@@ -40,7 +40,7 @@ impl Task<InProgress> {
 }
 #[tokio::main]
 async fn main() -> Result<()> {
-    let task = Task::new("task-1".to_string(), vec![]).await?
+    let task = Task::new("task-1".to_owned(), vec![])
         .start()?
         .process()
         .await?;
@@ -66,9 +66,10 @@ struct ApiClient<S: ProcessState> {
     client: reqwest::Client,
     base_url: String,
 }
+
 // Generated automatically:
 impl<S: ProcessState> ApiClient<S> {
-    async fn new(client: reqwest::Client, base_url: String) -> Self {
+    fn new(client: reqwest::Client, base_url: String) -> Self {
         Self {
             client,
             base_url,
@@ -145,7 +146,7 @@ async fn main() -> Result<()> {
         Uuid::new_v4(),
         "My Article".to_string(),
         ApiClient::new().await,
-    ).await;
+    );
     let published = article
         .submit_for_review().await?
         .approve().await?;

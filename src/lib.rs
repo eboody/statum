@@ -82,7 +82,7 @@ pub fn context(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let (param_names, param_types) = constructor_fields;
     let constructor = quote! {
         impl<S: #state_trait> #struct_name<S> {
-            pub async fn new(#(#param_names: #param_types),*) -> Self {
+            pub fn new(#(#param_names: #param_types),*) -> Self {
                 Self {
                     #(#param_names,)*
                     marker: std::marker::PhantomData
