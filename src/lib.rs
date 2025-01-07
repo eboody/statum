@@ -2,8 +2,8 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse_macro_input, parse_quote, Block, DeriveInput, Expr, ExprCall, ImplItem, ImplItemFn,
-    ItemImpl, Stmt, Type, TypePath,
+    parse::Parser, parse_macro_input, parse_quote, Block, DeriveInput, Expr, ExprCall, ImplItem,
+    ImplItemFn, ItemImpl, Stmt, Type, TypePath,
 };
 
 #[proc_macro_attribute]
@@ -34,9 +34,56 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn context(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
+    let mut input = parse_macro_input!(item as DeriveInput);
     let struct_name = &input.ident;
     let state_trait = extract_state_trait(&input);
+
+    // Add marker field to struct
+    if let syn::Data::Struct(ref mut struct_data) = input.data {
+        if let syn::Fields::Named(ref mut fields) = struct_data.fields {
+            fields.named.push(
+                syn::Field::parse_named
+                    .parse2(quote! { marker: std::marker::PhantomData<S> })
+                    .unwrap(),
+            );
+        }
+    }
+
+    // Get the fields for generating the constructor
+    let constructor_fields = match &input.data {
+        syn::Data::Struct(s) => match &s.fields {
+            syn::Fields::Named(fields) => {
+                let param_names = fields
+                    .named
+                    .iter()
+                    .filter(|f| f.ident.as_ref().map_or(false, |i| i != "marker"))
+                    .map(|f| &f.ident);
+                let param_types = fields
+                    .named
+                    .iter()
+                    .filter(|f| f.ident.as_ref().map_or(false, |i| i != "marker"))
+                    .map(|f| &f.ty);
+                (
+                    param_names.collect::<Vec<_>>(),
+                    param_types.collect::<Vec<_>>(),
+                )
+            }
+            _ => panic!("Only named fields are supported"),
+        },
+        _ => panic!("Only structs are supported"),
+    };
+
+    let (param_names, param_types) = constructor_fields;
+    let constructor = quote! {
+        impl<S: #state_trait> #struct_name<S> {
+            pub async fn new(#(#param_names: #param_types),*) -> Self {
+                Self {
+                    #(#param_names,)*
+                    marker: std::marker::PhantomData
+                }
+            }
+        }
+    };
 
     let fields = match &input.data {
         syn::Data::Struct(s) => match &s.fields {
@@ -76,6 +123,7 @@ pub fn context(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #input
         #transition_trait
         #impl_transition
+        #constructor
     };
 
     TokenStream::from(expanded)
