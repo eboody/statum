@@ -1,0 +1,18 @@
+[package]
+name = "enumachine"
+version = "0.1.0"
+description = "Ergonomic Finite-state & Typestate-machines"
+repository = "https://github.com/eboody/enumachine"
+license = "MIT"
+readme = "README.md"
+authors = ["Eran Boodnero <eran@eran.codes>"]
+keywords = ["enum", "macro", "typestate", "fsm", "state-machine"]
+categories = ["development-tools", "rust-patterns"]
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1"
+syn = { version = "2", features = ["full"] }
