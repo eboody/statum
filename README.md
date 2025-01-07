@@ -9,7 +9,7 @@ The typestate pattern lets you encode state machines at the type level, making i
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-statum = "0.1.4"
+statum = "0.1.5"
 ```
 ## Quick Start
 Here's a minimal example of a task processor:
@@ -109,6 +109,7 @@ Here's a more complete example showing async operations and state transitions:
 ```rust
 use statum::{state, context};
 use anyhow::Result;
+
 #[state]
 pub enum PublishState {
     Draft,
@@ -116,18 +117,21 @@ pub enum PublishState {
     Published,
     Archived,
 }
+
 #[context]
 struct Article<S: PublishState> {
     id: Uuid,
     content: String,
     client: ApiClient,
 }
+
 impl Article<Draft> {
     async fn submit_for_review(self) -> Result<Article<Review>> {
         self.client.save_draft(&self.id, &self.content).await?;
         Ok(self.into_context())
     }
 }
+
 impl Article<Review> {
     async fn approve(self) -> Result<Article<Published>> {
         self.client.publish(&self.id).await?;
@@ -139,12 +143,14 @@ impl Article<Review> {
         Ok(self.into_context())
     }
 }
+
 impl Article<Published> {
     async fn archive(self) -> Result<Article<Archived>> {
         self.client.archive(&self.id).await?;
         Ok(self.into_context())
     }
 }
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let article = Article::new(
