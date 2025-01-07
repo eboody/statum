@@ -9,7 +9,7 @@ The typestate pattern lets you encode state machines at the type level, making i
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-statum = "0.1.6"
+statum = "0.1.7"
 ```
 ## Quick Start
 Here's a minimal example of a task processor:
@@ -64,7 +64,7 @@ pub enum ProcessState {
 }
 ```
 ### Automatic Constructor Generation
-The `#[context]` attribute automatically generates an async `new` constructor and handles the PhantomData marker:
+The `#[context]` attribute automatically generates an `new` constructor and handles the PhantomData marker:
 ```rust
 #[context]
 struct ApiClient<S: ProcessState> {
