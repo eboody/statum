@@ -1,12 +1,23 @@
 [package]
-name = "enumachine"
+name = "statum"
 version = "0.1.0"
-description = "Ergonomic Finite-state & Typestate-machines"
+description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
 repository = "https://github.com/eboody/enumachine"
 license = "MIT"
 readme = "README.md"
+documentation = "https://docs.rs/statum"
 authors = ["Eran Boodnero <eran@eran.codes>"]
-keywords = ["enum", "macro", "typestate", "fsm", "state-machine"]
+keywords = [
+  "enum",
+  "macro",
+  "typestate",
+  "fsm",
+  "state-machine",
+  "state-machine",
+  "compile-time",
+  "finite-state",
+  "safety",
+]
 categories = ["development-tools", "rust-patterns"]
 edition = "2021"
 

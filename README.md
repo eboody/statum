@@ -1,4 +1,4 @@
-# enumachine
+# statum
 
 A zero-boilerplate library for finite-state machines in Rust, with compile-time state transition validation.
 
@@ -16,7 +16,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-enumachine = "0.1.0"
+statum = "0.1.0"
 ```
 
 ## Quick Start
@@ -24,7 +24,7 @@ enumachine = "0.1.0"
 Here's a minimal example of a task processor:
 
 ```rust
-use enumachine::{state, context, transition};
+use statum::{state, context, transition};
 
 #[state]
 pub enum TaskState {
