@@ -9,35 +9,40 @@ The typestate pattern lets you encode state machines at the type level, making i
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-statum = "0.1.2"
+statum = "0.1.4"
 ```
 ## Quick Start
 Here's a minimal example of a task processor:
 ```rust
 use statum::{state, context};
+
 #[state]
 pub enum TaskState {
     New,
     InProgress,
     Complete,
 }
+
 #[context]
 struct Task<S: TaskState> {
     id: String,
     data: Vec<u32>,
 }
+
 impl Task<New> {
     fn start(self) -> Result<Task<InProgress>> {
         // Use .into_context() to transition states
         Ok(self.into_context())
     }
 }
+
 impl Task<InProgress> {
     async fn process(self) -> Result<Task<Complete>> {
         // Do some work...
         Ok(self.into_context())
     }
 }
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let task = Task::new("task-1".to_owned(), vec![])
