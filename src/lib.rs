@@ -2,8 +2,14 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse::Parser, parse_macro_input, parse_quote, Block, DeriveInput, Expr, ExprCall, ImplItem,
-    ImplItemFn, ItemImpl, Stmt, Type, TypePath,
+    parse::Parser,
+    parse_macro_input,
+    DeriveInput,
+    //Expr,
+    //ExprCall,
+    //ImplItem,
+    //parse_quote, Block,
+    //ImplItemFn, ItemImpl, Stmt, Type, TypePath,
 };
 
 #[proc_macro_attribute]
@@ -129,91 +135,6 @@ pub fn context(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-#[proc_macro_attribute]
-pub fn transition(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemImpl);
-
-    // Get all methods in the impl block
-    let updated_items = input.items.iter().map(|item| {
-        if let ImplItem::Fn(method) = item {
-            // Create new function with transformed body
-            let mut new_method = method.clone();
-
-            // Transform the function body to add .into_context()
-            if let syn::ReturnType::Type(_, ty) = &method.sig.output {
-                // Check if return type is Result<Context<_>>
-                if let Type::Path(type_path) = &**ty {
-                    if is_result_type(type_path) {
-                        transform_method_body(&mut new_method);
-                    }
-                }
-            }
-
-            ImplItem::Fn(new_method)
-        } else {
-            item.clone()
-        }
-    });
-
-    // Reconstruct the impl block with transformed methods
-    let mut new_impl = input.clone();
-    new_impl.items = updated_items.collect();
-
-    quote! {
-        #new_impl
-    }
-    .into()
-}
-
-fn is_result_type(type_path: &TypePath) -> bool {
-    type_path
-        .path
-        .segments
-        .iter()
-        .any(|segment| segment.ident == "Result")
-}
-
-fn transform_method_body(method: &mut ImplItemFn) {
-    let new_body = if let Some(stmt) = extract_return_expr(&method.block) {
-        if let Expr::Call(call_expr) = stmt {
-            if is_ok_call(call_expr) {
-                let inner_expr = &call_expr.args[0];
-                quote! {
-                    {
-                        Ok(#inner_expr.into_context())
-                    }
-                }
-            } else {
-                quote! { #stmt }
-            }
-        } else {
-            quote! { #stmt }
-        }
-    } else {
-        quote! { #method.block }
-    };
-
-    method.block = parse_quote! { #new_body };
-}
-
-fn extract_return_expr(block: &Block) -> Option<&Expr> {
-    if let Some(Stmt::Expr(expr, ..)) = block.stmts.last() {
-        Some(expr)
-    } else {
-        None
-    }
-}
-
-fn is_ok_call(expr: &ExprCall) -> bool {
-    if let Expr::Path(path) = &*expr.func {
-        path.path
-            .segments
-            .iter()
-            .any(|segment| segment.ident == "Ok")
-    } else {
-        false
-    }
-}
 fn extract_state_trait(input: &DeriveInput) -> syn::Ident {
     let generics = &input.generics;
 
@@ -238,3 +159,88 @@ fn extract_state_trait(input: &DeriveInput) -> syn::Ident {
 
     panic!("Type parameter must have a trait bound")
 }
+//#[proc_macro_attribute]
+//pub fn transition(_attr: TokenStream, item: TokenStream) -> TokenStream {
+//    let input = parse_macro_input!(item as ItemImpl);
+//
+//    // Get all methods in the impl block
+//    let updated_items = input.items.iter().map(|item| {
+//        if let ImplItem::Fn(method) = item {
+//            // Create new function with transformed body
+//            let mut new_method = method.clone();
+//
+//            // Transform the function body to add .into_context()
+//            if let syn::ReturnType::Type(_, ty) = &method.sig.output {
+//                // Check if return type is Result<Context<_>>
+//                if let Type::Path(type_path) = &**ty {
+//                    if is_result_type(type_path) {
+//                        transform_method_body(&mut new_method);
+//                    }
+//                }
+//            }
+//
+//            ImplItem::Fn(new_method)
+//        } else {
+//            item.clone()
+//        }
+//    });
+//
+//    // Reconstruct the impl block with transformed methods
+//    let mut new_impl = input.clone();
+//    new_impl.items = updated_items.collect();
+//
+//    quote! {
+//        #new_impl
+//    }
+//    .into()
+//}
+//
+//fn is_result_type(type_path: &TypePath) -> bool {
+//    type_path
+//        .path
+//        .segments
+//        .iter()
+//        .any(|segment| segment.ident == "Result")
+//}
+//
+//fn transform_method_body(method: &mut ImplItemFn) {
+//    let new_body = if let Some(stmt) = extract_return_expr(&method.block) {
+//        if let Expr::Call(call_expr) = stmt {
+//            if is_ok_call(call_expr) {
+//                let inner_expr = &call_expr.args[0];
+//                quote! {
+//                    {
+//                        Ok(#inner_expr.into_context())
+//                    }
+//                }
+//            } else {
+//                quote! { #stmt }
+//            }
+//        } else {
+//            quote! { #stmt }
+//        }
+//    } else {
+//        quote! { #method.block }
+//    };
+//
+//    method.block = parse_quote! { #new_body };
+//}
+//
+//fn extract_return_expr(block: &Block) -> Option<&Expr> {
+//    if let Some(Stmt::Expr(expr, ..)) = block.stmts.last() {
+//        Some(expr)
+//    } else {
+//        None
+//    }
+//}
+//
+//fn is_ok_call(expr: &ExprCall) -> bool {
+//    if let Expr::Path(path) = &*expr.func {
+//        path.path
+//            .segments
+//            .iter()
+//            .any(|segment| segment.ident == "Ok")
+//    } else {
+//        false
+//    }
+//}
