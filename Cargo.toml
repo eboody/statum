@@ -7,17 +7,7 @@ license = "MIT"
 readme = "README.md"
 documentation = "https://docs.rs/statum"
 authors = ["Eran Boodnero <eran@eran.codes>"]
-keywords = [
-  "enum",
-  "macro",
-  "typestate",
-  "fsm",
-  "state-machine",
-  "state-machine",
-  "compile-time",
-  "finite-state",
-  "safety",
-]
+keywords = ["enum", "typestate", "fsm", "finite-state", "state-machine"]
 categories = ["development-tools", "rust-patterns"]
 edition = "2021"
 
