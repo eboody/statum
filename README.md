@@ -9,7 +9,7 @@ The typestate pattern lets you encode state machines at the type level, making i
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-statum = "0.1.5"
+statum = "0.1.6"
 ```
 ## Quick Start
 Here's a minimal example of a task processor:
