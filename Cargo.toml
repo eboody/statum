@@ -1,8 +1,8 @@
 [package]
 name = "statum"
-version = "0.1.0"
+version = "0.1.1"
 description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
-repository = "https://github.com/eboody/enumachine"
+repository = "https://github.com/eboody/statum"
 license = "MIT"
 readme = "README.md"
 documentation = "https://docs.rs/statum"
