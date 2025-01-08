@@ -114,7 +114,7 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
         if let syn::Fields::Named(ref mut fields) = struct_data.fields {
             fields.named.push(
                 syn::Field::parse_named
-                    .parse2(quote! { marker: std::marker::PhantomData<S> })
+                    .parse2(quote! { marker: core::marker::PhantomData<S> })
                     .unwrap(),
             );
             fields.named.push(
@@ -128,7 +128,7 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let (field_names, field_types) = get_field_info(&input);
     let field_assigns = quote! {
         #(#field_names: self.#field_names,)*
-        marker: std::marker::PhantomData,
+        marker: core::marker::PhantomData,
     };
 
     let transition_impl = quote! {
@@ -138,7 +138,7 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
             {
                 #struct_name {
                     #(#field_names: self.#field_names,)*
-                    marker: std::marker::PhantomData,
+                    marker: core::marker::PhantomData,
                     state_data: None,
                 }
             }
@@ -146,7 +146,7 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
             pub fn transition_with<NewState: #state_trait>(self, data: NewState::Data) -> #struct_name<NewState> {
                 #struct_name {
                     #(#field_names: self.#field_names,)*
-                    marker: std::marker::PhantomData,
+                    marker: core::marker::PhantomData,
                     state_data: Some(data),
                 }
             }
@@ -166,7 +166,7 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
             pub fn new(#(#field_names: #field_types),*) -> Self {
                 Self {
                     #(#field_names,)*
-                    marker: std::marker::PhantomData,
+                    marker: core::marker::PhantomData,
                     state_data: None,
                 }
             }
