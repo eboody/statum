@@ -14,7 +14,7 @@ The typestate pattern lets you encode state machines at the type level, making i
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-statum = "0.1.10"
+statum = "0.1.11"
 ```
 
 ## Quick Start
