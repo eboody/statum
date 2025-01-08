@@ -1,16 +1,6 @@
-extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{
-    parse::Parser,
-    parse_macro_input,
-    DeriveInput,
-    //Expr,
-    //ExprCall,
-    //ImplItem,
-    //parse_quote, Block,
-    //ImplItemFn, ItemImpl, Stmt, Type, TypePath,
-};
+use syn::{parse::Parser, parse_macro_input, DeriveInput, Fields};
 
 #[proc_macro_attribute]
 pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -19,20 +9,42 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let name = &input.ident;
 
     let states = match &input.data {
-        syn::Data::Enum(data_enum) => data_enum.variants.iter().map(|variant| &variant.ident),
+        syn::Data::Enum(data_enum) => data_enum.variants.iter().map(|variant| {
+            let variant_ident = &variant.ident;
+            let variant_fields = &variant.fields;
+
+            match variant_fields {
+                // Handle tuple variant with one field
+                Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+                    let field_type = &fields.unnamed.first().unwrap().ty;
+                    quote! {
+                        #vis struct #variant_ident(#field_type);
+                        impl #name for #variant_ident {
+                            type Data = #field_type;
+                        }
+                    }
+                }
+                // Handle unit variant (no fields)
+                Fields::Unit => {
+                    quote! {
+                        #vis struct #variant_ident;
+                        impl #name for #variant_ident {
+                            type Data = ();
+                        }
+                    }
+                }
+                // Error on other variants
+                _ => panic!("Variants must either be unit variants or single-field tuple variants"),
+            }
+        }),
         _ => panic!("state attribute can only be used on enums"),
     };
 
-    let states_impl = states.map(|state| {
-        quote! {
-            #vis struct #state;
-            impl #name for #state {}
-        }
-    });
-
     let expanded = quote! {
-        #vis trait #name {}
-        #(#states_impl)*
+        #vis trait #name {
+            type Data;
+        }
+        #(#states)*
     };
 
     TokenStream::from(expanded)
@@ -55,7 +67,57 @@ pub fn context(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    // Get the fields for generating the constructor
+    let fields = match &input.data {
+        syn::Data::Struct(s) => match &s.fields {
+            syn::Fields::Named(fields) => {
+                let field_names = fields
+                    .named
+                    .iter()
+                    .filter(|f| f.ident.as_ref().map_or(false, |i| i != "marker"))
+                    .map(|f| &f.ident);
+                quote! {
+                    #(#field_names: self.#field_names,)*
+                    marker: std::marker::PhantomData,
+                }
+            }
+            _ => panic!("Only named fields are supported"),
+        },
+        _ => panic!("Only structs are supported"),
+    };
+
+    // Constructor generation remains the same...
+    let constructor = generate_constructor(&input, &state_trait);
+
+    let transition_impl = quote! {
+        impl<CurrentState: #state_trait> #struct_name<CurrentState> {
+            pub fn into_context<NewState: #state_trait>(self) -> #struct_name<NewState>
+            where NewState: #state_trait<Data = ()>
+            {
+                #struct_name {
+                    #fields
+                }
+            }
+
+            pub fn into_context_with<NewState: #state_trait>(self, data: NewState::Data) -> #struct_name<NewState> {
+                #struct_name {
+                    #fields
+                }
+            }
+        }
+    };
+
+    let expanded = quote! {
+        #input
+        #transition_impl
+        #constructor
+    };
+
+    TokenStream::from(expanded)
+}
+
+fn generate_constructor(input: &DeriveInput, state_trait: &syn::Ident) -> proc_macro2::TokenStream {
+    let struct_name = &input.ident;
+
     let constructor_fields = match &input.data {
         syn::Data::Struct(s) => match &s.fields {
             syn::Fields::Named(fields) => {
@@ -80,7 +142,7 @@ pub fn context(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let (param_names, param_types) = constructor_fields;
-    let constructor = quote! {
+    quote! {
         impl<S: #state_trait> #struct_name<S> {
             pub fn new(#(#param_names: #param_types),*) -> Self {
                 Self {
@@ -89,50 +151,7 @@ pub fn context(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
         }
-    };
-
-    let fields = match &input.data {
-        syn::Data::Struct(s) => match &s.fields {
-            syn::Fields::Named(fields) => {
-                let field_names = fields
-                    .named
-                    .iter()
-                    .filter(|f| f.ident.as_ref().map_or(false, |i| i != "marker"))
-                    .map(|f| &f.ident);
-                quote! {
-                    #(#field_names: self.#field_names,)*
-                    marker: std::marker::PhantomData,
-                }
-            }
-            _ => panic!("Only named fields are supported"),
-        },
-        _ => panic!("Only structs are supported"),
-    };
-
-    let transition_trait = quote! {
-        trait IntoContext<NewState: #state_trait> {
-            fn into_context(self) -> #struct_name<NewState>;
-        }
-    };
-
-    let impl_transition = quote! {
-        impl<OldState: #state_trait, NewState: #state_trait> IntoContext<NewState> for #struct_name<OldState> {
-            fn into_context(self) -> #struct_name<NewState> {
-                #struct_name {
-                    #fields
-                }
-            }
-        }
-    };
-
-    let expanded = quote! {
-        #input
-        #transition_trait
-        #impl_transition
-        #constructor
-    };
-
-    TokenStream::from(expanded)
+    }
 }
 
 fn extract_state_trait(input: &DeriveInput) -> syn::Ident {
