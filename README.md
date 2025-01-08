@@ -7,14 +7,14 @@ A zero-boilerplate library for finite-state machines in Rust, with compile-time 
 The typestate pattern lets you encode state machines at the type level, making invalid state transitions impossible at compile time. This crate makes implementing typestates effortless through two attributes:
 
 - `#[state]` - Define your states
-- `#[context]` - Create your state machine
+- `#[machine]` - Create your state machine
 
 ## Installation
 
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-statum = "0.1.9"
+statum = "0.1.10"
 ```
 
 ## Quick Start
@@ -22,7 +22,7 @@ statum = "0.1.9"
 Here's a simple example of a task processor:
 
 ```rust
-use statum::{state, context};
+use statum::{state, machine};
 
 #[state]
 pub enum TaskState {
@@ -31,7 +31,7 @@ pub enum TaskState {
     Complete,
 }
 
-#[context]
+#[machine]
 struct Task<S: TaskState> {
     id: String,
     name: String,
@@ -39,14 +39,14 @@ struct Task<S: TaskState> {
 
 impl Task<New> {
     fn start(self) -> Task<InProgress> {
-        // Use into_context() for simple state transitions
-        self.into_context()
+        // Use transition() for simple state transitions
+        self.transition()
     }
 }
 
 impl Task<InProgress> {
     fn complete(self) -> Task<Complete> {
-        self.into_context()
+        self.transition()
     }
 }
 
@@ -80,7 +80,7 @@ struct ReviewData {
     comments: Vec<String>,
 }
 
-#[context]
+#[machine]
 struct Document<S: DocumentState> {
     id: String,
     content: String,
@@ -88,8 +88,8 @@ struct Document<S: DocumentState> {
 
 impl Document<Draft> {
     fn submit_for_review(self, reviewer: String) -> Document<Review> {
-        // Use into_context_with() for states with data
-        self.into_context_with(ReviewData {
+        // Use transition_with() for states with data
+        self.transition_with(ReviewData {
             reviewer,
             comments: vec![],
         })
@@ -117,7 +117,7 @@ impl Document<Review> {
 
     fn approve(self) -> Document<Published> {
         // Transition to a state without data
-        self.into_context()
+        self.transition()
     }
 }
 ```
@@ -165,7 +165,7 @@ impl DbRecord {
             String::new(),
         );
         
-        Ok(doc.into_context_with(ReviewData {
+        Ok(doc.transition_with(ReviewData {
             reviewer,
             comments: vec![],
         }))
@@ -178,8 +178,8 @@ impl DbRecord {
 Your state machine can maintain any context it needs:
 
 ```rust
-#[context]
-struct RichContext<S: DocumentState> {
+#[machine]
+struct DocumentProcessor<S: DocumentState> {
     id: Uuid,
     created_at: DateTime<Utc>,
     metadata: HashMap<String, String>,
