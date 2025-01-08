@@ -11,10 +11,9 @@ The typestate pattern lets you encode state machines at the type level, making i
 
 ## Installation
 
-Add this to your `Cargo.toml`:
-```toml
-[dependencies]
-statum = "0.1.11"
+Run the following Cargo command in your project directory:
+```bash
+cargo add statum
 ```
 
 ## Quick Start
@@ -32,7 +31,7 @@ pub enum TaskState {
 }
 
 #[machine]
-struct Task<S: TaskState> {
+pub struct Task<S: TaskState> {
     id: String,
     name: String,
 }
@@ -61,6 +60,17 @@ fn main() {
 }
 ```
 
+## Features
+
+- `debug` (enabled by default) - Implements Debug for state machines and states
+- `serde` - Adds serialization support via serde
+
+Enable features in your Cargo.toml:
+```toml
+[dependencies]
+statum = { version = "...", features = ["serde"] }
+```
+
 ## Advanced Features
 
 ### States with Data
@@ -75,13 +85,13 @@ pub enum DocumentState {
     Published,
 }
 
-struct ReviewData {
+pub struct ReviewData {
     reviewer: String,
     comments: Vec<String>,
 }
 
 #[machine]
-struct Document<S: DocumentState> {
+pub struct Document<S: DocumentState> {
     id: String,
     content: String,
 }
@@ -128,12 +138,12 @@ Here's how to integrate with external data sources:
 
 ```rust
 #[derive(Debug)]
-enum Error {
+pub enum Error {
     InvalidState,
 }
 
 #[derive(Clone)]
-struct DbRecord {
+pub struct DbRecord {
     id: String,
     state: String,
 }
@@ -179,7 +189,7 @@ Your state machine can maintain any context it needs:
 
 ```rust
 #[machine]
-struct DocumentProcessor<S: DocumentState> {
+pub struct DocumentProcessor<S: DocumentState> {
     id: Uuid,
     created_at: DateTime<Utc>,
     metadata: HashMap<String, String>,
