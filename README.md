@@ -1,206 +1,239 @@
-# statum
+Below is an example **README.md** that starts with a **very simple**, minimal example in the Quick Start section, then follows with notes on additional features (`serde`, custom derives, etc.). You can of course edit or reorganize as you see fit.
 
-A zero-boilerplate library for finite-state machines in Rust, with compile-time state transition validation.
+---
 
-## Overview
+# Statum
 
-The typestate pattern lets you encode state machines at the type level, making invalid state transitions impossible at compile time. This crate makes implementing typestates effortless through two attributes:
+**Statum** is a zero-boilerplate library for finite-state machines in Rust, with compile-time state transition validation. It provides two attribute macros:
 
-- `#[state]` - Define your states
-- `#[machine]` - Create your state machine
+- **`#[state]`** for defining states (as enums).
+- **`#[machine]`** for creating a state machine struct that tracks which state you’re in at compile time.
 
-## Installation
+## Quick Start (Minimal Example)
 
-Run the following Cargo command in your project directory:
-```bash
-cargo add statum
-```
-
-## Quick Start
-
-Here's a simple example of a task processor:
+Here’s the simplest usage of Statum without any extra features:
 
 ```rust
 use statum::{state, machine};
 
+// 1. Define your states as an enum.
 #[state]
-pub enum TaskState {
-    New,
-    InProgress,
-    Complete,
+pub enum LightState {
+    Off,
+    On,
 }
 
+// 2. Create a machine struct that references one of those states.
 #[machine]
-pub struct Task<S: TaskState> {
-    id: String,
+pub struct Light<S: LightState> {
     name: String,
 }
 
-impl Task<New> {
-    fn start(self) -> Task<InProgress> {
-        // Use transition() for simple state transitions
+// 3. Implement transitions for each state.
+impl Light<Off> {
+    pub fn switch_on(self) -> Light<On> {
         self.transition()
     }
 }
 
-impl Task<InProgress> {
-    fn complete(self) -> Task<Complete> {
+impl Light<On> {
+    pub fn switch_off(self) -> Light<Off> {
         self.transition()
     }
 }
 
 fn main() {
-    let task = Task::new(
-        "task-1".to_owned(),
-        "Important Task".to_owned(),
-    );
-    
-    let task = task.start();
-    let task = task.complete();
+    // 4. Create a machine with the "Off" state.
+    let light = Light::<Off>::new("desk lamp".to_owned());
+
+    // 5. Transition from Off -> On, On -> Off, etc.
+    let light = light.switch_on();
+    let light = light.switch_off();
 }
 ```
 
-## Features
+### How It Works
 
-- `debug` (enabled by default) - Implements Debug for state machines and states
-- `serde` - Adds serialization support via serde
+- `#[state]` transforms your enum, generating one struct per variant (like `Off` and `On`), plus a trait `LightState`.
+- `#[machine]` injects extra fields (`marker`, `state_data`) to track which state you’re in, letting you define transitions that change the state at the type level.
 
-Enable features in your Cargo.toml:
-```toml
-[dependencies]
-statum = { version = "...", features = ["serde"] }
-```
+That’s it! You now have a compile-time guaranteed state machine where invalid transitions are impossible.
 
-## Advanced Features
+---
 
-### States with Data
+## Additional Features & Examples
 
-States can carry state-specific data:
+### 1. Adding `Debug`, `Clone`, or Other Derives
+
+By default, you can add normal Rust derives on your enum and struct. For example:
 
 ```rust
 #[state]
-pub enum DocumentState {
-    Draft,                      // Simple state
-    Review(ReviewData),         // State with data
-    Published,
-}
-
-pub struct ReviewData {
-    reviewer: String,
-    comments: Vec<String>,
+#[derive(Debug, Clone)]
+pub enum LightState {
+    Off,
+    On,
 }
 
 #[machine]
-pub struct Document<S: DocumentState> {
+#[derive(Debug, Clone)]
+pub struct Light<S: LightState> {
+    name: String,
+}
+```
+
+**Important**: If you place `#[derive(...)]` _above_ `#[machine]`, you may see an error like:
+
+```
+error[E0063]: missing fields `marker` and `state_data` in initializer of `Light<_>`
+   |
+14 | #[derive(Debug, Clone)]
+   |          ^ missing `marker` and `state_data`
+```
+
+That’s because the derive macro for `Clone`, `Debug`, etc., expands before `#[machine]` has injected these extra fields. **To avoid this**, either:
+
+- Put `#[machine]` _above_ the derive(s), or  
+- Remove the conflicting derive(s) from the same item.
+
+For example, this works:
+
+```rust
+#[machine]
+#[derive(Debug, Clone)]
+pub struct Light<S: LightState> {
+    name: String,
+}
+```
+
+---
+
+### 2. `serde` Integration
+
+Statum can optionally propagate `Serialize`/`Deserialize` derives if you enable the `"serde"` feature and derive those on your `#[state]` enum. For example:
+
+```toml
+[dependencies]
+statum = { version = "x.y.z", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+```
+
+Then, in your code:
+
+```rust
+use statum::state;
+
+#[state]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub enum DocumentState {
+    Draft,
+    Published,
+}
+```
+
+If you enable Statum’s `"serde"` feature, any `#[derive(Serialize)]` and `#[derive(Deserialize)]` you put on the enum will get passed through to the expanded variant structs. If you do **not** enable that feature, deriving those traits will likely fail to compile.
+
+---
+
+### 3. Complex Transitions & Data-Bearing States
+
+States can hold data. For example:
+
+```rust
+#[state]
+pub enum ReviewState {
+    Draft,
+    InReview(ReviewData),
+    Published,
+}
+
+#[derive(Debug)]
+pub struct ReviewData {
+    reviewer: String,
+    notes: Vec<String>,
+}
+
+#[machine]
+pub struct Document<S: ReviewState> {
     id: String,
     content: String,
 }
 
+// ...
+
 impl Document<Draft> {
-    fn submit_for_review(self, reviewer: String) -> Document<Review> {
-        // Use transition_with() for states with data
-        self.transition_with(ReviewData {
-            reviewer,
-            comments: vec![],
-        })
+    pub fn submit_for_review(self, reviewer: String) -> Document<InReview> {
+        let data = ReviewData { reviewer, notes: vec![] };
+        self.transition_with(data)
     }
 }
+
+// ...
 ```
 
-### Accessing State Data
+## Accessing State Data
 
-When a state has associated data, you can access it safely:
+Use `.get_state_data()` or `.get_state_data_mut()` to interact with the state-specific data:
 
 ```rust
 impl Document<Review> {
     fn add_comment(&mut self, comment: String) {
-        // Safely modify state data
         if let Some(review_data) = self.get_state_data_mut() {
             review_data.comments.push(comment);
         }
     }
 
-    fn get_reviewer(&self) -> Option<&str> {
-        // Safely read state data
+    fn reviewer_name(&self) -> Option<&str> {
         self.get_state_data().map(|data| data.reviewer.as_str())
     }
 
     fn approve(self) -> Document<Published> {
-        // Transition to a state without data
         self.transition()
     }
 }
 ```
 
-### Database Integration
+---
 
-Here's how to integrate with external data sources:
+### 4. Attribute Ordering
 
-```rust
-#[derive(Debug)]
-pub enum Error {
-    InvalidState,
-}
+- **`#[state]`** must go on an **enum**.  
+- **`#[machine]`** must go on a **struct**.  
+- Because `#[machine]` injects extra fields, you generally need it _above_ any user `#[derive(...)]`. If you place `#[derive(...) ]` first, you might see “missing fields `marker` and `state_data` in initializer” errors.
 
-#[derive(Clone)]
-pub struct DbRecord {
-    id: String,
-    state: String,
-}
+---
 
-// Convert from database record to state machine
-impl TryFrom<&DbRecord> for Document<Draft> {
-    type Error = Error;
-    
-    fn try_from(record: &DbRecord) -> Result<Self, Error> {
-        if record.state != "draft" {
-            return Err(Error::InvalidState);
-        }
-        Ok(Document::new(
-            record.id.clone(),
-            String::new(),
-        ))
-    }
-}
+## Common Errors and Tips
 
-// Or use methods for more complex conversions with data
-impl DbRecord {
-    fn try_to_review(&self, reviewer: String) -> Result<Document<Review>, Error> {
-        if self.state != "review" {
-            return Err(Error::InvalidState);
-        }
-        
-        let doc = Document::new(
-            self.id.clone(),
-            String::new(),
-        );
-        
-        Ok(doc.transition_with(ReviewData {
-            reviewer,
-            comments: vec![],
-        }))
-    }
-}
+1. **`missing fields marker and state_data`**  
+   - Usually means your derive macros (e.g., `Clone` or `Debug`) expanded before Statum could inject those fields. Move `#[machine]` above your derives, or remove them.
+
+2. **`cannot find type X in this scope`**  
+   - Ensure that you define your `#[machine]` struct _before_ you reference it in `impl` blocks or function calls.
+
+3. **Feature gating**  
+   - If you’re using `#[derive(Serialize, Deserialize)]` on a `#[state]` enum but didn’t enable the `serde` feature in Statum, you’ll get compile errors about missing trait bounds.
+
+---
+
+## Lint Warnings (`unexpected_cfgs`)
+
+If you see warnings like:
 ```
-
-### Rich Context
-
-Your state machine can maintain any context it needs:
-
-```rust
-#[machine]
-pub struct DocumentProcessor<S: DocumentState> {
-    id: Uuid,
-    created_at: DateTime<Utc>,
-    metadata: HashMap<String, String>,
-    config: Config,
-}
+= note: no expected values for `feature`
+= help: consider adding `foo` as a feature in `Cargo.toml`
 ```
+it means you have the `unexpected_cfgs` lint enabled but you haven’t told your crate “feature = foo” is valid. This is a Rust nightly lint that ensures you only use `#[cfg(feature="...")]` with known feature values.
 
-## Contributing
+To fix it, either disable the lint or declare the allowed values in your crate’s `Cargo.toml`:
 
-Contributions welcome! Feel free to submit pull requests.
-
+```toml
+[lints.rust.unexpected_cfgs]
+check-cfg = [
+  'cfg(feature, values("serde"))'
+]
+level = "warn"
+```
 ## License
 
-MIT License - see LICENSE for details.
+Statum is distributed under the terms of the MIT license. See [LICENSE](LICENSE) for details.

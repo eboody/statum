@@ -1,6 +1,9 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse::Parser, parse_macro_input, DeriveInput, Fields};
+use syn::{
+    parse::Parser, parse_macro_input, punctuated::Punctuated, Data, DeriveInput, Fields, Path,
+    Token,
+};
 
 fn get_field_info(input: &DeriveInput) -> (Vec<&syn::Ident>, Vec<&syn::Type>) {
     match &input.data {
@@ -12,7 +15,7 @@ fn get_field_info(input: &DeriveInput) -> (Vec<&syn::Ident>, Vec<&syn::Type>) {
                     .filter(|f| {
                         f.ident
                             .as_ref()
-                            .map_or(false, |i| i != "marker" && i != "state_data")
+                            .is_some_and(|i| i != "marker" && i != "state_data")
                     })
                     .map(|f| f.ident.as_ref().unwrap())
                     .collect::<Vec<_>>();
@@ -22,7 +25,7 @@ fn get_field_info(input: &DeriveInput) -> (Vec<&syn::Ident>, Vec<&syn::Type>) {
                     .filter(|f| {
                         f.ident
                             .as_ref()
-                            .map_or(false, |i| i != "marker" && i != "state_data")
+                            .is_some_and(|i| i != "marker" && i != "state_data")
                     })
                     .map(|f| &f.ty)
                     .collect::<Vec<_>>();
@@ -40,16 +43,27 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let vis = &input.vis;
     let name = &input.ident;
 
-    // Build trait bounds based on features
+    // Analyze user-supplied #[derive(...)] to detect which traits they want
+    let (user_derives, wants_serialize, wants_deserialize, wants_debug, _wants_clone) =
+        analyze_user_derives(&input.attrs);
+
+    // We'll accumulate any trait bounds we need in "trait_bounds".
     let mut trait_bounds = vec![];
 
-    #[cfg(feature = "debug")]
-    trait_bounds.push(quote!(std::fmt::Debug));
+    // If the user derived Debug, we add std::fmt::Debug as a bound.
+    if wants_debug {
+        trait_bounds.push(quote!(std::fmt::Debug));
+    }
 
+    // Only add serde bounds if our crate's "serde" feature is enabled.
     #[cfg(feature = "serde")]
     {
-        trait_bounds.push(quote!(serde::Serialize));
-        trait_bounds.push(quote!(serde::de::DeserializeOwned));
+        if wants_serialize {
+            trait_bounds.push(quote!(serde::Serialize));
+        }
+        if wants_deserialize {
+            trait_bounds.push(quote!(serde::de::DeserializeOwned));
+        }
     }
 
     let trait_bounds = if trait_bounds.is_empty() {
@@ -58,17 +72,26 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
         quote!(: #(#trait_bounds +)*)
     };
 
+    // We'll replicate all user-specified derives on each generated variant struct.
+    let replicate_derives = if user_derives.is_empty() {
+        quote!()
+    } else {
+        quote! {
+            #[derive(#(#user_derives),*)]
+        }
+    };
+
+    // Convert each enum variant into a separate struct with an impl that ties back to the "State" trait.
     let states = match &input.data {
-        syn::Data::Enum(data_enum) => data_enum.variants.iter().map(|variant| {
+        Data::Enum(data_enum) => data_enum.variants.iter().map(|variant| {
             let variant_ident = &variant.ident;
             let variant_fields = &variant.fields;
-
             match variant_fields {
+                // Single-field tuple variant
                 Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
                     let field_type = &fields.unnamed.first().unwrap().ty;
                     quote! {
-                        #[cfg_attr(feature = "debug", derive(Debug))]
-                        #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+                        #replicate_derives
                         #vis struct #variant_ident(#field_type);
 
                         impl #name for #variant_ident {
@@ -85,10 +108,10 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         }
                     }
                 }
+                // Unit variant
                 Fields::Unit => {
                     quote! {
-                        #[cfg_attr(feature = "debug", derive(Debug))]
-                        #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+                        #replicate_derives
                         #vis struct #variant_ident;
 
                         impl #name for #variant_ident {
@@ -105,19 +128,26 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
                         }
                     }
                 }
-                _ => panic!("Variants must either be unit variants or single-field tuple variants"),
+                _ => panic!("Variants must be unit or single-field tuple variants"),
             }
         }),
-        _ => panic!("state attribute can only be used on enums"),
+        _ => {
+            return syn::Error::new_spanned(&input.ident, "#[state] can only be used on an enum")
+                .to_compile_error()
+                .into();
+        }
     };
 
     let expanded = quote! {
+        // The trait for this "state" enum
         #vis trait #name {
             type Data #trait_bounds;
             const HAS_DATA: bool;
             fn get_data(&self) -> Option<&Self::Data>;
             fn get_data_mut(&mut self) -> Option<&mut Self::Data>;
         }
+
+        // One struct + impl per variant
         #(#states)*
     };
 
@@ -130,7 +160,7 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let struct_name = &input.ident;
     let state_trait = extract_state_trait(&input);
 
-    // Add marker and optional state data
+    // Insert "marker" and "state_data" fields into the user's struct.
     if let syn::Data::Struct(ref mut struct_data) = input.data {
         if let syn::Fields::Named(ref mut fields) = struct_data.fields {
             fields.named.push(
@@ -147,15 +177,12 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let (field_names, field_types) = get_field_info(&input);
-    let _field_assigns = quote! {
-        #(#field_names: self.#field_names,)*
-        marker: core::marker::PhantomData,
-    };
 
     let transition_impl = quote! {
         impl<CurrentState: #state_trait> #struct_name<CurrentState> {
             pub fn transition<NewState: #state_trait>(self) -> #struct_name<NewState>
-            where NewState: #state_trait<Data = ()>
+            where
+                NewState: #state_trait<Data = ()>
             {
                 #struct_name {
                     #(#field_names: self.#field_names,)*
@@ -195,8 +222,6 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let expanded = quote! {
-        #[cfg_attr(feature = "debug", derive(Debug))]
-        #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
         #input
         #transition_impl
         #constructor
@@ -219,5 +244,42 @@ fn extract_state_trait(input: &DeriveInput) -> syn::Ident {
             }
         }
     }
-    panic!("Type parameter must have a trait bound")
+    panic!("Type parameter must have a trait bound");
+}
+
+fn analyze_user_derives(attrs: &[syn::Attribute]) -> (Vec<Path>, bool, bool, bool, bool) {
+    let mut user_derives = Vec::new();
+    let mut wants_serialize = false;
+    let mut wants_deserialize = false;
+    let mut wants_debug = false;
+    let mut wants_clone = false;
+
+    // Parse `#[derive(...)]` with syn 2.0
+    for attr in attrs {
+        if attr.path().is_ident("derive") {
+            if let Ok(paths) = attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated)
+            {
+                for path in paths {
+                    if let Some(ident) = path.get_ident() {
+                        match ident.to_string().as_str() {
+                            "Serialize" => wants_serialize = true,
+                            "Deserialize" => wants_deserialize = true,
+                            "Debug" => wants_debug = true,
+                            "Clone" => wants_clone = true,
+                            _ => {}
+                        }
+                    }
+                    user_derives.push(path);
+                }
+            }
+        }
+    }
+
+    (
+        user_derives,
+        wants_serialize,
+        wants_deserialize,
+        wants_debug,
+        wants_clone,
+    )
 }
