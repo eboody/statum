@@ -1,7 +1,3 @@
-Below is an example **README.md** that starts with a **very simple**, minimal example in the Quick Start section, then follows with notes on additional features (`serde`, custom derives, etc.). You can of course edit or reorganize as you see fit.
-
----
-
 # Statum
 
 **Statum** is a zero-boilerplate library for finite-state machines in Rust, with compile-time state transition validation. It provides two attribute macros:
