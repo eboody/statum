@@ -19,14 +19,9 @@ pub enum LightState {
     On,
 }
 
-// 2. Create a machine struct that references one of those states.
-// The fields in this struct are intended to provide context (e.g., configurations, clients, or dependencies)
-// needed across different states of the machine. This is similar to how Axum's `with_state`
-// shares context in routers. If you need to include data relevant to a specific state,
-// it is better to store that data within the state itself (as we discuss later in the README).
 #[machine]
 pub struct Light<S: LightState> {
-    name: String, // Contextual fields go here, like configurations, an identifier, clients, etc.
+    name: String, // Contextual, Machine-wide fields go here, like clients, configs, an identifier, etc.
 }
 
 // 3. Implement transitions for each state.
@@ -66,21 +61,6 @@ That’s it! You now have a compile-time guaranteed state machine where invalid 
 ## Additional Features & Examples
 
 ### 1. Adding `Debug`, `Clone`, or Other Derives
-
-statum is in active development so if you need something else let us know!
-
-Supported derives:
-- Serialize (with serde feature enabled)
-- Deserialize (with serde feature enabled)
-- Debug
-- Clone
-- Default
-- Eq
-- PartialEq
-- Hash
-- PartialOrd
-- Ord
-- Copy
 
 By default, you can add normal Rust derives on your enum and struct. For example:
 
@@ -162,13 +142,14 @@ If you enable Statum’s `"serde"` feature, any `#[derive(Serialize)]` and `#[de
 
 ### 3. Complex Transitions & Data-Bearing States
 
+#### Defining State Data
 States can hold data. For example:
 
 ```rust
 #[state]
 pub enum ReviewState {
     Draft,
-    InReview(ReviewData),
+    InReview(ReviewData), // State data
     Published,
 }
 
@@ -189,12 +170,14 @@ pub struct Document<S: ReviewState> {
 impl Document<Draft> {
     pub fn submit_for_review(self, reviewer: String) -> Document<InReview> {
         let data = ReviewData { reviewer, notes: vec![] };
-        self.transition_with(data)
+        self.transition_with(data) // Note: when we have state data, we use self.transition_with(...) instead of self.transition()
     }
 }
 
 // ...
 ```
+
+We use `self.transition_with(data)` instead of `self.transition()` to transition to a state that carries data.
 
 #### Accessing State Data
 
@@ -218,152 +201,163 @@ impl Document<Review> {
 }
 ```
 
+### 4. Reconstructing State Machines from Persistent Data
+
+In real-world applications, state machines often need to **persist their state**—for instance, saving to and loading from a database. Reconstructing a state machine from such persistent data requires a robust and type-safe mechanism to ensure that the machine accurately reflects the stored state. Here's how Statum facilitates this process:
+
+#### Motivation
+
+1. **Defining State Conditions for Persistent Data:**
+   
+   When data is stored persistently (e.g., in a database), it typically includes information about the current state of an entity. To accurately reconstruct the state machine from this data, we must clearly define **what it means** for the data to be in each possible state of the machine.
+
+2. **Handling Complex Validation Logic:**
+   
+   Determining the state based on persistent data can be intricate. Various fields, relationships, or external factors might influence the state determination. Statum provides the flexibility for developers to implement **custom validation logic** tailored to their specific requirements.
+
+3. **Organized Validation via `impl` Blocks:**
+   
+   By defining validation methods within an `impl` block on the persistent data struct (e.g., `DbData`), Statum ensures that there is a **dedicated method for each state variant**. This organization:
+   
+   - **Enforces Completeness:** Guarantees that every state has an associated validator.
+   - **Enhances Readability:** Centralizes state-related validation logic, making the codebase easier to understand and maintain.
+   - **Leverages Rust’s Type System:** Ensures that validations are type-safe and integrated seamlessly with the rest of the Rust code.
+
+4. **Constructing State-Specific Data Within Validators:**
+   
+   For states that carry additional data (e.g., `InProgress(DraftData)`), the validator methods are responsible for **constructing the necessary state-specific data**. This design choice ensures that:
+   
+   - **Data Integrity:** The state machine is instantiated with all required data, maintaining consistency and preventing runtime errors.
+   - **Encapsulation:** The logic for creating state-specific data is encapsulated within the validator, keeping the reconstruction process clean and modular.
+   - **Flexibility:** Developers can define exactly how state-specific data is derived from persistent data, accommodating diverse and complex scenarios.
+
+#### How It Works
+
+1. **Define States and Machine:**
+   
+   - Use the `#[state]` macro to define your state enum, specifying which states carry additional data.
+   - Use the `#[machine]` macro to create the state machine struct, registering any fields that are required across states.
+
+2. **Define Persistent Data and Implement Validators:**
+   
+   - Define a struct that represents your persistent data (e.g., a database record).
+   - Annotate an `impl` block on this persistent data struct with `#[validators(state = YourState, machine = YourMachine)]`.
+   - Within this block, implement a validator method for each state variant. **Each method must be named following the pattern `is_*`, where `*` is the snake_case version of the corresponding state variant.** For example, for a state `InProgress`, implement a method named `fn is_in_progress(&self) -> Result<…, …>`.
+   - These methods should:
+     - **Check State Validity:** Determine if the persistent data corresponds to the specific state.
+     - **Construct State Data (if needed):** For data-bearing states, create and return the necessary associated data.
+
+3. **Macro-Generated Reconstruction:**
+   
+   - The `#[validators]` macro analyzes the validator methods and the state machine’s field information.
+   - It generates a `to_machine` method on your persistent data struct that:
+     - **Invokes Validators:** Calls each validator to check the state and retrieve any associated data.
+     - **Constructs the State Machine:** Instantiates the state machine in the correct state, passing in the required fields and data.
+     - **Ensures Type Safety:** Returns a wrapper enum that encapsulates the correctly typed state machine, preventing invalid state transitions at compile time.
+
 ---
 
-### 4. Attribute Ordering
-
-- **`#[state]`** must go on an **enum**.  
-- **`#[machine]`** must go on a **struct**.  
-- Because `#[machine]` injects extra fields, you need it _above_ any user `#[derive(...)]`. If you place `#[derive(...) ]` first, you might see “missing fields `marker` and `state_data` in initializer” errors.
-
----
-
-### 5. Implementing the Typestate Builder Pattern with Statum
-
-The **typestate builder pattern** is a powerful way to enforce correct usage of a sequence of steps at compile time. With **statum**, you can implement this pattern using the provided `#[state]` and `#[machine]` macros to ensure type-safe state transitions in your builders.
-
-This guide will walk you through implementing a typestate builder for a hypothetical "User Registration" workflow.
-
----
-
-#### Overview
-
-Imagine we have a multi-step process for registering a user:
-1. Collect the user's name.
-2. Set the user's email.
-3. Submit the registration.
-
-Using the typestate builder pattern, we can ensure:
-- Each step must be completed before moving to the next.
-- Skipping steps or submitting prematurely results in compile-time errors.
-
----
-
-#### Steps to Implement
-
-##### 1. Define States
-
-Each step in the builder process is represented as a state using `#[state]`. For example:
+#### Example
 
 ```rust
-use statum::{state, machine};
-
 #[state]
-pub enum UserState {
-    NameNotSet,
-    NameSet(NameData),
-    EmailSet(UserData),
+#[derive(Clone, Debug, Serialize)]
+pub enum TaskState {
+    New,
+    InProgress(DraftData),
+    Complete,
 }
 
-#[derive(Debug, Clone)]
-pub struct NameData {
-    name: String,
+#[derive(Clone, Debug, Serialize)]
+pub struct DraftData {
+    version: u32,
 }
 
-#[derive(Debug, Clone)]
-pub struct UserData {
-    name: String,
-    email: String,
-}
-```
-
-Here:
-- **`NameNotSet`**: The initial state where the name has not been set.
-- **`NameSet`**: The state where the name is provided but the email is not.
-- **`EmailSet`**: The final state before submission.
-
-##### 2. Create the Builder Machine
-
-The builder itself is a `#[machine]`-decorated struct that uses the defined states.
-
-```rust
 #[machine]
-#[derive(Debug, Clone)]
-pub struct UserBuilder<S: UserState> {
-    id: u32,
+#[derive(Clone, Debug, Serialize)]
+struct TaskMachine<S: TaskState> {
+    client: String,
 }
-```
 
-This struct will manage transitions between states.
+#[derive(Clone)]
+struct DbData {
+    id: String,
+    state: String,
+}
 
-##### 3. Define State Transitions
+#[validators(state = TaskState, machine = TaskMachine)]
+impl DbData {
+    fn is_new(&self) -> Result<(), statum::Error> {
+        if self.state == "new" {
+            Ok(())
+        } else {
+            Err(statum::Error::InvalidState)
+        }
+    }
 
-Implement methods to move from one state to the next:
+    fn is_in_progress(&self) -> Result<DraftData, statum::Error> {
+        if self.state == "in_progress" {
+            Ok(DraftData { version: 1 })
+        } else {
+            Err(statum::Error::InvalidState)
+        }
+    }
 
-###### Transition from `NameNotSet` to `NameSet`
-```rust
-impl UserBuilder<NameNotSet> {
-    pub fn set_name(self, name: String) -> UserBuilder<NameSet> {
-        let data = NameData { name };
-        self.transition_with(data)
+    fn is_complete(&self) -> Result<(), statum::Error> {
+        if self.state == "complete" {
+            Ok(())
+        } else {
+            Err(statum::Error::InvalidState)
+        }
     }
 }
-```
 
-###### Transition from `NameSet` to `EmailSet`
-```rust
-impl UserBuilder<NameSet> {
-    pub fn set_email(self, email: String) -> UserBuilder<EmailSet> {
-        let NameData { name } = self.get_state_data().unwrap().clone();
-        let data = UserData { name, email };
-        self.transition_with(data)
+impl TaskMachine<New> {
+    fn start(self) -> TaskMachine<InProgress> {
+        let draft_data = DraftData { version: 1 };
+        self.transition_with(draft_data)
     }
 }
-```
 
-###### Transition from `EmailSet` to Submission
-```rust
-impl UserBuilder<EmailSet> {
-    pub fn submit(self) -> Result<(), &'static str> {
-        let UserData { name, email } = self.get_state_data().unwrap();
-        println!("User registered: Name = {}, Email = {}", name, email);
-        Ok(())
+impl TaskMachine<InProgress> {
+    fn process(self) -> TaskMachine<Complete> {
+        self.transition()
     }
 }
-```
 
-##### 4. Example Usage
-
-Here’s how you would use this builder:
-
-```rust
 fn main() {
-    let builder = UserBuilder::<NameNotSet>::new(1);
+    let client = "mock_client".to_owned();
 
-    // Step 1: Set the name
-    let builder = builder.set_name("Alice".to_string());
+    let task = DbData {
+        id: "42".to_owned(),
+        state: "in_progress".to_owned(),
+    };
 
-    // Step 2: Set the email
-    let builder = builder.set_email("alice@example.com".to_string());
+    let machine = task.to_machine(client).unwrap();
 
-    // Step 3: Submit the registration
-    builder.submit().unwrap();
+    match machine {
+        TaskMachineWrapper::New(machine) => {
+            println!("Task is new");
+            let machine = machine.start();
+            let machine = machine.process();
+        }
+        TaskMachineWrapper::InProgress(machine) => {
+            println!("Task is in progress");
+            let data = machine.get_state_data().unwrap();
+            println!("data: {:#?}", data);
+            let machine = machine.process();
+            println!("machine: {:#?}", machine);
+        }
+        TaskMachineWrapper::Complete(machine) => {
+            println!("Task is complete");
+        }
+    }
 }
 ```
 
-##### Compile-Time Guarantees
+By integrating validation methods within `impl` blocks and leveraging macros to enforce and utilize these validations, Statum provides a powerful and ergonomic way to bridge persistent data with compile-time validated state machines.
 
-- You **cannot** set the email without first setting the name:
-  ```rust
-  let builder = UserBuilder::<NameNotSet>::new(1);
-  let builder = builder.set_email("alice@example.com".to_string()); // Compile-time error
-  ```
-
-- You **cannot** submit the builder without setting the name and email:
-  ```rust
-  let builder = UserBuilder::<NameNotSet>::new(1);
-  builder.submit(); // Compile-time error
-  ```
+---
 
 ## Common Errors and Tips
 
