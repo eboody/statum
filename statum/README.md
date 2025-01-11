@@ -20,9 +20,13 @@ pub enum LightState {
 }
 
 // 2. Create a machine struct that references one of those states.
+// The fields in this struct are intended to provide context (e.g., configurations, clients, or dependencies)
+// needed across different states of the machine. This is similar to how Axum's `with_state`
+// shares context in routers. If you need to include data relevant to a specific state,
+// it is better to store that data within the state itself (as we discuss later in the README).
 #[machine]
 pub struct Light<S: LightState> {
-    name: String,
+    name: String, // Contextual fields go here, like configurations, an identifier, clients, etc.
 }
 
 // 3. Implement transitions for each state.
