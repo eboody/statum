@@ -1,5 +1,7 @@
 // cargo-deps: toml="0.8.8"
 
+extern crate toml;
+
 use std::env;
 use std::fs;
 use toml::Value;
@@ -25,6 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Read current version
     let cargo_content = fs::read_to_string("statum/Cargo.toml")?;
+
     let cargo_toml: Value = toml::from_str(&cargo_content)?;
     let current_version = cargo_toml["package"]["version"]
         .as_str()
@@ -54,6 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Update all crates
     for crate_path in &crate_paths {
         let cargo_path = format!("{}/Cargo.toml", crate_path);
+        println!("cargo_path: {:#?}", cargo_path);
         let content = fs::read_to_string(&cargo_path)?;
         let mut doc: Value = toml::from_str(&content)?;
 
