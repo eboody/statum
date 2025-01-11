@@ -36,21 +36,21 @@ pub(crate) fn get_state_variants(enum_name: &str) -> Option<Vec<VariantInfo>> {
     map.lock().unwrap().get(enum_name).cloned()
 }
 
-static MACHINE_FIELDS: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+static MACHINE_FIELDS: OnceLock<Mutex<HashMap<String, Vec<(String, String)>>>> = OnceLock::new();
 
 // Helper to get or init the storage
-fn get_fields_map() -> &'static Mutex<HashMap<String, Vec<String>>> {
+fn get_fields_map() -> &'static Mutex<HashMap<String, Vec<(String, String)>>> {
     MACHINE_FIELDS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 // Helper to register fields from #[machine]
-pub(crate) fn register_machine_fields(enum_name: String, fields: Vec<String>) {
+pub(crate) fn register_machine_fields(enum_name: String, fields: Vec<(String, String)>) {
     let map = get_fields_map();
     map.lock().unwrap().insert(enum_name, fields);
 }
 
 // Helper to get fields for #[model]
-pub(crate) fn get_machine_fields(enum_name: &str) -> Option<Vec<String>> {
+pub(crate) fn get_machine_fields(enum_name: &str) -> Option<Vec<(String, String)>> {
     let map = get_fields_map();
     map.lock().unwrap().get(enum_name).cloned()
 }
@@ -364,11 +364,14 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let (field_names, field_types) = get_field_info(&input);
 
-    let field_names_as_strings = field_names
+    // Register field names and their types
+    let fields_with_types: Vec<(String, String)> = field_names
         .iter()
-        .map(|ident| ident.to_string())
-        .collect::<Vec<_>>();
-    register_machine_fields(struct_name.to_string(), field_names_as_strings);
+        .zip(field_types.iter())
+        .map(|(name, ty)| (name.to_string(), ty.to_token_stream().to_string()))
+        .collect();
+
+    register_machine_fields(struct_name.to_string(), fields_with_types);
 
     let transition_impl = quote! {
         impl<CurrentState: #state_trait> #struct_name<CurrentState> {
@@ -595,7 +598,6 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let impl_block = parse_macro_input!(item as ItemImpl);
 
     // A. We need the type name for "impl Type { ... }"
-    //    e.g., "impl DbData { ... }"
     let self_ty = impl_block.self_ty.clone();
 
     // B. Grab the functions inside this impl that start with "is_"
@@ -609,25 +611,15 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    // 3. We also need the variants from the `state_ident` enum (like TaskState).
-    //    In your real code, you'd call get_state_variants(&state_ident) or
-    //    something similar. Here, we mock it with a fixed set of variants.
+    // 3. Retrieve the state variants
     let _state_name_str = state_ident.to_string();
     let enum_variants = match get_variants_of_state(&state_ident) {
         Ok(vars) => vars,
         Err(e) => return e.to_compile_error().into(),
     };
 
-    // 4. Generate the wrapper enum: e.g. TaskMachineWrapper
-    //    The name can be something like "{MachineName}Wrapper"
+    // 4. Generate the wrapper enum: e.g., TaskMachineWrapper
     let wrapper_enum_ident = format_ident!("{}Wrapper", machine_ident);
-
-    // 5. For each variant in the `state_ident` enum, create a variant in the wrapper:
-    //    enum TaskMachineWrapper {
-    //        New(TaskMachine<New>),
-    //        InProgress(TaskMachine<InProgress>),
-    //        Complete(TaskMachine<Complete>),
-    //    }
     let wrapper_variants = enum_variants.iter().map(|variant| {
         let v_id = format_ident!("{}", variant.name);
         quote! {
@@ -641,30 +633,47 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
+    // 5. Get machine field names and types
     let machine_name_str = machine_ident.to_string();
     let field_names_opt = get_machine_fields(&machine_name_str);
-    let field_idents = if let Some(field_names) = field_names_opt {
-        field_names
-            .into_iter()
-            .map(|s| format_ident!("{}", s))
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
+    if field_names_opt.is_none() {
+        return syn::Error::new_spanned(
+            machine_ident,
+            format!(
+                "Machine '{}' does not have registered fields",
+                machine_name_str
+            ),
+        )
+        .to_compile_error()
+        .into();
+    }
 
+    let fields = field_names_opt.unwrap();
+    let field_idents = fields
+        .iter()
+        .map(|s| format_ident!("{}", s.0))
+        .collect::<Vec<_>>();
+    let field_types = fields
+        .iter()
+        .map(|s| syn::parse_str::<syn::Type>(&s.1).unwrap())
+        .collect::<Vec<_>>();
+
+    // 6. Generate the `to_machine` function body and check for async validators
     let (to_machine_checks, has_async) =
         build_to_machine_fn(&enum_variants, &is_fns, &machine_ident, &wrapper_enum_ident);
 
+    // 7. Generate the `to_machine` signature
     let to_machine_signature = if has_async {
         quote! {
-            pub async fn to_machine(&self, #( #field_idents: String ),* ) -> Result<#wrapper_enum_ident, statum::Error>
+            pub async fn to_machine(&self, #( #field_idents: #field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
         }
     } else {
         quote! {
-            pub fn to_machine(&self, #( #field_idents: String ),* ) -> Result<#wrapper_enum_ident, statum::Error>
+            pub fn to_machine(&self, #( #field_idents: #field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
         }
     };
 
+    // 8. Combine everything into the final generated code
     let generated = quote! {
         #impl_block
 
@@ -679,7 +688,7 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    // 8. Return expanded tokens
+    // Return expanded tokens
     generated.into()
 }
 
@@ -716,7 +725,7 @@ fn build_to_machine_fn(
     let field_idents = if let Some(field_names) = field_names_opt {
         field_names
             .into_iter()
-            .map(|s| format_ident!("{}", s))
+            .map(|s| format_ident!("{}", s.0))
             .collect::<Vec<_>>()
     } else {
         Vec::new()
