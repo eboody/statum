@@ -202,9 +202,9 @@ Use `.get_state_data()` or `.get_state_data_mut()` to interact with the state-sp
 
 ```rust
 impl Document<Review> {
-    fn add_comment(&mut self, comment: String) {
+    fn add_note(&mut self, note: String) {
         if let Some(review_data) = self.get_state_data_mut() {
-            review_data.comments.push(comment);
+            review_data.notes.push(note);
         }
     }
 
