@@ -154,8 +154,20 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Analyze user-supplied #[derive(...)] to detect which traits they want
     #[allow(unused_variables)]
-    let (user_derives, wants_serialize, wants_deserialize, wants_debug, _wants_clone) =
-        analyze_user_derives(&input.attrs);
+    let (
+        user_derives,
+        wants_serialize,
+        wants_deserialize,
+        wants_debug,
+        wants_clone,
+        wants_default,
+        wants_eq,
+        wants_partial_eq,
+        wants_hash,
+        wants_partial_ord,
+        wants_ord,
+        wants_copy,
+    ) = analyze_user_derives(&input.attrs);
 
     // We'll accumulate any trait bounds we need in "trait_bounds".
     let mut trait_bounds = vec![];
