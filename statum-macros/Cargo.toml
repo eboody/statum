@@ -1,6 +1,6 @@
 [package]
 name = "statum-macros"
-version = "0.1.19"
+version = "0.1.20"
 description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
 repository = "https://github.com/eboody/statum"
 license = "MIT"
