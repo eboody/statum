@@ -2,37 +2,82 @@ use proc_macro::TokenStream;
 use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
+use syn::parse::Parse;
+use syn::parse::ParseStream;
+use syn::Ident;
 use syn::{
-    parse::Parser, parse_macro_input, punctuated::Punctuated, Data, DeriveInput, Fields, Path,
-    Token,
+    parse::Parser, parse_macro_input, punctuated::Punctuated, Data, DeriveInput, Fields, ImplItem,
+    ItemImpl, Path, PathArguments, ReturnType, Token, Type,
 };
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
-static STATE_VARIANTS: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+#[derive(Clone, Debug)]
+struct VariantInfo {
+    name: String,
+    data_type: Option<String>, // e.g., "DraftData" for InProgress, None for unit variants
+}
 
-// Helper to get or init the storage
-fn get_variants_map() -> &'static Mutex<HashMap<String, Vec<String>>> {
+static STATE_VARIANTS: OnceLock<Mutex<HashMap<String, Vec<VariantInfo>>>> = OnceLock::new();
+
+fn get_variants_map() -> &'static Mutex<HashMap<String, Vec<VariantInfo>>> {
     STATE_VARIANTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-// Helper to register variants from #[state]
-pub(crate) fn register_state_variants(enum_name: String, variants: Vec<String>) {
+pub(crate) fn register_state_variants(enum_name: String, variants: Vec<VariantInfo>) {
     let map = get_variants_map();
     map.lock().unwrap().insert(enum_name, variants);
 }
 
-// Helper to get variants for #[model]
-pub(crate) fn get_state_variants(enum_name: &str) -> Option<Vec<String>> {
+pub(crate) fn get_state_variants(enum_name: &str) -> Option<Vec<VariantInfo>> {
     let map = get_variants_map();
     map.lock().unwrap().get(enum_name).cloned()
 }
 
+static MACHINE_FIELDS: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+
+// Helper to get or init the storage
+fn get_fields_map() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    MACHINE_FIELDS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// Helper to register fields from #[machine]
+pub(crate) fn register_machine_fields(enum_name: String, fields: Vec<String>) {
+    let map = get_fields_map();
+    map.lock().unwrap().insert(enum_name, fields);
+}
+
+// Helper to get fields for #[model]
+pub(crate) fn get_machine_fields(enum_name: &str) -> Option<Vec<String>> {
+    let map = get_fields_map();
+    map.lock().unwrap().get(enum_name).cloned()
+}
+
+#[derive(Clone)]
 struct ModelAttr {
     machine: syn::Path,
     state: syn::Path,
+}
+
+#[derive(Clone, Debug)]
+struct ValidatorsAttr {
+    state: Ident,
+    machine: Ident,
+}
+
+impl Parse for ValidatorsAttr {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        input.parse::<Ident>()?; // parse "state"
+        input.parse::<Token![=]>()?;
+        let state = input.parse()?;
+        input.parse::<Token![,]>()?;
+        input.parse::<Ident>()?; // parse "machine"
+        input.parse::<Token![=]>()?;
+        let machine = input.parse()?;
+        Ok(ValidatorsAttr { state, machine })
+    }
 }
 
 impl syn::parse::Parse for ModelAttr {
@@ -138,18 +183,38 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
     let vis = &input.vis;
     let name = &input.ident;
+    println!("name: {:#?}", name);
 
-    // Extract variants
-    let variants = match &input.data {
+    // Extract variants with data type info
+    let variants: Vec<VariantInfo> = match &input.data {
         Data::Enum(data_enum) => data_enum
             .variants
             .iter()
-            .map(|v| v.ident.to_string())
+            .map(|v| {
+                let name = v.ident.to_string();
+                let data_type = match &v.fields {
+                    Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+                        // Single-field tuple variant
+                        Some(
+                            fields
+                                .unnamed
+                                .first()
+                                .unwrap()
+                                .ty
+                                .to_token_stream()
+                                .to_string(),
+                        )
+                    }
+                    Fields::Unit => None,
+                    _ => None, // For simplicity; handle other cases as needed
+                };
+                VariantInfo { name, data_type }
+            })
             .collect(),
         _ => panic!("#[state] can only be used on enums"),
     };
 
-    // Register variants for later use
+    // Register variants with their data types
     register_state_variants(name.to_string(), variants);
 
     // Analyze user-supplied #[derive(...)] to detect which traits they want
@@ -300,6 +365,12 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let (field_names, field_types) = get_field_info(&input);
 
+    let field_names_as_strings = field_names
+        .iter()
+        .map(|ident| ident.to_string())
+        .collect::<Vec<_>>();
+    register_machine_fields(struct_name.to_string(), field_names_as_strings);
+
     let transition_impl = quote! {
         impl<CurrentState: #state_trait> #struct_name<CurrentState> {
             pub fn transition<NewState: #state_trait>(self) -> #struct_name<NewState>
@@ -442,53 +513,53 @@ fn analyze_user_derives(
     )
 }
 
-//#[proc_macro_attribute]
-//pub fn model(attr: TokenStream, item: TokenStream) -> TokenStream {
-//    let ModelAttr { machine, state } = parse_macro_input!(attr as ModelAttr);
-//    let input = parse_macro_input!(item as DeriveInput);
-//    let struct_name = &input.ident;
-//
-//    // Use reference to machine when converting to token stream
-//    let machine_input = syn::parse_str::<DeriveInput>(
-//        &machine.to_token_stream().to_string()
-//    ).expect("Could not parse machine type");
-//
-//    let (field_names, field_types) = get_field_info(&machine_input);
-//
-//    let state_name = state.get_ident()
-//        .expect("Expected simple state name")
-//        .to_string();
-//
-//    let variants = get_state_variants(&state_name)
-//        .expect("State type not found - did you mark it with #[state]?");
-//
-//    // Generate try_to_* methods using the actual fields
-//    let try_methods = variants.iter().map(|variant| {
-//        let variant_ident = format_ident!("{}", variant);
-//        let try_method_name = format_ident!("try_to_{}", to_snake_case(variant));
-//        let is_method_name = format_ident!("is_{}", to_snake_case(variant));
-//
-//        quote! {
-//            pub fn #try_method_name(&self, #(#field_names: #field_types),*) -> Result<#machine<#variant_ident>, StatumError> {
-//                if self.#is_method_name() {
-//                    Ok(#machine::<#variant_ident>::new(#(#field_names),*))
-//                } else {
-//                    Err(StatumError::InvalidState)
-//                }
-//            }
-//        }
-//    });
-//
-//    let expanded = quote! {
-//        #input
-//
-//        impl #struct_name {
-//            #(#try_methods)*
-//        }
-//    };
-//
-//    TokenStream::from(expanded)
-//}
+#[proc_macro_attribute]
+pub fn model(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let ModelAttr { machine, state } = parse_macro_input!(attr as ModelAttr);
+    let input = parse_macro_input!(item as DeriveInput);
+    let struct_name = &input.ident;
+
+    // Use reference to machine when converting to token stream
+    let machine_input = syn::parse_str::<DeriveInput>(&machine.to_token_stream().to_string())
+        .expect("Could not parse machine type");
+
+    let (field_names, field_types) = get_field_info(&machine_input);
+
+    let state_name = state
+        .get_ident()
+        .expect("Expected simple state name")
+        .to_string();
+
+    let variants = get_state_variants(&state_name)
+        .expect("State type not found - did you mark it with #[state]?");
+
+    // Generate try_to_* methods using the actual fields
+    let try_methods = variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        let try_method_name = format_ident!("try_to_{}", to_snake_case(&variant.name));
+        let is_method_name = format_ident!("is_{}", to_snake_case(&variant.name));
+
+        quote! {
+            pub fn #try_method_name(&self, #(#field_names: #field_types),*) -> Result<#machine<#variant_ident>, statum::Error> {
+                if self.#is_method_name() {
+                    Ok(#machine::<#variant_ident>::new(#(#field_names),*))
+                } else {
+                    Err(statum::Error::InvalidState)
+                }
+            }
+        }
+    });
+
+    let expanded = quote! {
+        #input
+
+        impl #struct_name {
+            #(#try_methods)*
+        }
+    };
+
+    TokenStream::from(expanded)
+}
 
 // Helper function to convert PascalCase to snake_case
 fn to_snake_case(s: &str) -> String {
@@ -500,4 +571,264 @@ fn to_snake_case(s: &str) -> String {
         result.push(c.to_lowercase().next().unwrap());
     }
     result
+}
+
+/// The user would do:
+/// ```
+/// #[validators(state = TaskState, machine = TaskMachine)]
+/// impl DbData {
+///     fn is_new(&self /*, ..TaskMachine fields*/) -> Result<(), statum::Error> { ... }
+///     fn is_in_progress(&self /*, ..TaskMachine fields*/) -> Result<DraftData, statum::Error> { ... }
+///     fn is_complete(&self /*, ..TaskMachine fields*/) -> Result<(), statum::Error> { ... }
+/// }
+/// ```
+/// We parse the `impl` block, find all `is_*` fns, build a wrapper enum,
+/// and build a `to_machine(/*..TaskMachine fields*/)` method.
+#[proc_macro_attribute]
+pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // 1. Parse the attribute: #[validators(state = ..., machine = ...)]
+    let (state_ident, machine_ident) = match parse_validators_attr(attr) {
+        Ok(pair) => pair,
+        Err(e) => return e.to_compile_error().into(),
+    };
+
+    // 2. Parse the `impl` block itself
+    let impl_block = parse_macro_input!(item as ItemImpl);
+
+    // A. We need the type name for "impl Type { ... }"
+    //    e.g., "impl DbData { ... }"
+    let self_ty = impl_block.self_ty.clone();
+
+    // B. Grab the functions inside this impl that start with "is_"
+    let mut is_fns = Vec::new();
+    for item in &impl_block.items {
+        if let ImplItem::Fn(method) = item {
+            // Modified (searches for "is_"):
+            if method.sig.ident.to_string().starts_with("is_") {
+                is_fns.push(method);
+            }
+        }
+    }
+
+    // 3. We also need the variants from the `state_ident` enum (like TaskState).
+    //    In your real code, you'd call get_state_variants(&state_ident) or
+    //    something similar. Here, we mock it with a fixed set of variants.
+    let _state_name_str = state_ident.to_string();
+    let enum_variants = match get_variants_of_state(&state_ident) {
+        Ok(vars) => vars,
+        Err(e) => return e.to_compile_error().into(),
+    };
+
+    // 4. Generate the wrapper enum: e.g. TaskMachineWrapper
+    //    The name can be something like "{MachineName}Wrapper"
+    let wrapper_enum_ident = format_ident!("{}Wrapper", machine_ident);
+
+    // 5. For each variant in the `state_ident` enum, create a variant in the wrapper:
+    //    enum TaskMachineWrapper {
+    //        New(TaskMachine<New>),
+    //        InProgress(TaskMachine<InProgress>),
+    //        Complete(TaskMachine<Complete>),
+    //    }
+    let wrapper_variants = enum_variants.iter().map(|variant| {
+        let v_id = format_ident!("{}", variant.name);
+        quote! {
+            #v_id(#machine_ident<#v_id>)
+        }
+    });
+
+    let wrapper_enum = quote! {
+        pub enum #wrapper_enum_ident {
+            #(#wrapper_variants),*
+        }
+    };
+
+    // 6. Generate the `to_machine(&self) -> Result<Wrapper, statum::Error>` method
+    //    We'll chain if-let checks for each variant, calling the user’s `is_<Variant>` function.
+    let to_machine_fn =
+        build_to_machine_fn(&enum_variants, &is_fns, &machine_ident, &wrapper_enum_ident);
+
+    // 7. Reconstruct the final `impl DbData { ... }` block
+    //    but append our generated `to_machine` method and the wrapper enum after it.
+    let generated = quote! {
+        #impl_block
+
+        // Our new wrapper enum
+        #wrapper_enum
+
+        // Our new `to_machine` method
+        impl #self_ty {
+            #to_machine_fn
+        }
+    };
+
+    // 8. Return expanded tokens
+    generated.into()
+}
+
+fn parse_validators_attr(attr: TokenStream) -> syn::Result<(syn::Ident, syn::Ident)> {
+    let parsed = syn::parse::<ValidatorsAttr>(attr)?;
+    Ok((parsed.state, parsed.machine))
+}
+
+fn get_variants_of_state(state_ident: &syn::Ident) -> syn::Result<Vec<VariantInfo>> {
+    // Convert the `syn::Ident` to a string: e.g. "TaskState"
+    let enum_name = state_ident.to_string();
+
+    // Attempt to retrieve the variants from STATE_VARIANTS
+    match get_state_variants(&enum_name) {
+        Some(variants) => Ok(variants),
+        None => Err(syn::Error::new_spanned(
+            state_ident,
+            format!(
+                "No variants found for enum `{}`. Did you mark it with #[state]?",
+                enum_name
+            ),
+        )),
+    }
+}
+
+fn build_to_machine_fn(
+    enum_variants: &[VariantInfo],
+    is_fns: &[&syn::ImplItemFn],
+    machine_ident: &syn::Ident,
+    wrapper_enum_ident: &syn::Ident,
+) -> proc_macro2::TokenStream {
+    // Retrieve field names as before
+    let machine_name_str = machine_ident.to_string();
+    let field_names_opt = get_machine_fields(&machine_name_str);
+    let field_idents = if let Some(field_names) = field_names_opt {
+        field_names
+            .into_iter()
+            .map(|s| format_ident!("{}", s))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    let mut checks = vec![];
+
+    for variant_info in enum_variants {
+        let variant = &variant_info.name;
+        let variant_snake = to_snake_case(variant);
+        let is_method_ident = format_ident!("is_{}", variant_snake);
+        let variant_ident = format_ident!("{}", variant);
+
+        let user_fn = is_fns.iter().find(|f| f.sig.ident == is_method_ident);
+
+        if let Some(f) = user_fn {
+            if let Some((ok_ty_opt, _err_ty_opt)) = extract_result_ok_err_types(&f.sig.output) {
+                // Check if the variant expects data
+                let expects_data = variant_info.data_type.is_some();
+
+                match (expects_data, ok_ty_opt) {
+                    (true, Some(Type::Tuple(t))) if t.elems.is_empty() => {
+                        // Variant expects data but validator returned ()
+                        checks.push(
+                            syn::Error::new_spanned(
+                                &f.sig.output,
+                                format!(
+                                    "Validator for variant '{}' should return data of type {}",
+                                    variant,
+                                    variant_info.data_type.as_ref().unwrap()
+                                ),
+                            )
+                            .to_compile_error(),
+                        );
+                    }
+                    (true, Some(_ty)) => {
+                        // Data-bearing variant with some return type.
+                        checks.push(quote! {
+                            if let Ok(data) = self.#is_method_ident() {
+                                let machine = #machine_ident::<#variant_ident>::new(#(#field_idents.clone()),*).transition_with(data);
+                                return Ok(#wrapper_enum_ident::#variant_ident(machine));
+                            }
+                        });
+                    }
+                    (false, Some(Type::Tuple(t))) if t.elems.is_empty() => {
+                        // No-data variant
+                        checks.push(quote! {
+                            if let Ok(()) = self.#is_method_ident() {
+                                let machine = #machine_ident::<#variant_ident>::new(#(#field_idents.clone()),*);
+                                return Ok(#wrapper_enum_ident::#variant_ident(machine));
+                            }
+                        });
+                    }
+                    (false, Some(_)) => {
+                        // No-data variant but validator returns unexpected data.
+                        checks.push(
+                            syn::Error::new_spanned(
+                                &f.sig.output,
+                                format!(
+                                    "Validator for variant '{}' should not return data",
+                                    variant
+                                ),
+                            )
+                            .to_compile_error(),
+                        );
+                    }
+                    _ => {}
+                }
+            } else {
+                checks.push(
+                    syn::Error::new_spanned(
+                        &f.sig.output,
+                        "validator method must return Result<T, E>",
+                    )
+                    .to_compile_error(),
+                );
+            }
+        } else {
+            checks.push(
+                syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    format!("Missing validator method for variant '{}'", variant),
+                )
+                .to_compile_error(),
+            );
+        }
+    }
+
+    quote! {
+        pub fn to_machine(&self, #( #field_idents: String ),* ) -> Result<#wrapper_enum_ident, statum::Error> {
+            #(#checks)*
+
+            Err(statum::Error::InvalidState)
+        }
+    }
+}
+
+/// Helper to parse something like `-> Result<T, E>`
+/// Returns `Some((Some(T), Some(E)))` or `Some((Some(T), None))` etc.
+/// If it doesn't match a `Result<_, _>` signature, returns `None`.
+fn extract_result_ok_err_types(ret: &ReturnType) -> Option<(Option<Type>, Option<Type>)> {
+    if let ReturnType::Type(_, ty) = ret {
+        if let Type::Path(type_path) = &**ty {
+            let segments = &type_path.path.segments;
+            if let Some(seg) = segments.last() {
+                if seg.ident == "Result" {
+                    // We expect <T, E>
+                    if let PathArguments::AngleBracketed(args) = &seg.arguments {
+                        let args = &args.args;
+                        if args.len() == 2 {
+                            let mut iter = args.iter();
+                            let first = iter.next().unwrap();
+                            let second = iter.next().unwrap();
+
+                            // Convert to Type
+                            let ok_ty = match first {
+                                syn::GenericArgument::Type(t) => Some(t.clone()),
+                                _ => None,
+                            };
+                            let err_ty = match second {
+                                syn::GenericArgument::Type(t) => Some(t.clone()),
+                                _ => None,
+                            };
+                            return Some((ok_ty, err_ty));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }

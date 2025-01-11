@@ -1,4 +1,4 @@
 #[derive(Debug)]
-pub enum StatumError {
+pub enum Error {
     InvalidState,
 }
