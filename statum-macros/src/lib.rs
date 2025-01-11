@@ -1,6 +1,7 @@
 use proc_macro::TokenStream;
 use quote::format_ident;
 use quote::quote;
+use quote::ToTokens;
 use syn::{
     parse::Parser, parse_macro_input, punctuated::Punctuated, Data, DeriveInput, Fields, Path,
     Token,
@@ -48,7 +49,12 @@ impl syn::parse::Parse for ModelAttr {
         match name1.to_string().as_str() {
             "machine" => machine = Some(value1),
             "state" => state = Some(value1),
-            _ => return Err(syn::Error::new(name1.span(), "Expected 'machine' or 'state'")),
+            _ => {
+                return Err(syn::Error::new(
+                    name1.span(),
+                    "Expected 'machine' or 'state'",
+                ))
+            }
         }
 
         // Parse comma
@@ -63,7 +69,10 @@ impl syn::parse::Parse for ModelAttr {
         match name2.to_string().as_str() {
             "machine" => {
                 if machine.is_some() {
-                    return Err(syn::Error::new(name2.span(), "Duplicate 'machine' parameter"));
+                    return Err(syn::Error::new(
+                        name2.span(),
+                        "Duplicate 'machine' parameter",
+                    ));
                 }
                 machine = Some(value2);
             }
@@ -73,13 +82,21 @@ impl syn::parse::Parse for ModelAttr {
                 }
                 state = Some(value2);
             }
-            _ => return Err(syn::Error::new(name2.span(), "Expected 'machine' or 'state'")),
+            _ => {
+                return Err(syn::Error::new(
+                    name2.span(),
+                    "Expected 'machine' or 'state'",
+                ))
+            }
         }
 
         // Ensure we got both parameters
         match (machine, state) {
             (Some(machine), Some(state)) => Ok(ModelAttr { machine, state }),
-            _ => Err(syn::Error::new(name1.span(), "Must specify both 'machine' and 'state'")),
+            _ => Err(syn::Error::new(
+                name1.span(),
+                "Must specify both 'machine' and 'state'",
+            )),
         }
     }
 }
@@ -377,46 +394,53 @@ fn analyze_user_derives(attrs: &[syn::Attribute]) -> (Vec<Path>, bool, bool, boo
     )
 }
 
-#[proc_macro_attribute]
-pub fn model(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let ModelAttr { machine, state } = parse_macro_input!(attr as ModelAttr);
-    let input = parse_macro_input!(item as DeriveInput);
-    let struct_name = &input.ident;
-
-    let state_name = state.get_ident()
-        .expect("Expected simple state name")
-        .to_string();
-
-    let variants = get_state_variants(&state_name)
-        .expect("State type not found - did you mark it with #[state]?");
-
-    // Generate all try_to_* methods in a single impl block
-    let try_methods = variants.iter().map(|variant| {
-        let variant_ident = format_ident!("{}", variant);
-        let try_method_name = format_ident!("try_to_{}", to_snake_case(variant));
-        let is_method_name = format_ident!("is_{}", to_snake_case(variant));
-        
-        quote! {
-            pub fn #try_method_name(&self, client: String) -> Result<#machine<#variant_ident>, StatumError> {
-                if self.#is_method_name() {
-                    Ok(#machine::<#variant_ident>::new(client))
-                } else {
-                    Err(StatumError::InvalidState)
-                }
-            }
-        }
-    });
-
-    let expanded = quote! {
-        #input
-
-        impl #struct_name {
-            #(#try_methods)*
-        }
-    };
-
-    TokenStream::from(expanded)
-}
+//#[proc_macro_attribute]
+//pub fn model(attr: TokenStream, item: TokenStream) -> TokenStream {
+//    let ModelAttr { machine, state } = parse_macro_input!(attr as ModelAttr);
+//    let input = parse_macro_input!(item as DeriveInput);
+//    let struct_name = &input.ident;
+//
+//    // Use reference to machine when converting to token stream
+//    let machine_input = syn::parse_str::<DeriveInput>(
+//        &machine.to_token_stream().to_string()
+//    ).expect("Could not parse machine type");
+//
+//    let (field_names, field_types) = get_field_info(&machine_input);
+//
+//    let state_name = state.get_ident()
+//        .expect("Expected simple state name")
+//        .to_string();
+//
+//    let variants = get_state_variants(&state_name)
+//        .expect("State type not found - did you mark it with #[state]?");
+//
+//    // Generate try_to_* methods using the actual fields
+//    let try_methods = variants.iter().map(|variant| {
+//        let variant_ident = format_ident!("{}", variant);
+//        let try_method_name = format_ident!("try_to_{}", to_snake_case(variant));
+//        let is_method_name = format_ident!("is_{}", to_snake_case(variant));
+//
+//        quote! {
+//            pub fn #try_method_name(&self, #(#field_names: #field_types),*) -> Result<#machine<#variant_ident>, StatumError> {
+//                if self.#is_method_name() {
+//                    Ok(#machine::<#variant_ident>::new(#(#field_names),*))
+//                } else {
+//                    Err(StatumError::InvalidState)
+//                }
+//            }
+//        }
+//    });
+//
+//    let expanded = quote! {
+//        #input
+//
+//        impl #struct_name {
+//            #(#try_methods)*
+//        }
+//    };
+//
+//    TokenStream::from(expanded)
+//}
 
 // Helper function to convert PascalCase to snake_case
 fn to_snake_case(s: &str) -> String {
