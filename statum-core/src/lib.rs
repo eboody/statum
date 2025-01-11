@@ -1,4 +1,4 @@
 #[derive(Debug)]
-pub enum ConversionError {
+pub enum StatumError {
     InvalidState,
 }

@@ -397,11 +397,11 @@ pub fn model(attr: TokenStream, item: TokenStream) -> TokenStream {
         let is_method_name = format_ident!("is_{}", to_snake_case(variant));
         
         quote! {
-            pub fn #try_method_name(&self, client: String) -> Result<#machine<#variant_ident>, Error> {
+            pub fn #try_method_name(&self, client: String) -> Result<#machine<#variant_ident>, StatumError> {
                 if self.#is_method_name() {
                     Ok(#machine::<#variant_ident>::new(client))
                 } else {
-                    Err(Error::InvalidState)
+                    Err(StatumError::InvalidState)
                 }
             }
         }
