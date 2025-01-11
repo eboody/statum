@@ -61,6 +61,21 @@ That’s it! You now have a compile-time guaranteed state machine where invalid 
 
 ### 1. Adding `Debug`, `Clone`, or Other Derives
 
+statum is in active development so if you need something else let us know!
+
+Supported derives:
+- Serialize (with serde feature enabled)
+- Deserialize (with serde feature enabled)
+- Debug
+- Clone
+- Default
+- Eq
+- PartialEq
+- Hash
+- PartialOrd
+- Ord
+- Copy
+
 By default, you can add normal Rust derives on your enum and struct. For example:
 
 ```rust
@@ -97,6 +112,14 @@ For example, this works:
 ```rust
 #[machine]
 #[derive(Debug, Clone)]
+pub struct Light<S: LightState> {
+    name: String,
+}
+```
+This does not:
+```rust
+#[derive(Debug, Clone)] //note the position of the derive
+#[machine]
 pub struct Light<S: LightState> {
     name: String,
 }

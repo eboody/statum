@@ -357,12 +357,34 @@ fn extract_state_trait(input: &DeriveInput) -> syn::Ident {
     panic!("Type parameter must have a trait bound");
 }
 
-fn analyze_user_derives(attrs: &[syn::Attribute]) -> (Vec<Path>, bool, bool, bool, bool) {
+fn analyze_user_derives(
+    attrs: &[syn::Attribute],
+) -> (
+    Vec<Path>,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+) {
     let mut user_derives = Vec::new();
     let mut wants_serialize = false;
     let mut wants_deserialize = false;
     let mut wants_debug = false;
     let mut wants_clone = false;
+    let mut wants_default = false;
+    let mut wants_eq = false;
+    let mut wants_partial_eq = false;
+    let mut wants_hash = false;
+    let mut wants_partial_ord = false;
+    let mut wants_ord = false;
+    let mut wants_copy = false;
 
     // Parse `#[derive(...)]` with syn 2.0
     for attr in attrs {
@@ -376,6 +398,13 @@ fn analyze_user_derives(attrs: &[syn::Attribute]) -> (Vec<Path>, bool, bool, boo
                             "Deserialize" => wants_deserialize = true,
                             "Debug" => wants_debug = true,
                             "Clone" => wants_clone = true,
+                            "Default" => wants_default = true,
+                            "Eq" => wants_eq = true,
+                            "PartialEq" => wants_partial_eq = true,
+                            "Hash" => wants_hash = true,
+                            "PartialOrd" => wants_partial_ord = true,
+                            "Ord" => wants_ord = true,
+                            "Copy" => wants_copy = true,
                             _ => {}
                         }
                     }
@@ -391,6 +420,13 @@ fn analyze_user_derives(attrs: &[syn::Attribute]) -> (Vec<Path>, bool, bool, boo
         wants_deserialize,
         wants_debug,
         wants_clone,
+        wants_default,
+        wants_eq,
+        wants_partial_eq,
+        wants_hash,
+        wants_partial_ord,
+        wants_ord,
+        wants_copy,
     )
 }
 
