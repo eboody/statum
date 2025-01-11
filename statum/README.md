@@ -246,6 +246,7 @@ In real-world applications, state machines often need to **persist their state**
    - These methods should:
      - **Check State Validity:** Determine if the persistent data corresponds to the specific state.
      - **Construct State Data (if needed):** For data-bearing states, create and return the necessary associated data.
+        - In the scneario where you have state-specific data, your validator must return Result<YourData, statum::Error> instead of Result<(), statum::Error>.
 
 3. **Macro-Generated Reconstruction:**
    
@@ -295,6 +296,8 @@ impl DbData {
         }
     }
 
+    //Note: this method returns the state-specific data because the state is InProgress
+    //which carries additional data
     fn is_in_progress(&self) -> Result<DraftData, statum::Error> {
         if self.state == "in_progress" {
             Ok(DraftData { version: 1 })
