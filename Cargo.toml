@@ -4,5 +4,5 @@ members = ["statum-core", "statum-macros", "statum"]
 
 
 [workspace.metadata.scripts]
-readme = "cp README.md statum/README.md & cp README.md statum-core/README.md & cp README.md statum-macros/README.md"
+readme = "cp README.md statum/README.md & cp README.md statum-core/README.md & cp README.md statum-macros/README.md && cargo script scripts/update_version.rs -- 0.0.1"
 publish = "cargo publish -p statum-core && cargo publish -p statum-macros && cargo publish -p statum"
