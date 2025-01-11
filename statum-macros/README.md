@@ -324,6 +324,143 @@ All try_to_* methods return a Result with:
 - Ok: A valid TaskMachine instance in the desired state.
 - Err(StatumError): An error indicating invalid state transitions.
 
+### 6. Implementing the Typestate Builder Pattern with Statum
+
+The **typestate builder pattern** is a powerful way to enforce correct usage of a sequence of steps at compile time. With **statum**, you can implement this pattern using the provided `#[state]` and `#[machine]` macros to ensure type-safe state transitions in your builders.
+
+This guide will walk you through implementing a typestate builder for a hypothetical "User Registration" workflow.
+
+---
+
+#### Overview
+
+Imagine we have a multi-step process for registering a user:
+1. Collect the user's name.
+2. Set the user's email.
+3. Submit the registration.
+
+Using the typestate builder pattern, we can ensure:
+- Each step must be completed before moving to the next.
+- Skipping steps or submitting prematurely results in compile-time errors.
+
+---
+
+#### Steps to Implement
+
+##### 1. Define States
+
+Each step in the builder process is represented as a state using `#[state]`. For example:
+
+```rust
+use statum::{state, machine};
+
+#[state]
+pub enum UserState {
+    NameNotSet,
+    NameSet(NameData),
+    EmailSet(UserData),
+}
+
+#[derive(Debug, Clone)]
+pub struct NameData {
+    name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserData {
+    name: String,
+    email: String,
+}
+```
+
+Here:
+- **`NameNotSet`**: The initial state where the name has not been set.
+- **`NameSet`**: The state where the name is provided but the email is not.
+- **`EmailSet`**: The final state before submission.
+
+##### 2. Create the Builder Machine
+
+The builder itself is a `#[machine]`-decorated struct that uses the defined states.
+
+```rust
+#[machine]
+#[derive(Debug, Clone)]
+pub struct UserBuilder<S: UserState> {
+    id: u32,
+}
+```
+
+This struct will manage transitions between states.
+
+##### 3. Define State Transitions
+
+Implement methods to move from one state to the next:
+
+###### Transition from `NameNotSet` to `NameSet`
+```rust
+impl UserBuilder<NameNotSet> {
+    pub fn set_name(self, name: String) -> UserBuilder<NameSet> {
+        let data = NameData { name };
+        self.transition_with(data)
+    }
+}
+```
+
+###### Transition from `NameSet` to `EmailSet`
+```rust
+impl UserBuilder<NameSet> {
+    pub fn set_email(self, email: String) -> UserBuilder<EmailSet> {
+        let NameData { name } = self.get_state_data().unwrap().clone();
+        let data = UserData { name, email };
+        self.transition_with(data)
+    }
+}
+```
+
+###### Transition from `EmailSet` to Submission
+```rust
+impl UserBuilder<EmailSet> {
+    pub fn submit(self) -> Result<(), &'static str> {
+        let UserData { name, email } = self.get_state_data().unwrap();
+        println!("User registered: Name = {}, Email = {}", name, email);
+        Ok(())
+    }
+}
+```
+
+##### 4. Example Usage
+
+Here’s how you would use this builder:
+
+```rust
+fn main() {
+    let builder = UserBuilder::<NameNotSet>::new(1);
+
+    // Step 1: Set the name
+    let builder = builder.set_name("Alice".to_string());
+
+    // Step 2: Set the email
+    let builder = builder.set_email("alice@example.com".to_string());
+
+    // Step 3: Submit the registration
+    builder.submit().unwrap();
+}
+```
+
+##### Compile-Time Guarantees
+
+- You **cannot** set the email without first setting the name:
+  ```rust
+  let builder = UserBuilder::<NameNotSet>::new(1);
+  let builder = builder.set_email("alice@example.com".to_string()); // Compile-time error
+  ```
+
+- You **cannot** submit the builder without setting the name and email:
+  ```rust
+  let builder = UserBuilder::<NameNotSet>::new(1);
+  builder.submit(); // Compile-time error
+  ```
+
 ## Common Errors and Tips
 
 1. **`missing fields marker and state_data`**  
