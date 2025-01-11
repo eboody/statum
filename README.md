@@ -44,6 +44,8 @@ impl Light<On> {
 
 fn main() {
     // 4. Create a machine with the "Off" state.
+    // note: you dont need the ::<Off> here, it is inferred
+    // but it is shown here for clarity
     let light = Light::<Off>::new("desk lamp".to_owned());
 
     // 5. Transition from Off -> On, On -> Off, etc.
