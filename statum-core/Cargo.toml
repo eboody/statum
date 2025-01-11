@@ -1,0 +1,19 @@
+[package]
+name = "statum-core"
+version = "0.1.14"
+description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
+repository = "https://github.com/eboody/statum"
+license = "MIT"
+readme = "README.md"
+documentation = "https://docs.rs/statum"
+authors = ["Eran Boodnero <eran@eran.codes>"]
+keywords = ["enum", "typestate", "fsm", "finite-state", "state-machine"]
+categories = ["rust-patterns"]
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", optional = true, features = ["derive"] }
+
+[features]
+default = []
+serde = ["dep:serde"]

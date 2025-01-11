@@ -1,9 +1,88 @@
 use proc_macro::TokenStream;
+use quote::format_ident;
 use quote::quote;
 use syn::{
     parse::Parser, parse_macro_input, punctuated::Punctuated, Data, DeriveInput, Fields, Path,
     Token,
 };
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::OnceLock;
+
+static STATE_VARIANTS: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+
+// Helper to get or init the storage
+fn get_variants_map() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    STATE_VARIANTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+// Helper to register variants from #[state]
+pub(crate) fn register_state_variants(enum_name: String, variants: Vec<String>) {
+    let map = get_variants_map();
+    map.lock().unwrap().insert(enum_name, variants);
+}
+
+// Helper to get variants for #[model]
+pub(crate) fn get_state_variants(enum_name: &str) -> Option<Vec<String>> {
+    let map = get_variants_map();
+    map.lock().unwrap().get(enum_name).cloned()
+}
+
+struct ModelAttr {
+    machine: syn::Path,
+    state: syn::Path,
+}
+
+impl syn::parse::Parse for ModelAttr {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let mut machine = None;
+        let mut state = None;
+
+        // Parse first pair
+        let name1: syn::Ident = input.parse()?;
+        input.parse::<Token![=]>()?;
+        let value1: syn::Path = input.parse()?;
+
+        // Store in correct field
+        match name1.to_string().as_str() {
+            "machine" => machine = Some(value1),
+            "state" => state = Some(value1),
+            _ => return Err(syn::Error::new(name1.span(), "Expected 'machine' or 'state'")),
+        }
+
+        // Parse comma
+        input.parse::<Token![,]>()?;
+
+        // Parse second pair
+        let name2: syn::Ident = input.parse()?;
+        input.parse::<Token![=]>()?;
+        let value2: syn::Path = input.parse()?;
+
+        // Store in correct field
+        match name2.to_string().as_str() {
+            "machine" => {
+                if machine.is_some() {
+                    return Err(syn::Error::new(name2.span(), "Duplicate 'machine' parameter"));
+                }
+                machine = Some(value2);
+            }
+            "state" => {
+                if state.is_some() {
+                    return Err(syn::Error::new(name2.span(), "Duplicate 'state' parameter"));
+                }
+                state = Some(value2);
+            }
+            _ => return Err(syn::Error::new(name2.span(), "Expected 'machine' or 'state'")),
+        }
+
+        // Ensure we got both parameters
+        match (machine, state) {
+            (Some(machine), Some(state)) => Ok(ModelAttr { machine, state }),
+            _ => Err(syn::Error::new(name1.span(), "Must specify both 'machine' and 'state'")),
+        }
+    }
+}
 
 fn get_field_info(input: &DeriveInput) -> (Vec<&syn::Ident>, Vec<&syn::Type>) {
     match &input.data {
@@ -43,7 +122,21 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let vis = &input.vis;
     let name = &input.ident;
 
+    // Extract variants
+    let variants = match &input.data {
+        Data::Enum(data_enum) => data_enum
+            .variants
+            .iter()
+            .map(|v| v.ident.to_string())
+            .collect(),
+        _ => panic!("#[state] can only be used on enums"),
+    };
+
+    // Register variants for later use
+    register_state_variants(name.to_string(), variants);
+
     // Analyze user-supplied #[derive(...)] to detect which traits they want
+    #[allow(unused_variables)]
     let (user_derives, wants_serialize, wants_deserialize, wants_debug, _wants_clone) =
         analyze_user_derives(&input.attrs);
 
@@ -282,4 +375,57 @@ fn analyze_user_derives(attrs: &[syn::Attribute]) -> (Vec<Path>, bool, bool, boo
         wants_debug,
         wants_clone,
     )
+}
+
+#[proc_macro_attribute]
+pub fn model(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let ModelAttr { machine, state } = parse_macro_input!(attr as ModelAttr);
+    let input = parse_macro_input!(item as DeriveInput);
+    let struct_name = &input.ident;
+
+    let state_name = state.get_ident()
+        .expect("Expected simple state name")
+        .to_string();
+
+    let variants = get_state_variants(&state_name)
+        .expect("State type not found - did you mark it with #[state]?");
+
+    // Generate all try_to_* methods in a single impl block
+    let try_methods = variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant);
+        let try_method_name = format_ident!("try_to_{}", to_snake_case(variant));
+        let is_method_name = format_ident!("is_{}", to_snake_case(variant));
+        
+        quote! {
+            pub fn #try_method_name(&self, client: String) -> Result<#machine<#variant_ident>, Error> {
+                if self.#is_method_name() {
+                    Ok(#machine::<#variant_ident>::new(client))
+                } else {
+                    Err(Error::InvalidState)
+                }
+            }
+        }
+    });
+
+    let expanded = quote! {
+        #input
+
+        impl #struct_name {
+            #(#try_methods)*
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+// Helper function to convert PascalCase to snake_case
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && c.is_uppercase() {
+            result.push('_');
+        }
+        result.push(c.to_lowercase().next().unwrap());
+    }
+    result
 }
