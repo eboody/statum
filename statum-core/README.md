@@ -360,6 +360,8 @@ fn main() {
 
 By integrating validation methods within `impl` blocks and leveraging macros to enforce and utilize these validations, Statum provides a powerful and ergonomic way to bridge persistent data with compile-time validated state machines.
 
+Note: your validators can be async but make sure your call to .to_machine() is also async. You'll get a nice error message if you forget to do this.
+
 ---
 
 ## Common Errors and Tips

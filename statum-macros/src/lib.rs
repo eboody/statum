@@ -183,7 +183,6 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
     let vis = &input.vis;
     let name = &input.ident;
-    println!("name: {:#?}", name);
 
     // Extract variants with data type info
     let variants: Vec<VariantInfo> = match &input.data {
@@ -642,13 +641,30 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    // 6. Generate the `to_machine(&self) -> Result<Wrapper, statum::Error>` method
-    //    We'll chain if-let checks for each variant, calling the user’s `is_<Variant>` function.
-    let to_machine_fn =
+    let machine_name_str = machine_ident.to_string();
+    let field_names_opt = get_machine_fields(&machine_name_str);
+    let field_idents = if let Some(field_names) = field_names_opt {
+        field_names
+            .into_iter()
+            .map(|s| format_ident!("{}", s))
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    let (to_machine_checks, has_async) =
         build_to_machine_fn(&enum_variants, &is_fns, &machine_ident, &wrapper_enum_ident);
 
-    // 7. Reconstruct the final `impl DbData { ... }` block
-    //    but append our generated `to_machine` method and the wrapper enum after it.
+    let to_machine_signature = if has_async {
+        quote! {
+            pub async fn to_machine(&self, #( #field_idents: String ),* ) -> Result<#wrapper_enum_ident, statum::Error>
+        }
+    } else {
+        quote! {
+            pub fn to_machine(&self, #( #field_idents: String ),* ) -> Result<#wrapper_enum_ident, statum::Error>
+        }
+    };
+
     let generated = quote! {
         #impl_block
 
@@ -657,7 +673,9 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         // Our new `to_machine` method
         impl #self_ty {
-            #to_machine_fn
+            #to_machine_signature {
+                #to_machine_checks
+            }
         }
     };
 
@@ -692,8 +710,7 @@ fn build_to_machine_fn(
     is_fns: &[&syn::ImplItemFn],
     machine_ident: &syn::Ident,
     wrapper_enum_ident: &syn::Ident,
-) -> proc_macro2::TokenStream {
-    // Retrieve field names as before
+) -> (proc_macro2::TokenStream, bool) {
     let machine_name_str = machine_ident.to_string();
     let field_names_opt = get_machine_fields(&machine_name_str);
     let field_idents = if let Some(field_names) = field_names_opt {
@@ -706,6 +723,7 @@ fn build_to_machine_fn(
     };
 
     let mut checks = vec![];
+    let mut has_async = false;
 
     for variant_info in enum_variants {
         let variant = &variant_info.name;
@@ -716,66 +734,48 @@ fn build_to_machine_fn(
         let user_fn = is_fns.iter().find(|f| f.sig.ident == is_method_ident);
 
         if let Some(f) = user_fn {
+            let is_async = f.sig.asyncness.is_some();
+            if is_async {
+                has_async = true;
+            }
+            let await_token = if is_async {
+                quote! { .await }
+            } else {
+                quote! {}
+            };
+
             if let Some((ok_ty_opt, _err_ty_opt)) = extract_result_ok_err_types(&f.sig.output) {
-                // Check if the variant expects data
                 let expects_data = variant_info.data_type.is_some();
 
                 match (expects_data, ok_ty_opt) {
-                    (true, Some(Type::Tuple(t))) if t.elems.is_empty() => {
-                        // Variant expects data but validator returned ()
-                        checks.push(
-                            syn::Error::new_spanned(
-                                &f.sig.output,
-                                format!(
-                                    "Validator for variant '{}' should return data of type {}",
-                                    variant,
-                                    variant_info.data_type.as_ref().unwrap()
-                                ),
-                            )
-                            .to_compile_error(),
-                        );
-                    }
                     (true, Some(_ty)) => {
-                        // Data-bearing variant with some return type.
+                        // Data-bearing async or sync validator
                         checks.push(quote! {
-                            if let Ok(data) = self.#is_method_ident() {
+                            if let Ok(data) = self.#is_method_ident()#await_token {
                                 let machine = #machine_ident::<#variant_ident>::new(#(#field_idents.clone()),*).transition_with(data);
                                 return Ok(#wrapper_enum_ident::#variant_ident(machine));
                             }
                         });
                     }
                     (false, Some(Type::Tuple(t))) if t.elems.is_empty() => {
-                        // No-data variant
+                        // No-data async or sync validator
                         checks.push(quote! {
-                            if let Ok(()) = self.#is_method_ident() {
+                            if let Ok(()) = self.#is_method_ident()#await_token {
                                 let machine = #machine_ident::<#variant_ident>::new(#(#field_idents.clone()),*);
                                 return Ok(#wrapper_enum_ident::#variant_ident(machine));
                             }
                         });
                     }
-                    (false, Some(_)) => {
-                        // No-data variant but validator returns unexpected data.
+                    _ => {
                         checks.push(
                             syn::Error::new_spanned(
                                 &f.sig.output,
-                                format!(
-                                    "Validator for variant '{}' should not return data",
-                                    variant
-                                ),
+                                "Invalid return type for validator",
                             )
                             .to_compile_error(),
                         );
                     }
-                    _ => {}
                 }
-            } else {
-                checks.push(
-                    syn::Error::new_spanned(
-                        &f.sig.output,
-                        "validator method must return Result<T, E>",
-                    )
-                    .to_compile_error(),
-                );
             }
         } else {
             checks.push(
@@ -788,13 +788,13 @@ fn build_to_machine_fn(
         }
     }
 
-    quote! {
-        pub fn to_machine(&self, #( #field_idents: String ),* ) -> Result<#wrapper_enum_ident, statum::Error> {
-            #(#checks)*
+    let generated_checks = quote! {
+        #(#checks)*
 
-            Err(statum::Error::InvalidState)
-        }
-    }
+        Err(statum::Error::InvalidState)
+    };
+
+    (generated_checks, has_async)
 }
 
 /// Helper to parse something like `-> Result<T, E>`
