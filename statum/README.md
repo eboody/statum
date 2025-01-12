@@ -16,8 +16,9 @@
 ## Table of Contents
 - [Quick Start](#quick-start)
 - [Additional Features & Examples](#additional-features--examples)
-- [Complex Transitions & Data-Bearing States](#complex-transitions--data-bearing-states)
-- [Reconstructing State Machines from Persistent Data](#reconstructing-state-machines-from-persistent-data)
+- [Complex Transitions & Data-Bearing States](#3-complex-transitions--data-bearing-states)
+- [Serde Integration](#2-serde-integration)
+- [Reconstructing State Machines from Persistent Data](#4-reconstructing-state-machines-from-persistent-data)
 - [Common Errors and Tips](#common-errors-and-tips)
 
 ## Quick Start
