@@ -598,7 +598,7 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let impl_block = parse_macro_input!(item as ItemImpl);
 
     // Get the type of the `impl`
-    let self_ty = impl_block.self_ty.clone();
+    let self_ty = &impl_block.self_ty;
 
     // Get the state variants
     let enum_variants = match get_variants_of_state(&state_ident) {
@@ -700,13 +700,7 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let field_types = fields
         .iter()
-        .map(|(_name, ty)| {
-            if ty == "String" || ty == "std::string::String" {
-                syn::parse_str::<syn::Type>("str").unwrap()
-            } else {
-                syn::parse_str::<syn::Type>(ty).unwrap()
-            }
-        })
+        .map(|(_name, ty)| syn::parse_str::<syn::Type>(ty).unwrap())
         .collect::<Vec<_>>();
 
     let to_machine_signature = if has_async {
@@ -863,8 +857,8 @@ fn build_to_machine_fn(
                     (true, Some(_ty)) => {
                         // Data-bearing async or sync validator
                         checks.push(quote! {
-                            if let Ok(data) = self.#is_method_ident(#(#field_idents),*)#await_token {
-                                let machine = #machine_ident::<#variant_ident>::new(#(&#field_idents),*).transition_with(data);
+                            if let Ok(data) = self.#is_method_ident(#(&#field_idents),*)#await_token {
+                                let machine = #machine_ident::<#variant_ident>::new(#(#field_idents.clone()),*).transition_with(data);
                                 return Ok(#wrapper_enum_ident::#variant_ident(machine));
                             }
                         });
@@ -872,8 +866,8 @@ fn build_to_machine_fn(
                     (false, Some(Type::Tuple(t))) if t.elems.is_empty() => {
                         // No-data async or sync validator
                         checks.push(quote! {
-                            if let Ok(()) = self.#is_method_ident(#(#field_idents),*)#await_token {
-                                let machine = #machine_ident::<#variant_ident>::new(#(&#field_idents),*);
+                            if let Ok(()) = self.#is_method_ident(#(&#field_idents),*)#await_token {
+                                let machine = #machine_ident::<#variant_ident>::new(#(#field_idents.clone()),*);
                                 return Ok(#wrapper_enum_ident::#variant_ident(machine));
                             }
                         });
