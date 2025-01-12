@@ -178,14 +178,14 @@ pub struct Document<S: ReviewState> {
 impl Document<Draft> {
     pub fn submit_for_review(self, reviewer: String) -> Document<InReview> {
         let data = ReviewData { reviewer, notes: vec![] };
-        self.transition_with(data) // Note: when we have state data, we use self.transition_with(...) instead of self.transition()
+        self.transition_with(data)
     }
 }
 
 // ...
 ```
 
-> We use `self.transition_with(data)` instead of `self.transition()` to transition to a state that carries data.
+> Note: We use `self.transition_with(data)` instead of `self.transition()` to transition to a state that carries data.
 
 #### Accessing State Data
 
@@ -258,6 +258,8 @@ impl DbData {
     fn is_complete(&self) -> Result<(), statum::Error> { /* you get the idea */ }
 }
 ```
+
+> Note: The fields of your machine (e.g., client, name, priority) are automatically available inside validator methods. This eliminates boilerplate by letting you directly use these fields to determine a state.
 
 ---
 
@@ -373,10 +375,6 @@ fn main() {
     }
 }
 ```
-
-> Note: The fields of your machine (e.g., client, name, priority) are automatically available inside validator methods. This eliminates boilerplate by letting you directly use these fields to determine a state.
-
-
 ---
 
 > **Tip:** If any of your validators are `async`, ensure you call `.to_machine()` with `.await` to avoid compilation errors.
