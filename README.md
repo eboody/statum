@@ -1,3 +1,5 @@
+![Logo](statum_logo.png)
+
 # Statum
 
 **Statum** is a zero-boilerplate library for finite-state machines in Rust, with compile-time state transition validation. To start, it provides two attribute macros:
