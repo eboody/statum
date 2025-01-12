@@ -1,4 +1,6 @@
-![Logo](statum_logo.png)
+<div align="center">
+    <img src="logo.png" alt="statum Logo" width="200">
+</div>
 
 # Statum
 
