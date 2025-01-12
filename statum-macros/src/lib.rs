@@ -711,11 +711,11 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let to_machine_signature = if has_async {
         quote! {
-            pub async fn to_machine(&self, #( #field_idents: &#field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
+            pub async fn to_machine(&self, #( #field_idents: #field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
         }
     } else {
         quote! {
-            pub fn to_machine(&self, #( #field_idents: &#field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
+            pub fn to_machine(&self, #( #field_idents: #field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
         }
     };
 
