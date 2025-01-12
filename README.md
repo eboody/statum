@@ -1,5 +1,5 @@
 <div align="center">
-    <img src="logo.png" alt="statum Logo" width="200">
+    <img src="logo.png" alt="statum Logo" width="150">
 </div>
 
 # Statum
