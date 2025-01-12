@@ -10,7 +10,7 @@
 Hereâ€™s the simplest usage of Statum without any extra features:
 
 ```rust
-use statum::{state, machine};
+use statum::{machine, state};
 
 // 1. Define your states as an enum.
 #[state]
@@ -39,13 +39,11 @@ impl Light<On> {
 
 fn main() {
     // 4. Create a machine with the "Off" state.
-    // note: you dont need the ::<Off> here, it is inferred
-    // but it is shown here for clarity
-    let light = Light::<Off>::new("desk lamp".to_owned());
+    let light = Light::new("desk lamp".to_owned());
 
     // 5. Transition from Off -> On, On -> Off, etc.
-    let light = light.switch_on();
-    let light = light.switch_off();
+    let light = light.switch_on(); //is type Light<On>
+    let light = light.switch_off(); // is type Light<Off>
 }
 ```
 
@@ -213,6 +211,9 @@ State machines in real-world applications often need to **persist their state**â
 Here's a quick example to illustrate how `#[validators]` helps reconstruct state machines from persistent data:
 
 ```rust
+use serde::Serialize;
+use statum::{machine, state, validators};
+
 #[state]
 #[derive(Clone, Debug, Serialize)]
 pub enum TaskState {
@@ -262,7 +263,7 @@ impl DbData {
     }
 
     fn is_complete(&self) -> Result<(), statum::Error> {
-        if state == "complete" {
+        if self.state == "complete" {
             println!("Client: {}, Name: {}, Priority: {}", client, name, priority);
             Ok(())
         } else {
@@ -278,13 +279,21 @@ fn main() {
     };
 
     // Reconstruct the state machine
-    let task_machine = db_data.to_machine().unwrap();
+    let task_machine = db_data
+        .to_machine("my_client".to_owned(), "some_name".to_owned(), 1)
+        .unwrap();
 
     // Match on the state machine wrapper to access state-specific logic
     match task_machine {
-        TaskMachineWrapper::New => println!("Task is new"),
-        TaskMachineWrapper::InProgress(data) => println!("Task is in progress with version: {}", data.version),
-        TaskMachineWrapper::Complete => println!("Task is complete"),
+        TaskMachineWrapper::New(_new_machine) => {
+            println!("New machine");
+        }
+        TaskMachineWrapper::InProgress(_in_progress_machine) => {
+            println!("In progress machine");
+        }
+        TaskMachineWrapper::Complete(_complete_machine) => {
+            println!("Complete machine");
+        }
     }
 }
 ```
