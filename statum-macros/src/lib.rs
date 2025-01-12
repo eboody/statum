@@ -6,8 +6,8 @@ use syn::parse::Parse;
 use syn::parse::ParseStream;
 use syn::Ident;
 use syn::{
-    parse::Parser, parse_macro_input, punctuated::Punctuated, Data, DeriveInput, Fields, ImplItem,
-    ItemImpl, Path, PathArguments, ReturnType, Token, Type,
+    parse::Parser, parse_macro_input, punctuated::Punctuated, Data, DeriveInput, Fields, ItemImpl,
+    Path, PathArguments, ReturnType, Token, Type,
 };
 
 use std::collections::HashMap;
@@ -597,28 +597,16 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     // 2. Parse the `impl` block itself
     let impl_block = parse_macro_input!(item as ItemImpl);
 
-    // A. We need the type name for "impl Type { ... }"
+    // Get the type of the `impl`
     let self_ty = impl_block.self_ty.clone();
 
-    // B. Grab the functions inside this impl that start with "is_"
-    let mut is_fns = Vec::new();
-    for item in &impl_block.items {
-        if let ImplItem::Fn(method) = item {
-            // Modified (searches for "is_"):
-            if method.sig.ident.to_string().starts_with("is_") {
-                is_fns.push(method);
-            }
-        }
-    }
-
-    // 3. Retrieve the state variants
-    let _state_name_str = state_ident.to_string();
+    // Get the state variants
     let enum_variants = match get_variants_of_state(&state_ident) {
         Ok(vars) => vars,
         Err(e) => return e.to_compile_error().into(),
     };
 
-    // 4. Generate the wrapper enum: e.g., TaskMachineWrapper
+    // Generate the wrapper enum
     let wrapper_enum_ident = format_ident!("{}Wrapper", machine_ident);
     let wrapper_variants = enum_variants.iter().map(|variant| {
         let v_id = format_ident!("{}", variant.name);
@@ -626,14 +614,13 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
             #v_id(#machine_ident<#v_id>)
         }
     });
-
     let wrapper_enum = quote! {
         pub enum #wrapper_enum_ident {
             #(#wrapper_variants),*
         }
     };
 
-    // 5. Get machine field names and types
+    // Get machine field names and types
     let machine_name_str = machine_ident.to_string();
     let field_names_opt = get_machine_fields(&machine_name_str);
     if field_names_opt.is_none() {
@@ -647,40 +634,136 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
         .to_compile_error()
         .into();
     }
-
     let fields = field_names_opt.unwrap();
-    let field_idents = fields
-        .iter()
-        .map(|s| format_ident!("{}", s.0))
-        .collect::<Vec<_>>();
-    let field_types = fields
-        .iter()
-        .map(|s| syn::parse_str::<syn::Type>(&s.1).unwrap())
-        .collect::<Vec<_>>();
 
-    // 6. Generate the `to_machine` function body and check for async validators
+    let is_fns: Vec<&syn::ImplItemFn> = impl_block
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let syn::ImplItem::Fn(func) = item {
+                Some(func)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    //let expanded_methods: Vec<_> = is_fns
+    //    .iter()
+    //    .filter(|method| {
+    //        // Check if the method is already defined in the original `impl` block
+    //        !fields
+    //            .iter()
+    //            .any(|(field_name, _)| method.sig.ident == field_name)
+    //    })
+    //    .map(|method| {
+    //        let sig = &method.sig;
+    //        let method_name = &sig.ident;
+    //
+    //        // Extract asyncness and return type
+    //        let asyncness = &sig.asyncness;
+    //        let output = &sig.output;
+    //
+    //        // Combine original and additional inputs
+    //        let mut updated_inputs: Vec<syn::FnArg> = sig.inputs.iter().cloned().collect();
+    //        for (field_name, field_type) in &fields {
+    //            let field_ident = syn::parse_str::<syn::Ident>(field_name)
+    //                .unwrap_or_else(|_| panic!("Failed to parse '{}' as Ident", field_name));
+    //            let field_ty = syn::parse_str::<syn::Type>(field_type)
+    //                .unwrap_or_else(|_| panic!("Failed to parse '{}' as Type", field_type));
+    //
+    //            updated_inputs.push(syn::FnArg::Typed(syn::parse_quote! {
+    //                #field_ident: #field_ty
+    //            }));
+    //        }
+    //
+    //        let method_body = &method.block;
+    //
+    //        // Generate the method
+    //        quote! {
+    //            pub #asyncness fn #method_name(#(#updated_inputs),*) #output {
+    //                #method_body
+    //            }
+    //        }
+    //    })
+    //    .collect();
+
+    // Generate `to_machine` function
     let (to_machine_checks, has_async) =
         build_to_machine_fn(&enum_variants, &is_fns, &machine_ident, &wrapper_enum_ident);
 
-    // 7. Generate the `to_machine` signature
     let to_machine_signature = if has_async {
         quote! {
-            pub async fn to_machine(&self, #( #field_idents: #field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
+            pub async fn to_machine(&self) -> core::result::Result<#wrapper_enum_ident, statum::Error>
         }
     } else {
         quote! {
-            pub fn to_machine(&self, #( #field_idents: #field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
+            pub fn to_machine(&self) -> core::result::Result<#wrapper_enum_ident, statum::Error>
         }
     };
 
-    // 8. Combine everything into the final generated code
-    let generated = quote! {
-        #impl_block
+    let modified_impl_items: Vec<proc_macro2::TokenStream> = impl_block
+        .items
+        .iter()
+        .map(|item| {
+            if let syn::ImplItem::Fn(method) = item {
+                // Check if this method needs modification (e.g., starts with "is_")
+                if method.sig.ident.to_string().starts_with("is_") {
+                    let sig = &method.sig;
+                    let method_name = &sig.ident;
 
-        // Our new wrapper enum
+                    // Rebuild method signature with additional parameters
+                    let mut updated_inputs: Vec<syn::FnArg> = sig.inputs.iter().cloned().collect();
+                    for (field_name, field_type) in &fields {
+                        let field_ident =
+                            syn::parse_str::<syn::Ident>(field_name).unwrap_or_else(|_| {
+                                panic!("Failed to parse '{}' as Ident", field_name)
+                            });
+                        let field_ty = syn::parse_str::<syn::Type>(field_type)
+                            .unwrap_or_else(|_| panic!("Failed to parse '{}' as Type", field_type));
+
+                        updated_inputs.push(syn::FnArg::Typed(syn::parse_quote! {
+                            #field_ident: #field_ty
+                        }));
+                    }
+
+                    let method_body = &method.block;
+                    let asyncness = &sig.asyncness;
+                    let output = &sig.output;
+
+                    // Generate the modified method
+                    quote! {
+                        pub #asyncness fn #method_name(#(#updated_inputs),*) #output {
+                            #method_body
+                        }
+                    }
+                } else {
+                    // Keep other methods as-is
+                    quote! { #item }
+                }
+            } else {
+                // Keep non-method items (e.g., constants) as-is
+                quote! { #item }
+            }
+        })
+        .collect();
+
+    // Rebuild the `impl` block
+    let modified_impl_block = quote! {
+        impl #self_ty {
+            #(#modified_impl_items)*
+        }
+    };
+
+    // Combine with the rest of the generated code
+    let expanded = quote! {
+        // Wrapper enum
         #wrapper_enum
 
-        // Our new `to_machine` method
+        // Reconstructed impl block
+        #modified_impl_block
+
+        // `to_machine` method
         impl #self_ty {
             #to_machine_signature {
                 #to_machine_checks
@@ -688,8 +771,7 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    // Return expanded tokens
-    generated.into()
+    expanded.into()
 }
 
 fn parse_validators_attr(attr: TokenStream) -> syn::Result<(syn::Ident, syn::Ident)> {
@@ -760,7 +842,7 @@ fn build_to_machine_fn(
                     (true, Some(_ty)) => {
                         // Data-bearing async or sync validator
                         checks.push(quote! {
-                            if let Ok(data) = self.#is_method_ident()#await_token {
+                            if let Ok(data) = self.#is_method_ident(#(#field_idents),*)#await_token {
                                 let machine = #machine_ident::<#variant_ident>::new(#(#field_idents.clone()),*).transition_with(data);
                                 return Ok(#wrapper_enum_ident::#variant_ident(machine));
                             }
@@ -769,7 +851,7 @@ fn build_to_machine_fn(
                     (false, Some(Type::Tuple(t))) if t.elems.is_empty() => {
                         // No-data async or sync validator
                         checks.push(quote! {
-                            if let Ok(()) = self.#is_method_ident()#await_token {
+                            if let Ok(()) = self.#is_method_ident(#(#field_idents),*)#await_token {
                                 let machine = #machine_ident::<#variant_ident>::new(#(#field_idents.clone()),*);
                                 return Ok(#wrapper_enum_ident::#variant_ident(machine));
                             }

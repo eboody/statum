@@ -200,61 +200,80 @@ impl Document<Review> {
     }
 }
 ```
+---
 
-### 4. Reconstructing State Machines from Persistent Data
+r## 4. Reconstructing State Machines from Persistent Data
 
-In real-world applications, state machines often need to **persist their state**—for instance, saving to and loading from a database. Reconstructing a state machine from such persistent data requires a robust and type-safe mechanism to ensure that the machine accurately reflects the stored state. Here's how Statum facilitates this process:
+In real-world applications, state machines often need to **persist their state**—for instance, saving to and loading from a database. Reconstructing a state machine from such persistent data requires a robust and type-safe mechanism to ensure that the machine accurately reflects the stored state. With Statum, this process is seamless, intuitive, and developer-friendly.
+
+#### Key Feature: Direct Access to Machine Fields Inside Validator Methods
+
+Statum's `#[validators]` macro enables you to directly access **all fields of your machine struct** inside validator methods. This means you don't need to manually define or pass these fields as arguments—they are automatically injected and accessible. This enhancement drastically reduces boilerplate and ensures your validators focus solely on their logic.
+
+For example, if your machine struct has fields like `client`, `name`, or any other properties, these will be accessible inside your validator methods without any extra effort.
+
+---
 
 #### Motivation
 
+The `#[validators]` macro is designed to bridge the gap between **persistent data** (e.g., database records) and **state machines** by providing an ergonomic, type-safe, and flexible way to reconstruct state machines. Here’s the reasoning behind this design:
+
 1. **Defining State Conditions for Persistent Data:**
-   
-   When data is stored persistently (e.g., in a database), it typically includes information about the current state of an entity. To accurately reconstruct the state machine from this data, we must clearly define **what it means** for the data to be in each possible state of the machine.
+   - Persistent data typically includes information about the current state of an entity, often stored as a string or similar identifier.
+   - To reconstruct a state machine accurately, we need to define **what it means** for the data to represent each possible state of the machine.
+   - `validators` provides a structured mechanism to associate state conditions with their corresponding state variants, ensuring clarity and correctness.
 
 2. **Handling Complex Validation Logic:**
-   
-   Determining the state based on persistent data can be intricate. Various fields, relationships, or external factors might influence the state determination. Statum provides the flexibility for developers to implement **custom validation logic** tailored to their specific requirements.
+   - State determination is rarely straightforward; it might depend on a combination of fields, relationships, or external factors.
+   - With `validators`, developers can implement **custom validation logic** tailored to their application's requirements while benefiting from Rust's safety and expressiveness.
 
-3. **Organized Validation via `impl` Blocks:**
-   
-   By defining validation methods within an `impl` block on the persistent data struct (e.g., `DbData`), Statum ensures that there is a **dedicated method for each state variant**. This organization:
-   
-   - **Enforces Completeness:** Guarantees that every state has an associated validator.
-   - **Enhances Readability:** Centralizes state-related validation logic, making the codebase easier to understand and maintain.
-   - **Leverages Rust’s Type System:** Ensures that validations are type-safe and integrated seamlessly with the rest of the Rust code.
+3. **Simplifying Access to Machine Fields:**
+   - Validators often need access to fields of the state machine (e.g., configuration, context) to perform their checks or construct state-specific data.
+   - To eliminate boilerplate, the `#[validators]` macro automatically injects all fields of the machine into validator methods, making them directly accessible.
+   - This ensures developers can focus on validation logic without worrying about passing or defining these fields manually.
 
-4. **Constructing State-Specific Data Within Validators:**
-   
-   For states that carry additional data (e.g., `InProgress(DraftData)`), the validator methods are responsible for **constructing the necessary state-specific data**. This design choice ensures that:
-   
-   - **Data Integrity:** The state machine is instantiated with all required data, maintaining consistency and preventing runtime errors.
-   - **Encapsulation:** The logic for creating state-specific data is encapsulated within the validator, keeping the reconstruction process clean and modular.
-   - **Flexibility:** Developers can define exactly how state-specific data is derived from persistent data, accommodating diverse and complex scenarios.
+4. **Organized and Complete State Validation:**
+   - By defining validators within an `impl` block annotated with `#[validators]`, Statum ensures that:
+     - Every state variant has a dedicated validator.
+     - The validation logic is centralized and easy to maintain.
+     - Rust's type system guarantees that validators are complete, consistent, and type-safe.
+
+5. **Constructing State-Specific Data Within Validators:**
+   - Some states (e.g., `InProgress(DraftData)`) carry additional data that needs to be reconstructed along with the state machine.
+   - Validator methods are responsible for constructing this state-specific data, ensuring:
+     - **Data Integrity:** The machine is reconstructed with all required data.
+     - **Encapsulation:** State-specific logic is localized within the validators.
+     - **Flexibility:** Developers can define how state-specific data is derived, supporting complex scenarios.
+
+6. **Macro-Generated Reconstruction for Consistency and Simplicity:**
+   - The macro-generated `to_machine` method automates the reconstruction of the state machine by:
+     - Calling each validator to determine the state and retrieve any associated data.
+     - Constructing the state machine with the appropriate fields and state-specific data.
+   - This ensures consistency across the codebase and reduces the risk of errors.
+
+---
 
 #### How It Works
 
 1. **Define States and Machine:**
-   
    - Use the `#[state]` macro to define your state enum, specifying which states carry additional data.
-   - Use the `#[machine]` macro to create the state machine struct, registering any fields that are required across states.
+   - Use the `#[machine]` macro to create the state machine struct and register its fields.
 
 2. **Define Persistent Data and Implement Validators:**
-   
    - Define a struct that represents your persistent data (e.g., a database record).
    - Annotate an `impl` block on this persistent data struct with `#[validators(state = YourState, machine = YourMachine)]`.
-   - Within this block, implement a validator method for each state variant. **Each method must be named following the pattern `is_*`, where `*` is the snake_case version of the corresponding state variant.** For example, for a state `InProgress`, implement a method named `fn is_in_progress(&self) -> Result<…, …>`.
-   - These methods should:
-     - **Check State Validity:** Determine if the persistent data corresponds to the specific state.
-     - **Construct State Data (if needed):** For data-bearing states, create and return the necessary associated data.
-        - In the scneario where you have state-specific data, your validator must return Result<YourData, statum::Error> instead of Result<(), statum::Error>.
+   - Implement a validator method for each state variant, named as `is_*`, where `*` corresponds to the snake_case version of the state name.
+   - Inside each validator:
+     - Directly access the machine's fields as if they were local variables.
+     - Use these fields to determine if the persistent data matches the state and construct any state-specific data.
 
 3. **Macro-Generated Reconstruction:**
-   
-   - The `#[validators]` macro analyzes the validator methods and the state machine’s field information.
-   - It generates a `to_machine` method on your persistent data struct that:
-     - **Invokes Validators:** Calls each validator to check the state and retrieve any associated data.
-     - **Constructs the State Machine:** Instantiates the state machine in the correct state, passing in the required fields and data.
-     - **Ensures Type Safety:** Returns a wrapper enum that encapsulates the correctly typed state machine, preventing invalid state transitions at compile time.
+   - The `#[validators]` macro automatically:
+     - Augments your `impl` block to make the machine’s fields available in validator methods.
+     - Generates a `to_machine` method to:
+       - Validate each state using the corresponding validator method.
+       - Construct the state machine with the appropriate fields and state-specific data.
+     - Returns a type-safe wrapper enum that encapsulates the reconstructed state machine.
 
 ---
 
@@ -278,6 +297,8 @@ pub struct DraftData {
 #[derive(Clone, Debug, Serialize)]
 struct TaskMachine<S: TaskState> {
     client: String,
+    name: String,
+    priority: u8,
 }
 
 #[derive(Clone)]
@@ -290,16 +311,16 @@ struct DbData {
 impl DbData {
     fn is_new(&self) -> Result<(), statum::Error> {
         if self.state == "new" {
+            println!("Client: {}, Name: {}, Priority: {}", self.client, self.name, self.priority);
             Ok(())
         } else {
             Err(statum::Error::InvalidState)
         }
     }
 
-    //Note: this method returns the state-specific data because the state is InProgress
-    //which carries additional data
     fn is_in_progress(&self) -> Result<DraftData, statum::Error> {
         if self.state == "in_progress" {
+            println!("Client: {}, Name: {}, Priority: {}", self.client, self.name, self.priority);
             Ok(DraftData { version: 1 })
         } else {
             Err(statum::Error::InvalidState)
@@ -308,60 +329,42 @@ impl DbData {
 
     fn is_complete(&self) -> Result<(), statum::Error> {
         if self.state == "complete" {
+            println!("Client: {}, Name: {}, Priority: {}", self.client, self.name, self.priority);
             Ok(())
         } else {
             Err(statum::Error::InvalidState)
         }
     }
 }
-
-impl TaskMachine<New> {
-    fn start(self) -> TaskMachine<InProgress> {
-        let draft_data = DraftData { version: 1 };
-        self.transition_with(draft_data)
-    }
-}
-
-impl TaskMachine<InProgress> {
-    fn process(self) -> TaskMachine<Complete> {
-        self.transition()
-    }
-}
-
-fn main() {
-    let client = "mock_client".to_owned();
-
-    let task = DbData {
-        id: "42".to_owned(),
-        state: "in_progress".to_owned(),
-    };
-
-    let machine = task.to_machine(client).unwrap();
-
-    match machine {
-        TaskMachineWrapper::New(machine) => {
-            println!("Task is new");
-            let machine = machine.start();
-            let machine = machine.process();
-        }
-        TaskMachineWrapper::InProgress(machine) => {
-            println!("Task is in progress");
-            let data = machine.get_state_data().unwrap();
-            println!("data: {:#?}", data);
-            let machine = machine.process();
-            println!("machine: {:#?}", machine);
-        }
-        TaskMachineWrapper::Complete(machine) => {
-            println!("Task is complete");
-        }
-    }
-}
 ```
 
-By integrating validation methods within `impl` blocks and leveraging macros to enforce and utilize these validations, Statum provides a powerful and ergonomic way to bridge persistent data with compile-time validated state machines.
+In this example:
+- **Automatic field injection:** The fields `client`, `name`, and `priority` from `TaskMachine` are directly available inside the validator methods, reducing boilerplate and improving readability.
+- **Generic handling:** This behavior applies to **any fields defined in the machine struct**, no matter their names or types.
 
-Note: your validators can be async but make sure your call to .to_machine() is also async. You'll get a nice error message if you forget to do this.
+---
 
+Statum provides an ergonomic and powerful way to integrate persistent data with state machines, giving developers the flexibility and safety they need to build robust systems.
+
+---
+
+#### Why This Matters
+
+1. **Simplifies Validators:**
+   - You no longer need to manually define arguments for every field in your state machine.
+   - Validators focus solely on their logic.
+
+2. **Improves Developer Productivity:**
+   - Reduces repetitive code, making the implementation faster and cleaner.
+
+3. **Ensures Consistency:**
+   - The same fields are used consistently across all states and validators, minimizing errors.
+
+---
+
+By integrating field access into validator methods, Statum makes it even easier to build robust, type-safe state machines that integrate seamlessly with persistent data. 
+
+**Tip:** If your validators are `async`, ensure you call `.to_machine()` with `.await` to avoid compilation errors.
 ---
 
 ## Common Errors and Tips
