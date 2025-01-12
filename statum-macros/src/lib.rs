@@ -692,13 +692,30 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let (to_machine_checks, has_async) =
         build_to_machine_fn(&enum_variants, &is_fns, &machine_ident, &wrapper_enum_ident);
 
+    // Generate field identifiers and types
+    let field_idents = fields
+        .iter()
+        .map(|(name, _type)| format_ident!("{}", name))
+        .collect::<Vec<_>>();
+
+    let field_types = fields
+        .iter()
+        .map(|(_name, ty)| {
+            if ty == "String" || ty == "std::string::String" {
+                syn::parse_str::<syn::Type>("str").unwrap()
+            } else {
+                syn::parse_str::<syn::Type>(ty).unwrap()
+            }
+        })
+        .collect::<Vec<_>>();
+
     let to_machine_signature = if has_async {
         quote! {
-            pub async fn to_machine(&self) -> core::result::Result<#wrapper_enum_ident, statum::Error>
+            pub async fn to_machine(&self, #( #field_idents: &#field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
         }
     } else {
         quote! {
-            pub fn to_machine(&self) -> core::result::Result<#wrapper_enum_ident, statum::Error>
+            pub fn to_machine(&self, #( #field_idents: &#field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
         }
     };
 
@@ -719,11 +736,15 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
                             syn::parse_str::<syn::Ident>(field_name).unwrap_or_else(|_| {
                                 panic!("Failed to parse '{}' as Ident", field_name)
                             });
-                        let field_ty = syn::parse_str::<syn::Type>(field_type)
-                            .unwrap_or_else(|_| panic!("Failed to parse '{}' as Type", field_type));
+
+                        let field_ty = if field_type == "String" {
+                            syn::parse_str::<syn::Type>("str").unwrap()
+                        } else {
+                            syn::parse_str::<syn::Type>(field_type).unwrap()
+                        };
 
                         updated_inputs.push(syn::FnArg::Typed(syn::parse_quote! {
-                            #field_ident: #field_ty
+                            #field_ident: &#field_ty
                         }));
                     }
 
@@ -843,7 +864,7 @@ fn build_to_machine_fn(
                         // Data-bearing async or sync validator
                         checks.push(quote! {
                             if let Ok(data) = self.#is_method_ident(#(#field_idents),*)#await_token {
-                                let machine = #machine_ident::<#variant_ident>::new(#(#field_idents.clone()),*).transition_with(data);
+                                let machine = #machine_ident::<#variant_ident>::new(#(&#field_idents),*).transition_with(data);
                                 return Ok(#wrapper_enum_ident::#variant_ident(machine));
                             }
                         });
@@ -852,7 +873,7 @@ fn build_to_machine_fn(
                         // No-data async or sync validator
                         checks.push(quote! {
                             if let Ok(()) = self.#is_method_ident(#(#field_idents),*)#await_token {
-                                let machine = #machine_ident::<#variant_ident>::new(#(#field_idents.clone()),*);
+                                let machine = #machine_ident::<#variant_ident>::new(#(&#field_idents),*);
                                 return Ok(#wrapper_enum_ident::#variant_ident(machine));
                             }
                         });
