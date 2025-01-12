@@ -6,12 +6,26 @@
 
 **Statum** is a zero-boilerplate library for finite-state machines in Rust, with compile-time state transition validation. To start, it provides two attribute macros:
 
+### Why Use Statum?
+- **Compile-Time Safety**: State transitions are validated at compile time, ensuring no invalid transitions.
+- **Ergonomic Macros**: Define states and state machines with minimal boilerplate.
+- **State-Specific Data**: Add and access data tied to individual states easily.
+- **Persistence-Friendly**: Reconstruct state machines seamlessly from external data sources.
+
+
+## Table of Contents
+- [Quick Start](#quick-start)
+- [Additional Features & Examples](#additional-features--examples)
+- [Complex Transitions & Data-Bearing States](#complex-transitions--data-bearing-states)
+- [Reconstructing State Machines from Persistent Data](#reconstructing-state-machines-from-persistent-data)
+- [Common Errors and Tips](#common-errors-and-tips)
+
+## Quick Start
+
 - **`#[state]`** for defining states (as enums).
 - **`#[machine]`** for creating a state machine struct that tracks which state you’re in at compile time.
 
 There is one more super useful macro, but read on to find out more!
-
-## Quick Start (Minimal Example)
 
 Here’s the simplest usage of Statum without any extra features:
 
@@ -94,23 +108,18 @@ error[E0063]: missing fields `marker` and `state_data` in initializer of `Light<
    |          ^ missing `marker` and `state_data`
 ```
 
-That’s because the derive macro for `Clone`, `Debug`, etc., expands before `#[machine]` has injected these extra fields. 
 **To avoid this**, put `#[machine]` _above_ the derive(s).
 
 ```rust
-// ❌ This will cause an error
-#[derive(Debug, Clone)] // ↩ note the position of the derive
+// ❌ This will NOT work
+#[derive(Debug)] // ↩ note the position of the derive
 #[machine]
-pub struct Light<S: LightState> {
-    name: String,
-}
+pub struct Light<S: LightState>;
 
 // ✅ This will work
 #[machine]
-#[derive(Debug, Clone)]
-pub struct Light<S: LightState> {
-    name: String,
-}
+#[derive(Debug)]
+pub struct Light<S: LightState>;
 
 ```
 
@@ -175,7 +184,7 @@ impl Document<Draft> {
 // ...
 ```
 
-We use `self.transition_with(data)` instead of `self.transition()` to transition to a state that carries data.
+> We use `self.transition_with(data)` instead of `self.transition()` to transition to a state that carries data.
 
 #### Accessing State Data
 
@@ -204,11 +213,68 @@ impl Document<Review> {
 
 State machines in real-world applications often need to **persist their state**—saving to and loading from external storage like databases. Reconstructing a state machine from this data must be both robust and type-safe. Statum's `#[validators]` macro simplifies this process, ensuring seamless integration between your persistent data and state machine logic.
 
+The two key components are:
+   - `#[validators]` macro: Define validator methods on your persistent data struct to determine the state.
+   - `to_machine` method: Call this method on your persistent data to reconstruct the state machine.
+
 ---
 
-#### Using `#[validators]` to Reconstruct State Machines
+#### Why `#[validators]`?
 
-Here's a quick example to illustrate how `#[validators]` helps reconstruct state machines from persistent data:
+The `#[validators]` macro connects **persistent data** (e.g., database rows) to your state machine in a clean, type-safe, and ergonomic way. It simplifies the process of reconstructing state machines by letting you define what the data means for each state.
+
+##### The Key Idea:
+To rebuild a state machine from persistent data, you need to define what qualifies the data as being in a specific state. For example:
+- Is the data in the "Draft" state if the `status` field is `"new"`?
+- Does it represent "InProgress" if additional data (e.g., `draft_version`) is present?
+
+The `#[validators]` macro organizes this logic into validator methods—one for each state—making it easier to manage and understand.
+
+```rust
+#[validators(state = TaskState, machine = TaskMachine)]
+impl DbData {
+    fn is_draft(&self) -> Result<(), statum::Error> {
+        match self.state.as_str() {
+            "new" => Ok(()),
+            _ => Err(statum::Error::InvalidState),
+        }
+    }
+
+    fn is_in_progress(&self) -> Result<DraftData, statum::Error> {
+        match self.state.as_str() {
+            "in_progress" => Ok(DraftData { version: 1 }),
+            _ => Err(statum::Error::InvalidState),
+        }
+    }
+}
+```
+
+---
+
+#### How `#[validators]` Works:
+
+1. **Define Conditions for Each State**  
+   - Each state gets a corresponding validator method (e.g., `is_draft()` for `Draft`) to determine if the persistent data matches that state. 
+   - For states with extra data (e.g., `InProgress(DraftData)`), the validator method must reconstruct the necessary state-specific data.
+   - A bit of macro magic allows you to directly use fields of your machine struct inside validator methods. For instance, you can use a client defined in your machine struct to fetch data needed to determine a state.
+
+2. **Centralized Validation Logic**  
+   All validation happens in one `impl` block on your persistent data struct, keeping the code organized and easy to maintain.
+
+3. The `to_machine` Method
+   The `to_machine` method is generated for your persistent data struct, which you call to reconstruct the state machine. It returns a `TaskMachineWrapper` enum that you can `match` on to handle each state.
+
+```rust
+match task_machine {
+    TaskMachineWrapper::Draft(draft_machine) => { /* handle draft */ },
+    TaskMachineWrapper::InProgress(in_progress_machine) => { /* handle in-progress */ },
+    TaskMachineWrapper::Complete(complete_machine) => { /* handle complete */ },
+}
+```
+
+---
+
+#### Example
 
 ```rust
 use serde::Serialize;
@@ -217,7 +283,7 @@ use statum::{machine, state, validators};
 #[state]
 #[derive(Clone, Debug, Serialize)]
 pub enum TaskState {
-    Brainstorm,
+    Draft,
     InProgress(DraftData),
     Complete,
 }
@@ -235,18 +301,15 @@ struct TaskMachine<S: TaskState> {
     priority: u8,
 }
 
-#[derive(Clone)] // the struct that represents our persistent data
+#[derive(Clone)]
 struct DbData {
     id: String,
     state: String,
 }
 
-// Define validators for each state
-// Note: the validator method names are the same as the state variants but begin with is_*
 #[validators(state = TaskState, machine = TaskMachine)]
 impl DbData {
-    fn is_brainstorm(&self) -> Result<(), statum::Error> {
-        // a contrived validation check
+    fn is_draft(&self) -> Result<(), statum::Error> {
         if self.state == "new" {
             //Note: that we have access to the fields of TaskMachine here! 🧙
             println!("Client: {}, Name: {}, Priority: {}", client, name, priority);
@@ -257,9 +320,6 @@ impl DbData {
     }
 
     fn is_in_progress(&self) -> Result<DraftData, statum::Error> {
-        // We must return state-specific data defined in the state enum
-        // It is in these validators that we reconstruct the state data from
-        // our persistent data
         let state_data = DraftData { version: 1 };
 
         if self.state == "in_progress" {
@@ -269,8 +329,6 @@ impl DbData {
         }
     }
 
-    // statum plays nicely with tokio so you can use async functions here
-    // just make sure you call .await on .to_machine(..)
     fn is_complete(&self) -> Result<(), statum::Error> {
         if self.state == "complete" {
             Ok(())
@@ -287,19 +345,14 @@ fn main() {
     };
 
     // Reconstruct the state machine
-    // We use the to_machine method generated by the #[validators] macro
-    // to reconstruct the state machine from our persistent data
-    // Note: we pass the client, name, and priority fields of TaskMachine
-    // since to_machine acts as a constructor for our state machine
     let task_machine = db_data
-        .to_machine("my_client".to_owned(), "some_name".to_owned(), 1)
+        .to_machine("my_client".to_owned(), "some_name".to_owned(), 1) // Note: we pass our #[machine]'s fields here
         .unwrap();
 
-    // Match on the state machine wrapper to access state-specific logic
     match task_machine {
         // Note the generated wrapper type, TaskMachineWrapper
-        TaskMachineWrapper::Brainstorm(_new_machine) => {
-            // handle_new_machine(new_machine);
+        TaskMachineWrapper::Draft(_draft_machine) => {
+            // handle_draft_machine(draft_machine);
         }
         TaskMachineWrapper::InProgress(_in_progress_machine) => {
             // handle_in_progress_machine(in_progress_machine);
@@ -311,53 +364,12 @@ fn main() {
 }
 ```
 
-In this example, the `#[validators]` macro ensures that:
-1. Fields of the machine (`client`, `name`, `priority`) are **automatically available** inside validator methods.
-2. `db_data.to_machine()` calls the macro-generated `to_machine` method to determine the appropriate state and reconstruct the state machine.
-3. Using `match` on `TaskMachineWrapper`, the reconstructed machine's state determines the behavior, ensuring type-safe and intuitive handling
+> Note: The fields of your machine (e.g., client, name, priority) are automatically available inside validator methods. This eliminates boilerplate by letting you directly use these fields to determine a state.
+
 
 ---
 
-#### Why `#[validators]`?
-
-The `#[validators]` macro exists to solve a key problem: **connecting persistent data to state machines** in a type-safe, ergonomic, and flexible way.
-
-1. **Defining State Conditions for Persistent Data:**
-   
-   When data is stored persistently (e.g., in a database), it typically includes information about the current state of an entity. To accurately reconstruct the state machine from this data, we must clearly define **what it means** for the data to be in each possible state of the machine.
-
-2. **Handling Complex Validation Logic:**
-   
-   Determining the state based on persistent data can be intricate. Various fields, relationships, or external factors might influence the state determination. Statum provides the flexibility for developers to implement **custom validation logic** tailored to their specific requirements.
-
-3. **Organized Validation via impl Blocks:**
-   
-   By defining validation methods within an impl block on the persistent data struct (e.g., DbData), `statum` ensures that there is a **dedicated method for each state variant**. This organization:
-   
-   - **Enforces Completeness:** Guarantees that every state has an associated validator.
-   - **Enhances Readability:** Centralizes state-related validation logic, making the codebase easier to understand and maintain.
-   - **Leverages Rust’s Type System:** Ensures that validations are type-safe and integrated seamlessly with the rest of the Rust code.
-
-4. **Constructing State-Specific Data Within Validators:**
-   
-   For states that carry additional data (e.g., InProgress(DraftData)), the validator methods are responsible for **constructing the necessary state-specific data**. This design choice ensures that:
-   
-   - **Data Integrity:** The state machine is instantiated with all required data, maintaining consistency and preventing runtime errors.
-   - **Encapsulation:** The logic for creating state-specific data is encapsulated within the validator, keeping the reconstruction process clean and modular.
-   - **Flexibility:** Developers can define exactly how state-specific data is derived from persistent data, accommodating diverse and complex scenarios.
-
----
-
-#### Macro-Generated Reconstruction
-
-The `#[validators]` macro also generates a `to_machine` method that automates the process of:
-1. Validating the state using the corresponding methods.
-   - It does this by generated try_from implementations for each state.
-2. Constructing the state machine with the correct state and any state-specific data.
-
----
-
-**Tip:** If any of your validators are `async`, ensure you call `.to_machine()` with `.await` to avoid compilation errors.
+> **Tip:** If any of your validators are `async`, ensure you call `.to_machine()` with `.await` to avoid compilation errors.
 
 ---
 
