@@ -1,5 +1,5 @@
 <div align="center">
-    <img src="logo.png" alt="statum Logo" width="150">
+    <img src="https://github.com/eboody/statum/raw/main/logo.png" alt="statum Logo" width="150">
 </div>
 
 # Statum
