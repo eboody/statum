@@ -202,7 +202,7 @@ impl Document<Review> {
 ```
 ---
 
-r## 4. Reconstructing State Machines from Persistent Data
+### 4. Reconstructing State Machines from Persistent Data
 
 In real-world applications, state machines often need to **persist their state**—for instance, saving to and loading from a database. Reconstructing a state machine from such persistent data requires a robust and type-safe mechanism to ensure that the machine accurately reflects the stored state. With Statum, this process is seamless, intuitive, and developer-friendly.
 
