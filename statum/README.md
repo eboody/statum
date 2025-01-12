@@ -234,18 +234,27 @@ The `#[validators]` macro organizes this logic into validator methods—one for 
 #[validators(state = TaskState, machine = TaskMachine)]
 impl DbData {
     fn is_draft(&self) -> Result<(), statum::Error> {
-        match self.state.as_str() {
-            "new" => Ok(()),
-            _ => Err(statum::Error::InvalidState),
+        if self.state == "new" {
+            //Note: that we have access to the fields of TaskMachine here! 🧙
+            println!("Name: {}, Priority: {}", name, priority);
+            let some_other_data = fetch_data_from_somewhere(client);
+
+            Ok(())
+        } else {
+            Err(statum::Error::InvalidState)
         }
     }
 
     fn is_in_progress(&self) -> Result<DraftData, statum::Error> {
-        match self.state.as_str() {
-            "in_progress" => Ok(DraftData { version: 1 }),
-            _ => Err(statum::Error::InvalidState),
+        let state_data = DraftData { version: 1 };
+        if self.state == "in_progress" {
+            Ok(state_data)
+        } else {
+            Err(statum::Error::InvalidState)
         }
     }
+
+    fn is_complete(&self) -> Result<(), statum::Error> { /* you get the idea */ }
 }
 ```
 
