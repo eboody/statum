@@ -648,46 +648,6 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
         })
         .collect();
 
-    //let expanded_methods: Vec<_> = is_fns
-    //    .iter()
-    //    .filter(|method| {
-    //        // Check if the method is already defined in the original `impl` block
-    //        !fields
-    //            .iter()
-    //            .any(|(field_name, _)| method.sig.ident == field_name)
-    //    })
-    //    .map(|method| {
-    //        let sig = &method.sig;
-    //        let method_name = &sig.ident;
-    //
-    //        // Extract asyncness and return type
-    //        let asyncness = &sig.asyncness;
-    //        let output = &sig.output;
-    //
-    //        // Combine original and additional inputs
-    //        let mut updated_inputs: Vec<syn::FnArg> = sig.inputs.iter().cloned().collect();
-    //        for (field_name, field_type) in &fields {
-    //            let field_ident = syn::parse_str::<syn::Ident>(field_name)
-    //                .unwrap_or_else(|_| panic!("Failed to parse '{}' as Ident", field_name));
-    //            let field_ty = syn::parse_str::<syn::Type>(field_type)
-    //                .unwrap_or_else(|_| panic!("Failed to parse '{}' as Type", field_type));
-    //
-    //            updated_inputs.push(syn::FnArg::Typed(syn::parse_quote! {
-    //                #field_ident: #field_ty
-    //            }));
-    //        }
-    //
-    //        let method_body = &method.block;
-    //
-    //        // Generate the method
-    //        quote! {
-    //            pub #asyncness fn #method_name(#(#updated_inputs),*) #output {
-    //                #method_body
-    //            }
-    //        }
-    //    })
-    //    .collect();
-
     // Generate `to_machine` function
     let (to_machine_checks, has_async) =
         build_to_machine_fn(&enum_variants, &is_fns, &machine_ident, &wrapper_enum_ident);
@@ -712,6 +672,39 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
             pub fn to_machine(&self, #( #field_idents: #field_types ),* ) -> core::result::Result<#wrapper_enum_ident, statum::Error>
         }
     };
+
+    let try_methods = enum_variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        let try_method_name = format_ident!("try_to_{}", to_snake_case(&variant.name));
+        let is_method_name = format_ident!("is_{}", to_snake_case(&variant.name));
+
+        // Check if the `is_*` function is async
+        let is_async = is_fns.iter().any(|func| func.sig.ident == is_method_name && func.sig.asyncness.is_some());
+
+        if is_async {
+            // Generate an async method
+            quote! {
+                pub async fn #try_method_name(&self, #(#field_idents: #field_types),*) -> core::result::Result<#machine_ident<#variant_ident>, statum::Error> {
+                    if self.#is_method_name(#(&#field_idents),*).await.is_ok() {
+                        Ok(#machine_ident::<#variant_ident>::new(#(#field_idents),*))
+                    } else {
+                        Err(statum::Error::InvalidState)
+                    }
+                }
+            }
+        } else {
+            // Generate a sync method
+            quote! {
+                pub fn #try_method_name(&self, #(#field_idents: #field_types),*) -> core::result::Result<#machine_ident<#variant_ident>, statum::Error> {
+                    if self.#is_method_name(#(&#field_idents),*).is_ok() {
+                        Ok(#machine_ident::<#variant_ident>::new(#(#field_idents),*))
+                    } else {
+                        Err(statum::Error::InvalidState)
+                    }
+                }
+            }
+        }
+    });
 
     let modified_impl_items: Vec<proc_macro2::TokenStream> = impl_block
         .items
@@ -783,6 +776,10 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
             #to_machine_signature {
                 #to_machine_checks
             }
+        }
+
+        impl #self_ty {
+            #(#try_methods)*
         }
     };
 
