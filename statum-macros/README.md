@@ -19,6 +19,8 @@
 - [Complex Transitions & Data-Bearing States](#3-complex-transitions--data-bearing-states)
 - [Serde Integration](#2-serde-integration)
 - [Reconstructing State Machines from Persistent Data](#4-reconstructing-state-machines-from-persistent-data)
+- [Dynamic Access to State Machines](#5-dynamic-access-to-state-machines)
+- [API Reference](#api-reference)
 - [Common Errors and Tips](#common-errors-and-tips)
 
 ## Quick Start
@@ -276,13 +278,13 @@ impl DbData {
    All validation happens in one `impl` block on your persistent data struct, keeping the code organized and easy to maintain.
 
 3. The `to_machine` Method
-   The `to_machine` method is generated for your persistent data struct, which you call to reconstruct the state machine. It returns a `TaskMachineWrapper` enum that you can `match` on to handle each state.
+   The `to_machine` method is generated for your persistent data struct, which you call to reconstruct the state machine. It returns a `TaskMachineState` enum that you can `match` on to handle each state.
 
 ```rust
 match task_machine {
-    TaskMachineWrapper::Draft(draft_machine) => { /* handle draft */ },
-    TaskMachineWrapper::InProgress(in_progress_machine) => { /* handle in-progress */ },
-    TaskMachineWrapper::Complete(complete_machine) => { /* handle complete */ },
+    TaskMachineState::Draft(draft_machine) => { /* handle draft */ },
+    TaskMachineState::InProgress(in_progress_machine) => { /* handle in-progress */ },
+    TaskMachineState::Complete(complete_machine) => { /* handle complete */ },
 }
 ```
 
@@ -364,14 +366,14 @@ fn main() {
         .unwrap();
 
     match task_machine {
-        // Note the generated wrapper type, TaskMachineWrapper
-        TaskMachineWrapper::Draft(_draft_machine) => {
+        // Note the generated wrapper type, TaskMachineState
+        TaskMachineState::Draft(_draft_machine) => {
             // handle_draft_machine(draft_machine);
         }
-        TaskMachineWrapper::InProgress(_in_progress_machine) => {
+        TaskMachineState::InProgress(_in_progress_machine) => {
             // handle_in_progress_machine(in_progress_machine);
         }
-        TaskMachineWrapper::Complete(_complete_machine) => {
+        TaskMachineState::Complete(_complete_machine) => {
             // handle_complete_machine(complete_machine);
         }
     }
@@ -380,6 +382,59 @@ fn main() {
 ---
 
 > **Tip:** If any of your validators are `async`, ensure you call `.to_machine()` with `.await` to avoid compilation errors.
+
+---
+Here’s a concise addition to your README to address the `as_ref` method and how it complements the `match` approach.
+
+---
+
+### 5. Dynamic Access to State Machines
+
+In addition to `match`-based handling, Statum provides a dynamic way to inspect state machines using the `as_ref` method. This can be useful when you need runtime access to the underlying state without matching each variant explicitly.
+
+#### **Using `match` for Exhaustive State Handling**
+
+The recommended approach for most cases is to use `match`, which ensures that all states are handled explicitly at compile time:
+
+```rust
+match task_machine {
+    TaskMachineState::Draft(draft_machine) => {
+        println!("Task is in the Draft state: {:?}", draft_machine);
+        // Handle Draft state
+    }
+    TaskMachineState::InProgress(in_progress_machine) => {
+        println!("Task is in Progress: {:?}", in_progress_machine);
+        // Handle InProgress state
+    }
+    TaskMachineState::Complete(complete_machine) => {
+        println!("Task is Complete: {:?}", complete_machine);
+        // Handle Complete state
+    }
+}
+```
+
+#### **Using `as_ref` for Dynamic State Access**
+
+For cases where exhaustive matching is not ergonomic or necessary (e.g., logging, debugging, or generic handling), the `as_ref` method on the wrapper enum provides a dynamic way to access the underlying state:
+
+```rust
+if let Some(state) = task_machine.as_ref() {
+    if let Some(draft_machine) = state.downcast_ref::<TaskMachine<Draft>>() {
+        println!("Task is in the Draft state: {:?}", draft_machine);
+    } else if let Some(in_progress_machine) = state.downcast_ref::<TaskMachine<InProgress>>() {
+        println!("Task is in Progress: {:?}", in_progress_machine);
+    }
+}
+```
+
+#### **When to Use Each Approach**
+
+- **`match`:** Use when you want **compile-time guarantees** and **explicit state handling**. This is ideal for most state machine logic.
+- **`as_ref`:** Use when you need **dynamic runtime access** to the state without enumerating every variant, such as:
+  - Debugging or logging.
+  - Frameworks or systems requiring type-erased state handling.
+
+Statum’s flexibility lets you choose the approach that best fits your use case.
 
 ---
 
@@ -393,6 +448,59 @@ fn main() {
 
 3. **Feature gating**  
    - If you’re using `#[derive(Serialize, Deserialize)]` on a `#[state]` enum but didn’t enable the `serde` feature in Statum, you’ll get compile errors about missing trait bounds.
+
+---
+Here’s the organized **Statum API Reference** split into multiple tables for better clarity:
+
+---
+
+### API Reference
+
+#### **Core Macros**
+
+| Macro       | Description                                                                                   | Example Usage                                                |
+|-------------|-----------------------------------------------------------------------------------------------|-------------------------------------------------------------|
+| `#[state]`  | Defines states as an enum. Each variant becomes its own struct implementing the `State` trait. | `#[state] pub enum LightState { Off, On }`                  |
+| `#[machine]`| Defines a state machine struct and injects fields for state tracking and transitions.          | `#[machine] pub struct Light<S: LightState> { name: String }` |
+| `#[validators]` | Defines validation methods to map persistent data to specific states.                      | `#[validators(state = TaskState, machine = TaskMachine)]`    |
+
+---
+
+#### **State Machine Methods**
+
+| Method                | Description                                                                                           | Example Usage                                                |
+|-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
+| `.new(...)`           | Creates a new state machine in a specific state.                                                     | `let light = Light::new("desk lamp".to_owned());`           |
+| `.transition()`       | Transitions from one state to another (unit state).                                                  | `let light = light.switch_on();`                            |
+| `.transition_with(data)` | Transitions to a state that carries data.                                                          | `let document = document.submit_for_review("Reviewer");`    |
+| `.get_state_data()`   | Accesses the data of the current state (if available).                                                | `if let Some(data) = doc.get_state_data() { println!("{:?}", data); }` |
+| `.get_state_data_mut()`| Accesses the mutable data of the current state (if available).                                       | `doc.get_state_data_mut()?.notes.push("New note");`         |
+
+---
+
+#### **State Enum Methods**
+
+| Method                | Description                                                                                           | Example Usage                                                |
+|-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
+| `to_machine(...)`     | Reconstructs a state machine from persistent data and returns a wrapper enum.                         | `let wrapper = db_data.to_machine(...)?;`                   |
+| `is_*`                | Checks if the wrapper enum is in a specific state (e.g., `is_draft`, `is_in_progress`).               | `if wrapper.is_draft() { ... }`                             |
+| `try_to_*`            | Attempts to convert the wrapper enum into a specific machine state.                                   | `let draft_machine = wrapper.try_to_draft(...)?.unwrap();`  |
+
+---
+
+#### **Dynamic State Inspection**
+
+| Method                | Description                                                                                           | Example Usage                                                |
+|-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
+| `.as_ref()`           | Dynamically accesses the current state as a `&dyn Any` for runtime type inspection.                   | `if let Some(state) = wrapper.as_ref().downcast_ref::<TaskMachine<Draft>>() { ... }` |
+
+---
+
+#### **Generated Methods for Validators**
+
+| Method                | Description                                                                                           | Example Usage                                                |
+|-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
+| `is_*` (validators)   | Checks if the persistent data matches a specific state.                                               | `if db_data.is_draft()?.is_ok() { ... }`                    |
 
 ---
 
