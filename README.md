@@ -496,7 +496,7 @@ Here’s the organized **Statum API Reference** split into multiple tables for b
 
 ---
 
-#### **Generated Methods for Validators**
+#### **User-Generated Methods for Validators**
 
 | Method                | Description                                                                                           | Example Usage                                                |
 |-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
