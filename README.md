@@ -4,7 +4,7 @@
 
 # Statum
 
-**Statum** is a zero-boilerplate library for finite-state machines in Rust, with compile-time state transition validation. To start, it provides two attribute macros:
+**Statum** is a zero-boilerplate library for finite-state machines in Rust, with compile-time state transition validation. 
 
 ### Why Use Statum?
 - **Compile-Time Safety**: State transitions are validated at compile time, ensuring no invalid transitions.
@@ -22,6 +22,8 @@
 - [Common Errors and Tips](#common-errors-and-tips)
 
 ## Quick Start
+
+To start, it provides two attribute macros:
 
 - **`#[state]`** for defining states (as enums).
 - **`#[machine]`** for creating a state machine struct that tracks which state you’re in at compile time.
