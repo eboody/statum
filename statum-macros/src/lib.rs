@@ -607,16 +607,46 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     // Generate the wrapper enum
-    let wrapper_enum_ident = format_ident!("{}Wrapper", machine_ident);
+    let wrapper_enum_ident = format_ident!("{}State", machine_ident);
     let wrapper_variants = enum_variants.iter().map(|variant| {
         let v_id = format_ident!("{}", variant.name);
         quote! {
             #v_id(#machine_ident<#v_id>)
         }
     });
+
+    let is_methods = enum_variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        let method_name = format_ident!("is_{}", to_snake_case(&variant.name));
+
+        quote! {
+            pub fn #method_name(&self) -> bool {
+                matches!(self, Self::#variant_ident(_))
+            }
+        }
+    });
+
+    let wrapper_variants_match_arms = enum_variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+
+        quote! {
+            Self::#variant_ident(machine) => Some(machine)
+        }
+    });
+
     let wrapper_enum = quote! {
         pub enum #wrapper_enum_ident {
             #(#wrapper_variants),*
+        }
+
+        impl #wrapper_enum_ident {
+            #(#is_methods)*
+
+            pub fn as_ref(&self) -> Option<&dyn std::any::Any> {
+                match self {
+                    #(#wrapper_variants_match_arms),*
+                }
+            }
         }
     };
 
