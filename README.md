@@ -46,20 +46,20 @@ pub enum LightState {
 
 // 2. Define your machine with the #[machine] attribute.
 #[machine]
-pub struct Light<S: LightState> {
+pub struct LightMachine<S: LightState> {
     name: String, // Contextual, Machine-wide fields go here, like clients, configs, an identifier, etc.
 }
 
 // 3. Implement transitions for each state.
-impl Light<Off> {
-    pub fn switch_on(self) -> Light<On> {
+impl LightSwitch<Off> {
+    pub fn switch_on(self) -> LightSwitch<On> {
         //Note: we consume self and return a new state
         self.transition()
     }
 }
 
 impl Light<On> {
-    pub fn switch_off(self) -> Light<Off> {
+    pub fn switch_off(self) -> LightSwitch<Off> {
         self.transition()
     }
 }
@@ -99,7 +99,7 @@ pub enum LightState {
 
 #[machine]
 #[derive(Debug, Clone)]
-pub struct Light<S: LightState> {
+pub struct LightSwitch<S: LightState> {
     name: String,
 }
 ```
@@ -119,12 +119,12 @@ error[E0063]: missing fields `marker` and `state_data` in initializer of `Light<
 // ❌ This will NOT work
 #[derive(Debug)] // ↩ note the position of the derive
 #[machine]
-pub struct Light<S: LightState>;
+pub struct LightSwitch<S: LightState>;
 
 // ✅ This will work
 #[machine]
 #[derive(Debug)]
-pub struct Light<S: LightState>;
+pub struct LightSwitch<S: LightState>;
 
 ```
 
