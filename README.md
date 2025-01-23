@@ -16,12 +16,14 @@
 ## Table of Contents
 - [Quick Start](#quick-start)
 - [Additional Features & Examples](#additional-features--examples)
-- [Complex Transitions & Data-Bearing States](#3-complex-transitions--data-bearing-states)
-- [Serde Integration](#2-serde-integration)
-- [Reconstructing State Machines from Persistent Data](#4-reconstructing-state-machines-from-persistent-data)
-- [Dynamic Access to State Machines](#5-dynamic-access-to-state-machines)
-- [API Reference](#api-reference)
+  - [Adding Debug, Clone, or Other Derives](#1-adding-debug-clone-or-other-derives)
+  - [Complex Transitions & Data-Bearing States](#2-complex-transitions--data-bearing-states)
+  - [Serde Integration](#3-serde-integration)
+  - [Reconstructing State Machines from Persistent Data](#4-reconstructing-state-machines-from-persistent-data)
+  - [Dynamic Access to State Machines](#5-dynamic-access-to-state-machines)
 - [Common Errors and Tips](#common-errors-and-tips)
+- [API Reference](#api-reference)
+- [lint warnings](#lint-warnings)
 
 ## Quick Start
 
@@ -454,9 +456,9 @@ Here’s the organized **Statum API Reference** split into multiple tables for b
 
 ---
 
-### API Reference
+## API Reference
 
-#### **Core Macros**
+### **Core Macros**
 
 | Macro       | Description                                                                                   | Example Usage                                                |
 |-------------|-----------------------------------------------------------------------------------------------|-------------------------------------------------------------|
@@ -466,7 +468,7 @@ Here’s the organized **Statum API Reference** split into multiple tables for b
 
 ---
 
-#### **State Machine Methods**
+### **State Machine Methods**
 
 | Method                | Description                                                                                           | Example Usage                                                |
 |-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
@@ -478,7 +480,7 @@ Here’s the organized **Statum API Reference** split into multiple tables for b
 
 ---
 
-#### **State Enum Methods**
+### **State Enum Methods**
 
 | Method                | Description                                                                                           | Example Usage                                                |
 |-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
@@ -488,7 +490,7 @@ Here’s the organized **Statum API Reference** split into multiple tables for b
 
 ---
 
-#### **Dynamic State Inspection**
+### **Dynamic State Inspection**
 
 | Method                | Description                                                                                           | Example Usage                                                |
 |-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
@@ -496,7 +498,7 @@ Here’s the organized **Statum API Reference** split into multiple tables for b
 
 ---
 
-#### **User-Generated Methods for Validators**
+### **User-Generated Methods for Validators**
 
 | Method                | Description                                                                                           | Example Usage                                                |
 |-----------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
@@ -522,6 +524,7 @@ check-cfg = [
 ]
 level = "warn"
 ```
+
 ## License
 
 Statum is distributed under the terms of the MIT license. See [LICENSE](LICENSE) for details.
