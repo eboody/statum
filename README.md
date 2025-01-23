@@ -46,7 +46,7 @@ pub enum LightState {
 
 // 2. Define your machine with the #[machine] attribute.
 #[machine]
-pub struct LightMachine<S: LightState> {
+pub struct LightSwitch<S: LightState> {
     name: String, // Contextual, Machine-wide fields go here, like clients, configs, an identifier, etc.
 }
 
@@ -58,7 +58,7 @@ impl LightSwitch<Off> {
     }
 }
 
-impl Light<On> {
+impl LightSwitch<On> {
     pub fn switch_off(self) -> LightSwitch<Off> {
         self.transition()
     }
@@ -66,11 +66,11 @@ impl Light<On> {
 
 fn main() {
     // 4. Create a machine with the "Off" state.
-    let light = Light::new("desk lamp".to_owned());
+    let light = LightSwitch::new("desk lamp".to_owned());
 
     // 5. Transition from Off -> On, On -> Off, etc.
-    let light = light.switch_on(); //is type Light<On>
-    let light = light.switch_off(); // is type Light<Off>
+    let light = light.switch_on(); // is type LightSwitch<On>
+    let light = light.switch_off(); // is type LightSwitch<Off>
 }
 ```
 
