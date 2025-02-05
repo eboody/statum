@@ -911,6 +911,7 @@ fn build_to_machine_fn(
                 }
             }
         } else {
+            println!("No user_fn for variant '{}'", variant);
             checks.push(
                 syn::Error::new(
                     proc_macro2::Span::call_site(),
@@ -957,6 +958,19 @@ fn extract_result_ok_err_types(ret: &ReturnType) -> Option<(Option<Type>, Option
                                 _ => None,
                             };
                             return Some((ok_ty, err_ty));
+                        }
+                        if args.len() == 1 {
+                            let mut iter = args.iter();
+                            let first = iter.next().unwrap();
+
+                            // Convert to Type
+                            let ok_ty = match first {
+                                syn::GenericArgument::Type(t) => Some(t.clone()),
+                                _ => None,
+                            };
+                            return Some((ok_ty, None));
+                        } else {
+                            panic!("Expected 1 or 2 arguments in Result<_, _>");
                         }
                     }
                 }
