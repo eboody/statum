@@ -1,6 +1,8 @@
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"
+trybuild = "*"
+bon = "3.3.2"
 
 [dependencies.serde]
 features = ["derive"]
@@ -8,8 +10,11 @@ optional = true
 version = "1.0"
 
 [dependencies.syn]
-features = ["full"]
+features = ["full", "visit-mut", "visit"]
 version = "2.0"
+
+[dependencies.moddef]
+version = "0.2.6"
 
 [features]
 default = []
@@ -24,13 +29,7 @@ categories = ["rust-patterns"]
 description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
 documentation = "https://docs.rs/statum"
 edition = "2021"
-keywords = [
-    "enum",
-    "typestate",
-    "fsm",
-    "finite-state",
-    "state-machine",
-]
+keywords = ["enum", "typestate", "fsm", "finite-state", "state-machine"]
 license = "MIT"
 name = "statum-macros"
 readme = "README.md"
