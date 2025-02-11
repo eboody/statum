@@ -18,6 +18,12 @@ pub struct EnumInfo {
     pub file_path: StateFilePath,
 }
 
+impl EnumInfo {
+    pub fn get_variant_from_name(&self, variant_name: &str) -> Option<&VariantInfo> {
+        self.variants.iter().find(|v| v.name == variant_name)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct VariantInfo {
     pub name: String,
@@ -122,8 +128,22 @@ impl ToTokens for EnumInfo {
 
 static STATE_ENUMS: OnceLock<RwLock<HashMap<StateFilePath, EnumInfo>>> = OnceLock::new();
 
-pub fn get_state_enum_map() -> &'static RwLock<HashMap<StateFilePath, EnumInfo>> {
+fn get_state_enum_map() -> &'static RwLock<HashMap<StateFilePath, EnumInfo>> {
     STATE_ENUMS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+pub fn read_state_enum_map() -> HashMap<StateFilePath, EnumInfo> {
+    get_state_enum_map().read().unwrap().clone()
+}
+
+pub fn get_state_enum_variant(
+    enum_path: &StateFilePath,
+    variant_name: &str,
+) -> Option<VariantInfo> {
+    read_state_enum_map()
+        .get(enum_path)
+        .and_then(|enum_info| enum_info.get_variant_from_name(variant_name))
+        .cloned()
 }
 
 /// Extracts `#[derive(...)]` attributes from an enum

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 use syn::{Attribute, Generics, Ident, ItemStruct};
 
-use crate::{get_state_enum_map, EnumInfo, StateFilePath};
+use crate::{read_state_enum_map, EnumInfo, StateFilePath};
 
 // Structure to store metadata about a struct
 #[derive(Debug, Clone)]
@@ -209,19 +209,50 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
     let generics =
         syn::parse_str::<Generics>(&replaced_generics).expect("Failed to parse generics.");
 
-    let fields = machine_info.fields.iter().map(|field| {
-        let field_ident = format_ident!("{}", field.name);
-        let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
-        quote! { #vis #field_ident: #field_ty }
-    });
+    let state_trait_ident = format_ident!("{}Trait", state_enum.name);
+    let fields_vec: Vec<_> = machine_info
+        .fields
+        .iter()
+        .map(|field| {
+            // produce tokens for each field
+            let field_ident = format_ident!("{}", field.name);
+            let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
+            quote! { #vis #field_ident: #field_ty }
+        })
+        .collect();
+
+    let field_names: Vec<_> = machine_info
+        .fields
+        .iter()
+        .map(|field| {
+            // produce tokens for each field
+            let field_ident = format_ident!("{}", field.name);
+            quote! { #field_ident }
+        })
+        .collect();
+
+    // Now we can use `fields_vec` as many times as we want
+    let constructor = quote! {
+        impl<S: #state_trait_ident> #name_ident<S> {
+            pub fn new(#(#fields_vec),*) -> Self {
+                Self {
+                    #(#field_names,)*
+                    marker: core::marker::PhantomData,
+                    state_data: None,
+                }
+            }
+        }
+    };
 
     let struct_token_stream = quote! {
         #[derive(#(#derives),*)]
         #vis struct #name_ident #generics {
-            #(#fields),*,
+            #(#fields_vec),*,
             marker: core::marker::PhantomData<S>,
             state_data: Option<S::Data>,
         }
+
+        #constructor
     };
 
     quote! {
@@ -231,9 +262,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
 
 impl MachineInfo {
     pub fn get_matching_state_enum(&self) -> EnumInfo {
-        get_state_enum_map()
-            .read()
-            .unwrap()
+        read_state_enum_map()
             .get(&self.file_path.clone().into())
             .expect("Failed to read state_enum_map.")
             .clone()
