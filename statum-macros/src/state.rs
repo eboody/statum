@@ -34,6 +34,12 @@ impl AsRef<str> for StateFilePath {
     }
 }
 
+impl EnumInfo {
+    pub fn get_trait_name(&self) -> Ident {
+        format_ident!("{}Trait", self.name)
+    }
+}
+
 /// Convert `StateEnumName` into a `TokenStream` (for procedural macros)
 impl ToTokens for StateFilePath {
     fn to_tokens(&self, tokens: &mut TokenStream) {
@@ -229,34 +235,27 @@ pub fn generate_state_impls(enum_path: &StateFilePath) -> proc_macro2::TokenStre
         let variant_name = format_ident!("{}", variant.name);
 
         match &variant.data_type {
-            // Handle tuple variants
+            // Handle tuple variants (state has associated data)
             Some(field_type) => {
                 let field_ty = syn::parse_str::<syn::Type>(field_type).unwrap();
                 quote! {
                     #[derive(#(#derives),*)]
                     #vis struct #variant_name (pub #field_ty);
 
-                    impl #variant_name {
-                        pub fn get_data(&self) -> &#field_ty {
-                            &self.0
-                        }
-
-                        pub fn get_data_mut(&mut self) -> &mut #field_ty {
-                            &mut self.0
-                        }
+                    impl #name_ident for #variant_name {
+                        type Data = #field_ty;
                     }
-
-                    impl #name_ident for #variant_name {}
-
                 }
             }
-            // Handle unit variants
+            // Handle unit variants (state has no associated data)
             None => {
                 quote! {
                     #[derive(#(#derives),*)]
                     #vis struct #variant_name;
 
-                    impl #name_ident for #variant_name {}
+                    impl #name_ident for #variant_name {
+                        type Data = ();
+                    }
                 }
             }
         }
@@ -264,7 +263,9 @@ pub fn generate_state_impls(enum_path: &StateFilePath) -> proc_macro2::TokenStre
 
     let state_trait = quote! {
         #enum_info
-        #vis trait #name_ident {}
+        #vis trait #name_ident {
+            type Data;
+        }
     };
 
     // Generate the trait definition and include all variant structs
