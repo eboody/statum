@@ -1,2 +1,358 @@
+use proc_macro2::TokenStream;
+use quote::{format_ident, quote, ToTokens};
+use std::collections::HashMap;
 
+use syn::{FnArg, ImplItem, ImplItemFn, ReturnType};
 
+use syn::{Block, Ident, ItemImpl, Type};
+
+use crate::{
+    get_state_enum_variant, read_state_enum_map, EnumInfo, MachineInfo, MachinePath, StateFilePath,
+};
+
+/// Stores all metadata for a single transition method in an `impl` block
+#[derive(Debug)]
+pub struct TransitionFn {
+    pub name: Ident,
+    pub args: Vec<String>,
+    pub return_type: Option<Type>,
+    pub generics: Vec<Ident>,
+    pub internals: Block,
+}
+
+/// Represents the entire `impl` block of our `transition` macro
+#[derive(Debug)]
+pub struct TransitionImpl {
+    /// The concrete type being implemented (e.g. `Machine<Draft>`)
+    pub target_type: Type,
+    /// All transition methods extracted from the `impl`
+    pub functions: Vec<TransitionFn>,
+}
+
+pub fn parse_transition_impl(item_impl: &ItemImpl) -> TransitionImpl {
+    // 1) Extract target type (e.g., `Machine<Draft>`)
+    let target_type = *item_impl.self_ty.clone();
+
+    // 2) Collect all transition methods
+    let mut functions = Vec::new();
+    for item in &item_impl.items {
+        if let ImplItem::Fn(method) = item {
+            functions.push(parse_transition_fn(method));
+        }
+    }
+
+    TransitionImpl {
+        target_type,
+        functions,
+    }
+}
+
+pub fn parse_transition_fn(method: &ImplItemFn) -> TransitionFn {
+    // Collect argument names/types
+    let args: Vec<String> = method
+        .sig
+        .inputs
+        .iter()
+        .map(|arg| match arg {
+            FnArg::Receiver(_) => "self".to_string(),
+            FnArg::Typed(pat_type) => pat_type.ty.to_token_stream().to_string(),
+        })
+        .collect();
+
+    // Collect return type if any
+    let return_type = match &method.sig.output {
+        ReturnType::Type(_, ty) => Some(*ty.clone()),
+        ReturnType::Default => None,
+    };
+
+    // Collect generics
+    let generics = method
+        .sig
+        .generics
+        .params
+        .iter()
+        .filter_map(|param| {
+            if let syn::GenericParam::Type(type_param) = param {
+                Some(type_param.ident.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    TransitionFn {
+        name: method.sig.ident.clone(),
+        args,
+        return_type,
+        generics,
+        internals: method.block.clone(),
+    }
+}
+/// Validate that the target type is a known Machine and the state is a valid variant.
+/// Returns `Some(error_tokens)` if there is a validation error; otherwise `None`.
+pub fn validate_machine_and_state(
+    tr_impl: &TransitionImpl,
+    file_path: &str,
+    machine_map: &HashMap<MachinePath, MachineInfo>,
+    state_enum_map: &HashMap<StateFilePath, EnumInfo>,
+) -> Option<proc_macro2::TokenStream> {
+    let target_type_str = tr_impl.target_type.to_token_stream().to_string();
+
+    // e.g. split at '<' to separate "Machine" from "Draft>"
+    let mut type_parts = target_type_str.split('<');
+    let machine_name = type_parts.next().unwrap_or("").trim().to_string();
+    let state_name = type_parts
+        .next()
+        .map(|s| s.trim_end_matches('>').trim().to_string());
+
+    // 1) Validate machine
+    let machine_info = machine_map.get(&file_path.into());
+    if machine_info.is_none() {
+        let machine_name_clone = machine_name.clone();
+        return Some(quote! {
+            compile_error!(
+                concat!(
+                    "Invalid machine: ",
+                    #machine_name_clone,
+                    " is not present in this file. Did you forget to add a #[machine] attribute?"
+                )
+            )
+        });
+    }
+
+    // 2) Validate state variant
+    let found_enum_and_variant = state_enum_map.iter().any(|(state_enum_file_path, info)| {
+        // We only match the same file path
+        state_enum_file_path == &file_path.to_owned().into()
+            && state_name
+                .as_ref()
+                .is_some_and(|state| info.variants.iter().any(|variant| &variant.name == state))
+    });
+
+    if !found_enum_and_variant {
+        return Some(quote! {
+            compile_error!(
+                concat!(
+                    "Invalid state variant: ",
+                    #state_name,
+                    " is not a valid variant of a registered #[state] enum."
+                )
+            )
+        });
+    }
+
+    None
+}
+
+/// Validate all transition function signatures:
+///  - must have exactly one argument
+///  - that argument must be "self"
+pub fn validate_transition_functions(
+    functions: &[TransitionFn],
+) -> Option<proc_macro2::TokenStream> {
+    if functions.is_empty() {
+        return Some(quote! {
+            compile_error!("#[transition] impl blocks must contain at least one method returning Machine<SomeState>.");
+        });
+    }
+
+    for func in functions {
+        if func.args.len() != 1 || func.args[0] != "self" {
+            let func_name = &func.name;
+            return Some(quote! {
+                compile_error!(
+                    concat!(
+                        "Invalid function signature: ",
+                        stringify!(#func_name),
+                        " transition functions must only take 'self' as an argument."
+                    )
+                )
+            });
+        }
+    }
+    None
+}
+
+pub fn generate_transition_impl(
+    tr_impl: &TransitionImpl,
+    target_machine_info: &MachineInfo,
+    file_path: &str,
+) -> proc_macro2::TokenStream {
+    let target_type = &tr_impl.target_type;
+    let machine_name_ident = format_ident!("{}", target_machine_info.name);
+
+    let (_, target_state) = parse_machine_and_state(target_type).expect("Expected a state name");
+
+    let target_state_variant = get_state_enum_variant(&file_path.clone().into(), &target_state)
+        .expect("Expected a valid state variant. This should have been validated earlier.");
+
+    // Then generate code for each user-defined function
+    let user_fns = tr_impl.functions.iter().map(|function| {
+        let name = &function.name;
+        let args = function.args.iter().map(|arg| format_ident!("{}", arg));
+        let generics = function.generics.iter().map(|gen| format_ident!("{}", gen));
+        let return_type = function.return_type.as_ref().map(|ty| quote!(-> #ty));
+
+        let block = &function.internals; // syn::Block
+                                         //
+        let mut transition_impl = quote! {};
+
+        if let Some(ref return_type) = function.return_type {
+            let (_return_machine_name, return_state_name) =
+                parse_machine_and_state(return_type).expect("Expected a state name");
+
+            let return_state_info =
+                get_state_enum_variant(&file_path.clone().into(), &return_state_name).expect(
+                    "Expected a valid state variant. This should have been validated earlier.",
+                );
+
+            let fields = target_machine_info.fields_to_token_stream();
+
+            let return_state = format_ident!("{}", return_state_name);
+
+            transition_impl = if let Some(data_type) = &return_state_info.data_type {
+                let data_type = format_ident!("{}", data_type);
+                quote! {
+                    pub fn transition(self, data: #data_type) -> #machine_name_ident<#return_state>
+                    {
+                        #machine_name_ident {
+                            #fields
+                            marker: core::marker::PhantomData,
+                            state_data: Some(data),
+                        }
+                    }
+                }
+            } else {
+                quote! {
+                    pub fn transition(self) -> #machine_name_ident<#return_state>
+                    {
+                        #machine_name_ident {
+                            #fields
+                            marker: core::marker::PhantomData,
+                            state_data: None,
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut get_data_impl = quote! {};
+
+        if let Some(data_type) = &target_state_variant.data_type {
+            let data_type = format_ident!("{}", data_type);
+
+            get_data_impl = quote! {
+                pub fn get_data(&self) -> &#data_type {
+                    self.state_data.as_ref().expect("Expected state data to be Some.")
+                }
+
+                pub fn get_data_mut(&mut self) -> &mut #data_type {
+                    self.state_data.as_mut().expect("Expected state data to be Some.")
+                }
+            }
+        }
+
+        quote! {
+            #transition_impl
+            #get_data_impl
+            pub fn #name<#(#generics),*>(#(#args),*) #return_type
+            #block
+        }
+    });
+
+    quote! {
+        impl #target_type {
+            #(#user_fns)*
+        }
+    }
+}
+
+use syn::{AngleBracketedGenericArguments, GenericArgument, PathArguments, TypePath};
+
+/// Attempts to parse `ty` into the form:
+///
+///   - `Machine<SomeState>`
+///   - `Option<Machine<SomeState>>`
+///   - `Result<Machine<SomeState>, E>`
+///   - `some::error::Result<Machine<SomeState>, E>`
+///
+/// On success, returns ("Machine", "SomeState").
+///
+/// Recurses on the *first* generic argument if the last segment is `Result` or `Option`.
+pub fn parse_machine_and_state(ty: &Type) -> Option<(String, String)> {
+    // We only handle `Type::Path` (e.g. `Machine<...>`, `Option<...>`, `Result<...>`, etc.)
+    let Type::Path(TypePath { path, .. }) = ty else {
+        return None;
+    };
+
+    // Extract the LAST segment in the path, even if it has multiple segments (e.g. `some::error::Result`)
+    let last_segment = path.segments.last()?;
+
+    let ident_str = last_segment.ident.to_string();
+
+    // 1) If it's `Machine`, parse the single generic as `SomeState`.
+    if ident_str == "Machine" {
+        return extract_machine_generic(&last_segment.arguments);
+    }
+
+    // 2) If it's `Option`, parse the first generic argument -> presumably `Machine<SomeState>`.
+    if ident_str == "Option" {
+        if let Some(inner_ty) = extract_first_generic_type(&last_segment.arguments) {
+            return parse_machine_and_state(&inner_ty);
+        }
+        return None;
+    }
+
+    // 3) If it's `Result`, parse the first generic argument -> presumably `Machine<SomeState>`.
+    if ident_str == "Result" {
+        if let Some(inner_ty) = extract_first_generic_type(&last_segment.arguments) {
+            return parse_machine_and_state(&inner_ty);
+        }
+        return None;
+    }
+
+    // 4) If the last segment isn't recognized, no match.
+    None
+}
+
+/// Extracts `Machine<SomeState>` from the angle brackets of the given path arguments.
+fn extract_machine_generic(args: &PathArguments) -> Option<(String, String)> {
+    let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
+        args: generic_args, ..
+    }) = args
+    else {
+        return None;
+    };
+    // We expect exactly one generic argument: `Machine<OneThing>`
+    if generic_args.len() != 1 {
+        return None;
+    }
+    // That one argument must be a `TypePath`, e.g. `InProgress`
+    let GenericArgument::Type(Type::Path(state_path)) = &generic_args[0] else {
+        return None;
+    };
+    let state_seg = state_path.path.segments.last()?;
+    // Return ("Machine", "InProgress") for example
+    Some(("Machine".to_string(), state_seg.ident.to_string()))
+}
+
+/// Extracts the *first* generic type from an angle-bracketed path, e.g:
+///   `Option< T >` -> returns `Some(T)`
+///   `Result< T, E >` -> returns `Some(T)`
+///
+/// Otherwise returns `None`.
+fn extract_first_generic_type(args: &PathArguments) -> Option<Type> {
+    let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
+        args: generic_args, ..
+    }) = args
+    else {
+        return None;
+    };
+    if generic_args.is_empty() {
+        return None;
+    }
+    let GenericArgument::Type(ty) = &generic_args[0] else {
+        return None;
+    };
+    Some(ty.clone())
+}
