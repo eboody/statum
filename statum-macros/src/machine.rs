@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
-use syn::{Attribute, GenericParam, Generics, Ident, ItemStruct};
+use syn::{Attribute, Generics, Ident, ItemStruct};
 
 use crate::{get_state_enum_map, EnumInfo, StateFilePath};
 
@@ -161,6 +161,20 @@ impl ToTokens for MachinePath {
         ident.to_tokens(tokens);
     }
 }
+
+impl MachineInfo {
+    pub fn fields_to_token_stream(&self) -> TokenStream {
+        let fields = self.fields.iter().map(|field| {
+            let field_ident = format_ident!("{}", field.name);
+            quote! { #field_ident: self.#field_ident, }
+        });
+
+        quote! {
+            #(#fields)*
+        }
+    }
+}
+
 // Generates struct-based metadata implementations
 pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenStream {
     println!(
@@ -186,38 +200,32 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
         .map(|d| quote::ToTokens::to_token_stream(&syn::parse_str::<syn::Path>(d).unwrap()))
         .collect();
 
+    println!("[generate_machine_impls] Finished generating struct.");
+
+    let state_enum = machine_info.get_matching_state_enum();
+    let generics_str = machine_info.generics.trim(); // Remove extra spaces
+    let replaced_generics =
+        generics_str.replace(&state_enum.name, &format!("S: {}Trait", state_enum.name));
+    let generics =
+        syn::parse_str::<Generics>(&replaced_generics).expect("Failed to parse generics.");
+
     let fields = machine_info.fields.iter().map(|field| {
         let field_ident = format_ident!("{}", field.name);
         let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
         quote! { #vis #field_ident: #field_ty }
     });
 
-    println!("[generate_machine_impls] Finished generating struct.");
-
-    let marker = quote! {marker: core::marker::PhantomData<S>};
-
-    let state_enum = machine_info.get_matching_state_enum();
-    let generics = syn::parse_str::<Generics>(&machine_info.generics.replace(
-        &state_enum.name,
-        format!("S: {}Trait", state_enum.name).as_str(),
-    ))
-    .expect("Failed to parse generics.");
-
-    if machine_info.fields.is_empty() {
-        quote! {
-            #[derive(#(#derives),*)]
-            #vis struct #name_ident #generics {
-                #marker
-            }
+    let struct_token_stream = quote! {
+        #[derive(#(#derives),*)]
+        #vis struct #name_ident #generics {
+            #(#fields),*,
+            marker: core::marker::PhantomData<S>,
+            state_data: Option<S::Data>,
         }
-    } else {
-        quote! {
-            #[derive(#(#derives),*)]
-            #vis struct #name_ident #generics {
-                #(#fields),*
-                , #marker
-            }
-        }
+    };
+
+    quote! {
+        #struct_token_stream
     }
 }
 
