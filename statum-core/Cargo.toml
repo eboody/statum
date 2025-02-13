@@ -13,13 +13,7 @@ categories = ["rust-patterns"]
 description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
 documentation = "https://docs.rs/statum"
 edition = "2021"
-keywords = [
-    "enum",
-    "typestate",
-    "fsm",
-    "finite-state",
-    "state-machine",
-]
+keywords = ["enum", "typestate", "fsm", "finite-state", "state-machine"]
 license = "MIT"
 name = "statum-core"
 readme = "README.md"

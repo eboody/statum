@@ -1,4 +1,3 @@
-use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
 
@@ -6,9 +5,7 @@ use syn::{FnArg, ImplItem, ImplItemFn, ReturnType};
 
 use syn::{Block, Ident, ItemImpl, Type};
 
-use crate::{
-    get_state_enum_variant, read_state_enum_map, EnumInfo, MachineInfo, MachinePath, StateFilePath,
-};
+use crate::{get_state_enum_variant, EnumInfo, MachineInfo, MachinePath, StateFilePath};
 
 /// Stores all metadata for a single transition method in an `impl` block
 #[derive(Debug)]
@@ -183,7 +180,7 @@ pub fn generate_transition_impl(
 
     let (_, target_state) = parse_machine_and_state(target_type).expect("Expected a state name");
 
-    let target_state_variant = get_state_enum_variant(&file_path.clone().into(), &target_state)
+    let target_state_variant = get_state_enum_variant(&file_path.into(), &target_state)
         .expect("Expected a valid state variant. This should have been validated earlier.");
 
     // Then generate code for each user-defined function
@@ -201,10 +198,8 @@ pub fn generate_transition_impl(
             let (_return_machine_name, return_state_name) =
                 parse_machine_and_state(return_type).expect("Expected a state name");
 
-            let return_state_info =
-                get_state_enum_variant(&file_path.clone().into(), &return_state_name).expect(
-                    "Expected a valid state variant. This should have been validated earlier.",
-                );
+            let return_state_info = get_state_enum_variant(&file_path.into(), &return_state_name)
+                .expect("Expected a valid state variant. This should have been validated earlier.");
 
             let fields = target_machine_info.fields_to_token_stream();
 
@@ -218,7 +213,7 @@ pub fn generate_transition_impl(
                         #machine_name_ident {
                             #fields
                             marker: core::marker::PhantomData,
-                            state_data: Some(data),
+                            state_data: data,
                         }
                     }
                 }
@@ -229,7 +224,7 @@ pub fn generate_transition_impl(
                         #machine_name_ident {
                             #fields
                             marker: core::marker::PhantomData,
-                            state_data: None,
+                            state_data: (),
                         }
                     }
                 }
@@ -243,20 +238,17 @@ pub fn generate_transition_impl(
 
             get_data_impl = quote! {
                 pub fn get_data(&self) -> &#data_type {
-                    self.state_data.as_ref().expect("Expected state data to be Some.")
-                }
-
-                pub fn get_data_mut(&mut self) -> &mut #data_type {
-                    self.state_data.as_mut().expect("Expected state data to be Some.")
+                    &self.state_data
                 }
             }
         }
 
         quote! {
             #transition_impl
-            #get_data_impl
             pub fn #name<#(#generics),*>(#(#args),*) #return_type
             #block
+
+            #get_data_impl
         }
     });
 

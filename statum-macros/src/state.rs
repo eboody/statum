@@ -240,7 +240,7 @@ pub fn generate_state_impls(enum_path: &StateFilePath) -> proc_macro2::TokenStre
             .clone()
     };
 
-    let name_ident = format_ident!("{}Trait", enum_info.name);
+    let state_trait_ident = enum_info.get_trait_name();
 
     let vis = syn::parse_str::<syn::Visibility>(&enum_info.vis).unwrap();
 
@@ -262,9 +262,12 @@ pub fn generate_state_impls(enum_path: &StateFilePath) -> proc_macro2::TokenStre
                     #[derive(#(#derives),*)]
                     #vis struct #variant_name (pub #field_ty);
 
-                    impl #name_ident for #variant_name {
+                    impl #state_trait_ident for #variant_name {
                         type Data = #field_ty;
                     }
+                    // Mark that this variant requires state data.
+                    impl RequiresStateData for #variant_name {}
+
                 }
             }
             // Handle unit variants (state has no associated data)
@@ -273,9 +276,12 @@ pub fn generate_state_impls(enum_path: &StateFilePath) -> proc_macro2::TokenStre
                     #[derive(#(#derives),*)]
                     #vis struct #variant_name;
 
-                    impl #name_ident for #variant_name {
+                    impl #state_trait_ident for #variant_name {
                         type Data = ();
                     }
+
+                    // Unit variants don’t require state data.
+                    impl DoesNotRequireStateData for #variant_name {}
                 }
             }
         }
@@ -283,13 +289,16 @@ pub fn generate_state_impls(enum_path: &StateFilePath) -> proc_macro2::TokenStre
 
     let state_trait = quote! {
         #enum_info
-        #vis trait #name_ident {
+        #vis trait #state_trait_ident {
             type Data;
         }
     };
 
     // Generate the trait definition and include all variant structs
     quote! {
+        pub trait DoesNotRequireStateData {}
+        pub trait RequiresStateData {}
+
         #state_trait
 
         #(#variant_structs)*

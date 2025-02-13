@@ -56,6 +56,7 @@ pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
             );
         }
     }
+
     None
 }
 
@@ -173,6 +174,17 @@ impl MachineInfo {
             #(#fields)*
         }
     }
+    pub fn to_optional_fields(&self) -> TokenStream {
+        let fields = self.fields.iter().map(|field| {
+            let field_ident = format_ident!("{}", field.name);
+            let field_type_ident = format_ident!("{}", field.field_type);
+            quote! { #field_ident: Option<#field_type_ident>, }
+        });
+
+        quote! {
+            #(#fields)*
+        }
+    }
 }
 
 // Generates struct-based metadata implementations
@@ -204,12 +216,13 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
 
     let state_enum = machine_info.get_matching_state_enum();
     let generics_str = machine_info.generics.trim(); // Remove extra spaces
-    let replaced_generics =
-        generics_str.replace(&state_enum.name, &format!("S: {}Trait", state_enum.name));
+    let replaced_generics = generics_str.replace(
+        &state_enum.name,
+        &format!("S: {}", state_enum.get_trait_name()),
+    );
     let generics =
         syn::parse_str::<Generics>(&replaced_generics).expect("Failed to parse generics.");
 
-    let state_trait_ident = format_ident!("{}Trait", state_enum.name);
     let fields_vec: Vec<_> = machine_info
         .fields
         .iter()
@@ -221,42 +234,24 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
         })
         .collect();
 
-    let field_names: Vec<_> = machine_info
-        .fields
-        .iter()
-        .map(|field| {
-            // produce tokens for each field
-            let field_ident = format_ident!("{}", field.name);
-            quote! { #field_ident }
-        })
-        .collect();
-
-    // Now we can use `fields_vec` as many times as we want
-    let constructor = quote! {
-        impl<S: #state_trait_ident> #name_ident<S> {
-            pub fn new(#(#fields_vec),*) -> Self {
-                Self {
-                    #(#field_names,)*
-                    marker: core::marker::PhantomData,
-                    state_data: None,
-                }
-            }
-        }
-    };
-
     let struct_token_stream = quote! {
         #[derive(#(#derives),*)]
         #vis struct #name_ident #generics {
             #(#fields_vec),*,
             marker: core::marker::PhantomData<S>,
-            state_data: Option<S::Data>,
+            state_data: S::Data,
         }
-
-        #constructor
     };
+
+    let builder_methods = machine_info.generate_builder_methods();
+
+    //#[derive(statum::bon::Builder)]
+    //#[builder(crate = ::statum::bon)]
 
     quote! {
         #struct_token_stream
+
+        #builder_methods
     }
 }
 
@@ -266,6 +261,77 @@ impl MachineInfo {
             .get(&self.file_path.clone().into())
             .expect("Failed to read state_enum_map.")
             .clone()
+    }
+
+    pub fn generate_builder_methods(&self) -> TokenStream {
+        let state_enum = self.get_matching_state_enum();
+        let fields_map = self
+            .fields
+            .iter()
+            .map(|field| {
+                // produce tokens for each field
+                let field_ident = format_ident!("{}", field.name);
+                let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
+                quote! { #field_ident: #field_ty }
+            }).collect::<Vec<_>>();
+
+        let field_names = self
+            .fields
+            .iter()
+            .map(|field| {
+                // produce tokens for each field
+                let field_ident = format_ident!("{}", field.name);
+                quote! { #field_ident }
+            })
+            .collect::<Vec<_>>();
+
+        let name_ident = format_ident!("{}", self.name);
+
+        // Generate a builder method for each variant in the state enum.
+        let builder_methods = state_enum.variants.iter().map(|variant| {
+            let variant_ident = format_ident!("{}", variant.name);
+            let variant_builder_ident = format_ident!("{}Builder", variant.name);
+            let lowercase_variant_name = format_ident!("{}_builder", variant.name.to_lowercase());
+            
+            if let Some(ref data_type_str) = variant.data_type {
+                // For variants with associated data, parse the type.
+                let parsed_data_type = syn::parse_str::<syn::Type>(data_type_str)
+                    .expect("Failed to parse state data type");
+                    
+                quote! {
+                    #[statum::bon::bon(crate = ::statum::bon)]
+                    impl #name_ident<#variant_ident> {
+                        #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
+                        pub fn new(#(#fields_map),*, state_data: #parsed_data_type) -> #name_ident<#variant_ident> {
+                            #name_ident {
+                                #(#field_names),*,
+                                marker: core::marker::PhantomData,
+                                state_data,
+                            }
+                        }
+                    }
+                }
+            } else {
+                // For unit variants, no state_data parameter is needed.
+                quote! {
+                    #[statum::bon::bon(crate = ::statum::bon)]
+                    impl #name_ident<#variant_ident> {
+                        #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
+                        pub fn new(#(#fields_map),*,) -> #name_ident<#variant_ident> {
+                            #name_ident {
+                                #(#field_names),*,
+                                marker: core::marker::PhantomData,
+                                state_data: (),
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        quote! {
+            #(#builder_methods)*
+        }
     }
 }
 
