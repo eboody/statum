@@ -1,3 +1,10 @@
+[dependencies]
+bon = { version = "3.3.2", features = [
+  "experimental-getter",
+  "experimental-overwritable",
+  "implied-bounds",
+] }
+
 [dependencies.statum-core]
 path = "../statum-core"
 version = "0.1.48"
@@ -8,10 +15,7 @@ version = "0.1.48"
 
 [features]
 default = []
-serde = [
-    "statum-core/serde",
-    "statum-macros/serde",
-]
+serde = ["statum-core/serde", "statum-macros/serde"]
 
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]
@@ -19,13 +23,7 @@ categories = ["rust-patterns"]
 description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
 documentation = "https://docs.rs/statum"
 edition = "2021"
-keywords = [
-    "enum",
-    "typestate",
-    "fsm",
-    "finite-state",
-    "state-machine",
-]
+keywords = ["enum", "typestate", "fsm", "finite-state", "state-machine"]
 license = "MIT"
 name = "statum"
 readme = "README.md"

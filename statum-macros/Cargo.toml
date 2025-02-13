@@ -2,7 +2,6 @@
 proc-macro2 = "1.0"
 quote = "1.0"
 trybuild = "*"
-bon = "3.3.2"
 
 [dependencies.serde]
 features = ["derive"]
