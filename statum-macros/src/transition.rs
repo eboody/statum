@@ -240,6 +240,10 @@ pub fn generate_transition_impl(
                 pub fn get_data(&self) -> &#data_type {
                     &self.state_data
                 }
+
+                pub fn get_data_mut(&mut self) -> &mut #data_type {
+                    &mut self.state_data
+                }
             }
         }
 
