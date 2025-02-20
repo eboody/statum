@@ -294,6 +294,16 @@ pub fn generate_state_impls(enum_path: &StateFilePath) -> proc_macro2::TokenStre
         }
     };
 
+    let uninitialized_state_name = format_ident!("Uninitialized{}", enum_info.name);
+
+    let uninitialized_state = quote! {
+        pub struct #uninitialized_state_name;
+
+        impl #state_trait_ident for #uninitialized_state_name {
+            type Data = ();
+        }
+    };
+
     // Generate the trait definition and include all variant structs
     quote! {
         pub trait DoesNotRequireStateData {}
@@ -302,6 +312,8 @@ pub fn generate_state_impls(enum_path: &StateFilePath) -> proc_macro2::TokenStre
         #state_trait
 
         #(#variant_structs)*
+
+        #uninitialized_state
     }
 }
 pub fn validate_state_enum(item: &ItemEnum) -> Option<TokenStream> {
