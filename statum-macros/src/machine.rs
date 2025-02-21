@@ -49,6 +49,10 @@ pub fn get_machine_map() -> &'static RwLock<HashMap<MachinePath, MachineInfo>> {
     MACHINE_MAP.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+pub fn read_machine_map() -> HashMap<MachinePath, MachineInfo> {
+    get_machine_map().read().unwrap().clone()
+}
+
 // Extract derives from `#[derive(Debug, Clone, ...)]`
 
 pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
@@ -118,7 +122,7 @@ impl MachineInfo {
 pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenStream {
     if let Some(machine_info) = get_machine_map().read().unwrap().get(&machine_info.file_path) {
         let name_ident = format_ident!("{}", machine_info.name);
-        let generics = parse_generics(&machine_info);
+        let generics = parse_generics(machine_info);
         let struct_def = generate_struct_definition(machine_info, &name_ident, &generics);
         let builder_methods = machine_info.generate_builder_methods();
 

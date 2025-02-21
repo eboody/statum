@@ -4,7 +4,8 @@ moddef::moddef!(
     flat (pub(crate)) mod {
         state,
         machine,
-        transition
+        transition,
+        validators
     }
 );
 
@@ -101,4 +102,9 @@ pub fn transition(
     // Combine expanded code with the original `impl` if needed
     // or simply return the expanded code
     expanded.into()
+}
+
+#[proc_macro_attribute]
+pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
+    parse_validators(attr, item)
 }
