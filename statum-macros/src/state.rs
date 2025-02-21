@@ -20,7 +20,9 @@ pub struct EnumInfo {
 
 impl EnumInfo {
     pub fn get_variant_from_name(&self, variant_name: &str) -> Option<&VariantInfo> {
-        self.variants.iter().find(|v| v.name == variant_name)
+        self.variants
+            .iter()
+            .find(|v| v.name == variant_name || to_snake_case(&v.name) == variant_name)
     }
 }
 
@@ -28,6 +30,17 @@ impl EnumInfo {
 pub struct VariantInfo {
     pub name: String,
     pub data_type: Option<String>,
+}
+
+pub fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && c.is_uppercase() {
+            result.push('_');
+        }
+        result.push(c.to_lowercase().next().unwrap());
+    }
+    result
 }
 
 // Type-safe wrapper around an enum name
