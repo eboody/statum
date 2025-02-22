@@ -253,6 +253,12 @@ pub fn batch_builder_implementation(
     let field_names = machine_info.field_names();
     let field_builder_chain = quote! { #(.#field_names(self.#field_names.clone()))* };
 
+    let await_token = if async_token.is_empty() {
+        quote! {}
+    } else {
+        quote! { .await }
+    };
+
     let implementation = if async_token.is_empty() {
         quote! {
             self.items
@@ -266,37 +272,49 @@ pub fn batch_builder_implementation(
         }
     } else {
         quote! {
-        futures::future::join_all(
-            self.items.iter().map(|data| {
-                data.machine_builder()
-                    #field_builder_chain
-                    .build()
-            })
-        ).await
-                }
+            futures::future::join_all(
+                self.items.iter().map(|data| {
+                    data.machine_builder()
+                        #field_builder_chain
+                        .build()
+                })
+            ).await
+        }
     };
 
     let trait_impl = quote! {
         trait #trait_name_ident {
-            #machine_vis fn build_machines(&self) -> #bon_builder_ident<#builder_module_name::SetItems>;
+            #machine_vis fn machines_builder(&self) -> #bon_builder_ident<#builder_module_name::SetItems>;
         }
 
         impl #trait_name_ident for [#struct_ident] {
-            #machine_vis fn build_machines(&self) -> #bon_builder_ident<#builder_module_name::SetItems> {
+            #machine_vis fn machines_builder(&self) -> #bon_builder_ident<#builder_module_name::SetItems> {
                 let items = self.to_vec();
                 #builder_ident::builder().items(items)
             }
         }
 
         #[derive(statum::bon::Builder, Clone)]
+        #[builder(finish_fn = __private_build)]
         struct #builder_ident {
             #[builder(default)]
             items: Vec<#struct_ident>,
             #(#fields_with_types),*
         }
 
+        // ✅ Generalized Implementation: Dynamically Uses `#bon_builder_ident<S>` and `#superstate_ident`
+        impl<S> #bon_builder_ident<S>
+        where
+            S: #builder_module_name::IsComplete, // ✅ Ensures required fields are set
+        {
+            #[inline(always)]
+            pub #async_token fn build(self) -> Vec<core::result::Result<#superstate_ident, statum::Error>> {
+                self.__private_build().__private_finalize()#await_token
+            }
+        }
+
         impl #builder_ident {
-            #machine_vis #async_token fn finalize(self) -> Vec<core::result::Result<#superstate_ident, statum::Error>> {
+            #machine_vis #async_token fn __private_finalize(self) -> Vec<core::result::Result<#superstate_ident, statum::Error>> {
                 #implementation
             }
         }
