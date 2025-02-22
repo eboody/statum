@@ -245,45 +245,62 @@ pub fn batch_builder_implementation(
     machine_vis: syn::Visibility,
 ) -> proc_macro2::TokenStream {
     let trait_name_ident = format_ident!("{}BuilderExt", machine_ident);
+    let builder_ident = format_ident!("{}BatchBuilder", machine_ident);
+    let bon_builder_ident = format_ident!("{}Builder", builder_ident); // ✅ The actual bon-generated builder type
+    let builder_module_name = format_ident!("{}", to_snake_case(&bon_builder_ident.to_string()));
 
     let fields_with_types = machine_info.fields_with_types();
     let field_names = machine_info.field_names();
-
-    let builder_chain = quote! { #(.#field_names(#field_names.clone()))* };
+    let field_builder_chain = quote! { #(.#field_names(self.#field_names.clone()))* };
 
     let implementation = if async_token.is_empty() {
         quote! {
-           self.iter()
-               .map(|data| data.machine_builder()
-               #builder_chain
-               .build())
-               .collect()
+            self.items
+                .into_iter()
+                .map(|data| {
+                    data.machine_builder()
+                        #field_builder_chain
+                        .build()
+                })
+                .collect()
         }
     } else {
         quote! {
-           futures::future::join_all(
-                   self.iter()
-                       .map(|data| data.machine_builder()
-                       #builder_chain
-                       .build())
-                    )
-                   .await
-                   .into_iter()
-                   .collect()
-        }
+        futures::future::join_all(
+            self.items.iter().map(|data| {
+                data.machine_builder()
+                    #field_builder_chain
+                    .build()
+            })
+        ).await
+                }
     };
-    let implementation = quote! {
 
+    let trait_impl = quote! {
         trait #trait_name_ident {
-            #machine_vis #async_token fn build_machines(&self, #(#fields_with_types,)*) -> Vec<core::result::Result<#superstate_ident, statum::Error>>;
+            #machine_vis fn build_machines(&self) -> #bon_builder_ident<#builder_module_name::SetItems>;
         }
 
         impl #trait_name_ident for [#struct_ident] {
-            #machine_vis #async_token fn build_machines(&self, #(#fields_with_types,)*) -> Vec<core::result::Result<#superstate_ident, statum::Error>> {
+            #machine_vis fn build_machines(&self) -> #bon_builder_ident<#builder_module_name::SetItems> {
+                let items = self.to_vec();
+                #builder_ident::builder().items(items)
+            }
+        }
+
+        #[derive(statum::bon::Builder, Clone)]
+        struct #builder_ident {
+            #[builder(default)]
+            items: Vec<#struct_ident>,
+            #(#fields_with_types),*
+        }
+
+        impl #builder_ident {
+            #machine_vis #async_token fn finalize(self) -> Vec<core::result::Result<#superstate_ident, statum::Error>> {
                 #implementation
             }
         }
     };
 
-    implementation
+    trait_impl
 }

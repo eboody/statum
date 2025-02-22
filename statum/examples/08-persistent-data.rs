@@ -10,14 +10,14 @@ enum State {
 #[machine]
 struct Machine<State> {}
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Status {
     Draft,
     InReview,
     Published,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Article {
     status: Status,
 }
