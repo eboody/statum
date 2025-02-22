@@ -8,11 +8,11 @@ use crate::{
     MachinePath,
 };
 
+use proc_macro::Span;
+
 pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let file_path: String = std::env::current_dir()
-        .expect("Failed to get current directory.")
-        .to_string_lossy()
-        .to_string();
+    let path = Span::call_site().source_file().path();
+    let file_path = path.to_str().unwrap();
 
     let machine_ident = parse_macro_input!(attr as Ident);
     let item_impl = parse_macro_input!(item as ItemImpl);
@@ -21,7 +21,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let methods = item_impl.items.clone();
 
     // Ensure machine metadata exists
-    let machine_metadata = get_machine_metadata(&file_path.clone().into());
+    let machine_metadata = get_machine_metadata(&file_path.into());
     if machine_metadata.is_none() {
         return quote! {
             compile_error!("Error: No `Machine` found in scope. Ensure `#[validators(Machine)]` references a valid machine.");
@@ -32,28 +32,16 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let state_enum_map = read_state_enum_map();
     let state_enum_info = state_enum_map
-        .get(&file_path.clone().into())
+        .get(&file_path.into())
         .expect("State enum not found");
 
     let mut found_validators = HashSet::new();
     let mut validator_checks = vec![];
     let mut has_async = false;
 
-    let field_names = machine_metadata
-        .fields
-        .iter()
-        .map(|field| format_ident!("{}", field.name))
-        .collect::<Vec<_>>();
+    let field_names = machine_metadata.field_names();
 
-    let fields_map = machine_metadata
-        .fields
-        .iter()
-        .map(|field| {
-            let field_ident = format_ident!("{}", field.name);
-            let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
-            quote! { #field_ident: #field_ty }
-        })
-        .collect::<Vec<_>>();
+    let fields_with_types = machine_metadata.fields_with_types();
 
     let superstate_ident = format_ident!("{}SuperState", machine_ident);
 
@@ -82,12 +70,12 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
 
                 // Get expected return type based on state variant data
-                let state_variant = get_state_enum_variant(&file_path.clone().into(), &state_name);
+                let state_variant = get_state_enum_variant(&file_path.into(), &state_name);
 
                 if let Some(state_variant) = state_variant {
                     let expected_return_type = match &state_variant.data_type {
-                        Some(data_type) => format!("Result<{}>", data_type),
-                        None => "Result<()>".to_string(),
+                        Some(data_type) => format!("Result<{}", data_type),
+                        None => "Result<()".to_string(),
                     };
 
                     // Check if the function is async
@@ -100,7 +88,8 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
                     if let ReturnType::Type(_, return_ty) = &func.sig.output {
                         let actual_return_type =
                             return_ty.to_token_stream().to_string().replace(" ", "");
-                        if actual_return_type != expected_return_type {
+
+                        if !actual_return_type.starts_with(&expected_return_type) {
                             return quote! {
                                 compile_error!(concat!(
                                     "Error: ", #func_name, " must return `", #expected_return_type, "` but found `", #actual_return_type, "`"
@@ -128,22 +117,29 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
                         quote! {}
                     };
 
-                    let builder_call = quote! {
-                        #machine_ident::<#variant_ident>::builder()
-                            #(.#field_names(#field_names.clone()))*
-                            .build()
-                    };
+                    let field_builder_chain = quote! { #(.#field_names(#field_names.clone()))* };
 
                     if state_variant.data_type.is_some() {
+                        let builder_call = quote! {
+                            #machine_ident::<#variant_ident>::builder()
+                                #field_builder_chain
+                                .state_data(data)
+                                .build()
+                        };
                         // If state has data
                         validator_checks.push(quote! {
                             if let Ok(data) = self.#validator_fn_ident()#await_token {
                                 return Ok(#superstate_ident::#variant_ident(
-                                    #builder_call.transition_with(data)
+                                    #builder_call
                                 ));
                             }
                         });
                     } else {
+                        let builder_call = quote! {
+                            #machine_ident::<#variant_ident>::builder()
+                                #field_builder_chain
+                                .build()
+                        };
                         // If state has NO data
                         validator_checks.push(quote! {
                             if self.#validator_fn_ident()#await_token.is_ok() {
@@ -172,22 +168,32 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    let machine_vis = format_ident!("{}", machine_metadata.vis);
+    let machine_vis: syn::Visibility = match syn::parse_str(&machine_metadata.vis) {
+        Ok(vis) => vis,
+        Err(_) => syn::parse_quote!( /* default or nothing */ ),
+    };
+
     let async_token = if has_async {
         quote! { async }
     } else {
         quote! {}
     };
 
-    let batch_builder_impl =
-        batch_builder_implementation(&machine_ident, struct_ident, &superstate_ident);
+    let batch_builder_impl = batch_builder_implementation(
+        &machine_ident,
+        struct_ident,
+        &superstate_ident,
+        &machine_metadata,
+        async_token.clone(),
+        machine_vis.clone(),
+    );
 
     // **Fill in `new()` with the validation logic**
     let machine_builder_impl = quote! {
         #[statum::bon::bon(crate = ::statum::bon)]
         impl #struct_ident {
             #[builder(start_fn = machine_builder)]
-            #machine_vis #async_token fn new(&self, #(#fields_map),*) -> core::result::Result<#superstate_ident, statum::Error> {
+            #machine_vis #async_token fn new(&self, #(#fields_with_types),*) -> core::result::Result<#superstate_ident, statum::Error> {
                 #(#validator_checks)*
 
                 Err(statum::Error::InvalidState)
@@ -208,32 +214,57 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 pub fn get_machine_metadata(machine_path: &MachinePath) -> Option<MachineInfo> {
-    read_machine_map().get(machine_path).cloned()
+    let machine_map = read_machine_map();
+    machine_map.get(machine_path).cloned()
 }
 
 pub fn batch_builder_implementation(
     machine_ident: &Ident,
     struct_ident: &Type,
     superstate_ident: &Ident,
+    machine_info: &MachineInfo,
+    async_token: proc_macro2::TokenStream,
+    machine_vis: syn::Visibility,
 ) -> proc_macro2::TokenStream {
     let trait_name_ident = format_ident!("{}BuilderExt", machine_ident);
 
+    let fields_with_types = machine_info.fields_with_types();
+    let field_names = machine_info.field_names();
+
+    let builder_chain = quote! { #(.#field_names(#field_names.clone()))* };
+
+    let implementation = if async_token.is_empty() {
+        quote! {
+           self.iter()
+               .map(|data| data.machine_builder()
+               #builder_chain
+               .build())
+               .filter_map(core::result::Result::ok)
+               .collect()
+        }
+    } else {
+        quote! {
+           futures::future::join_all(
+                   self.iter()
+                       .map(|data| data.machine_builder()
+                       #builder_chain
+                       .build())
+                    )
+                   .await
+                   .into_iter()
+                   .filter_map(core::result::Result::ok)
+                   .collect()
+        }
+    };
     let implementation = quote! {
 
         trait #trait_name_ident {
-            async fn build_machines(&self) -> Vec<#superstate_ident>;
+            #machine_vis #async_token fn build_machines(&self, #(#fields_with_types,)*) -> Vec<#superstate_ident>;
         }
 
         impl #trait_name_ident for [#struct_ident] {
-            async fn build_machines(&self) -> Vec<#superstate_ident> {
-                futures::future::join_all(
-                    self.iter()
-                        .map(|data| data.machine_builder().name(data.id.clone()).build()),
-                )
-                    .await
-                    .into_iter()
-                    .filter_map(core::result::Result::ok)
-                    .collect()
+            #machine_vis #async_token fn build_machines(&self, #(#fields_with_types,)*) -> Vec<#superstate_ident> {
+                #implementation
             }
         }
     };

@@ -1,3 +1,4 @@
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
 
@@ -11,10 +12,12 @@ use crate::{get_state_enum_variant, EnumInfo, MachineInfo, MachinePath, StateFil
 #[derive(Debug)]
 pub struct TransitionFn {
     pub name: Ident,
-    pub args: Vec<String>,
+    pub args: Vec<TokenStream>,
     pub return_type: Option<Type>,
     pub generics: Vec<Ident>,
     pub internals: Block,
+    pub is_async: bool,
+    pub vis: syn::Visibility,
 }
 
 /// Represents the entire `impl` block of our `transition` macro
@@ -46,25 +49,19 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> TransitionImpl {
 
 pub fn parse_transition_fn(method: &ImplItemFn) -> TransitionFn {
     // Collect argument names/types with receiver details.
-    let args: Vec<String> = method
+
+    let args: Vec<proc_macro2::TokenStream> = method
         .sig
         .inputs
         .iter()
-        .map(|arg| {
-            match arg {
-                FnArg::Receiver(receiver) => {
-                    // Check if there's a reference and if it's mutable.
-                    if let Some((_and, _lifetime)) = &receiver.reference {
-                        if receiver.mutability.is_some() {
-                            "&mut self".to_string()
-                        } else {
-                            "&self".to_string()
-                        }
-                    } else {
-                        "self".to_string()
-                    }
-                }
-                FnArg::Typed(pat_type) => pat_type.ty.to_token_stream().to_string(),
+        .map(|arg| match arg {
+            FnArg::Receiver(receiver) => {
+                let mutability = receiver.mutability;
+                quote! { #mutability self }
+            }
+            FnArg::Typed(pat_type) => {
+                let arg_ty = pat_type.ty.to_token_stream();
+                quote! { #arg_ty }
             }
         })
         .collect();
@@ -90,12 +87,18 @@ pub fn parse_transition_fn(method: &ImplItemFn) -> TransitionFn {
         })
         .collect();
 
+    let is_async = method.sig.asyncness.is_some();
+
+    let vis = method.vis.to_owned();
+
     TransitionFn {
         name: method.sig.ident.clone(),
         args,
         return_type,
         generics,
         internals: method.block.clone(),
+        is_async,
+        vis,
     }
 }
 
@@ -174,14 +177,14 @@ pub fn validate_transition_functions(
     }
 
     for func in functions {
-        if func.args.len() != 1 || func.args[0] != "self" {
+        if func.args[0].to_string() != "self" && func.args[0].to_string() != "mut self" {
             let func_name = &func.name;
             return Some(quote! {
                 compile_error!(
                     concat!(
                         "Invalid function signature: ",
                         stringify!(#func_name),
-                        " transition functions must only take 'self' as an argument."
+                        " transition functions must be a method, that is it must take 'self' or 'mut self' as it's first argument."
                     )
                 )
             });
@@ -207,7 +210,7 @@ pub fn generate_transition_impl(
     // Then generate code for each user-defined function
     let user_fns = tr_impl.functions.iter().map(|function| {
         let name = &function.name;
-        let args = function.args.iter().map(|arg| format_ident!("{}", arg));
+        let args = function.args.clone();
         let generics = function.generics.iter().map(|gen| format_ident!("{}", gen));
         let return_type = function.return_type.as_ref().map(|ty| quote!(-> #ty));
 
@@ -289,9 +292,12 @@ pub fn generate_transition_impl(
             }
         }
 
+        let async_token = if function.is_async { quote! { async } } else { quote! {} };
+        let vis_token = &function.vis;
+
         quote! {
             #transition_impl
-            pub fn #name<#(#generics),*>(#(#args),*) #return_type
+            #vis_token #async_token fn #name<#(#generics),*>(#(#args),*) #return_type
             #block
 
             #extra_tokens

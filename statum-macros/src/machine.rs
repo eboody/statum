@@ -1,3 +1,4 @@
+use proc_macro::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
@@ -28,6 +29,31 @@ pub struct MachineInfo {
     pub fields: Vec<MachineField>,
     pub file_path: MachinePath,
     pub generics: String,
+}
+
+impl MachineInfo{
+    pub fn field_names(&self) -> Vec<Ident> {
+        let field_names = self
+        .fields
+        .iter()
+        .map(|field| format_ident!("{}", field.name))
+        .collect::<Vec<_>>();
+        field_names
+    }
+
+    pub fn fields_with_types(&self) -> Vec<TokenStream> {
+    let fields_map = self
+        .fields
+        .iter()
+        .map(|field| {
+            let field_ident = format_ident!("{}", field.name);
+            let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
+            quote! { #field_ident: #field_ty }
+        })
+        .collect::<Vec<_>>();
+        fields_map
+    }
+
 }
 
 // Structure to store each field in the struct
@@ -62,7 +88,9 @@ pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
     attr.meta.require_list().ok()?.parse_args_with(
         syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
     ).ok()
-    .map(|punctuated| punctuated.iter().map(|p| p.to_token_stream().to_string()).collect())
+    .map(|punctuated| {
+        punctuated.iter().map(|p| p.to_token_stream().to_string()).collect()
+    })
 }
 
 
@@ -81,16 +109,15 @@ impl MachineInfo {
                 "Error: #[machine] structs must have a generic type parameter implementing `State`."));
         }
 
+        let path = Span::call_site().source_file().path();
+        let file_path = path.to_str().unwrap();
+
         Ok(Self {
             name: item.ident.to_string(),
             vis: item.vis.to_token_stream().to_string(),
             derives: item.attrs.iter().filter_map(extract_derive).flatten().collect(),
             fields,
-            file_path: std::env::current_dir()
-                .expect("Failed to get current directory.")
-                .to_string_lossy()
-                .to_string()
-                .into(),
+            file_path: file_path.into(),
             generics: item.generics.to_token_stream().to_string(),
         })
     }
@@ -155,12 +182,19 @@ fn generate_struct_definition(
         quote! { pub #field_ident: #field_ty }
     });
 
-    let derives = &machine_info.derives;
+    let derives = if machine_info.derives.is_empty() {
+        quote! {}
+    } else {
+        let derive_tokens = machine_info.derives.iter().map(|d| syn::parse_str::<syn::Path>(d).unwrap());
+        quote! {
+            #[derive(#(#derive_tokens),*)]
+        }
+    };
 
     quote! {
-        #[derive(#(#derives),*)]
+        #derives
         pub struct #name_ident #generics {
-            #(#fields),*,
+            #( #fields, )*
             marker: core::marker::PhantomData<S>,
             state_data: S::Data,
         }
@@ -177,21 +211,21 @@ impl MachineInfo {
 
     pub fn generate_builder_methods(&self) -> TokenStream {
         let state_enum = self.get_matching_state_enum();
+
         let fields_map = self
             .fields
             .iter()
             .map(|field| {
-                // produce tokens for each field
                 let field_ident = format_ident!("{}", field.name);
                 let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
                 quote! { #field_ident: #field_ty }
-            }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
 
         let field_names = self
             .fields
             .iter()
             .map(|field| {
-                // produce tokens for each field
                 let field_ident = format_ident!("{}", field.name);
                 quote! { #field_ident }
             })
@@ -204,37 +238,83 @@ impl MachineInfo {
             let variant_ident = format_ident!("{}", variant.name);
             let variant_builder_ident = format_ident!("{}Builder", variant.name);
             let lowercase_variant_name = format_ident!("{}_builder", variant.name.to_lowercase());
-            
+
             if let Some(ref data_type_str) = variant.data_type {
                 // For variants with associated data, parse the type.
                 let parsed_data_type = syn::parse_str::<syn::Type>(data_type_str)
                     .expect("Failed to parse state data type");
-                    
+
+                let struct_initialization = if self.fields.is_empty() {
+                    quote! {
+                        #name_ident {
+                            marker: core::marker::PhantomData,
+                            state_data,
+                        }
+                    }
+                } else {
+                    quote! {
+                        #name_ident {
+                            #(#field_names),*,
+                            marker: core::marker::PhantomData,
+                            state_data,
+                        }
+                    }
+                };
+
+                let constructor_signature = if self.fields.is_empty() {
+                    quote! {
+                        pub fn new(state_data: #parsed_data_type) -> #name_ident<#variant_ident>
+                    }
+                } else {
+                    quote! {
+                        pub fn new(#(#fields_map),*, state_data: #parsed_data_type) -> #name_ident<#variant_ident>
+                    }
+                };
+
                 quote! {
                     #[statum::bon::bon(crate = ::statum::bon)]
                     impl #name_ident<#variant_ident> {
                         #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
-                        pub fn new(#(#fields_map),*, state_data: #parsed_data_type) -> #name_ident<#variant_ident> {
-                            #name_ident {
-                                #(#field_names),*,
-                                marker: core::marker::PhantomData,
-                                state_data,
-                            }
+                        #constructor_signature {
+                            #struct_initialization
                         }
                     }
                 }
             } else {
-                // For unit variants, no state_data parameter is needed.
+                // For unit variants (no state data)
+                let struct_initialization = if self.fields.is_empty() {
+                    quote! {
+                        #name_ident {
+                            marker: core::marker::PhantomData,
+                            state_data: (),
+                        }
+                    }
+                } else {
+                    quote! {
+                        #name_ident {
+                            #(#field_names),*,
+                            marker: core::marker::PhantomData,
+                            state_data: (),
+                        }
+                    }
+                };
+
+                let constructor_signature = if self.fields.is_empty() {
+                    quote! {
+                        pub fn new() -> #name_ident<#variant_ident>
+                    }
+                } else {
+                    quote! {
+                        pub fn new(#(#fields_map),*) -> #name_ident<#variant_ident>
+                    }
+                };
+
                 quote! {
                     #[statum::bon::bon(crate = ::statum::bon)]
                     impl #name_ident<#variant_ident> {
                         #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
-                        pub fn new(#(#fields_map),*,) -> #name_ident<#variant_ident> {
-                            #name_ident {
-                                #(#field_names),*,
-                                marker: core::marker::PhantomData,
-                                state_data: (),
-                            }
+                        #constructor_signature {
+                            #struct_initialization
                         }
                     }
                 }
@@ -251,35 +331,63 @@ pub fn validate_machine_struct(
     item: &ItemStruct,
     machine_info: &MachineInfo,
 ) -> Option<TokenStream> {
-    // Ensure it's applied to a struct
-    if !matches!(item, ItemStruct { .. }) {
-        return Some(quote! {
-            compile_error!("#[machine] must be applied to a struct. Example:
+    let matching_state_enum = machine_info.get_matching_state_enum();
 
-            #[state] enum MyState { ... } 
-            #[machine]
-            struct Machine<MyState> {
-                client: String,
-                name: String,
-                priority: u8,
-            }");
+    let machine_derives: Vec<String> = machine_info.derives.clone();
+    let state_derives: Vec<String> = matching_state_enum.derives.clone();
+
+    // Find which derives are missing from the #[state] enum
+    let missing_derives: Vec<String> = machine_derives
+        .iter()
+        .filter(|derive| !state_derives.contains(derive))
+        .cloned()
+        .collect();
+
+    if !missing_derives.is_empty() {
+        let missing_list = missing_derives.join(", ");
+        return Some(quote! {
+            compile_error!(concat!(
+                "The #[state] enum is missing required derives: ",
+                #missing_list,
+                "\nFix: Add the missing derives to your #[state] enum.\n",
+                "Example:\n\n",
+                "#[state]\n",
+                "#[derive(", #missing_list, ")]\n",
+                "pub enum State { Off, On }"
+            ));
         });
     }
 
-    let matching_state_enum = machine_info.get_matching_state_enum();
+    let state_name = matching_state_enum.name.clone();
+    let machine_name = machine_info.name.clone();
 
-    // Ensure the struct has at least one generic type parameter
-    if matching_state_enum.name != item.generics.params[0].to_token_stream().to_string() {
+    // Ensure it's applied to a struct
+    if !matches!(item, ItemStruct { .. }) {
         return Some(quote! {
-            compile_error!("#[machine] structs must have a generic type parameter of the same name as your #[state] enum. Example:
+            compile_error!(concat!(
+                "Error: #[machine] must be applied to a struct.\n\n",
+                "Fix: Apply #[machine] to a struct instead of another type.\n\n",
+                "Example:\n\n",
+                "#[state]\n",
+                "pub enum ", #state_name, " { ... }\n\n",
+                "#[machine]\n",
+                "pub struct ", #machine_name, "<", #state_name, "> { ... }"
+            ));
+        });
+    }
 
-            #[state] enum MyState { ... } 
-            #[machine]
-            struct Machine<MyState> {
-                client: String,
-                name: String,
-                priority: u8,
-            }");
+    // Ensure the struct has at least one generic type parameter matching the #[state] enum
+    let first_generic_param = item.generics.params.first().map(|param| param.to_token_stream().to_string());
+    if first_generic_param.as_deref() != Some(&state_name) {
+        return Some(quote! {
+            compile_error!(concat!(
+                "Error: #[machine] structs must have a generic type parameter that matches the #[state] enum.\n\n",
+                "Fix: Change the generic type parameter of `", #machine_name, "` to match `", #state_name, "`.\n\n",
+                "Expected:\n",
+                "pub struct ", #machine_name, "<", #state_name, "> { ... }\n\n",
+                "Found:\n",
+                "pub struct ", #machine_name, "<", first_generic_param.unwrap_or("<missing>").as_str(), "> { ... }"
+            ));
         });
     }
 
@@ -288,7 +396,5 @@ pub fn validate_machine_struct(
 
 pub fn store_machine_struct(machine_info: &MachineInfo) {
     let mut map = get_machine_map().write().unwrap();
-    println!("[store_machine_struct] Acquired write lock on machine_map.");
     map.insert(machine_info.file_path.clone(), machine_info.clone());
-    println!("[store_machine_struct] Inserted struct into machine_map.");
 }

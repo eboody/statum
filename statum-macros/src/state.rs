@@ -1,3 +1,4 @@
+use proc_macro::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::{
@@ -226,11 +227,8 @@ impl EnumInfo {
             ));
         }
 
-        let file_path = std::env::current_dir()
-            .expect("Failed to get current directory.")
-            .to_string_lossy()
-            .to_string()
-            .into();
+        let path = Span::call_site().source_file().path();
+        let file_path = path.to_str().unwrap();
 
         Ok(Self {
             derives,
@@ -238,7 +236,7 @@ impl EnumInfo {
             name,
             variants,
             generics,
-            file_path,
+            file_path: file_path.into(),
         })
     }
 }
@@ -374,7 +372,5 @@ pub fn validate_state_enum(item: &ItemEnum) -> Option<TokenStream> {
 
 pub fn store_state_enum(enum_info: &EnumInfo) {
     let mut map = get_state_enum_map().write().unwrap();
-    println!("[store_state_enum] Acquired write lock on state_enum_map.");
     map.insert(enum_info.file_path.clone(), enum_info.clone());
-    println!("[store_state_enum] Inserted enum into state_enum_map.");
 }
