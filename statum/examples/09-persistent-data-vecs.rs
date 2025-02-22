@@ -55,31 +55,23 @@ impl Article {
 
 #[tokio::main]
 async fn main() {
-    let articles = [
-        Article {
-            status: Status::Draft,
-        },
-        Article {
-            status: Status::InReview,
-        },
-        Article {
-            status: Status::Published,
-        },
-    ];
+    let articles: Vec<Article> = pretend_db_call().await.unwrap();
+
+    //NOTE: the builder is async because we have an async validator
+    let machine_super_states = articles
+        .machines_builder()
+        .client("client".to_string())
+        .build()
+        .await;
 
     //NOTE: im throwing away the errors here, but in a real application you would want to handle
     //them
-    let machines: Vec<MachineSuperState> = articles
-        .build_machines()
-        .client("client".to_string())
-        .build()
-        .finalize()
-        .await
+    let machine_super_states: Vec<MachineSuperState> = machine_super_states
         .into_iter()
         .filter_map(Result::ok)
         .collect();
 
-    for machine in machines {
+    for machine in machine_super_states {
         match machine {
             MachineSuperState::Draft(_machine) => {
                 println!("_machine is Machine<Draft>");
@@ -92,4 +84,32 @@ async fn main() {
             }
         }
     }
+
+    //OUTPUT:
+    //_machine is Machine<Draft>
+    //_machine is Machine<InReview>
+    //_machine is Machine<Published>
+    //_machine is Machine<Draft>
+    //_machine is Machine<InReview>
+}
+
+async fn pretend_db_call() -> Result<Vec<Article>, statum::Error> {
+    let articles = [
+        Article {
+            status: Status::Draft,
+        },
+        Article {
+            status: Status::InReview,
+        },
+        Article {
+            status: Status::Published,
+        },
+        Article {
+            status: Status::Draft,
+        },
+        Article {
+            status: Status::InReview,
+        },
+    ];
+    Ok(articles.to_vec())
 }
