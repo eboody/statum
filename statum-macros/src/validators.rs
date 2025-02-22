@@ -257,7 +257,6 @@ pub fn batch_builder_implementation(
                .map(|data| data.machine_builder()
                #builder_chain
                .build())
-               .filter_map(core::result::Result::ok)
                .collect()
         }
     } else {
@@ -270,18 +269,17 @@ pub fn batch_builder_implementation(
                     )
                    .await
                    .into_iter()
-                   .filter_map(core::result::Result::ok)
                    .collect()
         }
     };
     let implementation = quote! {
 
         trait #trait_name_ident {
-            #machine_vis #async_token fn build_machines(&self, #(#fields_with_types,)*) -> Vec<#superstate_ident>;
+            #machine_vis #async_token fn build_machines(&self, #(#fields_with_types,)*) -> Vec<core::result::Result<#superstate_ident, statum::Error>>;
         }
 
         impl #trait_name_ident for [#struct_ident] {
-            #machine_vis #async_token fn build_machines(&self, #(#fields_with_types,)*) -> Vec<#superstate_ident> {
+            #machine_vis #async_token fn build_machines(&self, #(#fields_with_types,)*) -> Vec<core::result::Result<#superstate_ident, statum::Error>> {
                 #implementation
             }
         }
