@@ -8,16 +8,18 @@ enum State {
 }
 
 #[machine]
-struct Machine<State> {}
+struct Machine<State> {
+    client: String,
+}
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum Status {
     Draft,
     InReview,
     Published,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Article {
     status: Status,
 }
@@ -69,6 +71,9 @@ async fn main() {
     //them
     let machines: Vec<MachineSuperState> = articles
         .build_machines()
+        .client("client".to_string())
+        .build()
+        .finalize()
         .await
         .into_iter()
         .filter_map(Result::ok)
