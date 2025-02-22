@@ -204,9 +204,27 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
         #batch_builder_impl
     };
 
+    // For each variant, create `is_{variant_name}(&self) -> bool`.
+    let is_methods = state_enum_info.variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        let fn_name = format_ident!("is_{}", crate::to_snake_case(&variant.name));
+        quote! {
+            pub fn #fn_name(&self) -> bool {
+                matches!(self, #superstate_ident::#variant_ident(_))
+            }
+        }
+    });
+
+    let superstate_impl = quote! {
+        impl #superstate_ident {
+            #(#is_methods)*
+        }
+    };
+
     // Merge original item with generated code
     let expanded = quote! {
         #superstate_enum
+        #superstate_impl
         #machine_builder_impl
     };
 

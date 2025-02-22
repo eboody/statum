@@ -25,6 +25,8 @@ struct Article {
 #[validators(Machine)]
 impl Article {
     pub fn is_draft(&self) -> Result<Article, statum::Error> {
+        //NOTE: if there is state data for this state, it's in these validator methods that we have to construct/retrieve it
+
         if self.status == Status::Draft {
             Ok(Article {
                 status: Status::Draft,
@@ -62,9 +64,5 @@ fn main() {
         MachineSuperState::Draft(_machine) => println!("do thing with Machine<Draft>"),
         MachineSuperState::InReview(_machine) => println!("do thing with Machine<InReview>"),
         MachineSuperState::Published(_machine) => println!("do thing with Machine<Published>"),
-    }
-
-    if article.is_draft().is_ok() {
-        let _machine = Machine::<Draft>::builder().state_data(article).build();
     }
 }
