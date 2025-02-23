@@ -1,4 +1,3 @@
-use proc_macro::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::{
@@ -16,7 +15,7 @@ pub struct EnumInfo {
     pub name: String,
     pub variants: Vec<VariantInfo>,
     pub generics: String,
-    pub file_path: StateFilePath,
+    pub module_path: StateModulePath,
 }
 
 impl EnumInfo {
@@ -46,9 +45,9 @@ pub fn to_snake_case(s: &str) -> String {
 
 // Type-safe wrapper around an enum name
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub struct StateFilePath(pub String);
+pub struct StateModulePath(pub String);
 
-impl AsRef<str> for StateFilePath {
+impl AsRef<str> for StateModulePath {
     fn as_ref(&self) -> &str {
         &self.0
     }
@@ -61,7 +60,7 @@ impl EnumInfo {
 }
 
 /// Convert `StateEnumName` into a `TokenStream` (for procedural macros)
-impl ToTokens for StateFilePath {
+impl ToTokens for StateModulePath {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let ident = syn::Ident::new(&self.0, proc_macro2::Span::call_site());
         ident.to_tokens(tokens);
@@ -69,43 +68,43 @@ impl ToTokens for StateFilePath {
 }
 
 /// Convert from `&str` to `StateEnumName`
-impl From<&str> for StateFilePath {
+impl From<&str> for StateModulePath {
     fn from(s: &str) -> Self {
         Self(s.to_string())
     }
 }
 
 /// Convert from `String` to `StateEnumName`
-impl From<String> for StateFilePath {
+impl From<String> for StateModulePath {
     fn from(s: String) -> Self {
         Self(s)
     }
 }
 
 /// Convert from `Ident` (Rust identifiers) to `StateEnumName`
-impl From<Ident> for StateFilePath {
+impl From<Ident> for StateModulePath {
     fn from(ident: Ident) -> Self {
         Self(ident.to_string())
     }
 }
 
 /// Convert from `&Ident` to `StateEnumName`
-impl From<&Ident> for StateFilePath {
+impl From<&Ident> for StateModulePath {
     fn from(ident: &Ident) -> Self {
         Self(ident.to_string())
     }
 }
 
 /// Convert from `TokenStream` to `StateEnumName`
-impl From<TokenStream> for StateFilePath {
+impl From<TokenStream> for StateModulePath {
     fn from(token_stream: TokenStream) -> Self {
         Self(token_stream.to_string())
     }
 }
 
 /// Convert `StateEnumName` into a `TokenStream`
-impl From<StateFilePath> for TokenStream {
-    fn from(state: StateFilePath) -> Self {
+impl From<StateModulePath> for TokenStream {
+    fn from(state: StateModulePath) -> Self {
         let ident = syn::Ident::new(&state.0, proc_macro2::Span::call_site());
         quote! { #ident }
     }
@@ -140,18 +139,18 @@ impl ToTokens for EnumInfo {
 
 // Global storage for `#[state]` enums
 
-static STATE_ENUMS: OnceLock<RwLock<HashMap<StateFilePath, EnumInfo>>> = OnceLock::new();
+static STATE_ENUMS: OnceLock<RwLock<HashMap<StateModulePath, EnumInfo>>> = OnceLock::new();
 
-fn get_state_enum_map() -> &'static RwLock<HashMap<StateFilePath, EnumInfo>> {
+fn get_state_enum_map() -> &'static RwLock<HashMap<StateModulePath, EnumInfo>> {
     STATE_ENUMS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-pub fn read_state_enum_map() -> HashMap<StateFilePath, EnumInfo> {
+pub fn read_state_enum_map() -> HashMap<StateModulePath, EnumInfo> {
     get_state_enum_map().read().unwrap().clone()
 }
 
 pub fn get_state_enum_variant(
-    enum_path: &StateFilePath,
+    enum_path: &StateModulePath,
     variant_name: &str,
 ) -> Option<VariantInfo> {
     read_state_enum_map()
@@ -227,8 +226,7 @@ impl EnumInfo {
             ));
         }
 
-        let path = Span::call_site().source_file().path();
-        let file_path = path.to_str().unwrap();
+        let module_path = module_path!();
 
         Ok(Self {
             derives,
@@ -236,12 +234,12 @@ impl EnumInfo {
             name,
             variants,
             generics,
-            file_path: file_path.into(),
+            module_path: module_path.into(),
         })
     }
 }
 
-pub fn generate_state_impls(enum_path: &StateFilePath) -> proc_macro2::TokenStream {
+pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenStream {
     let enum_info = {
         get_state_enum_map()
             .read()
@@ -372,5 +370,5 @@ pub fn validate_state_enum(item: &ItemEnum) -> Option<TokenStream> {
 
 pub fn store_state_enum(enum_info: &EnumInfo) {
     let mut map = get_state_enum_map().write().unwrap();
-    map.insert(enum_info.file_path.clone(), enum_info.clone());
+    map.insert(enum_info.module_path.clone(), enum_info.clone());
 }

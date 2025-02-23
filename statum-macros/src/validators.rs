@@ -8,21 +8,18 @@ use crate::{
     MachinePath,
 };
 
-use proc_macro::Span;
-
 pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let path = Span::call_site().source_file().path();
-    let file_path = path.to_str().unwrap();
+    let module_path = module_path!();
 
     let machine_ident = parse_macro_input!(attr as Ident);
     let item_impl = parse_macro_input!(item as ItemImpl);
     let struct_ident = &item_impl.clone().self_ty;
 
     let methods = item_impl.items.clone();
-    let modified_methods = inject_machine_fields(&methods, &file_path.into());
+    let modified_methods = inject_machine_fields(&methods, &module_path.into());
 
     // Ensure machine metadata exists
-    let machine_metadata = get_machine_metadata(&file_path.into());
+    let machine_metadata = get_machine_metadata(&module_path.into());
     if machine_metadata.is_none() {
         return quote! {
             compile_error!("Error: No `Machine` found in scope. Ensure `#[validators(Machine)]` references a valid machine.");
@@ -33,7 +30,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let state_enum_map = read_state_enum_map();
     let state_enum_info = state_enum_map
-        .get(&file_path.into())
+        .get(&module_path.into())
         .expect("State enum not found");
 
     let mut found_validators = HashSet::new();
@@ -71,7 +68,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
 
                 // Get expected return type based on state variant data
-                let state_variant = get_state_enum_variant(&file_path.into(), &state_name);
+                let state_variant = get_state_enum_variant(&module_path.into(), &state_name);
 
                 if let Some(state_variant) = state_variant {
                     let expected_return_type = match &state_variant.data_type {
