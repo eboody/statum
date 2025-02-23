@@ -1,23 +1,41 @@
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote, quote_spanned, ToTokens};
 use std::collections::HashMap;
+use syn::spanned::Spanned;
 
 use syn::{FnArg, ImplItem, ImplItemFn, ReturnType};
 
-use syn::{Block, Ident, ItemImpl, Type};
+use syn::Block;
+use syn::{Ident, ItemImpl, Type};
 
 use crate::{get_state_enum_variant, EnumInfo, MachineInfo, MachinePath, StateFilePath};
 
 /// Stores all metadata for a single transition method in an `impl` block
 #[derive(Debug)]
+#[allow(unused)]
 pub struct TransitionFn {
     pub name: Ident,
     pub args: Vec<TokenStream>,
     pub return_type: Option<Type>,
+    pub machine_name: String,
     pub generics: Vec<Ident>,
     pub internals: Block,
     pub is_async: bool,
     pub vis: syn::Visibility,
+    pub span: proc_macro2::Span,
+}
+
+impl TransitionFn {
+    pub fn return_state(&self) -> String {
+        //let r = self.return_type.as_ref().unwrap();
+        let (_, return_state) = parse_machine_and_state(
+            self.return_type.as_ref().expect("Expected a return type"),
+            format_ident!("{}", self.machine_name),
+        )
+        .expect("Expected to be able to parse the return type");
+
+        return_state
+    }
 }
 
 /// Represents the entire `impl` block of our `transition` macro
@@ -33,11 +51,20 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> TransitionImpl {
     // 1) Extract target type (e.g., `Machine<Draft>`)
     let target_type = *item_impl.self_ty.clone();
 
+    let machine_name = target_type
+        .to_token_stream()
+        .to_string()
+        .split('<')
+        .next()
+        .unwrap()
+        .trim()
+        .to_string();
+
     // 2) Collect all transition methods
     let mut functions = Vec::new();
     for item in &item_impl.items {
         if let ImplItem::Fn(method) = item {
-            functions.push(parse_transition_fn(method));
+            functions.push(parse_transition_fn(method, &machine_name));
         }
     }
 
@@ -47,7 +74,7 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> TransitionImpl {
     }
 }
 
-pub fn parse_transition_fn(method: &ImplItemFn) -> TransitionFn {
+pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> TransitionFn {
     // Collect argument names/types with receiver details.
 
     let args: Vec<proc_macro2::TokenStream> = method
@@ -72,7 +99,6 @@ pub fn parse_transition_fn(method: &ImplItemFn) -> TransitionFn {
         ReturnType::Default => None,
     };
 
-    // Collect generics
     let generics = method
         .sig
         .generics
@@ -90,15 +116,18 @@ pub fn parse_transition_fn(method: &ImplItemFn) -> TransitionFn {
     let is_async = method.sig.asyncness.is_some();
 
     let vis = method.vis.to_owned();
+    let span = method.span();
 
     TransitionFn {
         name: method.sig.ident.clone(),
         args,
         return_type,
+        machine_name: machine_name.to_owned(),
         generics,
         internals: method.block.clone(),
         is_async,
         vis,
+        span,
     }
 }
 
@@ -165,171 +194,143 @@ pub fn validate_machine_and_state(
 }
 
 /// Validate all transition function signatures:
-///  - must have exactly one argument
-///  - that argument must be "self"
+///  - must have exactly one argument: `self` or `mut self`
+///  - if the return type is Machine<T> where T is a state variant that carries data,
+///    then the function must call `.transition_with(..)` instead of `.transition()`
 pub fn validate_transition_functions(
     functions: &[TransitionFn],
+    _machine_info: &MachineInfo,
+    state_enum_map: &EnumInfo, // provided state map for looking up state definitions
 ) -> Option<proc_macro2::TokenStream> {
     if functions.is_empty() {
         return Some(quote! {
-            compile_error!("#[transition] impl blocks must contain at least one method returning Machine<SomeState>.");
+            compile_error!("#[transition] impl blocks must contain at least one method returning a valid machine.");
         });
     }
 
     for func in functions {
+        // Ensure the first argument is either 'self' or 'mut self'
         if func.args[0].to_string() != "self" && func.args[0].to_string() != "mut self" {
             let func_name = &func.name;
-            return Some(quote! {
+            return Some(quote_spanned! { func.span =>
                 compile_error!(
                     concat!(
                         "Invalid function signature: ",
                         stringify!(#func_name),
-                        " transition functions must be a method, that is it must take 'self' or 'mut self' as it's first argument."
+                        " transition functions must be a method, that is, it must take 'self' or 'mut self' as its first argument."
                     )
-                )
+                );
             });
+        }
+
+        // Instead of using string-based extraction, we now use machine_info.
+        // We expect the return type to be of the form <machine_info.ident><TargetState>
+        let return_state = func.return_state();
+        let body_str = func.internals.to_token_stream().to_string();
+        // Using our state enum map, check whether the target state requires associated data.
+        if state_has_data(&return_state, state_enum_map) {
+            let variant = state_enum_map.get_variant_from_name(&return_state).unwrap();
+            let data_type = variant.data_type.as_ref().unwrap();
+
+            // Look in the function body: if the user is not calling "transition_with", then error.
+            if !body_str.contains("transition_with") {
+                let func_name = &func.name;
+                return Some(quote_spanned! { func.span =>
+                    compile_error!(
+                        concat!(
+                            "Invalid transition function: ",
+                            stringify!(#func_name),
+                            " returns a state variant with associated data: ",
+                            stringify!(#data_type),
+                            ". Use .transition_with(",
+                            stringify!(#data_type),
+                            ") instead of .transition()."
+                        )
+                    );
+                });
+            }
+        } else {
+            // For states with no associated data, ensure transition_with is not used.
+            if body_str.contains("transition_with") {
+                let func_name = &func.name;
+                return Some(quote_spanned! { func.span =>
+                    compile_error!(
+                        concat!(
+                            "Invalid transition function: ",
+                            stringify!(#func_name),
+                            " returns a state variant with no associated data. Use .transition() instead of .transition_with(..)."
+                        )
+                    );
+                });
+            }
         }
     }
     None
 }
 
+/// Checks whether the given state variant (by name) requires associated data.
+/// Assumes `state_enum_map` maps state names to an info struct with a `has_data` field.
+fn state_has_data(state: &str, state_enum_map: &EnumInfo) -> bool {
+    let path = state_enum_map.file_path.clone();
+
+    let variant_info =
+        get_state_enum_variant(&path, state).expect("Expected a valid state variant");
+
+    variant_info.data_type.is_some()
+}
+
 pub fn generate_transition_impl(
+    input: &ItemImpl,
     tr_impl: &TransitionImpl,
     target_machine_info: &MachineInfo,
     file_path: &str,
 ) -> proc_macro2::TokenStream {
-    let target_type = &tr_impl.target_type;
+    let target_type = &tr_impl.target_type; // e.g., `OrderMachine<Cart>`
     let machine_target_ident = format_ident!("{}", target_machine_info.name);
+    let field_names = target_machine_info.field_names();
 
-    let (_, target_state) = parse_machine_and_state(target_type, machine_target_ident.clone())
-        .expect("Expected a state name");
+    // Iterate over transition functions
+    let transition_impls = tr_impl.functions.iter().map(|function| {
+        let return_state = function.return_state(); // Extracts `NextState`
+        let return_state_ident = format_ident!("{}", return_state);
 
-    let target_state_variant = get_state_enum_variant(&file_path.into(), &target_state)
-        .expect("Expected a valid state variant. This should have been validated earlier.");
+        let next_state_variant = get_state_enum_variant(&file_path.into(), &return_state)
+            .expect("Expected a valid state variant. This should have been validated earlier.");
 
-    // Then generate code for each user-defined function
-    let user_fns = tr_impl.functions.iter().map(|function| {
-        let name = &function.name;
-        let args = function.args.clone();
-        let generics = function.generics.iter().map(|gen| format_ident!("{}", gen));
-        let return_type = function.return_type.as_ref().map(|ty| quote!(-> #ty));
-
-        let block = &function.internals; // syn::Block
-        // If the block uses get_data_mut, then check for Clone on machine and state
-
-        // Prepare an empty token stream to potentially hold an error
-        let mut extra_tokens = quote! {};
-        if contains_get_data_mut(block) {
-            if !target_machine_info
-                .derives
-                .iter()
-                .any(|d| d.trim() == "Clone")
-            {
-                extra_tokens = quote! {
-                    compile_error!("Using get_data_mut requires that the machine struct derive Clone. Please add #[derive(Clone)] to your machine struct.");
-                };
-            } else {
-                let state_enum = target_machine_info.get_matching_state_enum();
-                if !state_enum.derives.iter().any(|d| d.trim() == "Clone") {
-                    extra_tokens = quote! {
-                        compile_error!("Using get_data_mut requires that the state enum derive Clone. Please add #[derive(Clone)] to your #[state] enum.");
-                    };
-                }
-            }
-        }
-        let mut transition_impl = quote! {};
-
-        if let Some(ref return_type) = function.return_type {
-            let (_return_machine_name, return_state_name) =
-                parse_machine_and_state(return_type, machine_target_ident.clone()).expect("Expected a state name");
-
-            let return_state_info = get_state_enum_variant(&file_path.into(), &return_state_name)
-                .expect("Expected a valid state variant. This should have been validated earlier.");
-
-            let fields = target_machine_info.fields_to_token_stream();
-
-            let return_state = format_ident!("{}", return_state_name);
-
-            transition_impl = if let Some(data_type) = &return_state_info.data_type {
-                let data_type = format_ident!("{}", data_type);
-                quote! {
-                    pub fn transition(self, data: #data_type) -> #machine_target_ident<#return_state>
-                    {
+        //  Implement `TransitionTo<NextState>` instead of `Transition`
+        if let Some(data_type) = &next_state_variant.data_type {
+            let data_type = syn::parse_str::<syn::Type>(data_type).unwrap();
+            quote! {
+                impl TransitionWith<#data_type> for #target_type {
+                    type NextState = #return_state_ident;
+                    fn transition_with(self, data: #data_type) -> #machine_target_ident<Self::NextState> {
                         #machine_target_ident {
-                            #fields
                             marker: core::marker::PhantomData,
                             state_data: data,
+                            #(#field_names: self.#field_names,)*
                         }
                     }
                 }
-            } else {
-                quote! {
-                    pub fn transition(self) -> #machine_target_ident<#return_state>
-                    {
+            }
+        } else {
+            quote! {
+                impl TransitionTo<#return_state_ident> for #target_type {
+                    fn transition(self) -> #machine_target_ident<#return_state_ident> {
                         #machine_target_ident {
-                            #fields
                             marker: core::marker::PhantomData,
                             state_data: (),
+                            #(#field_names: self.#field_names,)*
                         }
                     }
                 }
             }
-        }
-
-        let mut get_data_impl = quote! {};
-
-        if let Some(data_type) = &target_state_variant.data_type {
-            let data_type = format_ident!("{}", data_type);
-
-            get_data_impl = quote! {
-                pub fn get_data(&self) -> &#data_type {
-                    &self.state_data
-                }
-
-                pub fn get_data_mut(&mut self) -> &mut #data_type {
-                    &mut self.state_data
-                }
-            }
-        }
-
-        let async_token = if function.is_async { quote! { async } } else { quote! {} };
-        let vis_token = &function.vis;
-
-        quote! {
-            #transition_impl
-            #vis_token #async_token fn #name<#(#generics),*>(#(#args),*) #return_type
-            #block
-
-            #extra_tokens
-            #get_data_impl
         }
     });
 
     quote! {
-        impl #target_type {
-            #(#user_fns)*
-        }
+        #(#transition_impls)*
+        #input // Append the original impl block
     }
-}
-use syn::visit::Visit;
-
-struct GetDataMutVisitor {
-    found: bool,
-}
-
-impl<'ast> Visit<'ast> for GetDataMutVisitor {
-    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
-        if node.method == "get_data_mut" {
-            self.found = true;
-        }
-        syn::visit::visit_expr_method_call(self, node);
-    }
-}
-
-fn contains_get_data_mut(block: &syn::Block) -> bool {
-    let mut visitor = GetDataMutVisitor { found: false };
-    syn::visit::visit_block(&mut visitor, block);
-    visitor.found
 }
 
 use syn::{AngleBracketedGenericArguments, GenericArgument, PathArguments, TypePath};
@@ -353,15 +354,15 @@ pub fn parse_machine_and_state(ty: &Type, target_machine_ident: Ident) -> Option
     // Extract the LAST segment in the path, even if it has multiple segments (e.g. `some::error::Result`)
     let last_segment = path.segments.last()?;
 
-    let ident_str = last_segment.ident.to_string();
+    let return_machine_ident = last_segment.ident.clone();
 
     // 1) If it's `Machine`, parse the single generic as `SomeState`.
-    if target_machine_ident == ident_str {
+    if target_machine_ident == return_machine_ident {
         return extract_machine_generic(&last_segment.arguments, target_machine_ident);
     }
 
     // 2) If it's `Option`, parse the first generic argument -> presumably `Machine<SomeState>`.
-    if ident_str == "Option" {
+    if return_machine_ident == "Option" {
         if let Some(inner_ty) = extract_first_generic_type(&last_segment.arguments) {
             return parse_machine_and_state(&inner_ty, target_machine_ident);
         }
@@ -369,7 +370,7 @@ pub fn parse_machine_and_state(ty: &Type, target_machine_ident: Ident) -> Option
     }
 
     // 3) If it's `Result`, parse the first generic argument -> presumably `Machine<SomeState>`.
-    if ident_str == "Result" {
+    if return_machine_ident == "Result" {
         if let Some(inner_ty) = extract_first_generic_type(&last_segment.arguments) {
             return parse_machine_and_state(&inner_ty, target_machine_ident);
         }
