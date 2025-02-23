@@ -1,11 +1,10 @@
-use proc_macro::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
-use syn::{Attribute, Generics, Ident, ItemStruct};
+use syn::{Attribute, Generics, Ident, ItemStruct, Visibility};
 
-use crate::{read_state_enum_map, EnumInfo, StateFilePath};
+use crate::{read_state_enum_map, EnumInfo, StateModulePath};
 
 impl<T: ToString> From<T> for MachinePath {
     fn from(value: T) -> Self {
@@ -14,9 +13,9 @@ impl<T: ToString> From<T> for MachinePath {
 }
 
 // Convert MachinePath to StatePath
-impl From<MachinePath> for StateFilePath {
+impl From<MachinePath> for StateModulePath {
     fn from(machine: MachinePath) -> Self {
-        StateFilePath(machine.0)
+        StateModulePath(machine.0)
     }
 }
 
@@ -27,7 +26,7 @@ pub struct MachineInfo {
     pub vis: String,
     pub derives: Vec<String>,
     pub fields: Vec<MachineField>,
-    pub file_path: MachinePath,
+    pub module_path: MachinePath,
     pub generics: String,
 }
 
@@ -109,15 +108,14 @@ impl MachineInfo {
                 "Error: #[machine] structs must have a generic type parameter implementing `State`."));
         }
 
-        let path = Span::call_site().source_file().path();
-        let file_path = path.to_str().unwrap();
+        let module_path = module_path!();
 
         Ok(Self {
             name: item.ident.to_string(),
             vis: item.vis.to_token_stream().to_string(),
             derives: item.attrs.iter().filter_map(extract_derive).flatten().collect(),
             fields,
-            file_path: file_path.into(),
+            module_path: module_path.into(),
             generics: item.generics.to_token_stream().to_string(),
         })
     }
@@ -132,22 +130,9 @@ impl ToTokens for MachinePath {
     }
 }
 
-//impl MachineInfo {
-//    pub fn fields_to_token_stream(&self) -> TokenStream {
-//        let fields = self.fields.iter().map(|field| {
-//            let field_ident = format_ident!("{}", field.name);
-//            quote! { #field_ident: self.#field_ident, }
-//        });
-//
-//        quote! {
-//            #(#fields)*
-//        }
-//    }
-//}
-
 // Generates struct-based metadata implementations
 pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenStream {
-    if let Some(machine_info) = get_machine_map().read().unwrap().get(&machine_info.file_path) {
+    if let Some(machine_info) = get_machine_map().read().unwrap().get(&machine_info.module_path) {
         let name_ident = format_ident!("{}", machine_info.name);
         let generics = parse_generics(machine_info);
         let struct_def = generate_struct_definition(machine_info, &name_ident, &generics);
@@ -209,11 +194,12 @@ fn generate_struct_definition(
         }
     };
 
+    let vis: Visibility = syn::parse_str(&machine_info.vis).expect("Failed to parse visibility.");
     quote! {
         #derives
-        pub struct #name_ident #generics {
+        #vis struct #name_ident #generics {
             marker: core::marker::PhantomData<S>,
-            state_data: S::Data,
+            pub state_data: S::Data,
             #( #fields ),*
         }
     }
@@ -222,7 +208,7 @@ fn generate_struct_definition(
 impl MachineInfo {
     pub fn get_matching_state_enum(&self) -> EnumInfo {
         read_state_enum_map()
-            .get(&self.file_path.clone().into())
+            .get(&self.module_path.clone().into())
             .expect("Failed to read state_enum_map.")
             .clone()
     }
@@ -414,5 +400,5 @@ pub fn validate_machine_struct(
 
 pub fn store_machine_struct(machine_info: &MachineInfo) {
     let mut map = get_machine_map().write().unwrap();
-    map.insert(machine_info.file_path.clone(), machine_info.clone());
+    map.insert(machine_info.module_path.clone(), machine_info.clone());
 }

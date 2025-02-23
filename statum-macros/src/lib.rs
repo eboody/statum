@@ -1,5 +1,3 @@
-#![feature(proc_macro_span)]
-
 moddef::moddef!(
     flat (pub) mod {
     },
@@ -11,7 +9,7 @@ moddef::moddef!(
     }
 );
 
-use proc_macro::{Span, TokenStream};
+use proc_macro::TokenStream;
 use syn::{parse_macro_input, ItemEnum, ItemImpl, ItemStruct};
 
 #[proc_macro_attribute]
@@ -29,7 +27,7 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     store_state_enum(&enum_info);
 
     // Generate structs and implementations dynamically
-    let expanded = generate_state_impls(&enum_info.file_path);
+    let expanded = generate_state_impls(&enum_info.module_path);
 
     TokenStream::from(expanded)
 }
@@ -65,17 +63,16 @@ pub fn transition(
     let tr_impl = parse_transition_impl(&input);
 
     // -- Step 2: Perform validations
-    let path = Span::call_site().source_file().path();
-    let file_path = path.to_str().unwrap();
+    let module_path = module_path!();
 
     let machine_map = get_machine_map().read().unwrap();
     let state_enum_map = read_state_enum_map();
     let state_enum_info = state_enum_map
-        .get(&file_path.into())
+        .get(&module_path.into())
         .expect("State enum not found");
 
     if let Some(err) =
-        validate_machine_and_state(&tr_impl, file_path, &machine_map, &state_enum_map)
+        validate_machine_and_state(&tr_impl, module_path, &machine_map, &state_enum_map)
     {
         return err.into();
     }
@@ -83,7 +80,7 @@ pub fn transition(
     // Retrieve references to the actual MachineInfo / EnumInfo if you need them
     // If you need them for codegen, you can do something like:
     let machine_info = machine_map
-        .get(&file_path.into())
+        .get(&module_path.into())
         .expect("Machine not found, even though we validated above");
 
     if let Some(err) =
@@ -93,7 +90,7 @@ pub fn transition(
     }
 
     // -- Step 3: Generate new code
-    let expanded = generate_transition_impl(&input, &tr_impl, machine_info, file_path);
+    let expanded = generate_transition_impl(&input, &tr_impl, machine_info, module_path);
 
     // Combine expanded code with the original `impl` if needed
     // or simply return the expanded code

@@ -8,7 +8,7 @@ use syn::{FnArg, ImplItem, ImplItemFn, ReturnType};
 use syn::Block;
 use syn::{Ident, ItemImpl, Type};
 
-use crate::{get_state_enum_variant, EnumInfo, MachineInfo, MachinePath, StateFilePath};
+use crate::{get_state_enum_variant, EnumInfo, MachineInfo, MachinePath, StateModulePath};
 
 /// Stores all metadata for a single transition method in an `impl` block
 #[derive(Debug)]
@@ -137,7 +137,7 @@ pub fn validate_machine_and_state(
     tr_impl: &TransitionImpl,
     file_path: &str,
     machine_map: &HashMap<MachinePath, MachineInfo>,
-    state_enum_map: &HashMap<StateFilePath, EnumInfo>,
+    state_enum_map: &HashMap<StateModulePath, EnumInfo>,
 ) -> Option<proc_macro2::TokenStream> {
     let target_type_str = tr_impl.target_type.to_token_stream().to_string();
 
@@ -271,7 +271,7 @@ pub fn validate_transition_functions(
 /// Checks whether the given state variant (by name) requires associated data.
 /// Assumes `state_enum_map` maps state names to an info struct with a `has_data` field.
 fn state_has_data(state: &str, state_enum_map: &EnumInfo) -> bool {
-    let path = state_enum_map.file_path.clone();
+    let path = state_enum_map.module_path.clone();
 
     let variant_info =
         get_state_enum_variant(&path, state).expect("Expected a valid state variant");
