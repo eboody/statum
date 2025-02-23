@@ -70,13 +70,13 @@ pub fn transition(
 
     let machine_map = get_machine_map().read().unwrap();
     let state_enum_map = read_state_enum_map();
+    let state_enum_info = state_enum_map
+        .get(&file_path.into())
+        .expect("State enum not found");
 
     if let Some(err) =
         validate_machine_and_state(&tr_impl, file_path, &machine_map, &state_enum_map)
     {
-        return err.into();
-    }
-    if let Some(err) = validate_transition_functions(&tr_impl.functions) {
         return err.into();
     }
 
@@ -86,8 +86,14 @@ pub fn transition(
         .get(&file_path.into())
         .expect("Machine not found, even though we validated above");
 
+    if let Some(err) =
+        validate_transition_functions(&tr_impl.functions, machine_info, state_enum_info)
+    {
+        return err.into();
+    }
+
     // -- Step 3: Generate new code
-    let expanded = generate_transition_impl(&tr_impl, machine_info, file_path);
+    let expanded = generate_transition_impl(&input, &tr_impl, machine_info, file_path);
 
     // Combine expanded code with the original `impl` if needed
     // or simply return the expanded code

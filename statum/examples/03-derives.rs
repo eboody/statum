@@ -22,7 +22,7 @@ fn main() {
 
     let json_machine = serde_json::to_string(&machine_clone).unwrap();
 
-    println!("{}", json_machine);
+    println!("It's been successfully deserialized: {}", json_machine);
 
     let _deserialized_machine: Machine<Draft> = serde_json::from_str(&json_machine).unwrap();
 }

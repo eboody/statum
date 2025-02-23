@@ -132,18 +132,18 @@ impl ToTokens for MachinePath {
     }
 }
 
-impl MachineInfo {
-    pub fn fields_to_token_stream(&self) -> TokenStream {
-        let fields = self.fields.iter().map(|field| {
-            let field_ident = format_ident!("{}", field.name);
-            quote! { #field_ident: self.#field_ident, }
-        });
-
-        quote! {
-            #(#fields)*
-        }
-    }
-}
+//impl MachineInfo {
+//    pub fn fields_to_token_stream(&self) -> TokenStream {
+//        let fields = self.fields.iter().map(|field| {
+//            let field_ident = format_ident!("{}", field.name);
+//            quote! { #field_ident: self.#field_ident, }
+//        });
+//
+//        quote! {
+//            #(#fields)*
+//        }
+//    }
+//}
 
 // Generates struct-based metadata implementations
 pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenStream {
@@ -152,8 +152,10 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
         let generics = parse_generics(machine_info);
         let struct_def = generate_struct_definition(machine_info, &name_ident, &generics);
         let builder_methods = machine_info.generate_builder_methods();
+        let transition_traits = transition_traits(machine_info);
 
         quote! {
+            #transition_traits
             #struct_def
             #builder_methods
         }
@@ -169,6 +171,22 @@ fn parse_generics(machine_info: &MachineInfo) -> Generics {
         &format!("S: {} = Uninitialized{}", state_enum.get_trait_name(), &state_enum.name),
     );
     syn::parse_str::<Generics>(&generics_str).expect("Failed to parse generics.")
+}
+
+fn transition_traits(machine_info: &MachineInfo) -> TokenStream {
+    let state_enum = machine_info.get_matching_state_enum();
+    let trait_name = state_enum.get_trait_name();
+    let machine_name = format_ident!("{}", machine_info.name);
+    quote! {
+        pub trait TransitionTo<N: #trait_name> {
+            fn transition(self) -> #machine_name<N>;
+        }
+
+        pub trait TransitionWith<T> {
+            type NextState: #trait_name;
+            fn transition_with(self, data: T) -> #machine_name<Self::NextState>;
+        }
+    }
 }
 
 fn generate_struct_definition(
@@ -194,9 +212,9 @@ fn generate_struct_definition(
     quote! {
         #derives
         pub struct #name_ident #generics {
-            #( #fields, )*
             marker: core::marker::PhantomData<S>,
             state_data: S::Data,
+            #( #fields ),*
         }
     }
 }
@@ -254,9 +272,9 @@ impl MachineInfo {
                 } else {
                     quote! {
                         #name_ident {
-                            #(#field_names),*,
                             marker: core::marker::PhantomData,
                             state_data,
+                            #(#field_names,)*
                         }
                     }
                 };
@@ -267,7 +285,7 @@ impl MachineInfo {
                     }
                 } else {
                     quote! {
-                        pub fn new(#(#fields_map),*, state_data: #parsed_data_type) -> #name_ident<#variant_ident>
+                        pub fn new(#(#fields_map,)* state_data: #parsed_data_type) -> #name_ident<#variant_ident>
                     }
                 };
 
@@ -292,9 +310,9 @@ impl MachineInfo {
                 } else {
                     quote! {
                         #name_ident {
-                            #(#field_names),*,
                             marker: core::marker::PhantomData,
                             state_data: (),
+                            #(#field_names),*
                         }
                     }
                 };

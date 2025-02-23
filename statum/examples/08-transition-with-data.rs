@@ -36,7 +36,7 @@ impl Machine<Draft> {
         // NOTE: when transitioning to InReview, we need to provide the transition method with the
         // next state's data. In this case, we are transitioning to InReview and we need to provide DraftWithComment
         // This will make the data available for use in the next state
-        self.transition(draft_with_comment)
+        self.transition_with(draft_with_comment)
     }
 }
 

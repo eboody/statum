@@ -16,8 +16,6 @@ struct MyDraft {
 #[machine]
 struct Machine<State> {}
 
-
-
 #[transition]
 impl Machine<Draft> {
     pub fn into_in_review(self) -> Machine<InReview> {
