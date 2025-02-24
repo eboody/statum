@@ -1,8 +1,6 @@
 use statum::{machine, state, transition};
 
-// Example 1: Hierarchical FSMs (Sub-State Machines)
-
-pub mod task {
+mod task {
     use super::*;
 
     #[state]
@@ -18,7 +16,7 @@ pub mod task {
     pub struct Machine<State> {}
 }
 
-pub mod workflow {
+mod workflow {
     use super::*;
 
     #[state]
