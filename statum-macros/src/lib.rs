@@ -39,7 +39,7 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemStruct);
 
-    let machine_info = MachineInfo::from_item_struct(&input).expect("Failed to parse MachineInfo");
+    let machine_info = MachineInfo::from_item_struct(&input);
 
     // Validate the struct before proceeding
     if let Some(error) = validate_machine_struct(&input, &machine_info) {

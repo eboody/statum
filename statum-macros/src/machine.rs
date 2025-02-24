@@ -31,29 +31,28 @@ pub struct MachineInfo {
     pub generics: String,
 }
 
-impl MachineInfo{
+impl MachineInfo {
     pub fn field_names(&self) -> Vec<Ident> {
         let field_names = self
-        .fields
-        .iter()
-        .map(|field| format_ident!("{}", field.name))
-        .collect::<Vec<_>>();
+            .fields
+            .iter()
+            .map(|field| format_ident!("{}", field.name))
+            .collect::<Vec<_>>();
         field_names
     }
 
     pub fn fields_with_types(&self) -> Vec<TokenStream> {
-    let fields_map = self
-        .fields
-        .iter()
-        .map(|field| {
-            let field_ident = format_ident!("{}", field.name);
-            let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
-            quote! { #field_ident: #field_ty }
-        })
-        .collect::<Vec<_>>();
+        let fields_map = self
+            .fields
+            .iter()
+            .map(|field| {
+                let field_ident = format_ident!("{}", field.name);
+                let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
+                quote! { #field_ident: #field_ty }
+            })
+            .collect::<Vec<_>>();
         fields_map
     }
-
 }
 
 // Structure to store each field in the struct
@@ -66,7 +65,6 @@ pub struct MachineField {
 // Type-safe wrapper for struct names
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct MachinePath(pub String);
-
 
 // Global storage for all `#[machine]` structs
 static MACHINE_MAP: OnceLock<RwLock<HashMap<MachinePath, MachineInfo>>> = OnceLock::new();
@@ -85,44 +83,62 @@ pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
     if !attr.path().is_ident("derive") {
         return None;
     }
-    attr.meta.require_list().ok()?.parse_args_with(
-        syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
-    ).ok()
-    .map(|punctuated| {
-        punctuated.iter().map(|p| p.to_token_stream().to_string()).collect()
-    })
+    attr.meta
+        .require_list()
+        .ok()?
+        .parse_args_with(syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated)
+        .ok()
+        .map(|punctuated| {
+            punctuated
+                .iter()
+                .map(|p| p.to_token_stream().to_string())
+                .collect()
+        })
 }
-
 
 // Extracts machine struct information
 impl MachineInfo {
-    pub fn from_item_struct(item: &ItemStruct) -> syn::Result<Self> {
-        let fields = item.fields.iter().filter_map(|field| {
-            field.ident.as_ref().map(|ident| MachineField {
-                name: ident.to_string(),
-                field_type: field.ty.to_token_stream().to_string(),
+    pub fn from_item_struct(item: &ItemStruct) -> Self {
+        let fields = item
+            .fields
+            .iter()
+            .filter_map(|field| {
+                field.ident.as_ref().map(|ident| MachineField {
+                    name: ident.to_string(),
+                    field_type: field.ty.to_token_stream().to_string(),
+                })
             })
-        }).collect();
+            .collect();
 
         if item.generics.params.is_empty() {
-            return Err(syn::Error::new_spanned(item, 
-                "Error: #[machine] structs must have a generic type parameter implementing `State`."));
+            panic!(
+                "Error: \n#[machine] structs must have a generic type parameter that matches the #[state] enum.\n\n\
+                 Fix: Change the generic type parameter of `{}` to match `MyStateEnum`.\n\n\
+                 Expected:\n\
+                 pub struct {}<MyStateEnum> {{ ... }}\n\n\
+                 Found:\n\
+                 pub struct {} {{ ... }}",
+                item.ident, item.ident, item.ident
+            );
         }
-
 
         let module_path = get_pseudo_module_path();
 
-        Ok(Self {
+        Self {
             name: item.ident.to_string(),
             vis: item.vis.to_token_stream().to_string(),
-            derives: item.attrs.iter().filter_map(extract_derive).flatten().collect(),
+            derives: item
+                .attrs
+                .iter()
+                .filter_map(extract_derive)
+                .flatten()
+                .collect(),
             fields,
             module_path: module_path.into(),
             generics: item.generics.to_token_stream().to_string(),
-        })
+        }
     }
 }
-
 
 /// Allow `MachineName` to be used directly in `quote!`
 impl ToTokens for MachinePath {
@@ -147,7 +163,11 @@ impl ToTokens for MachinePath {
 
 // Generates struct-based metadata implementations
 pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenStream {
-    if let Some(machine_info) = get_machine_map().read().unwrap().get(&machine_info.module_path) {
+    if let Some(machine_info) = get_machine_map()
+        .read()
+        .unwrap()
+        .get(&machine_info.module_path)
+    {
         let name_ident = format_ident!("{}", machine_info.name);
         let generics = parse_generics(machine_info);
         let struct_def = generate_struct_definition(machine_info, &name_ident, &generics);
@@ -168,7 +188,11 @@ fn parse_generics(machine_info: &MachineInfo) -> Generics {
     let state_enum = &machine_info.get_matching_state_enum();
     let generics_str = machine_info.generics.trim().replace(
         &state_enum.name,
-        &format!("S: {} = Uninitialized{}", state_enum.get_trait_name(), &state_enum.name),
+        &format!(
+            "S: {} = Uninitialized{}",
+            state_enum.get_trait_name(),
+            &state_enum.name
+        ),
     );
     syn::parse_str::<Generics>(&generics_str).expect("Failed to parse generics.")
 }
@@ -203,13 +227,17 @@ fn generate_struct_definition(
     let derives = if machine_info.derives.is_empty() {
         quote! {}
     } else {
-        let derive_tokens = machine_info.derives.iter().map(|d| syn::parse_str::<syn::Path>(d).unwrap());
+        let derive_tokens = machine_info
+            .derives
+            .iter()
+            .map(|d| syn::parse_str::<syn::Path>(d).unwrap());
         quote! {
             #[derive(#(#derive_tokens),*)]
         }
     };
 
     let vis: Visibility = syn::parse_str(&machine_info.vis).expect("Failed to parse visibility.");
+
     quote! {
         #derives
         #vis struct #name_ident #generics {
@@ -396,7 +424,11 @@ pub fn validate_machine_struct(
     }
 
     // Ensure the struct has at least one generic type parameter matching the #[state] enum
-    let first_generic_param = item.generics.params.first().map(|param| param.to_token_stream().to_string());
+    let first_generic_param = item
+        .generics
+        .params
+        .first()
+        .map(|param| param.to_token_stream().to_string());
     if first_generic_param.as_deref() != Some(&state_name) {
         return Some(quote! {
             compile_error!(concat!(

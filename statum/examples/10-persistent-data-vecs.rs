@@ -12,14 +12,13 @@ struct Machine<State> {
     client: String,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq)]
 enum Status {
     Draft,
     InReview,
     Published,
 }
 
-#[derive(Debug, Clone)]
 struct Article {
     status: Status,
 }
@@ -112,5 +111,5 @@ async fn pretend_db_call() -> Result<Vec<Article>, statum::Error> {
             status: Status::InReview,
         },
     ];
-    Ok(articles.to_vec())
+    Ok(articles.into())
 }

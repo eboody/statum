@@ -11,7 +11,6 @@ use syn::{Ident, ItemImpl, Type};
 use crate::{get_state_enum_variant, EnumInfo, MachineInfo, MachinePath, StateModulePath};
 
 /// Stores all metadata for a single transition method in an `impl` block
-#[derive(Debug)]
 #[allow(unused)]
 pub struct TransitionFn {
     pub name: Ident,
@@ -39,7 +38,6 @@ impl TransitionFn {
 }
 
 /// Represents the entire `impl` block of our `transition` macro
-#[derive(Debug)]
 pub struct TransitionImpl {
     /// The concrete type being implemented (e.g. `Machine<Draft>`)
     pub target_type: Type,
