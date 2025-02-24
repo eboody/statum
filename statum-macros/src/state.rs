@@ -1,5 +1,4 @@
 use module_path_extractor::get_pseudo_module_path;
-use proc_macro::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::{

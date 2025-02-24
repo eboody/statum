@@ -1,5 +1,4 @@
 use module_path_extractor::get_pseudo_module_path;
-use proc_macro::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
@@ -148,7 +147,6 @@ impl ToTokens for MachinePath {
 
 // Generates struct-based metadata implementations
 pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenStream {
-    println!("\nmachine_info:\n{:#?}", machine_info);
     if let Some(machine_info) = get_machine_map().read().unwrap().get(&machine_info.module_path) {
         let name_ident = format_ident!("{}", machine_info.name);
         let generics = parse_generics(machine_info);
