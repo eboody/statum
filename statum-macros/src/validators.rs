@@ -259,8 +259,8 @@ pub fn batch_builder_implementation(
 
     quote! {
         // ✅ Trait to enable batch building
-        trait #trait_name_ident {
-            #machine_vis fn machines_builder(self) -> #bon_builder_ident<#builder_module_name::SetItems>;
+        #machine_vis trait #trait_name_ident {
+             fn machines_builder(self) -> #bon_builder_ident<#builder_module_name::SetItems>;
         }
 
         // ✅ Implement trait for anything convertible into Vec<#struct_ident>
@@ -268,7 +268,7 @@ pub fn batch_builder_implementation(
         where
             T: Into<Vec<#struct_ident>>,  // ✅ Works for Vec<T> AND slices
         {
-            #machine_vis fn machines_builder(self) -> #bon_builder_ident<#builder_module_name::SetItems> {
+            fn machines_builder(self) -> #bon_builder_ident<#builder_module_name::SetItems> {
                 #builder_ident::builder().items(self.into())  // ✅ Moves Vec<T> without Clone
             }
         }
@@ -294,7 +294,7 @@ pub fn batch_builder_implementation(
 
         // ✅ Finalization logic for batch processing
         impl #builder_ident {
-            #machine_vis #async_token fn __private_finalize(self) -> Vec<core::result::Result<#superstate_ident, statum::Error>> {
+            #async_token fn __private_finalize(self) -> Vec<core::result::Result<#superstate_ident, statum::Error>> {
                 #implementation
             }
         }
