@@ -135,7 +135,7 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> Transitio
 /// Returns `Some(error_tokens)` if there is a validation error; otherwise `None`.
 pub fn validate_machine_and_state(
     tr_impl: &TransitionImpl,
-    file_path: &str,
+    module_path: &str,
     machine_map: &HashMap<MachinePath, MachineInfo>,
     state_enum_map: &HashMap<StateModulePath, EnumInfo>,
 ) -> Option<proc_macro2::TokenStream> {
@@ -149,7 +149,7 @@ pub fn validate_machine_and_state(
         .map(|s| s.trim_end_matches('>').trim().to_string());
 
     // 1) Validate machine
-    let machine_info = machine_map.get(&file_path.into());
+    let machine_info = machine_map.get(&module_path.into());
     if machine_info.is_none() {
         let machine_name_clone = machine_name.clone();
         return Some(quote! {
@@ -164,9 +164,9 @@ pub fn validate_machine_and_state(
     }
 
     // 2) Validate state variant
-    let found_enum_and_variant = state_enum_map.iter().any(|(state_enum_file_path, info)| {
-        // We only match the same file path
-        state_enum_file_path == &file_path.to_owned().into()
+    let found_enum_and_variant = state_enum_map.iter().any(|(state_enum_module_path, info)| {
+        // We only match the same module path
+        state_enum_module_path == &module_path.to_owned().into()
             && state_name
                 .as_ref()
                 .is_some_and(|state| info.variants.iter().any(|variant| &variant.name == state))
@@ -174,8 +174,9 @@ pub fn validate_machine_and_state(
 
     let associated_state_enum = state_enum_map
         .iter()
-        .find(|(state_enum_file_path, _)| state_enum_file_path.as_ref() == file_path)
+        .find(|(state_enum_module_path, _)| state_enum_module_path.as_ref() == module_path)
         .expect("Expected a state enum for this file");
+
     let associated_state_enum_name = &associated_state_enum.1.name;
     if !found_enum_and_variant {
         return Some(quote! {
@@ -283,7 +284,7 @@ pub fn generate_transition_impl(
     input: &ItemImpl,
     tr_impl: &TransitionImpl,
     target_machine_info: &MachineInfo,
-    file_path: &str,
+    module_path: &str,
 ) -> proc_macro2::TokenStream {
     let target_type = &tr_impl.target_type; // e.g., `OrderMachine<Cart>`
     let machine_target_ident = format_ident!("{}", target_machine_info.name);
@@ -294,7 +295,7 @@ pub fn generate_transition_impl(
         let return_state = function.return_state(); // Extracts `NextState`
         let return_state_ident = format_ident!("{}", return_state);
 
-        let next_state_variant = get_state_enum_variant(&file_path.into(), &return_state)
+        let next_state_variant = get_state_enum_variant(&module_path.into(), &return_state)
             .expect("Expected a valid state variant. This should have been validated earlier.");
 
         //  Implement `TransitionTo<NextState>` instead of `Transition`

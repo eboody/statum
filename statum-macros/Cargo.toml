@@ -2,6 +2,7 @@
 proc-macro2 = { version = "1.0", features = [] }
 quote = "1.0"
 trybuild = "*"
+module_path_extractor = { path = "/home/eran/code/module_path_extractor" }
 
 [dependencies.serde]
 features = ["derive"]
