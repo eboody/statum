@@ -4,6 +4,7 @@ members = ["statum-core", "statum-macros", "statum"]
 
 [workspace.dependencies]
 statum = { path = "statum" }
+serde = { version = "1" }
 
 [workspace.metadata.scripts]
 readme = "cp README.md statum/README.md & cp README.md statum-core/README.md & cp README.md statum-macros/README.md && cargo script scripts/update_version.rs -- 0.0.1"

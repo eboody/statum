@@ -1,12 +1,3 @@
-[dependencies.serde]
-features = ["derive"]
-optional = true
-version = "1.0"
-
-[features]
-default = []
-serde = ["dep:serde"]
-
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]
 categories = ["rust-patterns"]
@@ -18,4 +9,11 @@ license = "MIT"
 name = "statum-core"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
-version = "0.1.48"
+version = "0.2.0"
+
+[dependencies]
+serde = { workspace = true, optional = true }
+
+[features]
+default = []
+serde = ["dep:serde"]
