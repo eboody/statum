@@ -22,7 +22,7 @@ struct DraftWithComment {
 
 #[transition]
 impl Machine<Draft> {
-    pub fn into_review(self) -> Machine<InReview> {
+    pub fn _into_review(self) -> Machine<InReview> {
         let my_draft: &MyDraft = &self.state_data;
 
         let draft_with_comment = DraftWithComment {
@@ -42,7 +42,7 @@ impl Machine<Draft> {
 
 #[transition]
 impl Machine<InReview> {
-    pub fn into_published(self) -> Machine<Published> {
+    pub fn _into_published(self) -> Machine<Published> {
         //NOTE: we can access the state data that the previous state transitioned with
         let _draft_with_comment: &DraftWithComment = &self.state_data;
         self.transition()

@@ -10,15 +10,13 @@ moddef::moddef!(
     }
 );
 
-use proc_macro::{Span, TokenStream};
+use proc_macro::TokenStream;
 use syn::{parse_macro_input, ItemEnum, ItemImpl, ItemStruct};
 
 use module_path_extractor::get_pseudo_module_path;
 
 #[proc_macro_attribute]
 pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let module_path = get_pseudo_module_path();
-    println!("\nmodule_path:\n{:#?}", module_path);
     let input = parse_macro_input!(item as ItemEnum);
 
     // Validate the enum before proceeding

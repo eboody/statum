@@ -18,7 +18,7 @@ struct Machine<State> {}
 
 #[transition]
 impl Machine<Draft> {
-    pub fn into_in_review(self) -> Machine<InReview> {
+    pub fn _into_in_review(self) -> Machine<InReview> {
         //NOTE: we can access the state's data with &self.state_data
         let my_draft_data_ref: &MyDraft = &self.state_data;
 
