@@ -4,21 +4,12 @@ quote = "1.0"
 trybuild = "*"
 module_path_extractor = "0.1"
 
-[dependencies.serde]
-features = ["derive"]
-optional = true
-version = "1.0"
-
 [dependencies.syn]
 features = ["full", "visit-mut", "visit"]
 version = "2.0"
 
 [dependencies.moddef]
 version = "0.2.6"
-
-[features]
-default = []
-serde = ["dep:serde"]
 
 [lib]
 proc-macro = true
