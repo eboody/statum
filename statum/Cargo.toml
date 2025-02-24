@@ -1,28 +1,3 @@
-[dev-dependencies]
-tokio = { version = "*", features = ["full"] }
-serde = { version = "*", features = ["derive"] }
-serde_json = "*"
-futures = "*"
-
-[dependencies]
-bon = { version = "3.3.2", features = [
-  "experimental-getter",
-  "experimental-overwritable",
-  "implied-bounds",
-] }
-
-[dependencies.statum-core]
-path = "../statum-core"
-version = "0.1.48"
-
-[dependencies.statum-macros]
-path = "../statum-macros"
-version = "0.1.48"
-
-[features]
-default = []
-serde = ["statum-core/serde", "statum-macros/serde"]
-
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]
 categories = ["rust-patterns"]
@@ -34,4 +9,23 @@ license = "MIT"
 name = "statum"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
-version = "0.1.48"
+version = "0.2.0"
+
+[features]
+default = []
+serde = ["statum-core/serde", "statum-macros/serde"]
+
+[dependencies]
+bon = { version = "3.3.2", features = [
+  "experimental-getter",
+  "experimental-overwritable",
+  "implied-bounds",
+] }
+statum-core = { path = "../statum-core" }
+statum-macros = { path = "../statum-macros" }
+
+[dev-dependencies]
+tokio = { version = "*", features = ["full"] }
+serde = { workspace = true }
+serde_json = "*"
+futures = "*"
