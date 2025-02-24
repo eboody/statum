@@ -1,0 +1,11 @@
+error: expected `enum`
+ --> tests/ui/invalid_state_not_enum.rs:5:1
+  |
+5 | struct NotAnEnum {
+  | ^^^^^^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/invalid_state_not_enum.rs:7:2
+  |
+7 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_not_enum.rs`

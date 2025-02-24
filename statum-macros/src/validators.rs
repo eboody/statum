@@ -260,20 +260,24 @@ pub fn batch_builder_implementation(
     quote! {
         // ✅ Trait to enable batch building
         trait #trait_name_ident {
-            #machine_vis fn machines_builder(&self) -> #bon_builder_ident<#builder_module_name::SetItems>;
+            #machine_vis fn machines_builder(self) -> #bon_builder_ident<#builder_module_name::SetItems>;
         }
 
-        impl #trait_name_ident for [#struct_ident] {
-            #machine_vis fn machines_builder(&self) -> #bon_builder_ident<#builder_module_name::SetItems> {
-                #builder_ident::builder().items(self.to_vec())
+        // ✅ Implement trait for anything convertible into Vec<#struct_ident>
+        impl<T> #trait_name_ident for T
+        where
+            T: Into<Vec<#struct_ident>>,  // ✅ Works for Vec<T> AND slices
+        {
+            #machine_vis fn machines_builder(self) -> #bon_builder_ident<#builder_module_name::SetItems> {
+                #builder_ident::builder().items(self.into())  // ✅ Moves Vec<T> without Clone
             }
         }
 
-        #[derive(statum::bon::Builder, Clone)]
+        #[derive(statum::bon::Builder)]
         #[builder(finish_fn = __private_build)]
         struct #builder_ident {
             #[builder(default)]
-            items: Vec<#struct_ident>,
+            items: Vec<#struct_ident>,  // ✅ Now only stores Vec<T>
             #(#fields_with_types),*
         }
 

@@ -23,6 +23,7 @@ bon = { version = "3.3.2", features = [
 ] }
 statum-core = { path = "../statum-core" }
 statum-macros = { path = "../statum-macros" }
+serde = { version = "*", features = ["derive"] }
 
 [dev-dependencies]
 tokio = { version = "*", features = ["full"] }
