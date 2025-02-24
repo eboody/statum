@@ -1,5 +1,4 @@
 use statum::{machine, state, transition};
-use tokio::time::{sleep, Duration};
 
 // Example 1: Hierarchical FSMs (Sub-State Machines)
 
@@ -16,7 +15,7 @@ pub mod task {
 
     #[machine]
     #[derive(Debug)]
-    pub struct Machine<TaskState> {}
+    pub struct Machine<State> {}
 }
 
 pub mod workflow {
@@ -26,7 +25,7 @@ pub mod workflow {
     #[derive(Debug)]
     pub enum State {
         NotStarted,
-        InProgress(TaskMachine<Running>),
+        InProgress(task::Machine<task::Running>),
         Finished,
     }
 
@@ -46,7 +45,7 @@ pub mod workflow {
 }
 
 fn main() {
-    let task_machine = TaskMachine::<Running>::builder().build();
+    let task_machine = task::Machine::<task::Running>::builder().build();
 
     let workflow_machine = workflow::Machine::<workflow::NotStarted>::builder().build();
 

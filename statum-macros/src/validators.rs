@@ -8,9 +8,7 @@ use crate::{
     MachinePath,
 };
 
-pub fn parse_validators(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let module_path = module_path!();
-
+pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str) -> TokenStream {
     let machine_ident = parse_macro_input!(attr as Ident);
     let item_impl = parse_macro_input!(item as ItemImpl);
     let struct_ident = &item_impl.clone().self_ty;

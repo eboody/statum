@@ -1,3 +1,5 @@
+use module_path_extractor::get_pseudo_module_path;
+use proc_macro::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
@@ -108,7 +110,8 @@ impl MachineInfo {
                 "Error: #[machine] structs must have a generic type parameter implementing `State`."));
         }
 
-        let module_path = module_path!();
+
+        let module_path = get_pseudo_module_path();
 
         Ok(Self {
             name: item.ident.to_string(),
@@ -130,8 +133,22 @@ impl ToTokens for MachinePath {
     }
 }
 
+//impl MachineInfo {
+//    pub fn fields_to_token_stream(&self) -> TokenStream {
+//        let fields = self.fields.iter().map(|field| {
+//            let field_ident = format_ident!("{}", field.name);
+//            quote! { #field_ident: self.#field_ident, }
+//        });
+//
+//        quote! {
+//            #(#fields)*
+//        }
+//    }
+//}
+
 // Generates struct-based metadata implementations
 pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenStream {
+    println!("\nmachine_info:\n{:#?}", machine_info);
     if let Some(machine_info) = get_machine_map().read().unwrap().get(&machine_info.module_path) {
         let name_ident = format_ident!("{}", machine_info.name);
         let generics = parse_generics(machine_info);
