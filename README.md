@@ -386,9 +386,6 @@ fn main() {
 > **Tip:** If any of your validators are `async`, ensure you call `.to_machine()` with `.await` to avoid compilation errors.
 
 ---
-Here’s a concise addition to your README to address the `as_ref` method and how it complements the `match` approach.
-
----
 
 ### 5. Dynamic Access to State Machines
 
