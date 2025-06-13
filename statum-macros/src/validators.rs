@@ -1,12 +1,39 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use std::collections::HashSet;
-use syn::{parse_macro_input, FnArg, Ident, ItemImpl, ReturnType, Type};
+use syn::{FnArg, Ident, ItemImpl, ReturnType, Type, parse_macro_input};
 
 use crate::{
-    get_state_enum_variant, read_machine_map, read_state_enum_map, to_snake_case, MachineInfo,
-    MachinePath,
+    MachineInfo, MachinePath, VariantInfo, get_state_enum_variant, read_machine_map,
+    read_state_enum_map, to_snake_case,
 };
+
+fn has_validators(item: &ItemImpl, state_variants: Vec<VariantInfo>) -> proc_macro2::TokenStream {
+    if item.items.is_empty() {
+        return quote! {};
+    }
+
+    for variant in state_variants {
+        let variant_name = to_snake_case(&variant.name);
+        let has_validator = item.items.iter().any(|item| {
+            if let syn::ImplItem::Fn(func) = item {
+                let func_name = func.sig.ident.to_string();
+
+                func_name.starts_with("is_") && func_name.ends_with(&variant_name)
+            } else {
+                false
+            }
+        });
+
+        if !has_validator {
+            return quote! {
+                compile_error!(concat!("Error: missing validator `is_", #variant_name , "`"));
+            };
+        }
+    }
+
+    quote! {}
+}
 
 pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str) -> TokenStream {
     let machine_ident = parse_macro_input!(attr as Ident);
@@ -24,12 +51,14 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         }
         .into();
     }
-    let machine_metadata = machine_metadata.unwrap();
+    let machine_metadata = machine_metadata.expect("Machine metadata not found");
 
     let state_enum_map = read_state_enum_map();
     let state_enum_info = state_enum_map
         .get(&module_path.into())
         .expect("State enum not found");
+
+    let has_validators = has_validators(&item_impl, state_enum_info.variants.clone());
 
     let mut found_validators = HashSet::new();
     let mut validator_checks = vec![];
@@ -41,12 +70,22 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
 
     let superstate_ident = format_ident!("{}SuperState", machine_ident);
 
+    if item_impl.items.is_empty() {
+        return quote! {
+            compile_error!("Error: No validator functions found in impl block");
+        }
+        .into();
+    }
+
     // Generate validator checks
     for item in &item_impl.items {
         if let syn::ImplItem::Fn(func) = item {
             let func_name = func.sig.ident.to_string();
             if func_name.starts_with("is_") {
-                let state_name = func_name.strip_prefix("is_").unwrap().to_string();
+                let state_name = func_name
+                    .strip_prefix("is_")
+                    .expect("Invalid function name")
+                    .to_string();
                 found_validators.insert(state_name.clone());
 
                 // Ensure correct function signature
@@ -219,6 +258,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
 
     // Merge original item with generated code
     let expanded = quote! {
+        #has_validators
         #superstate_enum
         #superstate_impl
         #machine_builder_impl
@@ -348,7 +388,7 @@ fn inject_machine_fields(methods: &[ImplItem], machine_path: &MachinePath) -> Ve
         .iter()
         .map(|field| {
             let field_type = turn_string_ref_into_str_slice(&field.field_type);
-            syn::parse_str::<syn::Type>(field_type).unwrap()
+            syn::parse_str::<syn::Type>(field_type).expect("Failed to parse field type")
         })
         .collect();
 
@@ -387,9 +427,5 @@ fn inject_machine_fields(methods: &[ImplItem], machine_path: &MachinePath) -> Ve
 }
 
 fn turn_string_ref_into_str_slice(input: &str) -> &str {
-    if input == "String" {
-        "str"
-    } else {
-        input
-    }
+    if input == "String" { "str" } else { input }
 }

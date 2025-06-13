@@ -11,7 +11,7 @@ moddef::moddef!(
 );
 
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, ItemEnum, ItemImpl, ItemStruct};
+use syn::{ItemEnum, ItemImpl, ItemStruct, parse_macro_input};
 
 use module_path_extractor::get_pseudo_module_path;
 
