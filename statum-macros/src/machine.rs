@@ -80,8 +80,11 @@ pub fn read_machine_map() -> HashMap<MachinePath, MachineInfo> {
 }
 
 pub fn ensure_machine_loaded(machine_path: &MachinePath) -> Option<MachineInfo> {
-    let source_info = get_source_info()?;
-    let file_path = source_info.0;
+    let source_info = get_source_info();
+    if source_info.is_none() {
+        return get_machine_map().read().ok()?.get(machine_path).cloned();
+    }
+    let file_path = source_info?.0;
     if let Some(info) = get_machine_map().read().ok()?.get(machine_path).cloned() {
         if info.file_path.as_deref() == Some(file_path.as_str()) {
             return Some(info);

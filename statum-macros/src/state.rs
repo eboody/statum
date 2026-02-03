@@ -153,8 +153,11 @@ pub fn read_state_enum_map() -> HashMap<StateModulePath, EnumInfo> {
 }
 
 pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo> {
-    let source_info = get_source_info()?;
-    let file_path = source_info.0;
+    let source_info = get_source_info();
+    if source_info.is_none() {
+        return get_state_enum_map().read().ok()?.get(enum_path).cloned();
+    }
+    let file_path = source_info?.0;
     if let Some(info) = get_state_enum_map().read().ok()?.get(enum_path).cloned() {
         if info.file_path.as_deref() == Some(file_path.as_str()) {
             return Some(info);
