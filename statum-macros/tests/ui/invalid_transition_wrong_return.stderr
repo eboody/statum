@@ -1,0 +1,13 @@
+error: custom attribute panicked
+  --> tests/ui/invalid_transition_wrong_return.rs:12:1
+   |
+12 | #[transition]
+   | ^^^^^^^^^^^^^
+   |
+   = help: message: Expected to be able to parse the return type
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_transition_wrong_return.rs:17:2
+   |
+17 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_wrong_return.rs`

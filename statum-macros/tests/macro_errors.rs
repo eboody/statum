@@ -19,6 +19,14 @@ fn test_invalid_machine_usage() {
 }
 
 #[test]
+fn test_invalid_transition_usage() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/invalid_transition_no_methods.rs");
+    t.compile_fail("tests/ui/invalid_transition_not_method.rs");
+    t.compile_fail("tests/ui/invalid_transition_wrong_return.rs");
+}
+
+#[test]
 fn test_invalid_validators_usage() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_validators_missing_variant.rs");
@@ -35,4 +43,5 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_machine_no_fields.rs");
     t.pass("tests/ui/valid_validators_sync.rs");
     t.pass("tests/ui/valid_validators_async.rs");
+    t.pass("tests/ui/valid_matrix.rs");
 }
