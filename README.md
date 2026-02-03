@@ -150,6 +150,37 @@ The macro generates:
 - Return type must be `Machine<NextState>` or `Option<Result<...>>` wrappers.
 - Data-bearing states must use `transition_with(data)`.
 
+#### Conditional transitions
+Transition methods must return a single next state. If you want branching based on input, keep the branching in a normal method and call explicit transition methods:
+
+```rust
+#[transition]
+impl ProcessMachine<Init> {
+    fn to_next(self) -> ProcessMachine<NextState> {
+        self.transition()
+    }
+
+    fn to_other(self) -> ProcessMachine<OtherState> {
+        self.transition()
+    }
+}
+
+enum Decision {
+    Next(ProcessMachine<NextState>),
+    Other(ProcessMachine<OtherState>),
+}
+
+impl ProcessMachine<Init> {
+    fn decide(self, event: u8) -> Decision {
+        if event == 0 {
+            Decision::Next(self.to_next())
+        } else {
+            Decision::Other(self.to_other())
+        }
+    }
+}
+```
+
 ### `#[validators]`
 - Use `#[validators(Machine)]` on an `impl` block for your persistent data type.
 - Must define an `is_{state}` method for every state variant (snake_case).

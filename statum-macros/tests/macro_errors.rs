@@ -24,6 +24,7 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_transition_no_methods.rs");
     t.compile_fail("tests/ui/invalid_transition_not_method.rs");
     t.compile_fail("tests/ui/invalid_transition_wrong_return.rs");
+    t.compile_fail("tests/ui/invalid_transition_conditional.rs");
 }
 
 #[test]
