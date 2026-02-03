@@ -1,4 +1,4 @@
-error: Error: No validator functions found in impl block
+error: Error: No validator functions found in impl block. Add at least one `is_*` method.
   --> tests/ui/invalid_validators_no_methods.rs:17:1
    |
 17 | #[validators(TaskMachine)]

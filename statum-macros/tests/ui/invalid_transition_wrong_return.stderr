@@ -1,10 +1,16 @@
-error: custom attribute panicked
-  --> tests/ui/invalid_transition_wrong_return.rs:12:1
+error: Invalid transition return type for `to_b`: expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`).
+
+       Expected:
+         fn to_b(self) -> Machine<NextState>
+
+       Actual:
+         u64
+  --> tests/ui/invalid_transition_wrong_return.rs:14:5
    |
-12 | #[transition]
-   | ^^^^^^^^^^^^^
-   |
-   = help: message: Expected to be able to parse the return type
+14 | /     fn to_b(self) -> u64 {
+15 | |         1
+16 | |     }
+   | |_____^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_transition_wrong_return.rs:17:2

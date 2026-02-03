@@ -25,7 +25,10 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
         return error.into();
     }
 
-    let enum_info = EnumInfo::from_item_enum(&input).expect("Failed to parse EnumInfo");
+    let enum_info = match EnumInfo::from_item_enum(&input) {
+        Ok(info) => info,
+        Err(err) => return err.to_compile_error().into(),
+    };
 
     // Store metadata in `state_enum_map`
     store_state_enum(&enum_info);

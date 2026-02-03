@@ -24,15 +24,19 @@ pub struct TransitionFn {
 }
 
 impl TransitionFn {
-    pub fn return_state(&self) -> String {
-        //let r = self.return_type.as_ref().unwrap();
-        let (_, return_state) = parse_machine_and_state(
-            self.return_type.as_ref().expect("Expected a return type"),
-            format_ident!("{}", self.machine_name),
-        )
-        .expect("Expected to be able to parse the return type");
+    pub fn return_state(&self) -> Result<String, TokenStream> {
+        let Some(return_type) = self.return_type.as_ref() else {
+            return Err(invalid_return_type_error(self, "missing return type"));
+        };
+        let machine_ident = format_ident!("{}", self.machine_name);
+        let Some((_, return_state)) = parse_machine_and_state(return_type, machine_ident) else {
+            return Err(invalid_return_type_error(
+                self,
+                "expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`)",
+            ));
+        };
 
-        return_state
+        Ok(return_state)
     }
 }
 
@@ -147,6 +151,18 @@ pub fn validate_transition_functions(
     }
 
     for func in functions {
+        if func.args.is_empty() {
+            let func_name = &func.name;
+            return Some(quote_spanned! { func.span =>
+                compile_error!(
+                    concat!(
+                        "Invalid function signature: ",
+                        stringify!(#func_name),
+                        " must take `self` or `mut self` as the first argument."
+                    )
+                );
+            });
+        }
         // Ensure the first argument is either 'self' or 'mut self'
         if func.args[0].to_string() != "self" && func.args[0].to_string() != "mut self" {
             let func_name = &func.name;
@@ -159,6 +175,10 @@ pub fn validate_transition_functions(
                     )
                 );
             });
+        }
+
+        if let Err(err) = func.return_state() {
+            return Some(err);
         }
     }
     None
@@ -181,7 +201,10 @@ pub fn generate_transition_impl(
 
     // Iterate over transition functions
     let transition_impls = tr_impl.functions.iter().map(|function| {
-        let return_state = function.return_state(); // Extracts `NextState`
+        let return_state = match function.return_state() {
+            Ok(state) => state,
+            Err(err) => return err,
+        };
         let return_state_ident = format_ident!("{}", return_state);
         let Some(variant_info) = state_enum_info.get_variant_from_name(&return_state) else {
             return quote_spanned! { function.span =>
@@ -229,6 +252,27 @@ pub fn generate_transition_impl(
     quote! {
         #(#transition_impls)*
         #input // Append the original impl block
+    }
+}
+
+fn invalid_return_type_error(func: &TransitionFn, reason: &str) -> TokenStream {
+    let func_name = &func.name;
+    let return_type = func
+        .return_type
+        .as_ref()
+        .map(|ty| ty.to_token_stream().to_string())
+        .unwrap_or_else(|| "<none>".to_string());
+    let machine_name = &func.machine_name;
+
+    let message = format!(
+        "Invalid transition return type for `{func_name}`: {reason}.\n\n\
+Expected:\n  fn {func_name}(self) -> {machine_name}<NextState>\n\n\
+Actual:\n  {return_type}"
+    );
+    let message = syn::LitStr::new(&message, func.span);
+
+    quote_spanned! { func.span =>
+        compile_error!(#message);
     }
 }
 

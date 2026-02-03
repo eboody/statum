@@ -13,6 +13,7 @@ fn has_validators(item: &ItemImpl, state_variants: Vec<VariantInfo>) -> proc_mac
         return quote! {};
     }
 
+    let mut missing = Vec::new();
     for variant in state_variants {
         let variant_name = to_snake_case(&variant.name);
         let has_validator = item.items.iter().any(|item| {
@@ -26,10 +27,24 @@ fn has_validators(item: &ItemImpl, state_variants: Vec<VariantInfo>) -> proc_mac
         });
 
         if !has_validator {
-            return quote! {
-                compile_error!(concat!("Error: missing validator `is_", #variant_name , "`"));
-            };
+            missing.push(variant_name);
         }
+    }
+
+    if !missing.is_empty() {
+        let missing_list = missing
+            .iter()
+            .map(|name| format!("is_{name}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return quote! {
+            compile_error!(concat!(
+                "Error: missing validator methods: ",
+                #missing_list,
+                ".\n",
+                "Fix: add one validator per state variant (snake_case), e.g. `fn is_draft(&self) -> Result<()>`."
+            ));
+        };
     }
 
     quote! {}
@@ -58,9 +73,18 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
     let machine_metadata = machine_metadata.expect("Machine metadata not found");
 
     let state_enum_map = read_state_enum_map();
-    let state_enum_info = state_enum_map
-        .get(&module_path_key.clone().into())
-        .expect("State enum not found");
+    let state_enum_info = match state_enum_map.get(&module_path_key.clone().into()) {
+        Some(info) => info,
+        None => {
+            return quote! {
+                compile_error!(
+                    "Error: No #[state] enum found in this module. \
+Ensure the enum is in the same module as the machine and validators."
+                );
+            }
+            .into();
+        }
+    };
 
     let has_validators = has_validators(&item_impl, state_enum_info.variants.clone());
 
@@ -76,7 +100,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
 
     if item_impl.items.is_empty() {
         return quote! {
-            compile_error!("Error: No validator functions found in impl block");
+            compile_error!("Error: No validator functions found in impl block. Add at least one `is_*` method.");
         }
         .into();
     }

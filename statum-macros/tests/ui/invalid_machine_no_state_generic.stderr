@@ -1,19 +1,10 @@
-error: custom attribute panicked
+error: Failed to resolve the #[state] enum for machine `Machine`. This can happen if proc-macro analysis runs before the enum is cached. Try reopening the file or running `cargo check`. If it persists, ensure the #[state] enum is in the same module.
  --> tests/ui/invalid_machine_no_state_generic.rs:4:1
   |
 4 | #[machine]
   | ^^^^^^^^^^
   |
-  = help: message: Error:
-          #[machine] structs must have a generic type parameter that matches the #[state] enum.
-
-          Fix: Change the generic type parameter of `Machine` to match `MyStateEnum`.
-
-          Expected:
-          pub struct Machine<MyStateEnum> { ... }
-
-          Found:
-          pub struct Machine { ... }
+  = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0601]: `main` function not found in crate `$CRATE`
  --> tests/ui/invalid_machine_no_state_generic.rs:7:2

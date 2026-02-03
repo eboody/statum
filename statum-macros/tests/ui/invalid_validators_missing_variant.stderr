@@ -1,4 +1,5 @@
-error: Error: missing validator `is_done`
+error: Error: missing validator methods: is_done.
+       Fix: add one validator per state variant (snake_case), e.g. `fn is_draft(&self) -> Result<()>`.
   --> tests/ui/invalid_validators_missing_variant.rs:18:1
    |
 18 | #[validators(TaskMachine)]

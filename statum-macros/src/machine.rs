@@ -172,18 +172,6 @@ impl MachineInfo {
             })
             .collect();
 
-        if item.generics.params.is_empty() {
-            panic!(
-                "Error: \n#[machine] structs must have a generic type parameter that matches the #[state] enum.\n\n\
-                 Fix: Change the generic type parameter of `{}` to match `MyStateEnum`.\n\n\
-                 Expected:\n\
-                 pub struct {}<MyStateEnum> {{ ... }}\n\n\
-                 Found:\n\
-                 pub struct {} {{ ... }}",
-                item.ident, item.ident, item.ident
-            );
-        }
-
         let module_path = get_pseudo_module_path();
         let file_path = get_source_info().map(|(path, _)| path);
 
@@ -284,7 +272,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
             #builder_methods
         }
     } else {
-        quote! { compile_error!("Struct not found in machine_map."); }
+        quote! { compile_error!("Internal error: machine metadata not found. Try re-running `cargo check` or ensuring #[machine] is applied in this module."); }
     }
 }
 
