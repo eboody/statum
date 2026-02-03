@@ -2,6 +2,9 @@
 name = "module_path_extractor"
 version = "0.2.0"
 edition = "2021"
+description = "Derive a Rust module path from a macro call-site span"
+license = "MIT"
+repository = "https://github.com/eboody/statum"
 
 [lib]
 path = "src/lib.rs"
