@@ -1,33 +1,32 @@
-[dependencies.statum-core]
-path = "../statum-core"
-version = "0.1.47"
-
-[dependencies.statum-macros]
-path = "../statum-macros"
-version = "0.1.47"
-
-[features]
-default = []
-serde = [
-    "statum-core/serde",
-    "statum-macros/serde",
-]
-
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]
 categories = ["rust-patterns"]
 description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
 documentation = "https://docs.rs/statum"
 edition = "2021"
-keywords = [
-    "enum",
-    "typestate",
-    "fsm",
-    "finite-state",
-    "state-machine",
-]
+keywords = ["enum", "typestate", "fsm", "finite-state", "state-machine"]
 license = "MIT"
 name = "statum"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
-version = "0.1.47"
+version = "0.2.0"
+
+[features]
+default = ["serde"]
+serde = ["statum-core/serde", "statum-macros/serde"]
+
+[dependencies]
+bon = { version = "3.3.2", features = [
+  "experimental-getter",
+  "experimental-overwritable",
+  "implied-bounds",
+] }
+statum-core = { path = "../statum-core" }
+statum-macros = { path = "../statum-macros" }
+serde = { version = "*", features = ["derive"] }
+
+[dev-dependencies]
+tokio = { version = "*", features = ["full"] }
+serde = { workspace = true }
+serde_json = "*"
+futures = "*"

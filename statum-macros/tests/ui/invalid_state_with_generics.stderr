@@ -1,0 +1,23 @@
+error[E0261]: use of undeclared lifetime name `'a`
+ --> tests/ui/invalid_state_with_generics.rs:4:1
+  |
+4 | #[state]
+  | ^^^^^^^^- lifetime `'a` is missing in item created through this procedural macro
+  | |
+  | undeclared lifetime
+  |
+  = note: this error originates in the attribute macro `state` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0425]: cannot find type `T` in this scope
+ --> tests/ui/invalid_state_with_generics.rs:4:1
+  |
+4 | #[state]
+  | ^^^^^^^^ not found in this scope
+  |
+  = note: this error originates in the attribute macro `state` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/invalid_state_with_generics.rs:8:2
+  |
+8 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_with_generics.rs`

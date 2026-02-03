@@ -1,0 +1,11 @@
+[package]
+name = "module_path_extractor"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+syn = { version = "2.0", features = ["full"] }

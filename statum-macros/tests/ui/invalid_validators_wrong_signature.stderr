@@ -1,0 +1,13 @@
+error: Error: is_draft must take exactly one argument: `&self`
+  --> tests/ui/invalid_validators_wrong_signature.rs:22:1
+   |
+22 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_validators_wrong_signature.rs:33:2
+   |
+33 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_wrong_signature.rs`

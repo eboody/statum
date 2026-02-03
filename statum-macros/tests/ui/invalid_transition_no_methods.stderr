@@ -1,0 +1,13 @@
+error: #[transition] impl blocks must contain at least one method returning a valid machine.
+  --> tests/ui/invalid_transition_no_methods.rs:16:1
+   |
+16 | #[transition]
+   | ^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_transition_no_methods.rs:17:19
+   |
+17 | impl Machine<A> {}
+   |                   ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_no_methods.rs`

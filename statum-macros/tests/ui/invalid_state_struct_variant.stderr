@@ -1,0 +1,19 @@
+error: Invalid variant 'Draft' in #[state] enum. Variants must be unit or single-field tuple variants. Example:
+
+       enum ExampleState {
+           Draft,
+           InProgress(String),
+           Complete,
+       }
+ --> tests/ui/invalid_state_struct_variant.rs:4:1
+  |
+4 | #[state]
+  | ^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `state` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/invalid_state_struct_variant.rs:7:2
+  |
+7 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_struct_variant.rs`

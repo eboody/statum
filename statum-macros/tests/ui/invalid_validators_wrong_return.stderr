@@ -1,0 +1,13 @@
+error: Error: is_in_progress must return `Result<Progress` but found `Result<(),statum_core::Error>`
+  --> tests/ui/invalid_validators_wrong_return.rs:27:1
+   |
+27 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_validators_wrong_return.rs:46:2
+   |
+46 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_wrong_return.rs`

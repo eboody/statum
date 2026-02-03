@@ -1,0 +1,19 @@
+error: Invalid transition return type for `to_b`: expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`).
+
+       Expected:
+         fn to_b(self) -> Machine<NextState>
+
+       Actual:
+         u64
+  --> tests/ui/invalid_transition_wrong_return.rs:18:5
+   |
+18 | /     fn to_b(self) -> u64 {
+19 | |         1
+20 | |     }
+   | |_____^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_transition_wrong_return.rs:21:2
+   |
+21 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_wrong_return.rs`
