@@ -3,7 +3,10 @@
 extern crate proc_macro;
 
 use proc_macro::Span;
+use proc_macro2::LineColumn;
 use std::fs;
+use syn::spanned::Spanned;
+use syn::Item;
 
 /// Extracts the file path and line number where the macro was invoked.
 pub fn get_source_info() -> Option<(String, usize)> {
@@ -14,65 +17,82 @@ pub fn get_source_info() -> Option<(String, usize)> {
     Some((file_path, line_number))
 }
 
-/// Reads the file and extracts the module path.
+/// Reads the file and extracts the module path at the given line.
 pub fn find_module_path(file_path: &str, line_number: usize) -> Option<String> {
     let content = fs::read_to_string(file_path).ok()?;
+    let parsed = syn::parse_file(&content).ok()?;
 
-    let mut module_path = Vec::new();
-    let mut last_inline_module: Option<String> = None;
+    let base = module_path_from_file(file_path);
+    let mut best_stack: Vec<String> = Vec::new();
 
-    for (i, line) in content.lines().enumerate() {
-        if i >= line_number {
-            break;
-        }
+    fn span_contains_line(span: proc_macro2::Span, line: usize) -> bool {
+        let LineColumn { line: start, .. } = span.start();
+        let LineColumn { line: end, .. } = span.end();
+        line >= start && line <= end
+    }
 
-        let trimmed = line.trim();
-
-        if let Some(mod_name) = trimmed.strip_prefix("mod ") {
-            if let Some(mod_name) = mod_name.strip_suffix('{') {
-                let mod_name = mod_name.trim().to_string();
-                last_inline_module = Some(mod_name.clone());
-                module_path.clear();
-                module_path.push(mod_name);
+    fn visit_items(
+        items: &[Item],
+        line: usize,
+        stack: &mut Vec<String>,
+        best: &mut Vec<String>,
+    ) {
+        for item in items {
+            let Item::Mod(module) = item else { continue };
+            let Some((_, inner_items)) = &module.content else { continue };
+            if !span_contains_line(module.span(), line) {
+                continue;
             }
-        } else if let Some(pub_mod_name) = trimmed.strip_prefix("pub mod ") {
-            if let Some(pub_mod_name) = pub_mod_name.strip_suffix('{') {
-                let pub_mod_name = pub_mod_name.trim().to_string();
-                last_inline_module = Some(pub_mod_name.clone());
-                module_path.clear();
-                module_path.push(pub_mod_name);
+
+            stack.push(module.ident.to_string());
+            if stack.len() > best.len() {
+                *best = stack.clone();
             }
+            visit_items(inner_items, line, stack, best);
+            stack.pop();
         }
     }
 
-    if !module_path.is_empty() {
-        return Some(module_path.join("::"));
+    visit_items(&parsed.items, line_number, &mut Vec::new(), &mut best_stack);
+
+    if best_stack.is_empty() {
+        return Some(base);
     }
 
-    Some(generate_pseudo_module_path(file_path, last_inline_module))
+    let nested = best_stack.join("::");
+    if base == "crate" {
+        Some(nested)
+    } else {
+        Some(format!("{base}::{nested}"))
+    }
 }
 
 /// Converts a file path into a pseudo-Rust module path.
-pub fn generate_pseudo_module_path(file_path: &str, inline_module: Option<String>) -> String {
-    let filename = file_path.rsplit('/').next().unwrap_or(file_path);
-    let filename = filename.split('.').next().unwrap_or(filename);
+pub fn module_path_from_file(file_path: &str) -> String {
+    let normalized = file_path.replace('\\', "/");
+    let relative = normalized
+        .split_once("/src/")
+        .map(|(_, tail)| tail)
+        .unwrap_or(normalized.as_str());
 
-    let parent_dir = file_path.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("");
-    let parent_dir = parent_dir.replace("/", "::");
-    let parent_dir = parent_dir.strip_prefix("src::").unwrap_or(&parent_dir);
-
-    if filename == "main" || filename == "lib" {
+    if relative == "lib.rs" || relative == "main.rs" {
         return "crate".to_string();
     }
 
-    if let Some(inline_mod) = inline_module {
-        return inline_mod;
+    let without_ext = relative.strip_suffix(".rs").unwrap_or(relative);
+    if without_ext.ends_with("/mod") {
+        let parent = without_ext
+            .strip_suffix("/mod")
+            .unwrap_or(without_ext);
+        let parent = parent.trim_matches('/');
+        return parent.replace('/', "::");
     }
 
-    if parent_dir.is_empty() {
-        filename.to_string()
+    let module = without_ext.trim_matches('/').replace('/', "::");
+    if module.is_empty() {
+        "crate".to_string()
     } else {
-        format!("{}::{}", parent_dir, filename)
+        module
     }
 }
 
