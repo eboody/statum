@@ -31,10 +31,10 @@
 To start, it provides three attribute macros:
 
 - **`#[state]`** for defining states (as enums).
-- **`#[machine]`** for creating a state machine struct that tracks which state you’re in at compile time.
+- **`#[machine]`** for creating a state machine struct that tracks which state you are in at compile time.
 - **`#[transition]`** for validating transition method signatures.
 
-Here’s the simplest usage of Statum without any extra features:
+Here is the simplest usage of Statum without any extra features:
 
 ```rust
 use statum::{machine, state, transition};
@@ -49,7 +49,7 @@ pub enum LightState {
 // 2. Define your machine with the #[machine] attribute.
 #[machine]
 pub struct LightSwitch<LightState> {
-    name: String, // Contextual, Machine-wide fields go here (clients, configs, identifiers, etc.)
+    name: String, // Contextual, machine-wide fields go here.
 }
 
 // 3. Implement transitions for each state.
@@ -84,10 +84,10 @@ Example: [statum-examples/src/examples/example_01_setup.rs](statum-examples/src/
 ### How It Works
 
 - `#[state]` transforms your enum, generating one struct per variant (like `Off` and `On`), plus a trait `LightState`.
-- `#[machine]` injects extra fields (`marker`, `state_data`) to track which state you’re in, letting you define transitions that change the state at the type level.
+- `#[machine]` injects extra fields (`marker`, `state_data`) to track which state you are in, letting you define transitions that change the state at the type level.
 - `#[transition]` validates method signatures and ties them to a concrete next state.
 
-That’s it! You now have a compile-time guaranteed state machine where invalid transitions are impossible.
+That is it. You now have a compile-time guaranteed state machine where invalid transitions are impossible.
 
 ---
 
@@ -112,7 +112,7 @@ pub struct LightSwitch<LightState> {
 }
 ```
 
-**Important**: If you place `#[derive(...)]` _above_ `#[machine]`, you may see an error like:
+**Important**: If you place `#[derive(...)]` above `#[machine]`, you may see an error like:
 
 ```
 error[E0063]: missing fields `marker` and `state_data` in initializer of `Light<_>`
@@ -121,11 +121,11 @@ error[E0063]: missing fields `marker` and `state_data` in initializer of `Light<
    |          ^ missing `marker` and `state_data`
 ```
 
-**To avoid this**, put `#[machine]` _above_ the derive(s).
+**To avoid this**, put `#[machine]` above the derive(s).
 
 ```rust
 // ❌ This will NOT work
-#[derive(Debug)] // ↩ note the position of the derive
+#[derive(Debug)] // note the position of the derive
 #[machine]
 pub struct LightSwitch<LightState>;
 
@@ -195,11 +195,11 @@ Examples: [statum-examples/src/examples/07-state-data.rs](statum-examples/src/ex
 
 ### 3. Reconstructing State Machines from Persistent Data
 
-State machines often need to **persist their state**—saving to and loading from external storage (DB rows, events, etc.). Statum’s `#[validators]` macro connects persistent data to state machine reconstruction in a clean, type-safe way.
+State machines often need to persist their state. Saving to and loading from external storage like databases should be both robust and type-safe. Statum's `#[validators]` macro simplifies this process, ensuring seamless integration between your persistent data and state machine logic.
 
 The key pieces are:
-- `#[validators]` on your data type impl block (one validator per state), and
-- the generated `machine_builder()` on the data type, which reconstructs a machine.
+- `#[validators]` macro on your data type impl block.
+- `machine_builder()` generated on the data type to reconstruct the machine.
 
 #### Example
 
@@ -224,37 +224,46 @@ struct TaskMachine<TaskState> {
     priority: u8,
 }
 
+enum Status {
+    Draft,
+    InReview,
+    Published,
+}
+
 struct DbData {
-    state: String,
+    state: Status,
 }
 
 #[validators(TaskMachine)]
 impl DbData {
     fn is_draft(&self) -> Result<(), statum::Error> {
-        if self.state == "new" {
-            // Note: machine fields are available here (client, name, priority).
-            println!("Client: {}, Name: {}, Priority: {}", client, name, priority);
-            Ok(())
-        } else {
-            Err(statum::Error::InvalidState)
+        match self.state {
+            Status::Draft => {
+                // Note: machine fields are available here (client, name, priority).
+                println!("Client: {}, Name: {}, Priority: {}", client, name, priority);
+                Ok(())
+            }
+            _ => Err(statum::Error::InvalidState),
         }
     }
 
     fn is_in_review(&self) -> Result<ReviewData, statum::Error> {
-        if self.state == "in_review" {
-            Ok(ReviewData { reviewer: "sam".into() })
-        } else {
-            Err(statum::Error::InvalidState)
+        match self.state {
+            Status::InReview => Ok(ReviewData { reviewer: "sam".into() }),
+            _ => Err(statum::Error::InvalidState),
         }
     }
 
     fn is_published(&self) -> Result<(), statum::Error> {
-        if self.state == "published" { Ok(()) } else { Err(statum::Error::InvalidState) }
+        match self.state {
+            Status::Published => Ok(()),
+            _ => Err(statum::Error::InvalidState),
+        }
     }
 }
 
 fn main() {
-    let db_data = DbData { state: "in_review".to_owned() };
+    let db_data = DbData { state: Status::InReview };
 
     let machine = db_data
         .machine_builder()
@@ -273,36 +282,6 @@ fn main() {
 ```
 
 Examples: [statum-examples/src/examples/09-persistent-data.rs](statum-examples/src/examples/09-persistent-data.rs), [statum-examples/src/examples/10-persistent-data-vecs.rs](statum-examples/src/examples/10-persistent-data-vecs.rs).
-
----
-
-### 4. Typestate Builder Ergonomics
-
-If you want a clean, ergonomic builder flow for your own stored data, you can use a local alias for the generated superstate:
-
-```rust
-type TaskState = TaskMachineSuperState;
-
-fn rebuild_task(row: &DbData) -> Result<TaskState, statum::Error> {
-    row.machine_builder()
-        .client("acme".to_owned())
-        .name("doc".to_owned())
-        .priority(1)
-        .build()
-}
-
-let row = DbData { state: "draft".to_owned() };
-
-match rebuild_task(&row)? {
-    TaskState::Draft(m) => { /* ... */ }
-    TaskState::InReview(m) => { /* ... */ }
-    TaskState::Published(m) => { /* ... */ }
-}
-```
-
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (type-erased storage + superstate matching).
-
----
 
 ## Examples
 
@@ -393,7 +372,7 @@ impl Machine<Pending> {
 ```
 
 ### Hierarchical machines (state data as a nested machine)
-Use a nested machine as state data to model parent/child flows:
+Use a nested machine as state data to model parent and child flows:
 
 Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (hierarchical machines). Example: [statum-examples/src/examples/11-hierarchical-machines.rs](statum-examples/src/examples/11-hierarchical-machines.rs).
 
@@ -477,10 +456,9 @@ Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs)
 #[validators(TaskMachine)]
 impl DbData {
     fn is_in_review(&self) -> Result<ReviewData, statum::Error> {
-        if self.state == "in_review" {
-            Ok(ReviewData { reviewer: fetch_reviewer(client) })
-        } else {
-            Err(statum::Error::InvalidState)
+        match self.state {
+            Status::InReview => Ok(ReviewData { reviewer: fetch_reviewer(client) }),
+            _ => Err(statum::Error::InvalidState),
         }
     }
 }
@@ -578,10 +556,10 @@ for item in items {
    - Usually means your derive macros (e.g., `Clone` or `Debug`) expanded before Statum could inject those fields. Move `#[machine]` above your derives, or remove them.
 
 2. **`cannot find type X in this scope`**  
-   - Ensure that you define your `#[machine]` struct _before_ you reference it in `impl` blocks or function calls.
+   - Ensure that you define your `#[machine]` struct before you reference it in `impl` blocks or function calls.
 
 3. **`Invalid transition return type`**  
-   - Transition methods must return `Machine<NextState>` (optionally wrapped in `Option`/`Result`).
+   - Transition methods must return `Machine<NextState>` (optionally wrapped in `Option` or `Result`).
 
 ---
 

@@ -8,7 +8,7 @@ syn = { version = "2.0", features = ["full", "visit-mut", "visit"] }
 [dev-dependencies]
 bon = "3.3.2"
 futures = "0.3"
-statum-core = { path = "../statum-core", version = "0.3.1" }
+statum-core = { path = "../statum-core", version = "0.3.2" }
 trybuild = "1.0"
 
 [features]
@@ -28,4 +28,4 @@ license = "MIT"
 name = "statum-macros"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
-version = "0.3.1"
+version = "0.3.2"
