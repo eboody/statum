@@ -155,7 +155,7 @@ The macro generates:
 - Must define an `is_{state}` method for every state variant (snake_case).
 - Each method returns `Result<()>` for unit states or `Result<StateData>` for data states.
 - Async validators are supported; if any validator is async, the generated builder is async.
+- The macro also generates a `{Machine}SuperState` enum that wraps each concrete machine state, so you can match on a single return type when reconstructing from persistence (a typestate builder pattern).
 
 ## Examples
 See `statum-examples/src/examples/` for the full suite of examples.
-
