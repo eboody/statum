@@ -157,5 +157,31 @@ The macro generates:
 - Async validators are supported; if any validator is async, the generated builder is async.
 - The macro also generates a `{Machine}SuperState` enum that wraps each concrete machine state, so you can match on a single return type when reconstructing from persistence (a typestate builder pattern).
 
+## Typestate Builder Ergonomics
+If you just want a clean, ergonomic builder flow for your own stored data, lean on the generated superstate and a local alias:
+
+```rust
+type TaskState = TaskMachineSuperState;
+
+fn rebuild_task(
+    row: &TaskRow,
+    client: Client,
+    db_pool: DbPool,
+) -> Result<TaskState, statum::Error> {
+    row.machine_builder()
+        .client(client)
+        .db_pool(db_pool)
+        .build()
+}
+
+match rebuild_task(&row, client, db_pool)? {
+    TaskState::Draft(m) => { /* ... */ }
+    TaskState::InReview(m) => { /* ... */ }
+    TaskState::Done(m) => { /* ... */ }
+}
+```
+
+This keeps the typestate builder pattern explicit while avoiding long type names in match arms.
+
 ## Examples
 See `statum-examples/src/examples/` for the full suite of examples.
