@@ -1,13 +1,13 @@
 error: Invalid function signature: to_b transition functions must be a method, that is, it must take 'self' or 'mut self' as its first argument.
-  --> tests/ui/invalid_transition_not_method.rs:14:5
+  --> tests/ui/invalid_transition_not_method.rs:18:5
    |
-14 | /     fn to_b(_value: u64) -> Machine<B> {
-15 | |         unimplemented!()
-16 | |     }
+18 | /     fn to_b(_value: u64) -> Machine<B> {
+19 | |         unimplemented!()
+20 | |     }
    | |_____^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_transition_not_method.rs:17:2
+  --> tests/ui/invalid_transition_not_method.rs:21:2
    |
-17 | }
+21 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_not_method.rs`

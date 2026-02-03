@@ -1,4 +1,8 @@
-use statum::{machine, state};
+#![allow(unused_imports)]
+extern crate self as statum;
+pub use bon;
+use statum_macros::{machine, state};
+use bon::builder as _;
 
 #[state]
 pub enum ToggleState {

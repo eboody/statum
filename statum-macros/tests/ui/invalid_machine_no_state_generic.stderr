@@ -1,13 +1,13 @@
 error: Failed to resolve the #[state] enum for machine `Machine`. This can happen if proc-macro analysis runs before the enum is cached. Try reopening the file or running `cargo check`. If it persists, ensure the #[state] enum is in the same module.
- --> tests/ui/invalid_machine_no_state_generic.rs:4:1
+ --> tests/ui/invalid_machine_no_state_generic.rs:7:1
   |
-4 | #[machine]
+7 | #[machine]
   | ^^^^^^^^^^
   |
   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0601]: `main` function not found in crate `$CRATE`
- --> tests/ui/invalid_machine_no_state_generic.rs:7:2
-  |
-7 | }
-  |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_no_state_generic.rs`
+  --> tests/ui/invalid_machine_no_state_generic.rs:10:2
+   |
+10 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_no_state_generic.rs`

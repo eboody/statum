@@ -5,15 +5,15 @@ error: The #[state] enum `BuildState` is missing required derives: Clone
        #[state]
        #[derive(Clone)]
        pub enum State { Off, On }
-  --> tests/ui/invalid_machine_missing_state_derive.rs:11:1
+  --> tests/ui/invalid_machine_missing_state_derive.rs:14:1
    |
-11 | #[machine]
+14 | #[machine]
    | ^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_machine_missing_state_derive.rs:15:2
+  --> tests/ui/invalid_machine_missing_state_derive.rs:18:2
    |
-15 | }
+18 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_missing_state_derive.rs`

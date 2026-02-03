@@ -1,4 +1,9 @@
-use statum::{machine, state, validators}; use statum::Error;
+#![allow(unused_imports)]
+extern crate self as statum;
+pub use statum_core::Error;
+pub use bon;
+use statum_macros::{machine, state, validators};
+use bon::builder as _;
 
 #[state]
 pub enum JobState {
@@ -22,30 +27,30 @@ pub struct JobRow {
 
 #[validators(JobMachine)]
 impl JobRow {
-    async fn is_queued(&self) -> Result<(), Error> {
+    async fn is_queued(&self) -> Result<(), statum_core::Error> {
         let _ = worker;
         if self.status == "queued" {
             Ok(())
         } else {
-            Err(Error::InvalidState)
+            Err(statum_core::Error::InvalidState)
         }
     }
 
-    async fn is_running(&self) -> Result<JobData, Error> {
+    async fn is_running(&self) -> Result<JobData, statum_core::Error> {
         let _ = worker;
         if self.status == "running" {
             Ok(JobData { id: 1 })
         } else {
-            Err(Error::InvalidState)
+            Err(statum_core::Error::InvalidState)
         }
     }
 
-    async fn is_complete(&self) -> Result<(), Error> {
+    async fn is_complete(&self) -> Result<(), statum_core::Error> {
         let _ = worker;
         if self.status == "complete" {
             Ok(())
         } else {
-            Err(Error::InvalidState)
+            Err(statum_core::Error::InvalidState)
         }
     }
 }

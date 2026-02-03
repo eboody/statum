@@ -1,4 +1,9 @@
-use statum::{machine, state, transition, validators};
+#![allow(unused_imports)]
+extern crate self as statum;
+pub use statum_core::Error;
+pub use bon;
+use statum_macros::{machine, state, transition, validators};
+use bon::builder as _;
 
 mod simple {
     use super::*;
@@ -80,7 +85,7 @@ mod wrappers_result {
 
     #[transition]
     impl Machine<X> {
-        fn to_y_result(self) -> Result<Machine<Y>, statum::Error> {
+        fn to_y_result(self) -> Result<Machine<Y>, statum_core::Error> {
             Ok(self.transition())
         }
     }
@@ -110,15 +115,15 @@ mod validators_sync {
 
     #[validators(Machine)]
     impl Row {
-        fn is_draft(&self) -> Result<(), statum::Error> {
-            if self.status == "draft" { Ok(()) } else { Err(statum::Error::InvalidState) }
+        fn is_draft(&self) -> Result<(), statum_core::Error> {
+            if self.status == "draft" { Ok(()) } else { Err(statum_core::Error::InvalidState) }
         }
 
-        fn is_in_review(&self) -> Result<ReviewData, statum::Error> {
+        fn is_in_review(&self) -> Result<ReviewData, statum_core::Error> {
             if self.status == "review" {
                 Ok(ReviewData { reviewer: "a".to_string() })
             } else {
-                Err(statum::Error::InvalidState)
+                Err(statum_core::Error::InvalidState)
             }
         }
     }

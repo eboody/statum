@@ -1,14 +1,14 @@
 error: Error: missing validator methods: is_done.
        Fix: add one validator per state variant (snake_case), e.g. `fn is_draft(&self) -> Result<()>`.
-  --> tests/ui/invalid_validators_missing_variant.rs:18:1
+  --> tests/ui/invalid_validators_missing_variant.rs:23:1
    |
-18 | #[validators(TaskMachine)]
+23 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_validators_missing_variant.rs:28:2
+  --> tests/ui/invalid_validators_missing_variant.rs:33:2
    |
-28 | }
+33 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_missing_variant.rs`

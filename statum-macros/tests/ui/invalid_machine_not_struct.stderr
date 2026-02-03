@@ -1,11 +1,11 @@
 error: expected `struct`
- --> tests/ui/invalid_machine_not_struct.rs:4:1
+ --> tests/ui/invalid_machine_not_struct.rs:8:1
   |
-4 | enum NotAStruct {
+8 | enum NotAStruct {
   | ^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
- --> tests/ui/invalid_machine_not_struct.rs:6:2
-  |
-6 | }
-  |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_not_struct.rs`
+  --> tests/ui/invalid_machine_not_struct.rs:10:2
+   |
+10 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_not_struct.rs`

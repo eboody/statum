@@ -1,21 +1,13 @@
-error: Error: is_in_progress must return `Result<Progress` but found `Result<(),Error>`
-  --> tests/ui/invalid_validators_wrong_return.rs:22:1
+error: Error: is_in_progress must return `Result<Progress` but found `Result<(),statum_core::Error>`
+  --> tests/ui/invalid_validators_wrong_return.rs:27:1
    |
-22 | #[validators(TaskMachine)]
+27 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-warning: unused import: `statum::Error`
- --> tests/ui/invalid_validators_wrong_return.rs:1:47
-  |
-1 | use statum::{machine, state, validators}; use statum::Error;
-  |                                               ^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
-
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_validators_wrong_return.rs:41:2
+  --> tests/ui/invalid_validators_wrong_return.rs:46:2
    |
-41 | }
+46 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_wrong_return.rs`

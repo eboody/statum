@@ -10,7 +10,6 @@ syn = { version = "2.0", features = ["full", "visit-mut", "visit"] }
 bon = "*"
 futures = "*"
 statum-core = { path = "../statum-core" }
-statum = { path = "../statum" }
 trybuild = "*"
 
 [features]

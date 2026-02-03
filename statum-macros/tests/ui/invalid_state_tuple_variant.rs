@@ -1,5 +1,5 @@
-extern crate statum;
-use statum::state;
+#![allow(unused_imports)]
+use statum_macros::state;
 
 #[state]
 enum BadState {
