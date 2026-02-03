@@ -23,10 +23,10 @@ bon = { version = "3.3.2", features = [
 ] }
 statum-core = { path = "../statum-core", version = "0.3.0" }
 statum-macros = { path = "../statum-macros", version = "0.3.0" }
-serde = { version = "*", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
-tokio = { version = "*", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
 serde = { workspace = true }
-serde_json = "*"
-futures = "*"
+serde_json = "1"
+futures = "0.3"
