@@ -79,6 +79,8 @@ fn main() {
 }
 ```
 
+Example: [statum-examples/src/examples/example_01_setup.rs](statum-examples/src/examples/example_01_setup.rs).
+
 ### How It Works
 
 - `#[state]` transforms your enum, generating one struct per variant (like `Off` and `On`), plus a trait `LightState`.
@@ -133,6 +135,8 @@ pub struct LightSwitch<LightState>;
 pub struct LightSwitch<LightState>;
 ```
 
+Example: [statum-examples/src/examples/03-derives.rs](statum-examples/src/examples/03-derives.rs).
+
 ---
 
 ### 2. Complex Transitions & Data-Bearing States
@@ -184,6 +188,8 @@ impl Document<InReview> {
     }
 }
 ```
+
+Examples: [statum-examples/src/examples/07-state-data.rs](statum-examples/src/examples/07-state-data.rs), [statum-examples/src/examples/08-transition-with-data.rs](statum-examples/src/examples/08-transition-with-data.rs).
 
 ---
 
@@ -266,6 +272,8 @@ fn main() {
 }
 ```
 
+Examples: [statum-examples/src/examples/09-persistent-data.rs](statum-examples/src/examples/09-persistent-data.rs), [statum-examples/src/examples/10-persistent-data-vecs.rs](statum-examples/src/examples/10-persistent-data-vecs.rs).
+
 ---
 
 ### 4. Typestate Builder Ergonomics
@@ -292,6 +300,8 @@ match rebuild_task(&row)? {
 }
 ```
 
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (type-erased storage + superstate matching).
+
 ---
 
 ## Examples
@@ -304,6 +314,8 @@ See `statum-examples/src/examples/` for the full suite of examples.
 
 ### Conditional transitions (branching decisions)
 Transition methods must return a single next state. Put branching logic in a normal method and call explicit transition methods:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (event-driven transitions).
 
 ```rust
 #[transition]
@@ -333,8 +345,57 @@ impl ProcessMachine<Init> {
 }
 ```
 
+### Event-driven transitions
+Model events as an enum and route them to explicit transition methods:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (event-driven transitions).
+
+```rust
+enum Event {
+    Go,
+    Alternative,
+}
+
+enum Decision {
+    Next(ProcessMachine<NextState>),
+    Other(ProcessMachine<OtherState>),
+}
+
+impl ProcessMachine<Init> {
+    fn handle_event(self, event: Event) -> Decision {
+        match event {
+            Event::Go => Decision::Next(self.to_next()),
+            Event::Alternative => Decision::Other(self.to_other()),
+        }
+    }
+}
+```
+
+### Guarded transitions
+Keep preconditions in a guard method and return a `Result` before transitioning:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (guarded transitions).
+
+```rust
+impl Machine<Pending> {
+    fn can_activate(&self) -> bool {
+        self.allowed
+    }
+
+    fn try_activate(self) -> Result<Machine<Active>, statum::Error> {
+        if self.can_activate() {
+            Ok(self.activate())
+        } else {
+            Err(statum::Error::InvalidState)
+        }
+    }
+}
+```
+
 ### Hierarchical machines (state data as a nested machine)
 Use a nested machine as state data to model parent/child flows:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (hierarchical machines). Example: [statum-examples/src/examples/11-hierarchical-machines.rs](statum-examples/src/examples/11-hierarchical-machines.rs).
 
 ```rust
 #[state]
@@ -357,8 +418,25 @@ enum ParentState {
 struct ParentMachine<ParentState> {}
 ```
 
+### State snapshots (carry previous state data forward)
+Capture the prior state's data inside the next state to keep history:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (state snapshots).
+
+```rust
+#[transition]
+impl Machine<Draft> {
+    fn publish(self) -> Machine<Published> {
+        let previous = self.state_data.clone();
+        self.transition_with(PublishData { previous })
+    }
+}
+```
+
 ### Rollbacks / undo transitions
 Model rollbacks by returning to a previous state explicitly, often with stored state data:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (rollbacks). Example: [statum-examples/src/examples/12-rollbacks.rs](statum-examples/src/examples/12-rollbacks.rs).
 
 ```rust
 #[transition]
@@ -371,6 +449,8 @@ impl Document<Published> {
 
 ### Async transitions (side effects before transition)
 Keep side effects in async methods and call a sync transition at the end:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (async side-effects). Example: [statum-examples/src/examples/06-async-transitions.rs](statum-examples/src/examples/06-async-transitions.rs).
 
 ```rust
 #[transition]
@@ -388,8 +468,28 @@ impl Job<Queued> {
 }
 ```
 
+### Rehydration with extra fetch
+Use machine fields inside validators to fetch extra data for state reconstruction:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (rehydration with fetch).
+
+```rust
+#[validators(TaskMachine)]
+impl DbData {
+    fn is_in_review(&self) -> Result<ReviewData, statum::Error> {
+        if self.state == "in_review" {
+            Ok(ReviewData { reviewer: fetch_reviewer(client) })
+        } else {
+            Err(statum::Error::InvalidState)
+        }
+    }
+}
+```
+
 ### Persistent batches
 When reconstructing many rows, use the batch builder on collections:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (parallel reconstruction, batch builder). Example: [statum-examples/src/examples/10-persistent-data-vecs.rs](statum-examples/src/examples/10-persistent-data-vecs.rs).
 
 ```rust
 let results = rows
@@ -411,6 +511,34 @@ let machines: Result<Vec<TaskMachineSuperState>, statum::Error> = rows
             .build()
     })
     .collect();
+```
+
+### Parallel reconstruction (async validators)
+If validators are async, the batch builder returns results in parallel:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (parallel reconstruction).
+
+```rust
+let results = rows
+    .machines_builder()
+    .tenant(tenant)
+    .build()
+    .await;
+```
+
+### Type-erased storage (collecting superstates)
+Store `*SuperState` values in a collection and match later:
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (type-erased storage).
+
+```rust
+let items: Vec<TaskMachineSuperState> = vec![machine];
+for item in items {
+    match item {
+        TaskMachineSuperState::Draft(m) => { /* ... */ }
+        _ => {}
+    }
+}
 ```
 
 ---
