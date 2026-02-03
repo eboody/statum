@@ -21,8 +21,8 @@ bon = { version = "3.3.2", features = [
   "experimental-overwritable",
   "implied-bounds",
 ] }
-statum-core = { path = "../statum-core" }
-statum-macros = { path = "../statum-macros" }
+statum-core = { path = "../statum-core", version = "0.3.0" }
+statum-macros = { path = "../statum-macros", version = "0.3.0" }
 serde = { version = "*", features = ["derive"] }
 
 [dev-dependencies]

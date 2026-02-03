@@ -12,3 +12,4 @@ serde = { version = "1" }
 [workspace.metadata.scripts]
 readme = "cp README.md statum/README.md & cp README.md statum-core/README.md & cp README.md statum-macros/README.md && cargo script scripts/update_version.rs -- 0.3.0"
 publish = "cargo publish -p statum-core && cargo publish -p statum-macros && cargo publish -p statum"
+publish-dry-run = "cargo publish -p statum-core --dry-run && cargo publish -p statum-macros --dry-run && cargo publish -p statum --dry-run"

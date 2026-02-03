@@ -9,7 +9,7 @@ syn = { version = "2.0", features = ["full", "visit-mut", "visit"] }
 [dev-dependencies]
 bon = "*"
 futures = "*"
-statum-core = { path = "../statum-core" }
+statum-core = { path = "../statum-core", version = "0.3.0" }
 trybuild = "*"
 
 [features]
