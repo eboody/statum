@@ -37,6 +37,7 @@ mod unit_and_data_transitions {
     pub fn run() {
         let machine = Machine::<Draft>::builder().id(1).build();
         let machine = machine.submit("sam".to_string());
+        let _reviewer = machine.state_data.reviewer.as_str();
         let _machine = machine.publish();
     }
 }
