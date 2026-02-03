@@ -53,8 +53,7 @@ impl Article {
     }
 }
 
-#[tokio::main]
-async fn main() {
+pub async fn run() {
     let articles: Vec<Article> = pretend_db_call().await.unwrap();
 
     //NOTE: the builder is async because we have an async validator

@@ -28,7 +28,7 @@ mod transaction {
     }
 }
 
-fn main() {
+pub fn run() {
     let _machine = transaction::Machine::<transaction::Pending>::builder().build();
 
     let _machine = _machine.confirm();

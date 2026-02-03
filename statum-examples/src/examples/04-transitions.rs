@@ -25,7 +25,7 @@ impl Machine<InReview> {
     }
 }
 
-fn main() {
+pub fn run() {
     // we use the builder pattern to construct a new machine
     let machine = Machine::<Draft>::builder().build();
 

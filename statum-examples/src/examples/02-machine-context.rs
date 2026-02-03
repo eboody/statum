@@ -14,7 +14,7 @@ struct Machine<State> {
     db_pool: String,
 }
 
-fn main() {
+pub fn run() {
     let my_client = "Pretend this is some client".to_owned();
     let my_db_pool = "Pretend this is a db pool".to_owned();
 

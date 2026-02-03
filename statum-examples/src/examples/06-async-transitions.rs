@@ -18,8 +18,7 @@ impl Machine<Draft> {
     }
 }
 
-#[tokio::main]
-async fn main() {
+pub async fn run() {
     let machine = Machine::<Draft>::builder().build();
 
     // NOTE: we're awaiting here

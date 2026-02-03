@@ -10,6 +10,6 @@ enum State {
 #[machine]
 struct Machine<State> {}
 
-fn main() {
+pub fn run() {
     let _machine = Machine::<Draft>::builder().build();
 }

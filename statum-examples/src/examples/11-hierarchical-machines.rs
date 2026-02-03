@@ -42,7 +42,7 @@ mod workflow {
     }
 }
 
-fn main() {
+pub fn run() {
     let task_machine = task::Machine::<task::Running>::builder().build();
 
     let workflow_machine = workflow::Machine::<workflow::NotStarted>::builder().build();

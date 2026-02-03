@@ -15,7 +15,7 @@ enum State {
 #[derive(Clone, Serialize, Deserialize)]
 struct Machine<State> {}
 
-fn main() {
+pub fn run() {
     let machine = Machine::<Draft>::builder().build();
 
     let machine_clone = machine.clone();

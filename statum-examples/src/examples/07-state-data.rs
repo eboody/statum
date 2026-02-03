@@ -31,7 +31,7 @@ impl Machine<Draft> {
     }
 }
 
-fn main() {
+pub fn run() {
     let my_draft = MyDraft {
         _title: "My first article".to_owned(),
         _content: "This is the content of my first article".to_owned(),

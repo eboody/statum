@@ -1,0 +1,12 @@
+[package]
+name = "statum-examples"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+statum = { path = "../statum" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = "*"
+tokio = { version = "*", features = ["full"] }
+bon = "*"
+futures = "*"

@@ -49,4 +49,13 @@ impl Machine<InReview> {
     }
 }
 
-fn main() {}
+pub fn run() {
+    let draft = MyDraft {
+        _title: "My first article".to_owned(),
+        _content: "This is the content of my first article".to_owned(),
+    };
+
+    let machine = Machine::<Draft>::builder().state_data(draft).build();
+    let machine = machine._into_review();
+    let _machine = machine._into_published();
+}

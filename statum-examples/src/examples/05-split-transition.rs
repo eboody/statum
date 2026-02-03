@@ -33,7 +33,7 @@ impl OrderMachine<PaymentPending> {
     }
 }
 
-fn main() {
+pub fn run() {
     let cart_machine = OrderMachine::<Cart>::builder().user_id(123).build();
 
     // 🔥 Works! Rust infers that `transition_with<String>()` should be called.

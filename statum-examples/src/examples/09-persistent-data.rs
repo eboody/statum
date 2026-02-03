@@ -63,8 +63,7 @@ async fn pretend_validation_call(_client: &str) -> Result<bool, statum::Error> {
     Ok(true)
 }
 
-#[tokio::main]
-async fn main() {
+pub async fn run() {
     let article = Article {
         status: Status::Draft,
     };
