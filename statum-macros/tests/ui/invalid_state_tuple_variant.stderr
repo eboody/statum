@@ -1,0 +1,13 @@
+error: custom attribute panicked
+ --> tests/ui/invalid_state_tuple_variant.rs:4:1
+  |
+4 | #[state]
+  | ^^^^^^^^
+  |
+  = help: message: Failed to parse EnumInfo: Error("Invalid variant `Draft` in #[state] enum. Variants must be unit or single-field tuple variants.")
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/invalid_state_tuple_variant.rs:7:2
+  |
+7 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_tuple_variant.rs`

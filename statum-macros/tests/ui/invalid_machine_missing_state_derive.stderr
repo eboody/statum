@@ -1,0 +1,19 @@
+error: The #[state] enum `BuildState` is missing required derives: Clone
+       Fix: Add the missing derives to your #[state] enum.
+       Example:
+
+       #[state]
+       #[derive(Clone)]
+       pub enum State { Off, On }
+  --> tests/ui/invalid_machine_missing_state_derive.rs:11:1
+   |
+11 | #[machine]
+   | ^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_machine_missing_state_derive.rs:15:2
+   |
+15 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_missing_state_derive.rs`

@@ -1,0 +1,21 @@
+error: Error: #[machine] structs must have a generic type parameter that matches the #[state] enum.
+
+       Fix: Change the generic type parameter of `BadMachine` to match `FooState`.
+
+       Expected:
+       pub struct BadMachine<FooState> { ... }
+
+       Found:
+       pub struct BadMachine<T> { ... }
+ --> tests/ui/invalid_machine_generic_not_first.rs:9:1
+  |
+9 | #[machine]
+  | ^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_machine_generic_not_first.rs:12:2
+   |
+12 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_generic_not_first.rs`

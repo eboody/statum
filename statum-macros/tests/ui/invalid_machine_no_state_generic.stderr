@@ -1,0 +1,22 @@
+error: custom attribute panicked
+ --> tests/ui/invalid_machine_no_state_generic.rs:4:1
+  |
+4 | #[machine]
+  | ^^^^^^^^^^
+  |
+  = help: message: Error:
+          #[machine] structs must have a generic type parameter that matches the #[state] enum.
+
+          Fix: Change the generic type parameter of `Machine` to match `MyStateEnum`.
+
+          Expected:
+          pub struct Machine<MyStateEnum> { ... }
+
+          Found:
+          pub struct Machine { ... }
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/invalid_machine_no_state_generic.rs:7:2
+  |
+7 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_no_state_generic.rs`

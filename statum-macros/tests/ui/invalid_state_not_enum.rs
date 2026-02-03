@@ -1,5 +1,5 @@
-extern crate statum_macros;
-use statum_macros::state;
+extern crate statum;
+use statum::state;
 
 #[state]
 struct NotAnEnum {

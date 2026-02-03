@@ -1,0 +1,13 @@
+error: Error: missing validator `is_done`
+  --> tests/ui/invalid_validators_missing_variant.rs:18:1
+   |
+18 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_validators_missing_variant.rs:28:2
+   |
+28 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_missing_variant.rs`

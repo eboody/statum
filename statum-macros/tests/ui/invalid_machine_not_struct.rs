@@ -1,5 +1,5 @@
-extern crate statum_macros;
-use statum_macros::machine;
+extern crate statum;
+use statum::machine;
 #[machine]
 enum NotAStruct {
     Variant,

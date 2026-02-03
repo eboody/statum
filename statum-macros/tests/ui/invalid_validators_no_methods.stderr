@@ -1,0 +1,13 @@
+error: Error: No validator functions found in impl block
+  --> tests/ui/invalid_validators_no_methods.rs:17:1
+   |
+17 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_validators_no_methods.rs:18:14
+   |
+18 | impl DbRow {}
+   |              ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_no_methods.rs`

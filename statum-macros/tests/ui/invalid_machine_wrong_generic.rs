@@ -1,8 +1,12 @@
-extern crate statum_macros;
-use statum_macros::machine;
+extern crate statum;
+use statum::{machine, state};
+
+#[state]
+enum MachineState {
+    Ready,
+}
 
 #[machine]
 struct Machine<S: Clone> {
-    // ❌ Should be
     client: String,
 }

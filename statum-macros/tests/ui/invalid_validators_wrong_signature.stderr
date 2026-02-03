@@ -1,0 +1,21 @@
+error: Error: is_draft must take exactly one argument: `&self`
+  --> tests/ui/invalid_validators_wrong_signature.rs:17:1
+   |
+17 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused import: `statum::Error`
+ --> tests/ui/invalid_validators_wrong_signature.rs:1:47
+  |
+1 | use statum::{machine, state, validators}; use statum::Error;
+  |                                               ^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_validators_wrong_signature.rs:28:2
+   |
+28 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_wrong_signature.rs`
