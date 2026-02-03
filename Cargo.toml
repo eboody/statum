@@ -1,6 +1,9 @@
 [workspace]
 resolver = "2"
-members = ["statum-core", "statum-macros", "statum"]
+members = ["module_path_extractor", "statum-core", "statum-macros", "statum", "statum-examples"]
+
+[patch.crates-io]
+module_path_extractor = { path = "module_path_extractor" }
 
 [workspace.dependencies]
 statum = { path = "statum" }

@@ -7,10 +7,14 @@ moddef = { version = "0.2.6" }
 syn = { version = "2.0", features = ["full", "visit-mut", "visit"] }
 
 [dev-dependencies]
+bon = "*"
+futures = "*"
+statum-core = { path = "../statum-core" }
+statum = { path = "../statum" }
 trybuild = "*"
 
 [features]
-default = []
+default = ["serde"]
 serde = ["dep:serde"]
 
 [lib]

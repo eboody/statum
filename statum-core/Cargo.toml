@@ -12,8 +12,8 @@ repository = "https://github.com/eboody/statum"
 version = "0.2.0"
 
 [dependencies]
-serde = { workspace = true, optional = true }
+serde = { workspace = true, optional = true, features = ["derive"] }
 
 [features]
-default = []
+default = ["serde"]
 serde = ["dep:serde"]

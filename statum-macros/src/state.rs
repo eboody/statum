@@ -1,8 +1,9 @@
-use module_path_extractor::get_pseudo_module_path;
+use module_path_extractor::{find_module_path, get_pseudo_module_path, get_source_info};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::{
     collections::HashMap,
+    fs,
     sync::{OnceLock, RwLock},
 };
 use syn::{Attribute, Fields, Ident, ItemEnum, Path};
@@ -17,6 +18,7 @@ pub struct EnumInfo {
     pub variants: Vec<VariantInfo>,
     pub generics: String,
     pub module_path: StateModulePath,
+    pub file_path: Option<String>,
 }
 
 impl EnumInfo {
@@ -150,14 +152,68 @@ pub fn read_state_enum_map() -> HashMap<StateModulePath, EnumInfo> {
     get_state_enum_map().read().unwrap().clone()
 }
 
+pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo> {
+    let source_info = get_source_info()?;
+    let file_path = source_info.0;
+    if let Some(info) = get_state_enum_map().read().ok()?.get(enum_path).cloned() {
+        if info.file_path.as_deref() == Some(file_path.as_str()) {
+            return Some(info);
+        }
+    }
+
+    let contents = fs::read_to_string(&file_path).ok()?;
+    let parsed = syn::parse_file(&contents).ok()?;
+    let allow_any_module = enum_path.as_ref() == "unknown";
+
+    let mut found: Option<EnumInfo> = None;
+    for item in parsed.items {
+        let enum_item = match item {
+            syn::Item::Enum(item_enum) => item_enum,
+            _ => continue,
+        };
+
+        if !enum_item.attrs.iter().any(|attr| attr.path().is_ident("state")) {
+            continue;
+        }
+
+        let enum_name = enum_item.ident.to_string();
+        let line_number = find_item_line(&contents, &enum_name)?;
+        let module_path = find_module_path(&file_path, line_number)?;
+        if !allow_any_module && &module_path != enum_path.as_ref() {
+            continue;
+        }
+
+        let mut enum_info = EnumInfo::from_item_enum(&enum_item).ok()?;
+        enum_info.file_path = Some(file_path.clone());
+        found = Some(enum_info);
+        break;
+    }
+
+    if let Some(enum_info) = found.clone() {
+        store_state_enum(&enum_info);
+    }
+
+    found
+}
+
+fn find_item_line(contents: &str, item_name: &str) -> Option<usize> {
+    for (idx, line) in contents.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("enum ") || trimmed.starts_with("pub enum ") {
+            if trimmed.contains(&format!("enum {}", item_name)) {
+                return Some(idx + 1);
+            }
+        }
+    }
+    None
+}
+
 pub fn get_state_enum_variant(
     enum_path: &StateModulePath,
     variant_name: &str,
 ) -> Option<VariantInfo> {
-    read_state_enum_map()
-        .get(enum_path)
-        .and_then(|enum_info| enum_info.get_variant_from_name(variant_name))
-        .cloned()
+    ensure_state_enum_loaded(enum_path)
+        .and_then(|enum_info| enum_info.get_variant_from_name(variant_name).cloned())
 }
 
 /// Extracts `#[derive(...)]` attributes from an enum
@@ -182,6 +238,7 @@ impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
         let name = item.ident.to_string();
         let vis = item.vis.to_token_stream().to_string();
+        // TODO: Support lifetimes/generics on #[state] enums.
         let generics = item.generics.clone().to_token_stream().to_string();
 
         let derives = item
@@ -228,6 +285,7 @@ impl EnumInfo {
         }
 
         let module_path = get_pseudo_module_path();
+        let file_path = get_source_info().map(|(path, _)| path);
 
         Ok(Self {
             derives,
@@ -236,6 +294,7 @@ impl EnumInfo {
             variants,
             generics,
             module_path: module_path.into(),
+            file_path,
         })
     }
 }
@@ -275,6 +334,9 @@ pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenSt
                     impl #state_trait_ident for #variant_name {
                         type Data = #field_ty;
                     }
+                    impl StateVariant for #variant_name {
+                        type Data = #field_ty;
+                    }
                     // Mark that this variant requires state data.
                     impl RequiresStateData for #variant_name {}
 
@@ -287,6 +349,9 @@ pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenSt
                     #vis struct #variant_name;
 
                     impl #state_trait_ident for #variant_name {
+                        type Data = ();
+                    }
+                    impl StateVariant for #variant_name {
                         type Data = ();
                     }
 
@@ -312,12 +377,18 @@ pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenSt
         impl #state_trait_ident for #uninitialized_state_name {
             type Data = ();
         }
+        impl StateVariant for #uninitialized_state_name {
+            type Data = ();
+        }
     };
 
     // Generate the trait definition and include all variant structs
     quote! {
         pub trait DoesNotRequireStateData {}
         pub trait RequiresStateData {}
+        pub trait StateVariant {
+            type Data;
+        }
 
         #state_trait
 

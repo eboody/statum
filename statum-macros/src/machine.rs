@@ -1,11 +1,12 @@
-use module_path_extractor::get_pseudo_module_path;
-use proc_macro2::TokenStream;
+use module_path_extractor::{find_module_path, get_pseudo_module_path, get_source_info};
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
+use std::fs;
 use std::sync::{OnceLock, RwLock};
-use syn::{Attribute, Generics, Ident, ItemStruct, Visibility};
+use syn::{Attribute, Generics, Ident, ItemStruct, LitStr, Visibility};
 
-use crate::{read_state_enum_map, EnumInfo, StateModulePath};
+use crate::{ensure_state_enum_loaded, EnumInfo, StateModulePath};
 
 impl<T: ToString> From<T> for MachinePath {
     fn from(value: T) -> Self {
@@ -29,6 +30,7 @@ pub struct MachineInfo {
     pub fields: Vec<MachineField>,
     pub module_path: MachinePath,
     pub generics: String,
+    pub file_path: Option<String>,
 }
 
 impl MachineInfo {
@@ -77,6 +79,66 @@ pub fn read_machine_map() -> HashMap<MachinePath, MachineInfo> {
     get_machine_map().read().unwrap().clone()
 }
 
+pub fn ensure_machine_loaded(machine_path: &MachinePath) -> Option<MachineInfo> {
+    let source_info = get_source_info()?;
+    let file_path = source_info.0;
+    if let Some(info) = get_machine_map().read().ok()?.get(machine_path).cloned() {
+        if info.file_path.as_deref() == Some(file_path.as_str()) {
+            return Some(info);
+        }
+    }
+
+    let contents = fs::read_to_string(&file_path).ok()?;
+    let parsed = syn::parse_file(&contents).ok()?;
+    let allow_any_module = machine_path.0 == "unknown";
+
+    let mut found: Option<MachineInfo> = None;
+    for item in parsed.items {
+        let struct_item = match item {
+            syn::Item::Struct(item_struct) => item_struct,
+            _ => continue,
+        };
+
+        if !struct_item
+            .attrs
+            .iter()
+            .any(|attr| attr.path().is_ident("machine"))
+        {
+            continue;
+        }
+
+        let struct_name = struct_item.ident.to_string();
+        let line_number = find_item_line(&contents, &struct_name)?;
+        let module_path = find_module_path(&file_path, line_number)?;
+        if !allow_any_module && &module_path != &machine_path.0 {
+            continue;
+        }
+
+        let mut machine_info = MachineInfo::from_item_struct_with_module(&struct_item, machine_path)?;
+        machine_info.file_path = Some(file_path.clone());
+        found = Some(machine_info);
+        break;
+    }
+
+    if let Some(machine_info) = found.clone() {
+        store_machine_struct(&machine_info);
+    }
+
+    found
+}
+
+fn find_item_line(contents: &str, item_name: &str) -> Option<usize> {
+    for (idx, line) in contents.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("struct ") || trimmed.starts_with("pub struct ") {
+            if trimmed.contains(&format!("struct {}", item_name)) {
+                return Some(idx + 1);
+            }
+        }
+    }
+    None
+}
+
 // Extract derives from `#[derive(Debug, Clone, ...)]`
 
 pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
@@ -123,6 +185,7 @@ impl MachineInfo {
         }
 
         let module_path = get_pseudo_module_path();
+        let file_path = get_source_info().map(|(path, _)| path);
 
         Self {
             name: item.ident.to_string(),
@@ -136,7 +199,44 @@ impl MachineInfo {
             fields,
             module_path: module_path.into(),
             generics: item.generics.to_token_stream().to_string(),
+            file_path,
         }
+    }
+
+    pub fn from_item_struct_with_module(
+        item: &ItemStruct,
+        module_path: &MachinePath,
+    ) -> Option<Self> {
+        let fields = item
+            .fields
+            .iter()
+            .filter_map(|field| {
+                field.ident.as_ref().map(|ident| MachineField {
+                    name: ident.to_string(),
+                    field_type: field.ty.to_token_stream().to_string(),
+                })
+            })
+            .collect();
+
+        if item.generics.params.is_empty() {
+            return None;
+        }
+
+        let file_path = get_source_info().map(|(path, _)| path);
+        Some(Self {
+            name: item.ident.to_string(),
+            vis: item.vis.to_token_stream().to_string(),
+            derives: item
+                .attrs
+                .iter()
+                .filter_map(extract_derive)
+                .flatten()
+                .collect(),
+            fields,
+            module_path: module_path.clone(),
+            generics: item.generics.to_token_stream().to_string(),
+            file_path,
+        })
     }
 }
 
@@ -168,11 +268,15 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
         .unwrap()
         .get(&machine_info.module_path)
     {
+        let state_enum = match machine_info.get_matching_state_enum() {
+            Ok(enum_info) => enum_info,
+            Err(err) => return err,
+        };
         let name_ident = format_ident!("{}", machine_info.name);
-        let generics = parse_generics(machine_info);
+        let generics = parse_generics(machine_info, &state_enum);
         let struct_def = generate_struct_definition(machine_info, &name_ident, &generics);
-        let builder_methods = machine_info.generate_builder_methods();
-        let transition_traits = transition_traits(machine_info);
+        let builder_methods = machine_info.generate_builder_methods(&state_enum);
+        let transition_traits = transition_traits(machine_info, &state_enum);
 
         quote! {
             #transition_traits
@@ -184,8 +288,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
     }
 }
 
-fn parse_generics(machine_info: &MachineInfo) -> Generics {
-    let state_enum = &machine_info.get_matching_state_enum();
+fn parse_generics(machine_info: &MachineInfo, state_enum: &EnumInfo) -> Generics {
     let generics_str = machine_info.generics.trim().replace(
         &state_enum.name,
         &format!(
@@ -197,8 +300,7 @@ fn parse_generics(machine_info: &MachineInfo) -> Generics {
     syn::parse_str::<Generics>(&generics_str).expect("Failed to parse generics.")
 }
 
-fn transition_traits(machine_info: &MachineInfo) -> TokenStream {
-    let state_enum = machine_info.get_matching_state_enum();
+fn transition_traits(machine_info: &MachineInfo, state_enum: &EnumInfo) -> TokenStream {
     let trait_name = state_enum.get_trait_name();
     let machine_name = format_ident!("{}", machine_info.name);
     quote! {
@@ -249,16 +351,12 @@ fn generate_struct_definition(
 }
 
 impl MachineInfo {
-    pub fn get_matching_state_enum(&self) -> EnumInfo {
-        read_state_enum_map()
-            .get(&self.module_path.clone().into())
-            .expect("Failed to read state_enum_map.")
-            .clone()
+    pub fn get_matching_state_enum(&self) -> Result<EnumInfo, TokenStream> {
+        ensure_state_enum_loaded(&self.module_path.clone().into())
+            .ok_or_else(|| missing_state_enum_error(self))
     }
 
-    pub fn generate_builder_methods(&self) -> TokenStream {
-        let state_enum = self.get_matching_state_enum();
-
+    pub fn generate_builder_methods(&self, state_enum: &EnumInfo) -> TokenStream {
         let fields_map = self
             .fields
             .iter()
@@ -277,9 +375,15 @@ impl MachineInfo {
                 quote! { #field_ident }
             })
             .collect::<Vec<_>>();
+        let field_types = self
+            .fields
+            .iter()
+            .map(|field| syn::parse_str::<syn::Type>(&field.field_type).unwrap())
+            .collect::<Vec<_>>();
 
         let name_ident = format_ident!("{}", self.name);
 
+        let use_ra_shim = is_rust_analyzer();
         // Generate a builder method for each variant in the state enum.
         let builder_methods = state_enum.variants.iter().map(|variant| {
             let variant_ident = format_ident!("{}", variant.name);
@@ -318,12 +422,36 @@ impl MachineInfo {
                     }
                 };
 
-                quote! {
-                    #[statum::bon::bon(crate = ::statum::bon)]
-                    impl #name_ident<#variant_ident> {
-                        #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
-                        #constructor_signature {
-                            #struct_initialization
+                if use_ra_shim {
+                    quote! {
+                        pub struct #variant_builder_ident;
+
+                        impl #variant_builder_ident {
+                            pub fn state_data(self, _data: #parsed_data_type) -> Self {
+                                self
+                            }
+
+                            #(pub fn #field_names(self, _value: #field_types) -> Self { self })*
+
+                            pub fn build(self) -> #name_ident<#variant_ident> {
+                                unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+                            }
+                        }
+
+                        impl #name_ident<#variant_ident> {
+                            pub fn builder() -> #variant_builder_ident {
+                                #variant_builder_ident
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        #[statum::bon::bon(crate = ::statum::bon)]
+                        impl #name_ident<#variant_ident> {
+                            #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
+                            #constructor_signature {
+                                #struct_initialization
+                            }
                         }
                     }
                 }
@@ -356,12 +484,32 @@ impl MachineInfo {
                     }
                 };
 
-                quote! {
-                    #[statum::bon::bon(crate = ::statum::bon)]
-                    impl #name_ident<#variant_ident> {
-                        #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
-                        #constructor_signature {
-                            #struct_initialization
+                if use_ra_shim {
+                    quote! {
+                        pub struct #variant_builder_ident;
+
+                        impl #variant_builder_ident {
+                            #(pub fn #field_names(self, _value: #field_types) -> Self { self })*
+
+                            pub fn build(self) -> #name_ident<#variant_ident> {
+                                unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+                            }
+                        }
+
+                        impl #name_ident<#variant_ident> {
+                            pub fn builder() -> #variant_builder_ident {
+                                #variant_builder_ident
+                            }
+                        }
+                    }
+                } else {
+                    quote! {
+                        #[statum::bon::bon(crate = ::statum::bon)]
+                        impl #name_ident<#variant_ident> {
+                            #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
+                            #constructor_signature {
+                                #struct_initialization
+                            }
                         }
                     }
                 }
@@ -374,14 +522,32 @@ impl MachineInfo {
     }
 }
 
+fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
+    if is_rust_analyzer() {
+        return TokenStream::new();
+    }
+    let message = format!(
+        "Failed to resolve the #[state] enum for machine `{}`. \
+This can happen if proc-macro analysis runs before the enum is cached. \
+Try reopening the file or running `cargo check`. If it persists, ensure the #[state] enum is in the same module.",
+        machine_info.name
+    );
+    let message = LitStr::new(&message, Span::call_site());
+    quote! { compile_error!(#message); }
+}
+
 pub fn validate_machine_struct(
     item: &ItemStruct,
     machine_info: &MachineInfo,
 ) -> Option<TokenStream> {
-    let matching_state_enum = machine_info.get_matching_state_enum();
+    let matching_state_enum = match machine_info.get_matching_state_enum() {
+        Ok(enum_info) => enum_info,
+        Err(err) => return Some(err),
+    };
 
     let machine_derives: Vec<String> = machine_info.derives.clone();
     let state_derives: Vec<String> = matching_state_enum.derives.clone();
+    let state_name = matching_state_enum.name.clone();
 
     // Find which derives are missing from the #[state] enum
     let missing_derives: Vec<String> = machine_derives
@@ -390,36 +556,38 @@ pub fn validate_machine_struct(
         .cloned()
         .collect();
 
-    if !missing_derives.is_empty() {
+    if !missing_derives.is_empty() && !is_rust_analyzer() {
         let missing_list = missing_derives.join(", ");
+        let message = format!(
+            "The #[state] enum `{state_name}` is missing required derives: {missing_list}\n\
+Fix: Add the missing derives to your #[state] enum.\n\
+Example:\n\n\
+#[state]\n\
+#[derive({missing_list})]\n\
+pub enum State {{ Off, On }}",
+        );
+        let message = LitStr::new(&message, Span::call_site());
         return Some(quote! {
-            compile_error!(concat!(
-                "The #[state] enum is missing required derives: ",
-                #missing_list,
-                "\nFix: Add the missing derives to your #[state] enum.\n",
-                "Example:\n\n",
-                "#[state]\n",
-                "#[derive(", #missing_list, ")]\n",
-                "pub enum State { Off, On }"
-            ));
+            compile_error!(#message);
         });
     }
 
-    let state_name = matching_state_enum.name.clone();
     let machine_name = machine_info.name.clone();
 
     // Ensure it's applied to a struct
     if !matches!(item, ItemStruct { .. }) {
+        let message = format!(
+            "Error: #[machine] must be applied to a struct.\n\n\
+Fix: Apply #[machine] to a struct instead of another type.\n\n\
+Example:\n\n\
+#[state]\n\
+pub enum {state_name} {{ ... }}\n\n\
+#[machine]\n\
+pub struct {machine_name}<{state_name}> {{ ... }}"
+        );
+        let message = LitStr::new(&message, Span::call_site());
         return Some(quote! {
-            compile_error!(concat!(
-                "Error: #[machine] must be applied to a struct.\n\n",
-                "Fix: Apply #[machine] to a struct instead of another type.\n\n",
-                "Example:\n\n",
-                "#[state]\n",
-                "pub enum ", #state_name, " { ... }\n\n",
-                "#[machine]\n",
-                "pub struct ", #machine_name, "<", #state_name, "> { ... }"
-            ));
+            compile_error!(#message);
         });
     }
 
@@ -430,19 +598,26 @@ pub fn validate_machine_struct(
         .first()
         .map(|param| param.to_token_stream().to_string());
     if first_generic_param.as_deref() != Some(&state_name) {
+        let found = first_generic_param.unwrap_or_else(|| "<missing>".to_string());
+        let message = format!(
+            "Error: #[machine] structs must have a generic type parameter that matches the #[state] enum.\n\n\
+Fix: Change the generic type parameter of `{machine_name}` to match `{state_name}`.\n\n\
+Expected:\n\
+pub struct {machine_name}<{state_name}> {{ ... }}\n\n\
+Found:\n\
+pub struct {machine_name}<{found}> {{ ... }}"
+        );
+        let message = LitStr::new(&message, Span::call_site());
         return Some(quote! {
-            compile_error!(concat!(
-                "Error: #[machine] structs must have a generic type parameter that matches the #[state] enum.\n\n",
-                "Fix: Change the generic type parameter of `", #machine_name, "` to match `", #state_name, "`.\n\n",
-                "Expected:\n",
-                "pub struct ", #machine_name, "<", #state_name, "> { ... }\n\n",
-                "Found:\n",
-                "pub struct ", #machine_name, "<", first_generic_param.unwrap_or("<missing>").as_str(), "> { ... }"
-            ));
+            compile_error!(#message);
         });
     }
 
     None
+}
+
+fn is_rust_analyzer() -> bool {
+    std::env::var("RUST_ANALYZER_INTERNALS").is_ok()
 }
 
 pub fn store_machine_struct(machine_info: &MachineInfo) {

@@ -11,6 +11,7 @@ moddef::moddef!(
 );
 
 use proc_macro::TokenStream;
+use crate::{ensure_machine_loaded, ensure_state_enum_loaded, MachinePath, StateModulePath};
 use syn::{ItemEnum, ItemImpl, ItemStruct, parse_macro_input};
 
 use module_path_extractor::get_pseudo_module_path;
@@ -67,27 +68,20 @@ pub fn transition(
 
     let module_path = get_pseudo_module_path();
 
-    let machine_map = get_machine_map().read().unwrap();
-    let state_enum_map = read_state_enum_map();
-    let state_enum_info = state_enum_map
-        .get(&module_path.clone().into())
-        .expect("State enum not found in proc macro transition");
+    let state_path: StateModulePath = module_path.clone().into();
+    let machine_path: MachinePath = module_path.clone().into();
+    let _ = ensure_state_enum_loaded(&state_path);
+    let _ = ensure_machine_loaded(&machine_path);
 
-    if let Some(err) =
-        validate_machine_and_state(&tr_impl, &module_path, &machine_map, &state_enum_map)
-    {
-        return err.into();
-    }
+    let machine_map = get_machine_map().read().unwrap();
 
     // Retrieve references to the actual MachineInfo / EnumInfo if you need them
     // If you need them for codegen, you can do something like:
     let machine_info = machine_map
-        .get(&module_path.clone().into())
+        .get(&machine_path)
         .expect("Machine not found, even though we validated above");
 
-    if let Some(err) =
-        validate_transition_functions(&tr_impl.functions, machine_info, state_enum_info)
-    {
+    if let Some(err) = validate_transition_functions(&tr_impl.functions, machine_info) {
         return err.into();
     }
 

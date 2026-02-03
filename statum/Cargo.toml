@@ -12,7 +12,7 @@ repository = "https://github.com/eboody/statum"
 version = "0.2.0"
 
 [features]
-default = []
+default = ["serde"]
 serde = ["statum-core/serde", "statum-macros/serde"]
 
 [dependencies]

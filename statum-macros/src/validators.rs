@@ -4,8 +4,8 @@ use std::collections::HashSet;
 use syn::{FnArg, Ident, ItemImpl, ReturnType, Type, parse_macro_input};
 
 use crate::{
-    MachineInfo, MachinePath, VariantInfo, get_state_enum_variant, read_machine_map,
-    read_state_enum_map, to_snake_case,
+    MachineInfo, MachinePath, VariantInfo, ensure_machine_loaded, ensure_state_enum_loaded,
+    get_state_enum_variant, read_machine_map, read_state_enum_map, to_snake_case,
 };
 
 fn has_validators(item: &ItemImpl, state_variants: Vec<VariantInfo>) -> proc_macro2::TokenStream {
@@ -44,7 +44,11 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
     let modified_methods = inject_machine_fields(&methods, &module_path.into());
 
     // Ensure machine metadata exists
-    let machine_metadata = get_machine_metadata(&module_path.into());
+    let module_path_key: MachinePath = module_path.into();
+    let _ = ensure_machine_loaded(&module_path_key);
+    let _ = ensure_state_enum_loaded(&module_path_key.clone().into());
+
+    let machine_metadata = get_machine_metadata(&module_path_key);
     if machine_metadata.is_none() {
         return quote! {
             compile_error!("Error: No `Machine` found in scope. Ensure `#[validators(Machine)]` references a valid machine.");
@@ -55,7 +59,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
 
     let state_enum_map = read_state_enum_map();
     let state_enum_info = state_enum_map
-        .get(&module_path.into())
+        .get(&module_path_key.clone().into())
         .expect("State enum not found");
 
     let has_validators = has_validators(&item_impl, state_enum_info.variants.clone());

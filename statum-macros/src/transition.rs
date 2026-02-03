@@ -1,6 +1,5 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned, ToTokens};
-use std::collections::HashMap;
 use syn::spanned::Spanned;
 
 use syn::{FnArg, ImplItem, ImplItemFn, ReturnType};
@@ -8,7 +7,7 @@ use syn::{FnArg, ImplItem, ImplItemFn, ReturnType};
 use syn::Block;
 use syn::{Ident, ItemImpl, Type};
 
-use crate::{get_state_enum_variant, EnumInfo, MachineInfo, MachinePath, StateModulePath};
+use crate::MachineInfo;
 
 /// Stores all metadata for a single transition method in an `impl` block
 #[allow(unused)]
@@ -131,66 +130,7 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> Transitio
 
 /// Validate that the target type is a known Machine and the state is a valid variant.
 /// Returns `Some(error_tokens)` if there is a validation error; otherwise `None`.
-pub fn validate_machine_and_state(
-    tr_impl: &TransitionImpl,
-    module_path: &str,
-    machine_map: &HashMap<MachinePath, MachineInfo>,
-    state_enum_map: &HashMap<StateModulePath, EnumInfo>,
-) -> Option<proc_macro2::TokenStream> {
-    let target_type_str = tr_impl.target_type.to_token_stream().to_string();
-
-    // e.g. split at '<' to separate "Machine" from "Draft>"
-    let mut type_parts = target_type_str.split('<');
-    let machine_name = type_parts.next().unwrap_or("").trim().to_string();
-    let state_name = type_parts
-        .next()
-        .map(|s| s.trim_end_matches('>').trim().to_string());
-
-    // 1) Validate machine
-    let machine_info = machine_map.get(&module_path.into());
-    if machine_info.is_none() {
-        let machine_name_clone = machine_name.clone();
-        return Some(quote! {
-            compile_error!(
-                concat!(
-                    "Invalid machine: ",
-                    #machine_name_clone,
-                    " is not present in this file. Did you forget to add a #[machine] attribute?"
-                )
-            )
-        });
-    }
-
-    // 2) Validate state variant
-    let found_enum_and_variant = state_enum_map.iter().any(|(state_enum_module_path, info)| {
-        // We only match the same module path
-        state_enum_module_path == &module_path.to_owned().into()
-            && state_name
-                .as_ref()
-                .is_some_and(|state| info.variants.iter().any(|variant| &variant.name == state))
-    });
-
-    let associated_state_enum = state_enum_map
-        .iter()
-        .find(|(state_enum_module_path, _)| state_enum_module_path.as_ref() == module_path)
-        .expect("Expected a state enum for this file");
-
-    let associated_state_enum_name = &associated_state_enum.1.name;
-    if !found_enum_and_variant {
-        return Some(quote! {
-            compile_error!(
-                concat!(
-                    "Invalid state variant: ",
-                    #state_name,
-                    " is not a valid variant of a registered #[state] enum: ",
-                    #associated_state_enum_name
-                )
-            )
-        });
-    }
-
-    None
-}
+// Validation of machine/state names is handled by the type system now.
 
 /// Validate all transition function signatures:
 ///  - must have exactly one argument: `self` or `mut self`
@@ -199,7 +139,6 @@ pub fn validate_machine_and_state(
 pub fn validate_transition_functions(
     functions: &[TransitionFn],
     _machine_info: &MachineInfo,
-    state_enum_map: &EnumInfo, // provided state map for looking up state definitions
 ) -> Option<proc_macro2::TokenStream> {
     if functions.is_empty() {
         return Some(quote! {
@@ -221,104 +160,65 @@ pub fn validate_transition_functions(
                 );
             });
         }
-
-        // Instead of using string-based extraction, we now use machine_info.
-        // We expect the return type to be of the form <machine_info.ident><TargetState>
-        let return_state = func.return_state();
-        let body_str = func.internals.to_token_stream().to_string();
-        // Using our state enum map, check whether the target state requires associated data.
-        if state_has_data(&return_state, state_enum_map) {
-            let variant = state_enum_map.get_variant_from_name(&return_state).unwrap();
-            let data_type = variant.data_type.as_ref().unwrap();
-
-            // Look in the function body: if the user is not calling "transition_with", then error.
-            if !body_str.contains("transition_with") {
-                let func_name = &func.name;
-                return Some(quote_spanned! { func.span =>
-                    compile_error!(
-                        concat!(
-                            "Invalid transition function: ",
-                            stringify!(#func_name),
-                            " returns a state variant with associated data: ",
-                            stringify!(#data_type),
-                            ". Use .transition_with(",
-                            stringify!(#data_type),
-                            ") instead of .transition()."
-                        )
-                    );
-                });
-            }
-        } else {
-            // For states with no associated data, ensure transition_with is not used.
-            if body_str.contains("transition_with") {
-                let func_name = &func.name;
-                return Some(quote_spanned! { func.span =>
-                    compile_error!(
-                        concat!(
-                            "Invalid transition function: ",
-                            stringify!(#func_name),
-                            " returns a state variant with no associated data. Use .transition() instead of .transition_with(..)."
-                        )
-                    );
-                });
-            }
-        }
     }
     None
-}
-
-/// Checks whether the given state variant (by name) requires associated data.
-/// Assumes `state_enum_map` maps state names to an info struct with a `has_data` field.
-fn state_has_data(state: &str, state_enum_map: &EnumInfo) -> bool {
-    let path = state_enum_map.module_path.clone();
-
-    let variant_info =
-        get_state_enum_variant(&path, state).expect("Expected a valid state variant");
-
-    variant_info.data_type.is_some()
 }
 
 pub fn generate_transition_impl(
     input: &ItemImpl,
     tr_impl: &TransitionImpl,
     target_machine_info: &MachineInfo,
-    module_path: &str,
+    _module_path: &str,
 ) -> proc_macro2::TokenStream {
     let target_type = &tr_impl.target_type; // e.g., `OrderMachine<Cart>`
     let machine_target_ident = format_ident!("{}", target_machine_info.name);
     let field_names = target_machine_info.field_names();
+    let state_enum_info = match target_machine_info.get_matching_state_enum() {
+        Ok(enum_info) => enum_info,
+        Err(err) => return err,
+    };
+    let state_enum_name = state_enum_info.name.clone();
 
     // Iterate over transition functions
     let transition_impls = tr_impl.functions.iter().map(|function| {
         let return_state = function.return_state(); // Extracts `NextState`
         let return_state_ident = format_ident!("{}", return_state);
+        let Some(variant_info) = state_enum_info.get_variant_from_name(&return_state) else {
+            return quote_spanned! { function.span =>
+                compile_error!(concat!(
+                    "Invalid state variant: ",
+                    #return_state,
+                    " is not a valid variant of a registered #[state] enum: ",
+                    #state_enum_name
+                ));
+            };
+        };
 
-        let next_state_variant = get_state_enum_variant(&module_path.into(), &return_state)
-            .expect("Expected a valid state variant. This should have been validated earlier.");
-
-        //  Implement `TransitionTo<NextState>` instead of `Transition`
-        if let Some(data_type) = &next_state_variant.data_type {
-            let data_type = syn::parse_str::<syn::Type>(data_type).unwrap();
-            quote! {
-                impl TransitionWith<#data_type> for #target_type {
-                    type NextState = #return_state_ident;
-                    fn transition_with(self, data: #data_type) -> #machine_target_ident<Self::NextState> {
-                        #machine_target_ident {
-                            marker: core::marker::PhantomData,
-                            state_data: data,
-                            #(#field_names: self.#field_names,)*
+        match &variant_info.data_type {
+            Some(data_type) => {
+                let data_ty = syn::parse_str::<Type>(data_type).unwrap();
+                quote! {
+                    impl TransitionWith<#data_ty> for #target_type {
+                        type NextState = #return_state_ident;
+                        fn transition_with(self, data: #data_ty) -> #machine_target_ident<Self::NextState> {
+                            #machine_target_ident {
+                                marker: core::marker::PhantomData,
+                                state_data: data,
+                                #(#field_names: self.#field_names,)*
+                            }
                         }
                     }
                 }
             }
-        } else {
-            quote! {
-                impl TransitionTo<#return_state_ident> for #target_type {
-                    fn transition(self) -> #machine_target_ident<#return_state_ident> {
-                        #machine_target_ident {
-                            marker: core::marker::PhantomData,
-                            state_data: (),
-                            #(#field_names: self.#field_names,)*
+            None => {
+                quote! {
+                    impl TransitionTo<#return_state_ident> for #target_type {
+                        fn transition(self) -> #machine_target_ident<#return_state_ident> {
+                            #machine_target_ident {
+                                marker: core::marker::PhantomData,
+                                state_data: (),
+                                #(#field_names: self.#field_names,)*
+                            }
                         }
                     }
                 }
