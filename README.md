@@ -141,7 +141,7 @@ The macro generates:
 ### `#[machine]`
 - Must be a struct.
 - First generic parameter must match the `#[state]` enum name.
-- If the machine derives traits, the state enum must derive the same traits.
+- Derives on `#[state]` are propagated to generated variant types.
 - Prefer `#[machine]` above `#[derive(..)]` to avoid derive ordering surprises.
 
 ### `#[transition]`
@@ -155,15 +155,6 @@ The macro generates:
 - Must define an `is_{state}` method for every state variant (snake_case).
 - Each method returns `Result<()>` for unit states or `Result<StateData>` for data states.
 - Async validators are supported; if any validator is async, the generated builder is async.
-
-## Serde
-Enable the `serde` feature and derive `Serialize/Deserialize` on your `#[state]` enum. The generated state variant structs will derive them as well.
-
-```toml
-[dependencies]
-statum = { version = "x.y.z", features = ["serde"] }
-serde = { version = "1", features = ["derive"] }
-```
 
 ## Examples
 See `statum-examples/src/examples/` for the full suite of examples.
