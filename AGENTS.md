@@ -26,7 +26,6 @@ Other notable paths: `scripts/` for release helpers and `logo.png` for branding.
 - Prefer type-driven validation (state data type) over function-body inspection.
 - Keep macro error messages precise, actionable, and scoped to the correct enum/machine.
 - Favor deterministic macro behavior even if it requires extra scanning or caching.
-- Maintain serde behavior as an opt-in feature and document it clearly.
 
 ## Style and Patterns Observed
 - API aims for minimal boilerplate and strong compile-time guarantees.
@@ -41,7 +40,6 @@ Other notable paths: `scripts/` for release helpers and `logo.png` for branding.
 
 ## Toolchain and Features
 - The repo pins nightly via `rust-toolchain.toml`; use nightly toolchain when building/testing.
-- Optional `serde` feature is supported across crates (see `statum` feature flags).
 
 ## Commit & Pull Request Guidelines
 - Recent history mixes conventional prefixes (`build:`, `refactor(scope):`) and informal messages; prefer `type(scope): short summary` when possible.

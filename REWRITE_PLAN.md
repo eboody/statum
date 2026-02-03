@@ -10,7 +10,7 @@
 - All workspace crates build and tests pass on nightly.
 - New API is documented in the README and has at least one end-to-end example per major feature.
 - Macro UI tests cover all expected diagnostics and success paths.
-- Migration guide covers: state definition, machine definition, transitions, validators, serde.
+- Migration guide covers: state definition, machine definition, transitions, validators.
 - No regression in compile-time safety compared to main.
 
 ## Milestones
@@ -29,7 +29,6 @@ Deliverables:
 ### 2) Core Types and Runtime Semantics
 - Verify `statum-core` types match the new API expectations.
 - Confirm trait names, bounds, and visibility strategy.
-- Ensure serde behavior is consistent and documented.
 
 Deliverables:
 - Updated `statum-core` API (if changes are needed).
@@ -73,4 +72,3 @@ Deliverables:
 2. Update README Quick Start to match the new API.
 3. Align macro diagnostics and UI tests to the spec.
 4. Port examples to the spec and validate with tests.
-

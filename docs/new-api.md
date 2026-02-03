@@ -111,9 +111,6 @@ impl MyPersistentData {
 - A builder `machine_builder()` on the persistent data type that returns `Result<SuperState, statum::Error>`.
 - A batch builder for processing lists of persistent data items.
 
-## Serde
-- `serde` is an opt-in feature; when enabled and the state enum derives `Serialize/Deserialize`, the generated state variant structs also derive them.
-
 ## Quick Example (Inferred)
 ```rust
 use statum::{machine, state, transition, validators};
@@ -155,4 +152,3 @@ impl StoredDoc {
     fn is_published(&self) -> Result<()> { Ok(()) }
 }
 ```
-

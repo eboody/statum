@@ -1,6 +1,6 @@
 [package]
 name = "module_path_extractor"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Derive a Rust module path from a macro call-site span"
 license = "MIT"

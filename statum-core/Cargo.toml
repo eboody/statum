@@ -9,11 +9,6 @@ license = "MIT"
 name = "statum-core"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
-version = "0.3.0"
+version = "0.3.1"
 
 [dependencies]
-serde = { workspace = true, optional = true, features = ["derive"] }
-
-[features]
-default = ["serde"]
-serde = ["dep:serde"]
