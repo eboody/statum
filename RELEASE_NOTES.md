@@ -1,5 +1,12 @@
 # Release Notes
 
+## v0.3.1 (2026-02-03)
+
+### Changes
+- Removed the `serde` feature and dependency; derives on `#[state]`/`#[machine]` are now fully user-driven.
+- Bumped internal versions and publish metadata.
+- Updated examples/docs to remove Serde usage.
+
 ## v0.3.0 (2026-02-03)
 
 This release is a **major rewrite** focused on a cleaner typestate API, improved macro diagnostics, and a more complete example/test suite.
