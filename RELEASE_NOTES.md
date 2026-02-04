@@ -1,5 +1,10 @@
 # Release Notes
 
+## v0.3.2 (2026-02-03)
+
+### Changes
+- README refreshed with enum-based validator examples and links to compiling examples/tests.
+
 ## v0.3.1 (2026-02-03)
 
 ### Changes
