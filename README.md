@@ -236,7 +236,7 @@ struct DbData {
 
 #[validators(TaskMachine)]
 impl DbData {
-    fn is_draft(&self) -> Result<(), statum::Error> {
+    fn is_draft(&self) -> statum::Result<()> {
         match self.state {
             Status::Draft => {
                 // Note: machine fields are available here (client, name, priority).
@@ -247,14 +247,14 @@ impl DbData {
         }
     }
 
-    fn is_in_review(&self) -> Result<ReviewData, statum::Error> {
+    fn is_in_review(&self) -> statum::Result<ReviewData> {
         match self.state {
             Status::InReview => Ok(ReviewData { reviewer: "sam".into() }),
             _ => Err(statum::Error::InvalidState),
         }
     }
 
-    fn is_published(&self) -> Result<(), statum::Error> {
+    fn is_published(&self) -> statum::Result<()> {
         match self.state {
             Status::Published => Ok(()),
             _ => Err(statum::Error::InvalidState),
@@ -296,7 +296,7 @@ pub mod task_machine {
 You can use it to shorten matches without introducing collisions:
 
 ```rust
-fn rebuild_task(row: &DbData) -> Result<task_machine::State, statum::Error> {
+fn rebuild_task(row: &DbData) -> statum::Result<task_machine::State> {
     row.machine_builder()
         .client("acme".to_owned())
         .name("doc".to_owned())
@@ -393,7 +393,7 @@ impl Machine<Pending> {
         self.allowed
     }
 
-    fn try_activate(self) -> Result<Machine<Active>, statum::Error> {
+    fn try_activate(self) -> statum::Result<Machine<Active>> {
         if self.can_activate() {
             Ok(self.activate())
         } else {
@@ -487,7 +487,7 @@ Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs)
 ```rust
 #[validators(TaskMachine)]
 impl DbData {
-    fn is_in_review(&self) -> Result<ReviewData, statum::Error> {
+    fn is_in_review(&self) -> statum::Result<ReviewData> {
         match self.state {
             Status::InReview => Ok(ReviewData { reviewer: fetch_reviewer(client) }),
             _ => Err(statum::Error::InvalidState),
@@ -508,10 +508,10 @@ let results = rows
     .build();
 ```
 
-If you want a plain `Result<Vec<Machine>, Error>` without skipping invalid rows, map and collect:
+If you want a plain `statum::Result<Vec<Machine>>` without skipping invalid rows, map and collect:
 
 ```rust
-let machines: Result<Vec<task_machine::State>, statum::Error> = rows
+let machines: statum::Result<Vec<task_machine::State>> = rows
     .into_iter()
     .map(|row| {
         row.machine_builder()
@@ -576,7 +576,7 @@ for item in items {
 ### `#[validators]`
 - Use `#[validators(Machine)]` on an `impl` block for your persistent data type.
 - Must define an `is_{state}` method for every state variant (snake_case).
-- Each method returns `Result<()>` for unit states or `Result<StateData>` for data states.
+- Each method returns `statum::Result<()>` for unit states or `statum::Result<StateData>` for data states.
 - Async validators are supported; if any validator is async, the generated builder is async.
 - The macro generates a `{Machine}SuperState` enum and a machine-scoped module alias for matching on reconstructed states (typestate builder pattern).
 
@@ -627,3 +627,7 @@ for item in items {
 | `machine_builder()` | Builder generated on the data type to reconstruct a machine from stored data.                         | `row.machine_builder().client(c).build()`                   |
 
 ---
+
+### **Type Aliases**
+
+`statum::Result<T>` is a convenience alias for `Result<T, statum::Error>`.

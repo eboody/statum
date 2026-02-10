@@ -9,7 +9,7 @@ license = "MIT"
 name = "statum"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
-version = "0.3.3"
+version = "0.3.4"
 
 [dependencies]
 bon = { version = "3.3.2", features = [
@@ -17,8 +17,8 @@ bon = { version = "3.3.2", features = [
   "experimental-overwritable",
   "implied-bounds",
 ] }
-statum-core = { path = "../statum-core", version = "0.3.3" }
-statum-macros = { path = "../statum-macros", version = "0.3.3" }
+statum-core = { path = "../statum-core", version = "0.3.4" }
+statum-macros = { path = "../statum-macros", version = "0.3.4" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

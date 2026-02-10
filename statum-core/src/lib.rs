@@ -3,6 +3,8 @@ pub enum Error {
     InvalidState,
 }
 
+pub type Result<T> = core::result::Result<T, Error>;
+
 impl<T> From<Error> for core::result::Result<T, Error> {
     fn from(val: Error) -> Self {
         Err(val)

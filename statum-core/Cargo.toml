@@ -9,6 +9,6 @@ license = "MIT"
 name = "statum-core"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
-version = "0.3.3"
+version = "0.3.4"
 
 [dependencies]
