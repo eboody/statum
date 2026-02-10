@@ -57,5 +57,11 @@ impl DbRow {
 
 fn main() {
     let row = DbRow { status: "draft" };
-    let _ = row.machine_builder().name("todo".to_string()).build();
+    let machine = row.machine_builder().name("todo".to_string()).build().unwrap();
+
+    match machine {
+        task_machine::State::Draft(_machine) => {}
+        task_machine::State::InProgress(_machine) => {}
+        task_machine::State::Done(_machine) => {}
+    }
 }

@@ -274,14 +274,46 @@ fn main() {
         .unwrap();
 
     match machine {
-        TaskMachineSuperState::Draft(_draft_machine) => { /* ... */ }
-        TaskMachineSuperState::InReview(_in_review_machine) => { /* ... */ }
-        TaskMachineSuperState::Published(_published_machine) => { /* ... */ }
+        task_machine::State::Draft(_draft_machine) => { /* ... */ }
+        task_machine::State::InReview(_in_review_machine) => { /* ... */ }
+        task_machine::State::Published(_published_machine) => { /* ... */ }
     }
 }
 ```
 
 Examples: [statum-examples/src/examples/09-persistent-data.rs](statum-examples/src/examples/09-persistent-data.rs), [statum-examples/src/examples/10-persistent-data-vecs.rs](statum-examples/src/examples/10-persistent-data-vecs.rs).
+
+### 4. Typestate Builder Ergonomics
+
+The validators macro also generates a machine-scoped module that exposes a short alias:
+
+```rust
+pub mod task_machine {
+    pub type State = TaskMachineSuperState;
+}
+```
+
+You can use it to shorten matches without introducing collisions:
+
+```rust
+fn rebuild_task(row: &DbData) -> Result<task_machine::State, statum::Error> {
+    row.machine_builder()
+        .client("acme".to_owned())
+        .name("doc".to_owned())
+        .priority(1)
+        .build()
+}
+
+let row = DbData { state: Status::Draft };
+
+match rebuild_task(&row)? {
+    task_machine::State::Draft(m) => { /* ... */ }
+    task_machine::State::InReview(m) => { /* ... */ }
+    task_machine::State::Published(m) => { /* ... */ }
+}
+```
+
+Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs).
 
 ## Examples
 
@@ -479,7 +511,7 @@ let results = rows
 If you want a plain `Result<Vec<Machine>, Error>` without skipping invalid rows, map and collect:
 
 ```rust
-let machines: Result<Vec<TaskMachineSuperState>, statum::Error> = rows
+let machines: Result<Vec<task_machine::State>, statum::Error> = rows
     .into_iter()
     .map(|row| {
         row.machine_builder()
@@ -510,10 +542,10 @@ Store `*SuperState` values in a collection and match later:
 Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (type-erased storage).
 
 ```rust
-let items: Vec<TaskMachineSuperState> = vec![machine];
+let items: Vec<task_machine::State> = vec![machine];
 for item in items {
     match item {
-        TaskMachineSuperState::Draft(m) => { /* ... */ }
+        task_machine::State::Draft(m) => { /* ... */ }
         _ => {}
     }
 }
@@ -546,7 +578,7 @@ for item in items {
 - Must define an `is_{state}` method for every state variant (snake_case).
 - Each method returns `Result<()>` for unit states or `Result<StateData>` for data states.
 - Async validators are supported; if any validator is async, the generated builder is async.
-- The macro generates a `{Machine}SuperState` enum for matching on reconstructed states (typestate builder pattern).
+- The macro generates a `{Machine}SuperState` enum and a machine-scoped module alias for matching on reconstructed states (typestate builder pattern).
 
 ---
 
@@ -591,7 +623,7 @@ for item in items {
 
 | Item                | Description                                                                                           | Example Usage                                                |
 |---------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
-| `{Machine}SuperState` | Wrapper enum for all machine states, used for matching.                                               | `match machine { TaskMachineSuperState::Draft(m) => ... }`  |
+| `{Machine}SuperState` | Wrapper enum for all machine states, used for matching.                                               | `match machine { task_machine::State::Draft(m) => ... }`  |
 | `machine_builder()` | Builder generated on the data type to reconstruct a machine from stored data.                         | `row.machine_builder().client(c).build()`                   |
 
 ---

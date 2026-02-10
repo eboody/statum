@@ -284,11 +284,22 @@ Ensure the enum is in the same module as the machine and validators."
         }
     };
 
+    let superstate_module_ident = format_ident!(
+        "{}",
+        to_snake_case(&machine_ident.to_string())
+    );
+    let superstate_module = quote! {
+        pub mod #superstate_module_ident {
+            pub type State = super::#superstate_ident;
+        }
+    };
+
     // Merge original item with generated code
     let expanded = quote! {
         #has_validators
         #superstate_enum
         #superstate_impl
+        #superstate_module
         #machine_builder_impl
     };
 
