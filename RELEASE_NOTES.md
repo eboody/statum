@@ -1,5 +1,11 @@
 # Release Notes
 
+## v0.3.3 (2026-02-03)
+
+### Changes
+- Validators now generate a machine-scoped module alias for matching superstates.
+- README updated to use the new module alias and enum-based status matching.
+
 ## v0.3.2 (2026-02-03)
 
 ### Changes
