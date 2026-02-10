@@ -199,7 +199,7 @@ State machines often need to persist their state. Saving to and loading from ext
 
 The key pieces are:
 - `#[validators]` macro on your data type impl block.
-- `machine_builder()` generated on the data type to reconstruct the machine.
+- `into_machine()` generated on the data type to reconstruct the machine (with `machine_builder()` kept for compatibility).
 
 #### Example
 
@@ -266,7 +266,7 @@ fn main() {
     let db_data = DbData { state: Status::InReview };
 
     let machine = db_data
-        .machine_builder()
+        .into_machine()
         .client("acme".to_owned())
         .name("doc".to_owned())
         .priority(1)
@@ -297,7 +297,7 @@ You can use it to shorten matches without introducing collisions:
 
 ```rust
 fn rebuild_task(row: &DbData) -> statum::Result<task_machine::State> {
-    row.machine_builder()
+    row.into_machine()
         .client("acme".to_owned())
         .name("doc".to_owned())
         .priority(1)
@@ -514,7 +514,7 @@ If you want a plain `statum::Result<Vec<Machine>>` without skipping invalid rows
 let machines: statum::Result<Vec<task_machine::State>> = rows
     .into_iter()
     .map(|row| {
-        row.machine_builder()
+        row.into_machine()
             .client(client.clone())
             .name(name.clone())
             .priority(priority)
@@ -530,10 +530,10 @@ Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs)
 
 ```rust
 let results = rows
-    .machines_builder()
-    .tenant(tenant)
-    .build()
-    .await;
+        .machines_builder()
+        .tenant(tenant)
+        .build()
+        .await;
 ```
 
 ### Type-erased storage (collecting superstates)
@@ -624,7 +624,7 @@ for item in items {
 | Item                | Description                                                                                           | Example Usage                                                |
 |---------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
 | `{Machine}SuperState` | Wrapper enum for all machine states, used for matching.                                               | `match machine { task_machine::State::Draft(m) => ... }`  |
-| `machine_builder()` | Builder generated on the data type to reconstruct a machine from stored data.                         | `row.machine_builder().client(c).build()`                   |
+| `into_machine()` | Builder generated on the data type to reconstruct a machine from stored data.                         | `row.into_machine().client(c).build()`                   |
 
 ---
 

@@ -261,6 +261,12 @@ Ensure the enum is in the same module as the machine and validators."
 
                 Err(statum::Error::InvalidState)
             }
+            #[builder(start_fn = into_machine)]
+            #machine_vis #async_token fn __statum_into_machine(&self #(, #fields_with_types)*) -> core::result::Result<#superstate_ident, statum::Error> {
+                #(#validator_checks)*
+
+                Err(statum::Error::InvalidState)
+            }
             #(#modified_methods)*
         }
 
@@ -390,7 +396,7 @@ fn generate_finalization_logic(
             self.items
                 .into_iter()
                 .map(|data| {
-                    data.machine_builder()
+                    data.into_machine()
                         #field_builder_chain
                         .build()
                 })
@@ -400,7 +406,7 @@ fn generate_finalization_logic(
         quote! {
             futures::future::join_all(
                 self.items.iter().map(|data| {
-                    data.machine_builder()
+                    data.into_machine()
                         #field_builder_chain
                         .build()
                 })
