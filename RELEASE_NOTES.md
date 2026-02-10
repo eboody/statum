@@ -1,5 +1,11 @@
 # Release Notes
 
+## v0.3.4 (2026-02-03)
+
+### Changes
+- Added `statum::Result<T>` as a convenience alias for `Result<T, statum::Error>`.
+- README updated to use enum-based validator matching and `statum::Result`.
+
 ## v0.3.3 (2026-02-03)
 
 ### Changes
@@ -24,10 +30,10 @@ This release is a **major rewrite** focused on a cleaner typestate API, improved
 
 ### Highlights
 - **New examples crate**: examples moved into `statum-examples/` with runnable tests.
-- **Macro diagnostics overhaul**: clearer, state‑named errors for common misuse cases.
+- **Macro diagnostics overhaul**: clearer, state-named errors for common misuse cases.
 - **Deterministic macro loading**: more stable macro metadata resolution across modules.
 - **Validators flow**: improved reconstruction ergonomics with a generated `{Machine}SuperState` for matching.
-- **Robust module path extraction**: handles multi‑module files more reliably.
+- **Robust module path extraction**: handles multi-module files more reliably.
 - **Expanded test coverage**: trybuild UI cases + stress tests for API permutations.
 
 ### Breaking Changes / Migration
