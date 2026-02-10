@@ -1,5 +1,11 @@
 # Release Notes
 
+## v0.3.5 (2026-02-03)
+
+### Changes
+- Added `into_machine()` as the preferred validators builder entry point. `machine_builder()` remains for compatibility.
+- Updated README examples to use `into_machine()` and `statum::Result`.
+
 ## v0.3.4 (2026-02-03)
 
 ### Changes
