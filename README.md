@@ -328,6 +328,8 @@ Transition methods must return a single next state. Put branching logic in a nor
 
 Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (event-driven transitions).
 
+Tip: Keep the decision enum variant names aligned with your `#[state]` variants. It makes matches read the same way while still carrying typed machines.
+
 ```rust
 #[transition]
 impl ProcessMachine<Init> {
