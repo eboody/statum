@@ -217,20 +217,6 @@ Ensure the enum is in the same module as the machine and validators."
         }
     }
 
-    // **Generate SuperState Enum**
-    let superstate_variants = state_enum_info.variants.iter().map(|variant| {
-        let variant_ident = format_ident!("{}", variant.name);
-        quote! {
-            #variant_ident(#machine_ident<#variant_ident>)
-        }
-    });
-
-    let superstate_enum = quote! {
-        pub enum #superstate_ident {
-            #(#superstate_variants),*
-        }
-    };
-
     let machine_vis: syn::Visibility = match syn::parse_str(&machine_metadata.vis) {
         Ok(vis) => vis,
         Err(_) => syn::parse_quote!( /* default or nothing */ ),
@@ -261,7 +247,7 @@ Ensure the enum is in the same module as the machine and validators."
 
                 Err(statum::Error::InvalidState)
             }
-            #[builder(start_fn = into_machine)]
+            #[builder(start_fn = into_machine, finish_fn = build)]
             #machine_vis #async_token fn __statum_into_machine(&self #(, #fields_with_types)*) -> core::result::Result<#superstate_ident, statum::Error> {
                 #(#validator_checks)*
 
@@ -273,39 +259,9 @@ Ensure the enum is in the same module as the machine and validators."
         #batch_builder_impl
     };
 
-    // For each variant, create `is_{variant_name}(&self) -> bool`.
-    let is_methods = state_enum_info.variants.iter().map(|variant| {
-        let variant_ident = format_ident!("{}", variant.name);
-        let fn_name = format_ident!("is_{}", crate::to_snake_case(&variant.name));
-        quote! {
-            pub fn #fn_name(&self #(, #fields_with_types)*) -> bool {
-                matches!(self, #superstate_ident::#variant_ident(_))
-            }
-        }
-    });
-
-    let superstate_impl = quote! {
-        impl #superstate_ident {
-            #(#is_methods)*
-        }
-    };
-
-    let superstate_module_ident = format_ident!(
-        "{}",
-        to_snake_case(&machine_ident.to_string())
-    );
-    let superstate_module = quote! {
-        pub mod #superstate_module_ident {
-            pub type State = super::#superstate_ident;
-        }
-    };
-
     // Merge original item with generated code
     let expanded = quote! {
         #has_validators
-        #superstate_enum
-        #superstate_impl
-        #superstate_module
         #machine_builder_impl
     };
 

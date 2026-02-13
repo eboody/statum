@@ -321,6 +321,38 @@ mod type_erased_storage {
     }
 }
 
+mod superstate_without_validators {
+    use super::*;
+
+    #[state]
+    enum State {
+        Draft,
+        Done,
+    }
+
+    #[machine]
+    struct WorkflowMachine<State> {}
+
+    #[transition]
+    impl WorkflowMachine<Draft> {
+        fn finish(self) -> WorkflowMachine<Done> {
+            self.transition()
+        }
+    }
+
+    pub fn run() {
+        let machine = WorkflowMachine::<Draft>::builder().build();
+        let wrapper = WorkflowMachineSuperState::Draft(machine);
+
+        match wrapper {
+            workflow_machine::State::Draft(m) => {
+                let _done = m.finish();
+            }
+            workflow_machine::State::Done(_m) => {}
+        }
+    }
+}
+
 #[test]
 fn patterns_rehydration_with_fetch() {
     rehydration_with_fetch::run();
@@ -354,4 +386,9 @@ async fn patterns_parallel_reconstruction() {
 #[test]
 fn patterns_type_erased_storage() {
     type_erased_storage::run();
+}
+
+#[test]
+fn patterns_superstate_without_validators() {
+    superstate_without_validators::run();
 }

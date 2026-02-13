@@ -6,7 +6,7 @@ use std::fs;
 use std::sync::{OnceLock, RwLock};
 use syn::{Attribute, Generics, Ident, ItemStruct, LitStr, Visibility};
 
-use crate::{ensure_state_enum_loaded, EnumInfo, StateModulePath};
+use crate::{ensure_state_enum_loaded, to_snake_case, EnumInfo, StateModulePath};
 
 impl<T: ToString> From<T> for MachinePath {
     fn from(value: T) -> Self {
@@ -264,15 +264,18 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
             Err(err) => return err,
         };
         let name_ident = format_ident!("{}", machine_info.name);
+        let superstate_ident = format_ident!("{}SuperState", machine_info.name);
         let generics = parse_generics(machine_info, &state_enum);
         let struct_def = generate_struct_definition(machine_info, &name_ident, &generics);
         let builder_methods = machine_info.generate_builder_methods(&state_enum);
         let transition_traits = transition_traits(machine_info, &state_enum);
+        let superstate = generate_superstate(machine_info, &state_enum, &name_ident, &superstate_ident);
 
         quote! {
             #transition_traits
             #struct_def
             #builder_methods
+            #superstate
         }
     } else {
         quote! { compile_error!("Internal error: machine metadata not found. Try re-running `cargo check` or ensuring #[machine] is applied in this module."); }
@@ -302,6 +305,48 @@ fn transition_traits(machine_info: &MachineInfo, state_enum: &EnumInfo) -> Token
         pub trait TransitionWith<T> {
             type NextState: #trait_name;
             fn transition_with(self, data: T) -> #machine_name<Self::NextState>;
+        }
+    }
+}
+
+fn generate_superstate(
+    machine_info: &MachineInfo,
+    state_enum: &EnumInfo,
+    machine_ident: &Ident,
+    superstate_ident: &Ident,
+) -> TokenStream {
+    let superstate_variants = state_enum.variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        quote! {
+            #variant_ident(#machine_ident<#variant_ident>)
+        }
+    });
+
+    let vis: Visibility = syn::parse_str(&machine_info.vis).expect("Failed to parse visibility.");
+
+    let is_methods = state_enum.variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        let fn_name = format_ident!("is_{}", to_snake_case(&variant.name));
+        quote! {
+            pub fn #fn_name(&self) -> bool {
+                matches!(self, #superstate_ident::#variant_ident(_))
+            }
+        }
+    });
+
+    let module_ident = format_ident!("{}", to_snake_case(&machine_info.name));
+
+    quote! {
+        #vis enum #superstate_ident {
+            #(#superstate_variants),*
+        }
+
+        impl #superstate_ident {
+            #(#is_methods)*
+        }
+
+        #vis mod #module_ident {
+            pub type State = super::#superstate_ident;
         }
     }
 }
