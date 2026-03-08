@@ -4,10 +4,20 @@ extern crate proc_macro;
 
 use proc_macro::Span;
 use proc_macro2::LineColumn;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{OnceLock, RwLock};
 use syn::spanned::Spanned;
 use syn::Item;
+
+type ModulePathCache = HashMap<(String, usize), Option<String>>;
+
+static MODULE_PATH_CACHE: OnceLock<RwLock<ModulePathCache>> = OnceLock::new();
+
+fn get_module_path_cache() -> &'static RwLock<ModulePathCache> {
+    MODULE_PATH_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
 
 /// Extracts the file path and line number where the macro was invoked.
 pub fn get_source_info() -> Option<(String, usize)> {
@@ -20,8 +30,23 @@ pub fn get_source_info() -> Option<(String, usize)> {
 
 /// Reads the file and extracts the module path at the given line.
 pub fn find_module_path(file_path: &str, line_number: usize) -> Option<String> {
+    let cache_key = (file_path.to_string(), line_number);
+    if let Some(cached) = get_module_path_cache()
+        .read()
+        .ok()
+        .and_then(|cache| cache.get(&cache_key).cloned())
+    {
+        return cached;
+    }
+
     let module_root = module_root_from_file(file_path);
-    find_module_path_in_file(file_path, line_number, &module_root)
+    let resolved = find_module_path_in_file(file_path, line_number, &module_root);
+
+    if let Ok(mut cache) = get_module_path_cache().write() {
+        cache.insert(cache_key, resolved.clone());
+    }
+
+    resolved
 }
 
 /// Converts a file path into a pseudo-Rust module path.
@@ -38,9 +63,7 @@ pub fn module_path_from_file(file_path: &str) -> String {
 
     let without_ext = relative.strip_suffix(".rs").unwrap_or(relative);
     if without_ext.ends_with("/mod") {
-        let parent = without_ext
-            .strip_suffix("/mod")
-            .unwrap_or(without_ext);
+        let parent = without_ext.strip_suffix("/mod").unwrap_or(without_ext);
         let parent = parent.trim_matches('/');
         return parent.replace('/', "::");
     }
@@ -84,9 +107,7 @@ pub fn module_path_from_file_with_root(file_path: &str, module_root: &Path) -> S
 
     let without_ext = relative.strip_suffix(".rs").unwrap_or(relative);
     if without_ext.ends_with("/mod") {
-        let parent = without_ext
-            .strip_suffix("/mod")
-            .unwrap_or(without_ext);
+        let parent = without_ext.strip_suffix("/mod").unwrap_or(without_ext);
         let parent = parent.trim_matches('/');
         return parent.replace('/', "::");
     }
@@ -117,15 +138,12 @@ pub fn find_module_path_in_file(
         line >= start && line <= end
     }
 
-    fn visit_items(
-        items: &[Item],
-        line: usize,
-        stack: &mut Vec<String>,
-        best: &mut Vec<String>,
-    ) {
+    fn visit_items(items: &[Item], line: usize, stack: &mut Vec<String>, best: &mut Vec<String>) {
         for item in items {
             let Item::Mod(module) = item else { continue };
-            let Some((_, inner_items)) = &module.content else { continue };
+            let Some((_, inner_items)) = &module.content else {
+                continue;
+            };
             if !span_contains_line(module.span(), line) {
                 continue;
             }

@@ -3,6 +3,7 @@ moddef::moddef!(
     flat (pub) mod {
     },
     flat (pub(crate)) mod {
+        source_cache,
         state,
         machine,
         transition,
@@ -10,8 +11,8 @@ moddef::moddef!(
     }
 );
 
+use crate::{MachinePath, StateModulePath, ensure_machine_loaded, ensure_state_enum_loaded};
 use proc_macro::TokenStream;
-use crate::{ensure_machine_loaded, ensure_state_enum_loaded, MachinePath, StateModulePath};
 use syn::{ItemEnum, ItemImpl, ItemStruct, parse_macro_input};
 
 use module_path_extractor::get_pseudo_module_path;

@@ -3,10 +3,11 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::{
     collections::HashMap,
-    fs,
     sync::{OnceLock, RwLock},
 };
 use syn::{Attribute, Fields, Ident, ItemEnum, Path};
+
+use crate::source_cache::get_file_analysis;
 
 // Structure to hold extracted enum data
 #[derive(Clone, Debug)]
@@ -164,29 +165,19 @@ pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo>
         }
     }
 
-    let contents = fs::read_to_string(&file_path).ok()?;
-    let parsed = syn::parse_file(&contents).ok()?;
+    let analysis = get_file_analysis(&file_path)?;
     let allow_any_module = enum_path.as_ref() == "unknown";
 
     let mut found: Option<EnumInfo> = None;
-    for item in parsed.items {
-        let enum_item = match item {
-            syn::Item::Enum(item_enum) => item_enum,
-            _ => continue,
-        };
-
-        if !enum_item.attrs.iter().any(|attr| attr.path().is_ident("state")) {
-            continue;
-        }
-
-        let enum_name = enum_item.ident.to_string();
-        let line_number = find_item_line(&contents, &enum_name)?;
+    for entry in &analysis.state_enums {
+        let enum_item = &entry.item;
+        let line_number = entry.line_number;
         let module_path = find_module_path(&file_path, line_number)?;
         if !allow_any_module && &module_path != enum_path.as_ref() {
             continue;
         }
 
-        let mut enum_info = EnumInfo::from_item_enum(&enum_item).ok()?;
+        let mut enum_info = EnumInfo::from_item_enum_with_module(enum_item, module_path.into()).ok()?;
         enum_info.file_path = Some(file_path.clone());
         found = Some(enum_info);
         break;
@@ -198,19 +189,6 @@ pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo>
 
     found
 }
-
-fn find_item_line(contents: &str, item_name: &str) -> Option<usize> {
-    for (idx, line) in contents.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("enum ") || trimmed.starts_with("pub enum ") {
-            if trimmed.contains(&format!("enum {}", item_name)) {
-                return Some(idx + 1);
-            }
-        }
-    }
-    None
-}
-
 pub fn get_state_enum_variant(
     enum_path: &StateModulePath,
     variant_name: &str,
@@ -239,6 +217,24 @@ pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
 
 impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
+        let module_path = get_pseudo_module_path();
+        let file_path = get_source_info().map(|(path, _)| path);
+        Self::from_item_enum_with_module_and_file(item, module_path.into(), file_path)
+    }
+
+    pub fn from_item_enum_with_module(
+        item: &ItemEnum,
+        module_path: StateModulePath,
+    ) -> syn::Result<Self> {
+        let file_path = get_source_info().map(|(path, _)| path);
+        Self::from_item_enum_with_module_and_file(item, module_path, file_path)
+    }
+
+    fn from_item_enum_with_module_and_file(
+        item: &ItemEnum,
+        module_path: StateModulePath,
+        file_path: Option<String>,
+    ) -> syn::Result<Self> {
         let name = item.ident.to_string();
         let vis = item.vis.to_token_stream().to_string();
         // TODO: Support lifetimes/generics on #[state] enums.
@@ -286,9 +282,6 @@ impl EnumInfo {
                 "Error: #[state] enums must have at least one variant.",
             ));
         }
-
-        let module_path = get_pseudo_module_path();
-        let file_path = get_source_info().map(|(path, _)| path);
 
         Ok(Self {
             derives,

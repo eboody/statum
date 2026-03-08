@@ -2,11 +2,11 @@ use module_path_extractor::{find_module_path, get_pseudo_module_path, get_source
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
-use std::fs;
 use std::sync::{OnceLock, RwLock};
 use syn::{Attribute, Generics, Ident, ItemStruct, LitStr, Visibility};
 
 use crate::{ensure_state_enum_loaded, to_snake_case, EnumInfo, StateModulePath};
+use crate::source_cache::get_file_analysis;
 
 impl<T: ToString> From<T> for MachinePath {
     fn from(value: T) -> Self {
@@ -91,33 +91,20 @@ pub fn ensure_machine_loaded(machine_path: &MachinePath) -> Option<MachineInfo> 
         }
     }
 
-    let contents = fs::read_to_string(&file_path).ok()?;
-    let parsed = syn::parse_file(&contents).ok()?;
+    let analysis = get_file_analysis(&file_path)?;
     let allow_any_module = machine_path.0 == "unknown";
 
     let mut found: Option<MachineInfo> = None;
-    for item in parsed.items {
-        let struct_item = match item {
-            syn::Item::Struct(item_struct) => item_struct,
-            _ => continue,
-        };
-
-        if !struct_item
-            .attrs
-            .iter()
-            .any(|attr| attr.path().is_ident("machine"))
-        {
-            continue;
-        }
-
-        let struct_name = struct_item.ident.to_string();
-        let line_number = find_item_line(&contents, &struct_name)?;
+    for entry in &analysis.machine_structs {
+        let struct_item = &entry.item;
+        let line_number = entry.line_number;
         let module_path = find_module_path(&file_path, line_number)?;
         if !allow_any_module && &module_path != &machine_path.0 {
             continue;
         }
 
-        let mut machine_info = MachineInfo::from_item_struct_with_module(&struct_item, machine_path)?;
+        let mut machine_info =
+            MachineInfo::from_item_struct_with_module(struct_item, machine_path)?;
         machine_info.file_path = Some(file_path.clone());
         found = Some(machine_info);
         break;
@@ -129,19 +116,6 @@ pub fn ensure_machine_loaded(machine_path: &MachinePath) -> Option<MachineInfo> 
 
     found
 }
-
-fn find_item_line(contents: &str, item_name: &str) -> Option<usize> {
-    for (idx, line) in contents.lines().enumerate() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("struct ") || trimmed.starts_with("pub struct ") {
-            if trimmed.contains(&format!("struct {}", item_name)) {
-                return Some(idx + 1);
-            }
-        }
-    }
-    None
-}
-
 // Extract derives from `#[derive(Debug, Clone, ...)]`
 
 pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
