@@ -149,17 +149,17 @@ fn get_state_enum_map() -> &'static RwLock<HashMap<StateModulePath, EnumInfo>> {
     STATE_ENUMS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-pub fn read_state_enum_map() -> HashMap<StateModulePath, EnumInfo> {
-    get_state_enum_map().read().unwrap().clone()
+pub fn get_state_enum(enum_path: &StateModulePath) -> Option<EnumInfo> {
+    get_state_enum_map().read().ok()?.get(enum_path).cloned()
 }
 
 pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo> {
     let source_info = get_source_info();
     if source_info.is_none() {
-        return get_state_enum_map().read().ok()?.get(enum_path).cloned();
+        return get_state_enum(enum_path);
     }
     let file_path = source_info?.0;
-    if let Some(info) = get_state_enum_map().read().ok()?.get(enum_path).cloned() {
+    if let Some(info) = get_state_enum(enum_path) {
         if info.file_path.as_deref() == Some(file_path.as_str()) {
             return Some(info);
         }
@@ -189,14 +189,6 @@ pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo>
 
     found
 }
-pub fn get_state_enum_variant(
-    enum_path: &StateModulePath,
-    variant_name: &str,
-) -> Option<VariantInfo> {
-    ensure_state_enum_loaded(enum_path)
-        .and_then(|enum_info| enum_info.get_variant_from_name(variant_name).cloned())
-}
-
 /// Extracts `#[derive(...)]` attributes from an enum
 pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
     if attr.path().is_ident("derive") {

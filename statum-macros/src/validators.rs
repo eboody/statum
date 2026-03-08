@@ -1,14 +1,14 @@
 use proc_macro::TokenStream;
 use quote::{ToTokens, format_ident, quote};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use syn::{FnArg, Ident, ItemImpl, ReturnType, Type, parse_macro_input};
 
 use crate::{
-    MachineInfo, MachinePath, VariantInfo, ensure_machine_loaded, ensure_state_enum_loaded,
-    get_state_enum_variant, read_machine_map, read_state_enum_map, to_snake_case,
+    get_machine, get_state_enum, MachineInfo, MachinePath, StateModulePath, VariantInfo,
+    ensure_machine_loaded, ensure_state_enum_loaded, to_snake_case,
 };
 
-fn has_validators(item: &ItemImpl, state_variants: Vec<VariantInfo>) -> proc_macro2::TokenStream {
+fn has_validators(item: &ItemImpl, state_variants: &[VariantInfo]) -> proc_macro2::TokenStream {
     if item.items.is_empty() {
         return quote! {};
     }
@@ -53,15 +53,16 @@ fn has_validators(item: &ItemImpl, state_variants: Vec<VariantInfo>) -> proc_mac
 pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str) -> TokenStream {
     let machine_ident = parse_macro_input!(attr as Ident);
     let item_impl = parse_macro_input!(item as ItemImpl);
-    let struct_ident = &item_impl.clone().self_ty;
+    let struct_ident = &item_impl.self_ty;
 
     let methods = item_impl.items.clone();
     let modified_methods = inject_machine_fields(&methods, &module_path.into());
 
     // Ensure machine metadata exists
     let module_path_key: MachinePath = module_path.into();
+    let state_path_key: StateModulePath = module_path.into();
     let _ = ensure_machine_loaded(&module_path_key);
-    let _ = ensure_state_enum_loaded(&module_path_key.clone().into());
+    let _ = ensure_state_enum_loaded(&state_path_key);
 
     let machine_metadata = get_machine_metadata(&module_path_key);
     if machine_metadata.is_none() {
@@ -72,8 +73,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
     }
     let machine_metadata = machine_metadata.expect("Machine metadata not found");
 
-    let state_enum_map = read_state_enum_map();
-    let state_enum_info = match state_enum_map.get(&module_path_key.clone().into()) {
+    let state_enum_info = match get_state_enum(&state_path_key) {
         Some(info) => info,
         None => {
             return quote! {
@@ -86,9 +86,8 @@ Ensure the enum is in the same module as the machine and validators."
         }
     };
 
-    let has_validators = has_validators(&item_impl, state_enum_info.variants.clone());
+    let has_validators = has_validators(&item_impl, &state_enum_info.variants);
 
-    let mut found_validators = HashSet::new();
     let mut validator_checks = vec![];
     let mut has_async = false;
 
@@ -105,6 +104,13 @@ Ensure the enum is in the same module as the machine and validators."
         .into();
     }
 
+    let mut variant_by_name: HashMap<String, VariantInfo> =
+        HashMap::with_capacity(state_enum_info.variants.len() * 2);
+    for variant in &state_enum_info.variants {
+        variant_by_name.insert(variant.name.clone(), variant.clone());
+        variant_by_name.insert(to_snake_case(&variant.name), variant.clone());
+    }
+
     // Generate validator checks
     for item in &item_impl.items {
         if let syn::ImplItem::Fn(func) = item {
@@ -114,7 +120,6 @@ Ensure the enum is in the same module as the machine and validators."
                     .strip_prefix("is_")
                     .expect("Invalid function name")
                     .to_string();
-                found_validators.insert(state_name.clone());
 
                 // Ensure correct function signature
                 if func.sig.inputs.len() != 1 {
@@ -133,7 +138,7 @@ Ensure the enum is in the same module as the machine and validators."
                 }
 
                 // Get expected return type based on state variant data
-                let state_variant = get_state_enum_variant(&module_path.into(), &state_name);
+                let state_variant = variant_by_name.get(&state_name).cloned();
 
                 if let Some(state_variant) = state_variant {
                     let expected_return_type = match &state_variant.data_type {
@@ -269,8 +274,7 @@ Ensure the enum is in the same module as the machine and validators."
 }
 
 pub fn get_machine_metadata(machine_path: &MachinePath) -> Option<MachineInfo> {
-    let machine_map = read_machine_map();
-    machine_map.get(machine_path).cloned()
+    get_machine(machine_path)
 }
 
 pub fn batch_builder_implementation(
@@ -375,10 +379,8 @@ use syn::{ImplItem, ImplItemFn};
 
 /// Rewrites `is_*` methods to include machine fields as additional parameters.
 fn inject_machine_fields(methods: &[ImplItem], machine_path: &MachinePath) -> Vec<ImplItem> {
-    let machine_map = read_machine_map();
-
     // Retrieve machine metadata
-    let machine_info = match machine_map.get(machine_path) {
+    let machine_info = match get_machine(machine_path) {
         Some(info) => info,
         None => panic!("MachinePath '{}' not found in registry", machine_path.0),
     };

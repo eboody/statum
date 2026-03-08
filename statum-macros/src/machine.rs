@@ -75,17 +75,17 @@ pub fn get_machine_map() -> &'static RwLock<HashMap<MachinePath, MachineInfo>> {
     MACHINE_MAP.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-pub fn read_machine_map() -> HashMap<MachinePath, MachineInfo> {
-    get_machine_map().read().unwrap().clone()
+pub fn get_machine(machine_path: &MachinePath) -> Option<MachineInfo> {
+    get_machine_map().read().ok()?.get(machine_path).cloned()
 }
 
 pub fn ensure_machine_loaded(machine_path: &MachinePath) -> Option<MachineInfo> {
     let source_info = get_source_info();
     if source_info.is_none() {
-        return get_machine_map().read().ok()?.get(machine_path).cloned();
+        return get_machine(machine_path);
     }
     let file_path = source_info?.0;
-    if let Some(info) = get_machine_map().read().ok()?.get(machine_path).cloned() {
+    if let Some(info) = get_machine(machine_path) {
         if info.file_path.as_deref() == Some(file_path.as_str()) {
             return Some(info);
         }

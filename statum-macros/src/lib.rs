@@ -11,7 +11,9 @@ moddef::moddef!(
     }
 );
 
-use crate::{MachinePath, StateModulePath, ensure_machine_loaded, ensure_state_enum_loaded};
+use crate::{
+    MachinePath, StateModulePath, ensure_machine_loaded, ensure_state_enum_loaded, get_machine,
+};
 use proc_macro::TokenStream;
 use syn::{ItemEnum, ItemImpl, ItemStruct, parse_macro_input};
 
@@ -77,12 +79,9 @@ pub fn transition(
     let _ = ensure_state_enum_loaded(&state_path);
     let _ = ensure_machine_loaded(&machine_path);
 
-    let machine_map = get_machine_map().read().unwrap();
-
-    // Retrieve references to the actual MachineInfo / EnumInfo if you need them
-    // If you need them for codegen, you can do something like:
-    let machine_info = machine_map
-        .get(&machine_path)
+    let machine_info_owned = get_machine(&machine_path);
+    let machine_info = machine_info_owned
+        .as_ref()
         .expect("Machine not found, even though we validated above");
 
     if let Some(err) = validate_transition_functions(&tr_impl.functions, machine_info) {
