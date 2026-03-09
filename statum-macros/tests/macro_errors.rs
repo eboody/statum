@@ -34,6 +34,7 @@ fn test_invalid_validators_usage() {
     t.compile_fail("tests/ui/invalid_validators_wrong_return.rs");
     t.compile_fail("tests/ui/invalid_validators_wrong_signature.rs");
     t.compile_fail("tests/ui/invalid_validators_no_methods.rs");
+    t.compile_fail("tests/ui/invalid_validators_unknown_machine.rs");
 }
 
 #[test]

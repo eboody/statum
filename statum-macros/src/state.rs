@@ -1,4 +1,4 @@
-use macro_registry::analysis::{EnumEntry, FileAnalysis};
+use macro_registry::analysis::{EnumEntry, FileAnalysis, get_file_analysis};
 use macro_registry::callsite::{current_module_path, current_source_info};
 use macro_registry::registry::{
     RegistryDomain, RegistryKey, RegistryValue, StaticRegistry, ensure_loaded,
@@ -50,7 +50,9 @@ pub fn to_snake_case(s: &str) -> String {
         if i > 0 && c.is_uppercase() {
             result.push('_');
         }
-        result.push(c.to_lowercase().next().unwrap());
+        for lowered in c.to_lowercase() {
+            result.push(lowered);
+        }
     }
     result
 }
@@ -80,8 +82,16 @@ impl EnumInfo {
 /// Convert `StateEnumName` into a `TokenStream` (for procedural macros)
 impl ToTokens for StateModulePath {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ident = syn::Ident::new(&self.0, proc_macro2::Span::call_site());
-        ident.to_tokens(tokens);
+        match syn::parse_str::<syn::Path>(&self.0) {
+            Ok(path) => path.to_tokens(tokens),
+            Err(_) => {
+                let message = syn::LitStr::new(
+                    "Invalid state module path tokenization.",
+                    proc_macro2::Span::call_site(),
+                );
+                tokens.extend(quote! { compile_error!(#message); });
+            }
+        }
     }
 }
 
@@ -123,8 +133,10 @@ impl From<TokenStream> for StateModulePath {
 /// Convert `StateEnumName` into a `TokenStream`
 impl From<StateModulePath> for TokenStream {
     fn from(state: StateModulePath) -> Self {
-        let ident = syn::Ident::new(&state.0, proc_macro2::Span::call_site());
-        quote! { #ident }
+        match syn::parse_str::<syn::Path>(&state.0) {
+            Ok(path) => quote! { #path },
+            Err(err) => err.to_compile_error(),
+        }
     }
 }
 
@@ -132,18 +144,29 @@ impl From<StateModulePath> for TokenStream {
 impl ToTokens for EnumInfo {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let name = format_ident!("{}", &self.name);
-        let variants = self.variants.iter().map(|v| {
-            let var_name = syn::Ident::new(&v.name, proc_macro2::Span::call_site());
-            match &v.data_type {
-                Some(ty) => {
-                    let ty = syn::parse_str::<syn::Type>(ty).unwrap();
-                    quote! { #var_name(#ty) }
-                }
-                None => quote! { #var_name },
+        let vis = match syn::parse_str::<syn::Visibility>(&self.vis) {
+            Ok(vis) => vis,
+            Err(err) => {
+                tokens.extend(err.to_compile_error());
+                return;
             }
-        });
+        };
 
-        let vis = syn::parse_str::<syn::Visibility>(&self.vis).unwrap();
+        let mut variants = Vec::with_capacity(self.variants.len());
+        for variant in &self.variants {
+            let var_name = syn::Ident::new(&variant.name, proc_macro2::Span::call_site());
+            let variant_tokens = match &variant.data_type {
+                Some(ty) => match syn::parse_str::<syn::Type>(ty) {
+                    Ok(ty) => quote! { #var_name(#ty) },
+                    Err(err) => {
+                        tokens.extend(err.to_compile_error());
+                        return;
+                    }
+                },
+                None => quote! { #var_name },
+            };
+            variants.push(variant_tokens);
+        }
 
         let expanded = quote! {
             #vis enum #name {
@@ -190,20 +213,49 @@ pub fn get_state_enum(enum_path: &StateModulePath) -> Option<EnumInfo> {
 pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo> {
     ensure_loaded::<StateRegistryDomain>(&STATE_ENUMS, enum_path)
 }
+
+pub fn ensure_state_enum_loaded_by_name(
+    enum_path: &StateModulePath,
+    enum_name: &str,
+) -> Option<EnumInfo> {
+    if let Some(existing) = get_state_enum(enum_path)
+        && existing.name == enum_name
+    {
+        return Some(existing);
+    }
+
+    if let Some((file_path, _)) = current_source_info()
+        && let Some(analysis) = get_file_analysis(&file_path)
+    {
+        for entry in &analysis.enums {
+            if entry.item.ident != enum_name {
+                continue;
+            }
+            if !entry.attrs.iter().any(|attr| attr == "state") {
+                continue;
+            }
+            if let Ok(info) = EnumInfo::from_item_enum_with_module(&entry.item, enum_path.clone()) {
+                STATE_ENUMS.insert(enum_path.clone(), info.clone());
+                return Some(info);
+            }
+        }
+    }
+
+    let loaded = ensure_state_enum_loaded(enum_path)?;
+    (loaded.name == enum_name).then_some(loaded)
+}
 /// Extracts `#[derive(...)]` attributes from an enum
 pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
-    if attr.path().is_ident("derive") {
-        if let Ok(meta) = attr.meta.require_list() {
-            return Some(
-                meta.parse_args_with(
-                    syn::punctuated::Punctuated::<Path, syn::Token![,]>::parse_terminated,
-                )
-                .ok()?
-                .iter()
-                .map(|p| p.to_token_stream().to_string())
-                .collect(),
-            );
-        }
+    if attr.path().is_ident("derive") && let Ok(meta) = attr.meta.require_list() {
+        return Some(
+            meta.parse_args_with(
+                syn::punctuated::Punctuated::<Path, syn::Token![,]>::parse_terminated,
+            )
+            .ok()?
+            .iter()
+            .map(|p| p.to_token_stream().to_string())
+            .collect(),
+        );
     }
     None
 }
@@ -244,15 +296,19 @@ impl EnumInfo {
         for variant in &item.variants {
             let name = variant.ident.to_string();
             let data_type = match &variant.fields {
-                Fields::Unnamed(fields) if fields.unnamed.len() == 1 => Some(
-                    fields
-                        .unnamed
-                        .first()
-                        .unwrap()
-                        .ty
-                        .to_token_stream()
-                        .to_string(),
-                ),
+                Fields::Unnamed(fields) if fields.unnamed.len() == 1 => match fields.unnamed.first() {
+                    Some(first) => Some(first.ty.to_token_stream().to_string()),
+                    None => {
+                        return Err(syn::Error::new_spanned(
+                            variant,
+                            format!(
+                                "Invalid variant `{}` in #[state] enum. \
+                                 Variants must be unit or single-field tuple variants.",
+                                name
+                            ),
+                        ));
+                    }
+                },
                 Fields::Unit => None, // ✅ Unit variant is allowed
                 _ => {
                     return Err(syn::Error::new_spanned(
@@ -282,35 +338,53 @@ impl EnumInfo {
             name,
             variants,
             generics,
-            module_path: module_path.into(),
+            module_path,
             file_path,
         })
     }
 }
 
 pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenStream {
-    let enum_info = get_state_enum(enum_path).expect("Enum not found in state_enum_map.");
+    let Some(enum_info) = get_state_enum(enum_path) else {
+        return quote! {
+            compile_error!("Internal error: state metadata not found. Ensure #[state] is applied in this module.");
+        };
+    };
 
     let state_trait_ident = enum_info.get_trait_name();
 
-    let vis = syn::parse_str::<syn::Visibility>(&enum_info.vis).unwrap();
+    let vis = match syn::parse_str::<syn::Visibility>(&enum_info.vis) {
+        Ok(vis) => vis,
+        Err(err) => return err.to_compile_error(),
+    };
 
-    let derives: Vec<proc_macro2::TokenStream> = enum_info
-        .derives
+    let mut derives: Vec<syn::Path> = Vec::with_capacity(enum_info.derives.len());
+    for derive in &enum_info.derives {
+        let parsed = match syn::parse_str::<syn::Path>(derive) {
+            Ok(path) => path,
+            Err(err) => return err.to_compile_error(),
+        };
+        derives.push(parsed);
+    }
+    let derive_tokens = derives
         .iter()
-        .map(|d| quote::ToTokens::to_token_stream(&syn::parse_str::<syn::Path>(d).unwrap()))
-        .collect();
+        .map(quote::ToTokens::to_token_stream)
+        .collect::<Vec<_>>();
 
+    let mut variant_structs = Vec::with_capacity(enum_info.variants.len());
     // Generate one struct and implementation per variant
-    let variant_structs = enum_info.variants.iter().map(|variant| {
+    for variant in &enum_info.variants {
         let variant_name = format_ident!("{}", variant.name);
 
-        match &variant.data_type {
+        let tokens = match &variant.data_type {
             // Handle tuple variants (state has associated data)
             Some(field_type) => {
-                let field_ty = syn::parse_str::<syn::Type>(field_type).unwrap();
+                let field_ty = match syn::parse_str::<syn::Type>(field_type) {
+                    Ok(ty) => ty,
+                    Err(err) => return err.to_compile_error(),
+                };
                 quote! {
-                    #[derive(#(#derives),*)]
+                    #[derive(#(#derive_tokens),*)]
                     #vis struct #variant_name (pub #field_ty);
 
                     impl #state_trait_ident for #variant_name {
@@ -327,7 +401,7 @@ pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenSt
             // Handle unit variants (state has no associated data)
             None => {
                 quote! {
-                    #[derive(#(#derives),*)]
+                    #[derive(#(#derive_tokens),*)]
                     #vis struct #variant_name;
 
                     impl #state_trait_ident for #variant_name {
@@ -341,8 +415,9 @@ pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenSt
                     impl DoesNotRequireStateData for #variant_name {}
                 }
             }
-        }
-    });
+        };
+        variant_structs.push(tokens);
+    }
 
     let state_trait = quote! {
         #enum_info

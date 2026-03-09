@@ -7,13 +7,8 @@ error: Invalid transition return type for `decide`: expected return type like `M
          Decision
   --> tests/ui/invalid_transition_conditional.rs:27:5
    |
-27 | /     fn decide(self, event: u8) -> Decision {
-28 | |         if event == 0 {
-29 | |             Decision::Next(self.transition())
-30 | |         } else {
-...  |
-33 | |     }
-   | |_____^
+27 |     fn decide(self, event: u8) -> Decision {
+   |     ^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_transition_conditional.rs:34:2

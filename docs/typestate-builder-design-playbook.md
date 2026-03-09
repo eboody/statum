@@ -178,6 +178,50 @@ This is the main modularity and extensibility lever. A clean split between machi
 
 Putting all data into machine fields "for convenience." You lose one of typestate's biggest wins: state-constrained data guarantees.
 
+## Step 3.5: Respect Statum Macro Boundaries
+
+### What to do
+
+Keep `#[transition]` impl blocks narrowly focused on legal transition methods.
+
+Put non-transition helpers in regular `impl` blocks:
+
+- constructors (`from_command`, `new_with_context`),
+- branch helpers (`build`, `route`, `decide` returning enums),
+- formatting/inspection helpers.
+
+This avoids mixing protocol edges with orchestration glue.
+
+### Why it matters
+
+Statum macros enforce transition signatures. Helpers that are not transitions can fail macro validation and create noisy APIs.
+
+Separation here improves readability and modularity: transition blocks read like protocol graphs, while regular impl blocks handle setup and policy glue.
+
+### Wrong vs right
+
+```rust
+// Wrong: helper method in a #[transition] impl block.
+#[transition]
+impl PostMessageMachine<Incoming> {
+    fn from_command(cmd: PostMessageCommand) -> Self { /* ... */ }
+}
+
+// Right: helper in regular impl; transitions stay in #[transition] blocks.
+impl PostMessageMachine<Incoming> {
+    fn from_command(cmd: PostMessageCommand) -> Self { /* ... */ }
+}
+
+#[transition]
+impl PostMessageMachine<Incoming> {
+    fn validate_message(self) -> Result<PostMessageMachine<Validated>, Error> { /* ... */ }
+}
+```
+
+### Common mistake
+
+Treating `#[transition]` blocks as general-purpose impl blocks. They are protocol-edge definitions, not generic utility containers.
+
 ## Step 4: Encode Legal Transitions (`#[transition]`)
 
 ### What to do
@@ -226,6 +270,35 @@ This is where expressiveness and correctness meet: API shape communicates legal 
 ### Common mistake
 
 Adding a broad `impl DocumentMachine<S>` with generic transition methods. That reintroduces invalid paths and defeats typestate constraints.
+
+## Step 4.5: Use a Three-Layer Flow Shape
+
+### What to do
+
+For endpoint/application flows, keep responsibilities explicit:
+
+1. Boundary adapter: parse dynamic input into a typed starting machine.
+2. Protocol transitions: concrete-state transition methods encode legal edges.
+3. Orchestration: sequence transitions and side effects at the call site.
+
+Example shape:
+
+```rust
+let flow = PostMessageMachine::<Incoming>::from_command(cmd);
+let flow = flow.validate_message()?;
+let flow = flow.apply_moderation(&moderator)?;
+let built = flow.build(now);
+```
+
+### Why it matters
+
+This pattern makes the happy path easy to read and makes it obvious where runtime uncertainty lives.
+
+It also keeps extensibility high: adding a new stable state usually means adding one transition method and one orchestration step.
+
+### Common mistake
+
+Collapsing all logic into free functions or one large method that hides protocol stages and makes future extensions risky.
 
 ## Step 5: Keep Branching and Guards Outside Transition Definitions
 
@@ -278,6 +351,32 @@ Keeping branching outside transition signatures preserves readability and keeps 
 
 Trying to hide all branching inside one giant transition method that returns different next states ad hoc. Model choices explicitly with enums/results.
 
+## Step 5.5: Prefer Associated Methods Over Wrapper Functions
+
+### What to do
+
+Prefer calling methods directly on typed machine states instead of creating top-level forwarding wrappers.
+
+Use top-level functions only when they add boundary adaptation or shared policy.
+
+```rust
+// Preferred
+let flow = flow.validate_message()?;
+let flow = flow.persist(&repo).await?;
+
+// Avoid when it adds no value
+let flow = validate_message(flow)?;
+let flow = persist(flow, &repo).await?;
+```
+
+### Why it matters
+
+Forwarding wrappers create noise without adding invariants. Direct typed calls are usually more readable and expressive.
+
+### Common mistake
+
+Keeping `mark_*` or `run_*` free functions after typestate migration even though they only proxy one method call.
+
 ## Step 6: Be Deliberate About State-Specific Data
 
 ### What to do
@@ -296,6 +395,13 @@ If data is globally relevant (like `id`, tenant, repository handle), keep it on 
 Correct placement turns the type system into a validator for data lifecycle. You prevent impossible combinations like "published document with no publish timestamp."
 
 It also improves expressiveness: the state type itself documents which data is meaningful in that phase.
+
+Ownership cost guideline:
+
+- If transitions repeatedly clone large payloads, reevaluate placement.
+- Move truly cross-phase data to machine context.
+- Keep state payloads compact and phase-local.
+- Prefer passing lightweight identifiers between states when full payload transfer is unnecessary.
 
 ### Common mistake
 
@@ -442,6 +548,11 @@ Acceptance criteria for adoption:
 - Team can explain the lifecycle by reading state names and transition method signatures only.
 - Added type complexity is justified by reduced runtime validation noise.
 
+When runtime transition tests are redundant:
+
+- Remove tests that only assert impossible typed mis-orderings.
+- Keep tests for boundary adapters, guards, side effects, and persistence/rehydration.
+
 Quality acceptance check:
 
 - Readability: reviewers can infer the lifecycle from state/transition names with minimal extra docs.
@@ -450,6 +561,35 @@ Quality acceptance check:
 - Expressiveness: return types and method availability clearly encode protocol intent.
 - Idiomaticity: ownership/borrowing patterns are straightforward and do not depend on hacks.
 - Correctness: invalid protocol paths fail at compile time where feasible, else at explicit runtime boundaries.
+
+## Step 11: Bon + Statum Composition
+
+### What to do
+
+Use `bon` for assembling input/context, and `statum` for enforcing protocol legality.
+
+Guideline:
+
+- Builder (bon): data assembly and defaults.
+- Typestate (statum): ordered lifecycle and legal transitions.
+
+```rust
+let command = PostMessageCommand::builder()
+    .sender(sender)
+    .receiver(receiver)
+    .body(body)
+    .build();
+
+let flow = PostMessageMachine::<Incoming>::from_command(command);
+```
+
+### Why it matters
+
+This split improves idiomaticity and readability: builders solve construction ergonomics, typestate solves workflow legality.
+
+### Common mistake
+
+Using builders to simulate protocol steps that should be encoded as typed transitions.
 
 ## End-to-End Skeleton
 
@@ -587,6 +727,26 @@ This staged migration avoids big-bang rewrites while still delivering compile-ti
    - Refactor: centralize conversion through `#[validators]` and builder flow.
 5. Anti-pattern: typestate for volatile user-defined graphs.
    - Refactor: maintain runtime graph engine; use typed wrappers only around stable subflows.
+6. Anti-pattern: forwarding-wrapper explosion (`mark_*`, `run_*`, `next_*`) that only delegates.
+   - Refactor: call typed state methods directly; keep free functions only for real boundary adaptation.
+7. Anti-pattern: non-transition helpers inside `#[transition]` impl blocks.
+   - Refactor: move constructors/policy helpers into regular impl blocks and keep transition impls protocol-only.
+8. Anti-pattern: policy branching hidden in procedural glue.
+   - Refactor: return typed decision enums from concrete states and branch explicitly in orchestration.
+9. Anti-pattern: clone-heavy transition payload churn.
+   - Refactor: rebalance machine-context vs state-payload ownership to keep transitions lightweight.
+
+## Design Review Checklist
+
+Use this quick checklist during code review:
+
+1. Are states finite, domain-named, and protocol-meaningful?
+2. Are legal edges represented by methods on concrete source states?
+3. Are `#[transition]` impl blocks free of constructors/helpers?
+4. Are top-level helper functions limited to true boundary/policy concerns?
+5. Are branch decisions represented explicitly (enum/result) instead of hidden glue?
+6. Are ownership/clone costs acceptable across transitions?
+7. Are tests focused on runtime boundaries rather than impossible typed mis-orders?
 
 ## Final Guidance
 

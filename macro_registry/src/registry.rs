@@ -101,13 +101,18 @@ where
             continue;
         }
 
-        let resolved_module_path = module_path_for_line(&file_path, D::entry_line(entry))?;
+        let Some(resolved_module_path) = module_path_for_line(&file_path, D::entry_line(entry))
+        else {
+            continue;
+        };
         if !module_matches(requested_key, &resolved_module_path) {
             continue;
         }
 
         let canonical_key = D::Key::from_module_path(resolved_module_path);
-        let mut value = D::build_value(entry, &canonical_key)?;
+        let Some(mut value) = D::build_value(entry, &canonical_key) else {
+            continue;
+        };
         value.set_file_path(file_path.clone());
         found = Some((canonical_key, value));
         break;

@@ -1,16 +1,20 @@
-[package]
-name = "module_path_extractor"
-version = "0.2.4"
-edition = "2021"
-description = "Derive a Rust module path from a macro call-site span"
-license = "MIT"
-repository = "https://github.com/eboody/statum"
-readme = "README.md"
+[dependencies.proc-macro2]
+features = ["span-locations"]
+version = "1"
+
+[dependencies.syn]
+features = ["full"]
+version = "2.0"
 
 [lib]
 path = "src/lib.rs"
 
-
-[dependencies]
-proc-macro2 = { version = "1", features = ["span-locations"] }
-syn = { version = "2.0", features = ["full"] }
+[package]
+description = "Derive a Rust module path from a macro call-site span"
+edition = "2021"
+license = "MIT"
+name = "module_path_extractor"
+readme = "README.md"
+repository = "https://github.com/eboody/statum"
+rust-version = "1.94"
+version = "0.3.13"

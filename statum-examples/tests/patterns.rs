@@ -1,3 +1,5 @@
+#![allow(clippy::wrong_self_convention)]
+
 use statum::{machine, state, transition, validators};
 
 mod rehydration_with_fetch {
@@ -30,12 +32,18 @@ mod rehydration_with_fetch {
     #[validators(Machine)]
     impl Row {
         fn is_draft(&self) -> Result<(), statum::Error> {
-            if self.status == "draft" { Ok(()) } else { Err(statum::Error::InvalidState) }
+            if self.status == "draft" {
+                Ok(())
+            } else {
+                Err(statum::Error::InvalidState)
+            }
         }
 
         fn is_in_review(&self) -> Result<ReviewData, statum::Error> {
             if self.status == "review" {
-                Ok(ReviewData { reviewer: fetch_reviewer(client) })
+                Ok(ReviewData {
+                    reviewer: fetch_reviewer(client),
+                })
             } else {
                 Err(statum::Error::InvalidState)
             }
@@ -189,7 +197,9 @@ mod state_snapshots {
     }
 
     pub fn run() {
-        let draft = DraftData { title: "doc".to_string() };
+        let draft = DraftData {
+            title: "doc".to_string(),
+        };
         let machine = Machine::<Draft>::builder().state_data(draft).build();
         let published = machine.publish();
         assert_eq!(published.state_data.previous.title.as_str(), "doc");
@@ -249,16 +259,29 @@ mod parallel_reconstruction {
     #[validators(Machine)]
     impl Row {
         async fn is_draft(&self) -> Result<(), statum::Error> {
-            if self.status == "draft" { Ok(()) } else { Err(statum::Error::InvalidState) }
+            if self.status == "draft" {
+                Ok(())
+            } else {
+                Err(statum::Error::InvalidState)
+            }
         }
 
         async fn is_published(&self) -> Result<(), statum::Error> {
-            if self.status == "published" { Ok(()) } else { Err(statum::Error::InvalidState) }
+            if self.status == "published" {
+                Ok(())
+            } else {
+                Err(statum::Error::InvalidState)
+            }
         }
     }
 
     pub async fn run() {
-        let rows = vec![Row { status: "draft" }, Row { status: "published" }];
+        let rows = vec![
+            Row { status: "draft" },
+            Row {
+                status: "published",
+            },
+        ];
         let results = rows
             .machines_builder()
             .tenant("t".to_string())
@@ -290,11 +313,19 @@ mod type_erased_storage {
     #[validators(Machine)]
     impl Row {
         fn is_a(&self) -> Result<(), statum::Error> {
-            if self.status == "a" { Ok(()) } else { Err(statum::Error::InvalidState) }
+            if self.status == "a" {
+                Ok(())
+            } else {
+                Err(statum::Error::InvalidState)
+            }
         }
 
         fn is_b(&self) -> Result<(), statum::Error> {
-            if self.status == "b" { Ok(()) } else { Err(statum::Error::InvalidState) }
+            if self.status == "b" {
+                Ok(())
+            } else {
+                Err(statum::Error::InvalidState)
+            }
         }
     }
 

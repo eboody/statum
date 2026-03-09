@@ -6,6 +6,86 @@ use std::env;
 use std::fs;
 use toml::Value;
 
+const PUBLISHED_CRATES: [&str; 5] = [
+    "module_path_extractor",
+    "macro_registry",
+    "statum-core",
+    "statum-macros",
+    "statum",
+];
+const ALL_CRATES: [&str; 6] = [
+    "module_path_extractor",
+    "macro_registry",
+    "statum-core",
+    "statum-macros",
+    "statum",
+    "statum-examples",
+];
+
+fn parse_semver_triplet(input: &str, field: &str) -> Result<[u32; 3], Box<dyn std::error::Error>> {
+    let parts: Vec<u32> = input
+        .split('.')
+        .map(|s| s.parse::<u32>())
+        .collect::<Result<Vec<_>, _>>()?;
+    if parts.len() != 3 {
+        return Err(format!("{field} must be in format x.y.z").into());
+    }
+    Ok([parts[0], parts[1], parts[2]])
+}
+
+fn apply_internal_dep_versions(table_value: &mut Value, new_version: &str) {
+    let Some(table) = table_value.as_table_mut() else {
+        return;
+    };
+
+    for dep_name in PUBLISHED_CRATES {
+        let Some(dep_value) = table.get_mut(dep_name) else {
+            continue;
+        };
+
+        match dep_value {
+            Value::String(_) => {
+                *dep_value = Value::String(new_version.to_string());
+            }
+            Value::Table(dep_table) => {
+                if dep_table.contains_key("path") || dep_table.contains_key("version") {
+                    dep_table.insert("version".to_string(), Value::String(new_version.to_string()));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn apply_internal_versions(doc: &mut Value, new_version: &str) {
+    if let Some(package) = doc.get_mut("package") {
+        if let Some(package_table) = package.as_table_mut() {
+            package_table.insert("version".to_string(), Value::String(new_version.to_string()));
+        }
+    }
+
+    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(section_value) = doc.get_mut(section) {
+            apply_internal_dep_versions(section_value, new_version);
+        }
+    }
+
+    if let Some(targets) = doc.get_mut("target") {
+        if let Some(targets_table) = targets.as_table_mut() {
+            for (_, target_cfg) in targets_table.iter_mut() {
+                let Some(target_table) = target_cfg.as_table_mut() else {
+                    continue;
+                };
+                for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                    if let Some(section_value) = target_table.get_mut(section) {
+                        apply_internal_dep_versions(section_value, new_version);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
@@ -13,79 +93,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    let increment: Vec<u32> = args[1]
-        .split('.')
-        .map(|s| s.parse::<u32>())
-        .collect::<Result<Vec<_>, _>>()?;
+    let increment = parse_semver_triplet(&args[1], "Version increment")?;
 
-    if increment.len() != 3 {
-        return Err("Version increment must be in format x.y.z".into());
-    }
-
-    // Paths for all our crates
-    let crate_paths = ["statum", "statum-core", "statum-macros"];
-
-    // Read current version
-    let cargo_content = fs::read_to_string("statum/Cargo.toml")?;
-
+    let root_cargo_path = "statum/Cargo.toml";
+    let cargo_content = fs::read_to_string(root_cargo_path)?;
     let cargo_toml: Value = toml::from_str(&cargo_content)?;
     let current_version = cargo_toml["package"]["version"]
         .as_str()
         .ok_or("Version not found")?;
 
-    // Parse and increment version
-    let mut parts: Vec<u32> = current_version
-        .split('.')
-        .map(|s| s.parse::<u32>())
-        .collect::<Result<Vec<_>, _>>()?;
-
-    if parts.len() != 3 {
-        return Err("Current version must be in format x.y.z".into());
-    }
-
-    // Add the increment to each part
+    let mut current = parse_semver_triplet(current_version, "Current version")?;
     for i in 0..3 {
-        parts[i] += increment[i];
+        current[i] += increment[i];
     }
 
-    let new_version = format!("{}.{}.{}", parts[0], parts[1], parts[2]);
+    let new_version = format!("{}.{}.{}", current[0], current[1], current[2]);
     println!(
         "Incrementing version from {} to {}",
         current_version, new_version
     );
 
-    // Update all crates
-    for crate_path in &crate_paths {
+    for crate_path in &ALL_CRATES {
         let cargo_path = format!("{}/Cargo.toml", crate_path);
-        println!("cargo_path: {:#?}", cargo_path);
         let content = fs::read_to_string(&cargo_path)?;
         let mut doc: Value = toml::from_str(&content)?;
 
-        // Update the crate's own version
-        if let Some(package) = doc.get_mut("package") {
-            if let Some(version) = package.get_mut("version") {
-                *version = Value::String(new_version.clone());
-            }
-        }
+        apply_internal_versions(&mut doc, &new_version);
 
-        // Update any dependencies on our other crates
-        if let Some(deps) = doc.get_mut("dependencies") {
-            for dep_name in ["statum-core", "statum-macros"] {
-                if let Some(dep) = deps.get_mut(dep_name) {
-                    if let Some(table) = dep.as_table_mut() {
-                        if let Some(version) = table.get_mut("version") {
-                            *version = Value::String(new_version.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Write back the updated TOML
         fs::write(&cargo_path, toml::to_string_pretty(&doc)?)?;
-        println!("Updated version in {}", cargo_path);
+        println!("Updated version metadata in {}", cargo_path);
 
-        // Copy README.md
         let readme_dest = format!("{}/README.md", crate_path);
         fs::copy("README.md", &readme_dest)?;
         println!("Copied README.md to {}", readme_dest);

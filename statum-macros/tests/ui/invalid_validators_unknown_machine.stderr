@@ -1,0 +1,7 @@
+error: Error: No matching `#[machine]` found in scope. Ensure `#[validators(Machine)]` references a machine in the same module.
+  --> tests/ui/invalid_validators_unknown_machine.rs:22:1
+   |
+22 | #[validators(DoesNotExist)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)

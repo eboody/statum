@@ -3,227 +3,175 @@
 extern crate toml;
 
 use std::fs;
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::io;
+use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 use toml::Value;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let crates = ["statum-core", "statum-macros", "statum"];
+const PUBLISH_ORDER: [&str; 5] = [
+    "module_path_extractor",
+    "macro_registry",
+    "statum-core",
+    "statum-macros",
+    "statum",
+];
 
-    // First ask for version increment
-    println!("Enter version increment (e.g. 0.0.1):");
-    let mut increment = String::new();
-    std::io::stdin().read_line(&mut increment)?;
-    let increment = increment.trim();
+fn run(mut cmd: Command, context: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let output = cmd.output()?;
+    if output.status.success() {
+        return Ok(());
+    }
 
-    // Run the version increment script
-    println!("\nIncrementing versions...");
-    let output = Command::new("cargo")
-        .args(["script", "scripts/update_version.rs", "--", increment])
-        .output()?;
-
-    if !output.status.success() {
+    if !output.stdout.is_empty() {
         println!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
         eprintln!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-        return Err("Version increment failed".into());
     }
+    Err(format!("{context} failed").into())
+}
 
-    println!("✓ Version increment successful");
-
-    // Git add
-    println!("\nAdding changes to git...");
-    let output = Command::new("git").args(["add", "*"]).output()?;
-
-    if !output.status.success() {
-        return Err("Git add failed".into());
-    }
-
-    // First get commit type using lumen list and fzf
-    println!("Getting commit type...");
-    let mut lumen = Command::new("lumen")
-        .arg("list")
-        .stdout(Stdio::piped())
-        .spawn()?;
-
-    let mut fzf = Command::new("fzf")
-        .arg("-n1")
-        .arg("--select-1")
-        .stdin(lumen.stdout.take().ok_or("Failed to get lumen stdout")?)
-        .stdout(Stdio::piped())
-        .spawn()?;
-
-    let output = fzf.wait_with_output()?;
-    lumen.wait()?;
-
-    if !output.status.success() {
-        return Err("Failed to get commit type".into());
-    }
-
-    let commit_type = String::from_utf8(output.stdout)?.trim().to_string();
-    println!("Selected commit type: {}", commit_type);
-
-    // Now use that type to get the commit message
-    let draft_output = Command::new("lumen")
-        .arg("draft")
-        .arg(&commit_type)
+fn ensure_clean_worktree() -> Result<(), Box<dyn std::error::Error>> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain"])
         .output()?;
-
-    if !draft_output.status.success() {
-        eprintln!("stderr:\n{}", String::from_utf8_lossy(&draft_output.stderr));
-        return Err("Lumen draft failed".into());
+    if !output.status.success() {
+        return Err("Failed to inspect git status".into());
     }
-
-    let commit_msg = String::from_utf8(draft_output.stdout)?;
-    println!("\nCommit message:\n{}", commit_msg);
-
-    // Create git commit with the message
-    let mut commit = Command::new("git")
-        .args(["commit", "-F", "-"])
-        .stdin(Stdio::piped())
-        .spawn()?;
-
-    if let Some(mut stdin) = commit.stdin.take() {
-        stdin.write_all(commit_msg.as_bytes())?;
+    if !output.stdout.is_empty() {
+        return Err(
+            "Working tree is not clean. Commit or stash changes before running publish script."
+                .into(),
+        );
     }
+    Ok(())
+}
 
-    let status = commit.wait()?;
-    if !status.success() {
-        return Err("Git commit failed".into());
-    }
-
-    println!("✓ Changes committed successfully");
-
-    // Get the new version
-    let cargo_content = fs::read_to_string(format!("{}/Cargo.toml", crates[0]))?;
+fn crate_version(crate_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let cargo_content = fs::read_to_string(format!("{crate_name}/Cargo.toml"))?;
     let cargo_toml: Value = toml::from_str(&cargo_content)?;
-    let new_version = cargo_toml["package"]["version"]
+    cargo_toml["package"]["version"]
         .as_str()
-        .ok_or("Version not found")?;
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "Version not found".into())
+}
 
-    // Check if user wants to continue with validation and publishing
-    println!(
-        "\nVersions updated to {}. Continue with validation and publishing?",
-        new_version
-    );
-    println!("Press Enter to continue or Ctrl+C to abort...");
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-
-    // First verify all versions match
-    let mut versions = Vec::new();
-    for crate_name in crates {
-        let cargo_content = fs::read_to_string(format!("{}/Cargo.toml", crate_name))?;
-        let cargo_toml: Value = toml::from_str(&cargo_content)?;
-        let version = cargo_toml["package"]["version"]
-            .as_str()
-            .ok_or("Version not found")?;
-        versions.push((crate_name, version.to_string()));
-    }
-
-    // Check all versions match
-    let first_version = &versions[0].1;
-    for (crate_name, version) in &versions {
-        if version != first_version {
+fn verify_versions_match() -> Result<String, Box<dyn std::error::Error>> {
+    let first = crate_version(PUBLISH_ORDER[0])?;
+    for crate_name in PUBLISH_ORDER.iter().skip(1) {
+        let version = crate_version(crate_name)?;
+        if version != first {
             return Err(format!(
-                "Version mismatch! {} has version {} but {} has version {}",
-                crates[0], first_version, crate_name, version
+                "Version mismatch: {} has {}, expected {}",
+                crate_name, version, first
             )
             .into());
         }
     }
-    println!("✓ All crate versions match: {}", first_version);
+    Ok(first)
+}
 
-    // Verify all crates build
-    println!("\nVerifying builds...");
-    for crate_name in crates {
-        println!("\nBuilding {}...", crate_name);
-        let output = Command::new("cargo")
-            .current_dir(crate_name)
-            .args(["build", "--all-features"])
-            .output()?;
-
-        if !output.status.success() {
-            println!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-            eprintln!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-            return Err(format!("Failed to build {}", crate_name).into());
-        }
-        println!("✓ {} built successfully", crate_name);
-    }
-
-    // Verify tests pass
-    println!("\nRunning tests...");
-    for crate_name in crates {
-        println!("\nTesting {}...", crate_name);
-        let output = Command::new("cargo")
-            .current_dir(crate_name)
-            .args(["test", "--all-features"])
-            .output()?;
-
-        if !output.status.success() {
-            println!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-            eprintln!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-            return Err(format!("Tests failed for {}", crate_name).into());
-        }
-        println!("✓ {} tests passed", crate_name);
-    }
-
-    // Run dry-run publishes first
-    println!("\nPerforming dry-run publishes...");
-    for crate_name in crates {
-        println!("\nDry-run publishing {}...", crate_name);
-        let output = Command::new("cargo")
-            .current_dir(crate_name)
-            .args(["publish", "--dry-run"])
-            .output()?;
-
-        if !output.status.success() {
-            println!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-            eprintln!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-            return Err(format!("Dry-run publish failed for {}", crate_name).into());
-        }
-        println!("✓ {} dry-run publish successful", crate_name);
-    }
-
-    // Check if user wants to continue with actual publish
-    println!(
-        "\nAll checks and dry-runs passed! Ready to publish version {}.",
-        first_version
-    );
-    println!("Press Enter to continue with actual publish or Ctrl+C to abort...");
+fn read_line_trimmed() -> Result<String, Box<dyn std::error::Error>> {
     let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
+    io::stdin().read_line(&mut input)?;
+    Ok(input.trim().to_string())
+}
 
-    // Publish crates
-    for crate_name in crates {
-        println!("\nPublishing {}", crate_name);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ensure_clean_worktree()?;
 
-        let output = Command::new("cargo")
-            .current_dir(crate_name)
-            .args(["publish", "--no-verify"]) // Skip verification since we already did it
-            .output()?;
+    println!("Enter version increment (e.g. 0.0.1):");
+    let increment = read_line_trimmed()?;
+    if increment.is_empty() {
+        return Err("Version increment cannot be empty".into());
+    }
 
-        if !output.stdout.is_empty() {
-            println!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
-        }
-        if !output.stderr.is_empty() {
-            eprintln!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
-        }
+    println!("\nIncrementing versions...");
+    run(
+        {
+            let mut cmd = Command::new("cargo");
+            cmd.args(["script", "scripts/update_version.rs", "--", &increment]);
+            cmd
+        },
+        "Version increment",
+    )?;
 
-        if !output.status.success() {
-            return Err(format!("Failed to publish {}", crate_name).into());
-        }
+    let version = verify_versions_match()?;
+    println!("✓ All publishable crates are aligned at version {version}");
 
-        println!("✓ Successfully published {}", crate_name);
+    println!("\nRunning pre-publish checks...");
+    run(
+        {
+            let mut cmd = Command::new("cargo");
+            cmd.args(["fmt", "--all", "--check"]);
+            cmd
+        },
+        "cargo fmt --check",
+    )?;
+    run(
+        {
+            let mut cmd = Command::new("cargo");
+            cmd.args([
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--all-features",
+                "--",
+                "-D",
+                "warnings",
+            ]);
+            cmd
+        },
+        "cargo clippy",
+    )?;
+    run(
+        {
+            let mut cmd = Command::new("cargo");
+            cmd.args(["test", "--workspace"]);
+            cmd
+        },
+        "cargo test",
+    )?;
 
-        // Sleep between publishes
-        if crate_name != crates[crates.len() - 1] {
+    println!("\nRunning publish dry-runs in dependency order...");
+    for crate_name in PUBLISH_ORDER {
+        println!("Dry-run publishing {crate_name}...");
+        run(
+            {
+                let mut cmd = Command::new("cargo");
+                cmd.args(["publish", "-p", crate_name, "--dry-run"]);
+                cmd
+            },
+            &format!("cargo publish --dry-run for {crate_name}"),
+        )?;
+    }
+
+    println!(
+        "\nDry-runs passed for version {version}. Type 'publish' to continue with actual publish:"
+    );
+    let confirm = read_line_trimmed()?;
+    if confirm != "publish" {
+        return Err("Publish aborted by user".into());
+    }
+
+    for (idx, crate_name) in PUBLISH_ORDER.iter().enumerate() {
+        println!("\nPublishing {crate_name}...");
+        run(
+            {
+                let mut cmd = Command::new("cargo");
+                cmd.args(["publish", "-p", crate_name]);
+                cmd
+            },
+            &format!("cargo publish for {crate_name}"),
+        )?;
+
+        if idx + 1 != PUBLISH_ORDER.len() {
             println!("Waiting 30 seconds before publishing next crate...");
             sleep(Duration::from_secs(30));
         }
     }
 
-    println!("\n✓ All crates published successfully!");
+    println!("\n✓ All crates published successfully.");
     Ok(())
 }

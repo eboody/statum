@@ -1,3 +1,5 @@
+#![allow(clippy::wrong_self_convention)]
+
 use statum::{machine, state, transition, validators};
 
 mod unit_and_data_transitions {
@@ -124,19 +126,29 @@ mod validators_sync_and_async {
     #[validators(Machine)]
     impl Row {
         fn is_draft(&self) -> Result<(), statum::Error> {
-            if self.status == "draft" { Ok(()) } else { Err(statum::Error::InvalidState) }
+            if self.status == "draft" {
+                Ok(())
+            } else {
+                Err(statum::Error::InvalidState)
+            }
         }
 
         async fn is_in_review(&self) -> Result<ReviewData, statum::Error> {
             if self.status == "review" {
-                Ok(ReviewData { reviewer: "a".to_string() })
+                Ok(ReviewData {
+                    reviewer: "a".to_string(),
+                })
             } else {
                 Err(statum::Error::InvalidState)
             }
         }
 
         fn is_published(&self) -> Result<(), statum::Error> {
-            if self.status == "published" { Ok(()) } else { Err(statum::Error::InvalidState) }
+            if self.status == "published" {
+                Ok(())
+            } else {
+                Err(statum::Error::InvalidState)
+            }
         }
     }
 
@@ -180,7 +192,11 @@ mod hierarchical_state_data {
         #[state]
         pub enum State {
             NotStarted,
-            InProgress(crate::hierarchical_state_data::sub::Machine<crate::hierarchical_state_data::sub::Running>),
+            InProgress(
+                crate::hierarchical_state_data::sub::Machine<
+                    crate::hierarchical_state_data::sub::Running,
+                >,
+            ),
             Done,
         }
 
@@ -191,7 +207,9 @@ mod hierarchical_state_data {
         impl Machine<NotStarted> {
             pub fn start(
                 self,
-                sub: crate::hierarchical_state_data::sub::Machine<crate::hierarchical_state_data::sub::Running>,
+                sub: crate::hierarchical_state_data::sub::Machine<
+                    crate::hierarchical_state_data::sub::Running,
+                >,
             ) -> Machine<InProgress> {
                 self.transition_with(sub)
             }

@@ -1,25 +1,42 @@
+[dependencies.bon]
+features = [
+    "experimental-getter",
+    "experimental-overwritable",
+    "implied-bounds",
+]
+version = "3.3.2"
+
+[dependencies.statum-core]
+path = "../statum-core"
+version = "0.3.13"
+
+[dependencies.statum-macros]
+path = "../statum-macros"
+version = "0.3.13"
+
+[dev-dependencies]
+futures = "0.3"
+
+[dev-dependencies.tokio]
+features = ["full"]
+version = "1"
+
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]
 categories = ["rust-patterns"]
 description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
 documentation = "https://docs.rs/statum"
 edition = "2021"
-keywords = ["enum", "typestate", "fsm", "finite-state", "state-machine"]
+keywords = [
+    "enum",
+    "typestate",
+    "fsm",
+    "finite-state",
+    "state-machine",
+]
 license = "MIT"
 name = "statum"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
-version = "0.3.12"
-
-[dependencies]
-bon = { version = "3.3.2", features = [
-  "experimental-getter",
-  "experimental-overwritable",
-  "implied-bounds",
-] }
-statum-core = { path = "../statum-core", version = "0.3.12" }
-statum-macros = { path = "../statum-macros", version = "0.3.12" }
-
-[dev-dependencies]
-tokio = { version = "1", features = ["full"] }
-futures = "0.3"
+rust-version = "1.94"
+version = "0.3.13"

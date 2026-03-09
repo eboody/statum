@@ -1,4 +1,4 @@
-use macro_registry::analysis::{FileAnalysis, StructEntry};
+use macro_registry::analysis::{FileAnalysis, StructEntry, get_file_analysis};
 use macro_registry::callsite::{current_module_path, current_source_info};
 use macro_registry::registry::{
     RegistryDomain, RegistryKey, RegistryValue, StaticRegistry, ensure_loaded,
@@ -38,25 +38,28 @@ pub struct MachineInfo {
 
 impl MachineInfo {
     pub fn field_names(&self) -> Vec<Ident> {
-        let field_names = self
-            .fields
+        self.fields
             .iter()
             .map(|field| format_ident!("{}", field.name))
-            .collect::<Vec<_>>();
-        field_names
+            .collect::<Vec<_>>()
     }
 
-    pub fn fields_with_types(&self) -> Vec<TokenStream> {
-        let fields_map = self
-            .fields
-            .iter()
-            .map(|field| {
-                let field_ident = format_ident!("{}", field.name);
-                let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
-                quote! { #field_ident: #field_ty }
-            })
-            .collect::<Vec<_>>();
-        fields_map
+    pub fn fields_with_types(&self) -> Result<Vec<TokenStream>, syn::Error> {
+        let mut fields = Vec::with_capacity(self.fields.len());
+        for field in &self.fields {
+            let field_ident = format_ident!("{}", field.name);
+            let field_ty = syn::parse_str::<syn::Type>(&field.field_type).map_err(|_| {
+                syn::Error::new(
+                    Span::call_site(),
+                    format!(
+                        "Failed to parse machine field type `{}` for field `{}`.",
+                        field.field_type, field.name
+                    ),
+                )
+            })?;
+            fields.push(quote! { #field_ident: #field_ty });
+        }
+        Ok(fields)
     }
 }
 
@@ -130,6 +133,37 @@ pub fn get_machine(machine_path: &MachinePath) -> Option<MachineInfo> {
 
 pub fn ensure_machine_loaded(machine_path: &MachinePath) -> Option<MachineInfo> {
     ensure_loaded::<MachineRegistryDomain>(&MACHINE_MAP, machine_path)
+}
+
+pub fn ensure_machine_loaded_by_name(
+    machine_path: &MachinePath,
+    machine_name: &str,
+) -> Option<MachineInfo> {
+    if let Some(existing) = get_machine(machine_path)
+        && existing.name == machine_name
+    {
+        return Some(existing);
+    }
+
+    if let Some((file_path, _)) = current_source_info()
+        && let Some(analysis) = get_file_analysis(&file_path)
+    {
+        for entry in &analysis.structs {
+            if entry.item.ident != machine_name {
+                continue;
+            }
+            if !entry.attrs.iter().any(|attr| attr == "machine") {
+                continue;
+            }
+            if let Some(info) = MachineInfo::from_item_struct_with_module(&entry.item, machine_path) {
+                MACHINE_MAP.insert(machine_path.clone(), info.clone());
+                return Some(info);
+            }
+        }
+    }
+
+    let loaded = ensure_machine_loaded(machine_path)?;
+    (loaded.name == machine_name).then_some(loaded)
 }
 // Extract derives from `#[derive(Debug, Clone, ...)]`
 
@@ -223,8 +257,16 @@ impl MachineInfo {
 /// Allow `MachineName` to be used directly in `quote!`
 impl ToTokens for MachinePath {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let ident = syn::Ident::new(&self.0, proc_macro2::Span::call_site());
-        ident.to_tokens(tokens);
+        match syn::parse_str::<syn::Path>(&self.0) {
+            Ok(path) => path.to_tokens(tokens),
+            Err(_) => {
+                let message = LitStr::new(
+                    "Invalid machine module path tokenization.",
+                    Span::call_site(),
+                );
+                tokens.extend(quote! { compile_error!(#message); });
+            }
+        }
     }
 }
 
@@ -243,35 +285,51 @@ impl ToTokens for MachinePath {
 
 // Generates struct-based metadata implementations
 pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenStream {
-    if let Some(machine_info) = get_machine_map()
-        .read()
-        .unwrap()
-        .get(&machine_info.module_path)
-    {
-        let state_enum = match machine_info.get_matching_state_enum() {
-            Ok(enum_info) => enum_info,
+    let map_guard = match get_machine_map().read() {
+        Ok(guard) => guard,
+        Err(_) => {
+            return quote! {
+                compile_error!("Internal error: machine metadata lock poisoned.");
+            };
+        }
+    };
+    let Some(machine_info) = map_guard.get(&machine_info.module_path) else {
+        return quote! {
+            compile_error!("Internal error: machine metadata not found. Try re-running `cargo check` or ensuring #[machine] is applied in this module.");
+        };
+    };
+
+    let state_enum = match machine_info.get_matching_state_enum() {
+        Ok(enum_info) => enum_info,
+        Err(err) => return err,
+    };
+    let name_ident = format_ident!("{}", machine_info.name);
+    let superstate_ident = format_ident!("{}SuperState", machine_info.name);
+    let generics = match parse_generics(machine_info, &state_enum) {
+        Ok(generics) => generics,
+        Err(err) => return err,
+    };
+    let struct_def = match generate_struct_definition(machine_info, &name_ident, &generics) {
+        Ok(def) => def,
+        Err(err) => return err,
+    };
+    let builder_methods = machine_info.generate_builder_methods(&state_enum);
+    let transition_traits = transition_traits(machine_info, &state_enum);
+    let superstate =
+        match generate_superstate(machine_info, &state_enum, &name_ident, &superstate_ident) {
+            Ok(state) => state,
             Err(err) => return err,
         };
-        let name_ident = format_ident!("{}", machine_info.name);
-        let superstate_ident = format_ident!("{}SuperState", machine_info.name);
-        let generics = parse_generics(machine_info, &state_enum);
-        let struct_def = generate_struct_definition(machine_info, &name_ident, &generics);
-        let builder_methods = machine_info.generate_builder_methods(&state_enum);
-        let transition_traits = transition_traits(machine_info, &state_enum);
-        let superstate = generate_superstate(machine_info, &state_enum, &name_ident, &superstate_ident);
 
-        quote! {
-            #transition_traits
-            #struct_def
-            #builder_methods
-            #superstate
-        }
-    } else {
-        quote! { compile_error!("Internal error: machine metadata not found. Try re-running `cargo check` or ensuring #[machine] is applied in this module."); }
+    quote! {
+        #transition_traits
+        #struct_def
+        #builder_methods
+        #superstate
     }
 }
 
-fn parse_generics(machine_info: &MachineInfo, state_enum: &EnumInfo) -> Generics {
+fn parse_generics(machine_info: &MachineInfo, state_enum: &EnumInfo) -> Result<Generics, TokenStream> {
     let generics_str = machine_info.generics.trim().replace(
         &state_enum.name,
         &format!(
@@ -280,7 +338,7 @@ fn parse_generics(machine_info: &MachineInfo, state_enum: &EnumInfo) -> Generics
             &state_enum.name
         ),
     );
-    syn::parse_str::<Generics>(&generics_str).expect("Failed to parse generics.")
+    syn::parse_str::<Generics>(&generics_str).map_err(|err| err.to_compile_error())
 }
 
 fn transition_traits(machine_info: &MachineInfo, state_enum: &EnumInfo) -> TokenStream {
@@ -303,7 +361,7 @@ fn generate_superstate(
     state_enum: &EnumInfo,
     machine_ident: &Ident,
     superstate_ident: &Ident,
-) -> TokenStream {
+) -> Result<TokenStream, TokenStream> {
     let superstate_variants = state_enum.variants.iter().map(|variant| {
         let variant_ident = format_ident!("{}", variant.name);
         quote! {
@@ -311,7 +369,8 @@ fn generate_superstate(
         }
     });
 
-    let vis: Visibility = syn::parse_str(&machine_info.vis).expect("Failed to parse visibility.");
+    let vis: Visibility =
+        syn::parse_str(&machine_info.vis).map_err(|err| err.to_compile_error())?;
 
     let is_methods = state_enum.variants.iter().map(|variant| {
         let variant_ident = format_ident!("{}", variant.name);
@@ -325,7 +384,7 @@ fn generate_superstate(
 
     let module_ident = format_ident!("{}", to_snake_case(&machine_info.name));
 
-    quote! {
+    Ok(quote! {
         #vis enum #superstate_ident {
             #(#superstate_variants),*
         }
@@ -337,60 +396,77 @@ fn generate_superstate(
         #vis mod #module_ident {
             pub type State = super::#superstate_ident;
         }
-    }
+    })
 }
 
 fn generate_struct_definition(
     machine_info: &MachineInfo,
     name_ident: &Ident,
     generics: &Generics,
-) -> TokenStream {
-    let fields = machine_info.fields.iter().map(|field| {
+) -> Result<TokenStream, TokenStream> {
+    let mut field_tokens = Vec::with_capacity(machine_info.fields.len());
+    for field in &machine_info.fields {
         let field_ident = format_ident!("{}", field.name);
-        let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
-        quote! { pub #field_ident: #field_ty }
-    });
+        let field_ty = syn::parse_str::<syn::Type>(&field.field_type)
+            .map_err(|err| err.to_compile_error())?;
+        field_tokens.push(quote! { pub #field_ident: #field_ty });
+    }
 
     let derives = if machine_info.derives.is_empty() {
         quote! {}
     } else {
-        let derive_tokens = machine_info
-            .derives
-            .iter()
-            .map(|d| syn::parse_str::<syn::Path>(d).unwrap());
+        let mut derive_tokens = Vec::with_capacity(machine_info.derives.len());
+        for derive in &machine_info.derives {
+            let parsed = syn::parse_str::<syn::Path>(derive).map_err(|err| err.to_compile_error())?;
+            derive_tokens.push(parsed);
+        }
         quote! {
             #[derive(#(#derive_tokens),*)]
         }
     };
 
-    let vis: Visibility = syn::parse_str(&machine_info.vis).expect("Failed to parse visibility.");
+    let vis: Visibility =
+        syn::parse_str(&machine_info.vis).map_err(|err| err.to_compile_error())?;
 
-    quote! {
+    Ok(quote! {
         #derives
         #vis struct #name_ident #generics {
             marker: core::marker::PhantomData<S>,
             pub state_data: S::Data,
-            #( #fields ),*
+            #( #field_tokens ),*
         }
-    }
+    })
 }
 
 impl MachineInfo {
+    pub(crate) fn expected_state_name(&self) -> Option<String> {
+        let generics = syn::parse_str::<Generics>(&self.generics).ok()?;
+        let first_param = generics.params.first()?;
+        if let syn::GenericParam::Type(ty) = first_param {
+            Some(ty.ident.to_string())
+        } else {
+            None
+        }
+    }
+
     pub fn get_matching_state_enum(&self) -> Result<EnumInfo, TokenStream> {
-        ensure_state_enum_loaded(&self.module_path.clone().into())
-            .ok_or_else(|| missing_state_enum_error(self))
+        let state_path: StateModulePath = self.module_path.clone().into();
+        let Some(state_enum) = ensure_state_enum_loaded(&state_path) else {
+            return Err(missing_state_enum_error(self));
+        };
+        Ok(state_enum)
     }
 
     pub fn generate_builder_methods(&self, state_enum: &EnumInfo) -> TokenStream {
-        let fields_map = self
-            .fields
-            .iter()
-            .map(|field| {
-                let field_ident = format_ident!("{}", field.name);
-                let field_ty = syn::parse_str::<syn::Type>(&field.field_type).unwrap();
-                quote! { #field_ident: #field_ty }
-            })
-            .collect::<Vec<_>>();
+        let mut fields_map = Vec::with_capacity(self.fields.len());
+        for field in &self.fields {
+            let field_ident = format_ident!("{}", field.name);
+            let field_ty = match syn::parse_str::<syn::Type>(&field.field_type) {
+                Ok(ty) => ty,
+                Err(err) => return err.to_compile_error(),
+            };
+            fields_map.push(quote! { #field_ident: #field_ty });
+        }
 
         let field_names = self
             .fields
@@ -400,11 +476,14 @@ impl MachineInfo {
                 quote! { #field_ident }
             })
             .collect::<Vec<_>>();
-        let field_types = self
-            .fields
-            .iter()
-            .map(|field| syn::parse_str::<syn::Type>(&field.field_type).unwrap())
-            .collect::<Vec<_>>();
+        let mut field_types = Vec::with_capacity(self.fields.len());
+        for field in &self.fields {
+            let ty = match syn::parse_str::<syn::Type>(&field.field_type) {
+                Ok(ty) => ty,
+                Err(err) => return err.to_compile_error(),
+            };
+            field_types.push(ty);
+        }
 
         let name_ident = format_ident!("{}", self.name);
 
@@ -417,8 +496,10 @@ impl MachineInfo {
 
             if let Some(ref data_type_str) = variant.data_type {
                 // For variants with associated data, parse the type.
-                let parsed_data_type = syn::parse_str::<syn::Type>(data_type_str)
-                    .expect("Failed to parse state data type");
+                let parsed_data_type = match syn::parse_str::<syn::Type>(data_type_str) {
+                    Ok(ty) => ty,
+                    Err(err) => return err.to_compile_error(),
+                };
 
                 let struct_initialization = if self.fields.is_empty() {
                     quote! {
@@ -459,7 +540,7 @@ impl MachineInfo {
                             #(pub fn #field_names(self, _value: #field_types) -> Self { self })*
 
                             pub fn build(self) -> #name_ident<#variant_ident> {
-                                unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+                                panic!("statum rust-analyzer shim: builder values are not constructed at runtime")
                             }
                         }
 
@@ -517,7 +598,7 @@ impl MachineInfo {
                             #(pub fn #field_names(self, _value: #field_types) -> Self { self })*
 
                             pub fn build(self) -> #name_ident<#variant_ident> {
-                                unsafe { core::mem::MaybeUninit::uninit().assume_init() }
+                                panic!("statum rust-analyzer shim: builder values are not constructed at runtime")
                             }
                         }
 

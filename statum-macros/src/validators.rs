@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use syn::{FnArg, Ident, ItemImpl, ReturnType, Type, parse_macro_input};
 
 use crate::{
-    get_machine, get_state_enum, MachineInfo, MachinePath, StateModulePath, VariantInfo,
-    ensure_machine_loaded, ensure_state_enum_loaded, to_snake_case,
+    get_state_enum, MachineInfo, MachinePath, StateModulePath, VariantInfo,
+    ensure_machine_loaded_by_name, ensure_state_enum_loaded_by_name, to_snake_case,
 };
 
 fn has_validators(item: &ItemImpl, state_variants: &[VariantInfo]) -> proc_macro2::TokenStream {
@@ -56,30 +56,40 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
     let struct_ident = &item_impl.self_ty;
 
     let methods = item_impl.items.clone();
-    let modified_methods = inject_machine_fields(&methods, &module_path.into());
-
-    // Ensure machine metadata exists
     let module_path_key: MachinePath = module_path.into();
-    let state_path_key: StateModulePath = module_path.into();
-    let _ = ensure_machine_loaded(&module_path_key);
-    let _ = ensure_state_enum_loaded(&state_path_key);
-
-    let machine_metadata = get_machine_metadata(&module_path_key);
-    if machine_metadata.is_none() {
+    let machine_name = machine_ident.to_string();
+    let machine_metadata = ensure_machine_loaded_by_name(&module_path_key, &machine_name);
+    let Some(machine_metadata) = machine_metadata else {
         return quote! {
-            compile_error!("Error: No `Machine` found in scope. Ensure `#[validators(Machine)]` references a valid machine.");
+            compile_error!("Error: No matching `#[machine]` found in scope. Ensure `#[validators(Machine)]` references a machine in the same module.");
         }
         .into();
-    }
-    let machine_metadata = machine_metadata.expect("Machine metadata not found");
+    };
 
-    let state_enum_info = match get_state_enum(&state_path_key) {
+    let modified_methods = match inject_machine_fields(&methods, &machine_metadata) {
+        Ok(methods) => methods,
+        Err(err) => return err.into(),
+    };
+
+    let state_path_key: StateModulePath = module_path.into();
+    let expected_state_name = machine_metadata.expected_state_name();
+    let _ = if let Some(expected_name) = expected_state_name.as_ref() {
+        ensure_state_enum_loaded_by_name(&state_path_key, expected_name)
+    } else {
+        None
+    };
+
+    let state_enum_info = match expected_state_name {
+        Some(expected_name) => ensure_state_enum_loaded_by_name(&state_path_key, &expected_name),
+        None => get_state_enum(&state_path_key),
+    };
+    let state_enum_info = match state_enum_info {
         Some(info) => info,
         None => {
             return quote! {
                 compile_error!(
-                    "Error: No #[state] enum found in this module. \
-Ensure the enum is in the same module as the machine and validators."
+                    "Error: No matching #[state] enum found in this module. \
+Ensure the enum is in the same module as the machine and validators, and that the machine's first generic parameter matches the #[state] enum name."
                 );
             }
             .into();
@@ -93,7 +103,10 @@ Ensure the enum is in the same module as the machine and validators."
 
     let field_names = machine_metadata.field_names();
 
-    let fields_with_types = machine_metadata.fields_with_types();
+    let fields_with_types = match machine_metadata.fields_with_types() {
+        Ok(fields) => fields,
+        Err(err) => return err.to_compile_error().into(),
+    };
 
     let superstate_ident = format_ident!("{}SuperState", machine_ident);
 
@@ -118,8 +131,8 @@ Ensure the enum is in the same module as the machine and validators."
             if func_name.starts_with("is_") {
                 let state_name = func_name
                     .strip_prefix("is_")
-                    .expect("Invalid function name")
-                    .to_string();
+                    .map(|name| name.to_string())
+                    .unwrap_or_default();
 
                 // Ensure correct function signature
                 if func.sig.inputs.len() != 1 {
@@ -128,13 +141,13 @@ Ensure the enum is in the same module as the machine and validators."
                     }
                     .into();
                 }
-                if let FnArg::Typed(arg) = &func.sig.inputs[0] {
-                    if !matches!(*arg.ty, Type::Reference(_)) {
-                        return quote! {
-                            compile_error!(concat!("Error: ", #func_name, " must take `&self` as the first argument"));
-                        }
-                        .into();
+                if let FnArg::Typed(arg) = &func.sig.inputs[0]
+                    && !matches!(*arg.ty, Type::Reference(_))
+                {
+                    return quote! {
+                        compile_error!(concat!("Error: ", #func_name, " must take `&self` as the first argument"));
                     }
+                    .into();
                 }
 
                 // Get expected return type based on state variant data
@@ -273,10 +286,6 @@ Ensure the enum is in the same module as the machine and validators."
     expanded.into()
 }
 
-pub fn get_machine_metadata(machine_path: &MachinePath) -> Option<MachineInfo> {
-    get_machine(machine_path)
-}
-
 pub fn batch_builder_implementation(
     machine_ident: &Ident,
     struct_ident: &Type,
@@ -291,7 +300,10 @@ pub fn batch_builder_implementation(
     let builder_module_name = format_ident!("{}", to_snake_case(&bon_builder_ident.to_string()));
 
     // Extract field info
-    let fields_with_types = machine_info.fields_with_types();
+    let fields_with_types = match machine_info.fields_with_types() {
+        Ok(fields) => fields,
+        Err(err) => return err.to_compile_error(),
+    };
     let field_names = machine_info.field_names();
     let field_builder_chain = quote! { #(.#field_names(self.#field_names.clone()))* };
 
@@ -378,24 +390,22 @@ fn generate_finalization_logic(
 use syn::{ImplItem, ImplItemFn};
 
 /// Rewrites `is_*` methods to include machine fields as additional parameters.
-fn inject_machine_fields(methods: &[ImplItem], machine_path: &MachinePath) -> Vec<ImplItem> {
-    // Retrieve machine metadata
-    let machine_info = match get_machine(machine_path) {
-        Some(info) => info,
-        None => panic!("MachinePath '{}' not found in registry", machine_path.0),
-    };
-
+fn inject_machine_fields(
+    methods: &[ImplItem],
+    machine_info: &MachineInfo,
+) -> Result<Vec<ImplItem>, proc_macro2::TokenStream> {
     let field_idents: Vec<Ident> = machine_info.field_names();
-    let field_types: Vec<syn::Type> = machine_info
-        .fields
-        .iter()
-        .map(|field| {
-            let field_type = turn_string_ref_into_str_slice(&field.field_type);
-            syn::parse_str::<syn::Type>(field_type).expect("Failed to parse field type")
-        })
-        .collect();
+    let mut field_types: Vec<syn::Type> = Vec::with_capacity(machine_info.fields.len());
+    for field in &machine_info.fields {
+        let field_type = turn_string_ref_into_str_slice(&field.field_type);
+        let parsed = match syn::parse_str::<syn::Type>(field_type) {
+            Ok(ty) => ty,
+            Err(err) => return Err(err.to_compile_error()),
+        };
+        field_types.push(parsed);
+    }
 
-    methods
+    Ok(methods
         .iter()
         .map(|item| {
             if let ImplItem::Fn(func) = item {
@@ -426,7 +436,7 @@ fn inject_machine_fields(methods: &[ImplItem], machine_path: &MachinePath) -> Ve
             }
             item.clone() // Keep other methods unchanged
         })
-        .collect()
+        .collect())
 }
 
 fn turn_string_ref_into_str_slice(input: &str) -> &str {

@@ -1,8 +1,5 @@
-#![feature(proc_macro_span)]
-
 extern crate proc_macro;
 
-use proc_macro::Span;
 use proc_macro2::LineColumn;
 use std::collections::HashMap;
 use std::fs;
@@ -21,11 +18,21 @@ fn get_module_path_cache() -> &'static RwLock<ModulePathCache> {
 
 /// Extracts the file path and line number where the macro was invoked.
 pub fn get_source_info() -> Option<(String, usize)> {
-    let span = Span::call_site().source();
-    let file_path = span.local_file()?;
-    let file_path = file_path.to_string_lossy().to_string();
-    let line_number = span.line();
-    Some((file_path, line_number))
+    // `proc_macro` APIs panic when used outside a proc-macro context.
+    // Return `None` instead of panicking so callers can degrade gracefully.
+    let span = std::panic::catch_unwind(proc_macro::Span::call_site).ok()?;
+    let line_number = span.start().line();
+
+    if let Some(local_file) = span.local_file() {
+        return Some((local_file.to_string_lossy().into_owned(), line_number));
+    }
+
+    let file_path = span.file();
+    if file_path.is_empty() {
+        None
+    } else {
+        Some((file_path, line_number))
+    }
 }
 
 /// Reads the file and extracts the module path at the given line.

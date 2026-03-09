@@ -1,4 +1,3 @@
-#![feature(proc_macro_span)]
 moddef::moddef!(
     flat (pub) mod {
     },
@@ -11,10 +10,11 @@ moddef::moddef!(
 );
 
 use crate::{
-    MachinePath, StateModulePath, ensure_machine_loaded, ensure_state_enum_loaded, get_machine,
+    MachinePath, StateModulePath, ensure_machine_loaded_by_name, ensure_state_enum_loaded,
 };
 use macro_registry::callsite::current_module_path;
 use proc_macro::TokenStream;
+use syn::spanned::Spanned;
 use syn::{ItemEnum, ItemImpl, ItemStruct, parse_macro_input};
 
 #[proc_macro_attribute]
@@ -68,19 +68,34 @@ pub fn transition(
     let input = parse_macro_input!(item as ItemImpl);
 
     // -- Step 1: Parse
-    let tr_impl = parse_transition_impl(&input);
+    let tr_impl = match parse_transition_impl(&input) {
+        Ok(parsed) => parsed,
+        Err(err) => return err.into(),
+    };
 
     let module_path = current_module_path();
 
     let state_path: StateModulePath = module_path.clone().into();
     let machine_path: MachinePath = module_path.clone().into();
     let _ = ensure_state_enum_loaded(&state_path);
-    let _ = ensure_machine_loaded(&machine_path);
-
-    let machine_info_owned = get_machine(&machine_path);
-    let machine_info = machine_info_owned
-        .as_ref()
-        .expect("Machine not found, even though we validated above");
+    let machine_info_owned = ensure_machine_loaded_by_name(&machine_path, &tr_impl.machine_name);
+    let machine_info = match machine_info_owned.as_ref() {
+        Some(info) => info,
+        None => {
+            let message = syn::LitStr::new(
+                &format!(
+                    "No matching #[machine] metadata found for `{}` in this module. \
+Ensure #[machine] is applied to `{}` in the same module as this #[transition] impl.",
+                    tr_impl.machine_name, tr_impl.machine_name
+                ),
+                input.self_ty.span(),
+            );
+            return quote::quote_spanned! { input.self_ty.span() =>
+                compile_error!(#message);
+            }
+            .into();
+        }
+    };
 
     if let Some(err) = validate_transition_functions(&tr_impl.functions, machine_info) {
         return err.into();

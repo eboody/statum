@@ -13,7 +13,7 @@ use crate::MachineInfo;
 #[allow(unused)]
 pub struct TransitionFn {
     pub name: Ident,
-    pub args: Vec<TokenStream>,
+    pub has_receiver: bool,
     pub return_type: Option<Type>,
     pub machine_name: String,
     pub generics: Vec<Ident>,
@@ -44,22 +44,24 @@ impl TransitionFn {
 pub struct TransitionImpl {
     /// The concrete type being implemented (e.g. `Machine<Draft>`)
     pub target_type: Type,
+    /// The machine type name extracted from `target_type` (e.g. `Machine`)
+    pub machine_name: String,
     /// All transition methods extracted from the `impl`
     pub functions: Vec<TransitionFn>,
 }
 
-pub fn parse_transition_impl(item_impl: &ItemImpl) -> TransitionImpl {
+pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, TokenStream> {
     // 1) Extract target type (e.g., `Machine<Draft>`)
     let target_type = *item_impl.self_ty.clone();
-
-    let machine_name = target_type
-        .to_token_stream()
-        .to_string()
-        .split('<')
-        .next()
-        .unwrap()
-        .trim()
-        .to_string();
+    let Some(machine_name) = extract_machine_name(&target_type) else {
+        let message = syn::LitStr::new(
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+            target_type.span(),
+        );
+        return Err(quote_spanned! { target_type.span() =>
+            compile_error!(#message);
+        });
+    };
 
     // 2) Collect all transition methods
     let mut functions = Vec::new();
@@ -69,30 +71,23 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> TransitionImpl {
         }
     }
 
-    TransitionImpl {
+    Ok(TransitionImpl {
         target_type,
+        machine_name,
         functions,
-    }
+    })
+}
+
+fn extract_machine_name(target_type: &Type) -> Option<String> {
+    let Type::Path(type_path) = target_type else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    Some(segment.ident.to_string())
 }
 
 pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> TransitionFn {
-    // Collect argument names/types with receiver details.
-
-    let args: Vec<proc_macro2::TokenStream> = method
-        .sig
-        .inputs
-        .iter()
-        .map(|arg| match arg {
-            FnArg::Receiver(receiver) => {
-                let mutability = receiver.mutability;
-                quote! { #mutability self }
-            }
-            FnArg::Typed(pat_type) => {
-                let arg_ty = pat_type.ty.to_token_stream();
-                quote! { #arg_ty }
-            }
-        })
-        .collect();
+    let has_receiver = matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)));
 
     // Collect return type if any
     let return_type = match &method.sig.output {
@@ -121,7 +116,7 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> Transitio
 
     TransitionFn {
         name: method.sig.ident.clone(),
-        args,
+        has_receiver,
         return_type,
         machine_name: machine_name.to_owned(),
         generics,
@@ -135,7 +130,6 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> Transitio
 /// Validate that the target type is a known Machine and the state is a valid variant.
 /// Returns `Some(error_tokens)` if there is a validation error; otherwise `None`.
 // Validation of machine/state names is handled by the type system now.
-
 /// Validate all transition function signatures:
 ///  - must have exactly one argument: `self` or `mut self`
 ///  - if the return type is Machine<T> where T is a state variant that carries data,
@@ -151,20 +145,7 @@ pub fn validate_transition_functions(
     }
 
     for func in functions {
-        if func.args.is_empty() {
-            let func_name = &func.name;
-            return Some(quote_spanned! { func.span =>
-                compile_error!(
-                    concat!(
-                        "Invalid function signature: ",
-                        stringify!(#func_name),
-                        " must take `self` or `mut self` as the first argument."
-                    )
-                );
-            });
-        }
-        // Ensure the first argument is either 'self' or 'mut self'
-        if func.args[0].to_string() != "self" && func.args[0].to_string() != "mut self" {
+        if !func.has_receiver {
             let func_name = &func.name;
             return Some(quote_spanned! { func.span =>
                 compile_error!(
@@ -219,7 +200,10 @@ pub fn generate_transition_impl(
 
         match &variant_info.data_type {
             Some(data_type) => {
-                let data_ty = syn::parse_str::<Type>(data_type).unwrap();
+                let data_ty = match syn::parse_str::<Type>(data_type) {
+                    Ok(ty) => ty,
+                    Err(err) => return err.to_compile_error(),
+                };
                 quote! {
                     impl TransitionWith<#data_ty> for #target_type {
                         type NextState = #return_state_ident;

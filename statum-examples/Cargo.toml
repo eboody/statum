@@ -1,12 +1,18 @@
-[package]
-name = "statum-examples"
-version = "0.3.6"
-edition = "2024"
-rust-version = "1.94"
-license = "MIT"
-
 [dependencies]
-statum = { path = "../statum" }
-tokio = { version = "1", features = ["full"] }
 bon = "3.9.0"
 futures = "0.3"
+
+[dependencies.statum]
+path = "../statum"
+version = "0.3.13"
+
+[dependencies.tokio]
+features = ["full"]
+version = "1"
+
+[package]
+edition = "2024"
+license = "MIT"
+name = "statum-examples"
+rust-version = "1.94"
+version = "0.3.13"

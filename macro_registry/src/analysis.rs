@@ -54,7 +54,12 @@ fn build_file_analysis(file_path: &str) -> Option<FileAnalysis> {
         match item {
             syn::Item::Enum(item_enum) => {
                 let name = item_enum.ident.to_string();
-                let line_number = find_item_line(&contents, "enum", &name)?;
+                let span_line = item_enum.ident.span().start().line;
+                let line_number = if span_line > 0 {
+                    span_line
+                } else {
+                    find_item_line(&contents, "enum", &name)?
+                };
                 analysis.enums.push(EnumEntry {
                     attrs: attribute_names(&item_enum.attrs),
                     item: item_enum,
@@ -63,7 +68,12 @@ fn build_file_analysis(file_path: &str) -> Option<FileAnalysis> {
             }
             syn::Item::Struct(item_struct) => {
                 let name = item_struct.ident.to_string();
-                let line_number = find_item_line(&contents, "struct", &name)?;
+                let span_line = item_struct.ident.span().start().line;
+                let line_number = if span_line > 0 {
+                    span_line
+                } else {
+                    find_item_line(&contents, "struct", &name)?
+                };
                 analysis.structs.push(StructEntry {
                     attrs: attribute_names(&item_struct.attrs),
                     item: item_struct,
@@ -105,4 +115,46 @@ fn find_item_line(contents: &str, kind: &str, item_name: &str) -> Option<usize> 
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn write_temp_rust_file(contents: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("statum_analysis_{nanos}.rs"));
+        fs::write(&path, contents).expect("write temp file");
+        path
+    }
+
+    #[test]
+    fn parses_line_numbers_for_struct_and_enum() {
+        let path = write_temp_rust_file(
+            r#"
+#[state]
+pub(crate) enum MyState {
+    A,
+}
+
+#[machine]
+pub struct MyMachine<MyState> {
+    id: u64,
+}
+"#,
+        );
+
+        let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
+        assert_eq!(analysis.enums.len(), 1);
+        assert_eq!(analysis.structs.len(), 1);
+        assert!(analysis.enums[0].line_number > 0);
+        assert!(analysis.structs[0].line_number > 0);
+
+        let _ = fs::remove_file(path);
+    }
 }
