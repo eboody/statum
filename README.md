@@ -4,13 +4,13 @@
 
 # Statum
 
-**Statum** is a zero-boilerplate library for finite-state machines in Rust, with compile-time state transition validation.
+**Statum** is a zero-boilerplate Rust toolkit for ergonomic typestate builders and protocol-safe APIs, built on finite-state modeling with compile-time transition validation.
 
 ### Why Use Statum?
 - **Compile-Time Safety**: State transitions are validated at compile time, ensuring no invalid transitions.
-- **Ergonomic Macros**: Define states and state machines with minimal boilerplate.
+- **Ergonomic Macros**: Define typestate lifecycles with minimal boilerplate.
 - **State-Specific Data**: Add and access data tied to individual states easily.
-- **Persistence-Friendly**: Reconstruct state machines seamlessly from external data sources.
+- **Persistence-Friendly**: Reconstruct typed machines seamlessly from external data sources.
 
 
 ## Table of Contents
@@ -20,6 +20,8 @@
   - [Complex Transitions & Data-Bearing States](#2-complex-transitions--data-bearing-states)
   - [Reconstructing State Machines from Persistent Data](#3-reconstructing-state-machines-from-persistent-data)
   - [Typestate Builder Ergonomics](#4-typestate-builder-ergonomics)
+- [Typestate Builder Design Playbook](#typestate-builder-design-playbook)
+  - [Manual Typestate Builder vs Statum Ergonomics](#manual-typestate-builder-vs-statum-ergonomics)
 - [Examples](#examples)
 - [Patterns & Guidance](#patterns--guidance)
 - [API Rules (Current)](#api-rules-current)
@@ -315,6 +317,123 @@ match rebuild_task(&row)? {
 
 Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs).
 
+## Typestate Builder Design Playbook
+
+If an abstract entity moves through meaningful stages with real ordering constraints, it is a strong typestate candidate.
+
+Applied well, this approach should improve readability, modularity, extensibility, expressiveness, idiomaticity, and correctness.
+
+In practice, design in this order:
+
+1. Identify the staged entity and write its lifecycle in plain language.
+2. Define finite states first with `#[state]` (and attach phase-specific data only where it is truly invariant).
+3. Define machine context with `#[machine]` (long-lived dependencies, IDs, shared context).
+4. Encode legal transitions with `#[transition]` on concrete source states.
+5. Keep runtime branching in normal methods, then dispatch into explicit transition methods.
+6. Use `#[validators]` to safely rehydrate from persistence back into typed machine states.
+7. Keep a hybrid boundary: stable protocol core in typestate, highly dynamic edges in runtime validation.
+
+Use this compact checklist to decide fit quickly:
+
+1. Finite states exist.
+2. Legal transitions are mostly compile-time known.
+3. Invalid transitions are expensive.
+4. API behavior differs by state.
+5. Some data is only valid in specific states.
+6. Workflow is stable enough to justify type-level encoding.
+
+Interpretation:
+
+- 5-6 yes: strong typestate candidate.
+- 3-4 yes: hybrid approach.
+- 0-2 yes: runtime model is likely better for now.
+
+Quick quality check:
+
+- Readability + expressiveness: state names and method availability make lifecycle intent obvious.
+- Modularity + extensibility: most changes are localized to a specific state impl, and adding a stable new state does not cause broad rewrites.
+- Idiomaticity + correctness: ownership is straightforward and illegal protocol paths are blocked at compile time where possible.
+
+### Manual Typestate Builder vs Statum Ergonomics
+
+If you have seen this walkthrough ([YouTube](https://www.youtube.com/watch?v=pwmIQzLuYl0)), the core idea is:
+
+- move missing required fields (like URL or method) from runtime checks into compile-time typestate constraints.
+- expose `build()` only when the builder is in a "ready" type state.
+
+That pattern works great, but a manual implementation usually requires:
+
+1. Multiple marker/data state types (`NoUrl`, `Url`, `NoMethod`, `Method`, `Sealed`, `NotSealed`).
+2. A generic builder with a type matrix (for example `Builder<U, M, S>`).
+3. Several specialized impl blocks to control method availability.
+4. `PhantomData` marker fields when a state generic carries no runtime data.
+
+Statum keeps the same compile-time guarantees and removes most of that boilerplate.
+
+In practice, that means cleaner code, easier extension points, and more explicit protocol intent.
+
+Manual approach -> Statum equivalent:
+
+- Hand-written marker types -> `#[state]` generates variant marker types and state trait wiring.
+- Generic matrix (`Builder<U, M, S>`) -> `#[machine]` gives a single machine type parameterized by current state.
+- Manual method gating -> Write methods in concrete `impl Machine<StateX>` blocks.
+- Manual transition plumbing -> `#[transition]` validates transition signatures and target states.
+- Manual `PhantomData` marker plumbing -> `#[machine]` handles state marker tracking for you.
+- Manual rehydration checks -> `#[validators]` maps persisted data back into typed machine states.
+
+Minimal shape in Statum:
+
+```rust
+use statum::{machine, state, transition};
+
+struct UrlOnly {
+    url: String,
+}
+
+struct MethodOnly {
+    method: String,
+}
+
+struct ReadyData {
+    url: String,
+    method: String,
+}
+
+#[state]
+enum RequestState {
+    MissingBoth,
+    HasUrl(UrlOnly),
+    HasMethod(MethodOnly),
+    Ready(ReadyData),
+}
+
+#[machine]
+struct RequestBuilder<RequestState> {
+    headers: Vec<(String, String)>,
+}
+
+#[transition]
+impl RequestBuilder<HasUrl> {
+    fn set_method(self, method: String) -> RequestBuilder<Ready> {
+        let url = self.state_data.url.clone();
+        self.transition_with(ReadyData { url, method })
+    }
+}
+
+impl RequestBuilder<Ready> {
+    fn build(self) -> Request {
+        // build is only available in Ready state
+        Request {}
+    }
+}
+
+struct Request {}
+```
+
+You still get compile-time errors when calling methods in the wrong state. The difference is that Statum lets you focus on lifecycle design instead of generic/marker plumbing.
+
+Full guide: [Typestate Builder Design Playbook (Step-by-Step)](docs/typestate-builder-design-playbook.md).
+
 ## Examples
 
 See `statum-examples/src/examples/` for the full suite of examples.
@@ -322,6 +441,8 @@ See `statum-examples/src/examples/` for the full suite of examples.
 ---
 
 ## Patterns & Guidance
+
+Decision guide: [Typestate Builder Design Playbook (Step-by-Step)](docs/typestate-builder-design-playbook.md)
 
 ### Conditional transitions (branching decisions)
 Transition methods must return a single next state. Put branching logic in a normal method and call explicit transition methods:
