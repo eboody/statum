@@ -1,13 +1,11 @@
-use module_path_extractor::{find_module_path, get_pseudo_module_path, get_source_info};
+use macro_registry::analysis::{EnumEntry, FileAnalysis};
+use macro_registry::callsite::{current_module_path, current_source_info};
+use macro_registry::registry::{
+    RegistryDomain, RegistryKey, RegistryValue, StaticRegistry, ensure_loaded,
+};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
-use std::{
-    collections::HashMap,
-    sync::{OnceLock, RwLock},
-};
 use syn::{Attribute, Fields, Ident, ItemEnum, Path};
-
-use crate::source_cache::get_file_analysis;
 
 // Structure to hold extracted enum data
 #[derive(Clone, Debug)]
@@ -27,6 +25,16 @@ impl EnumInfo {
         self.variants
             .iter()
             .find(|v| v.name == variant_name || to_snake_case(&v.name) == variant_name)
+    }
+}
+
+impl RegistryValue for EnumInfo {
+    fn file_path(&self) -> Option<&str> {
+        self.file_path.as_deref()
+    }
+
+    fn set_file_path(&mut self, file_path: String) {
+        self.file_path = Some(file_path);
     }
 }
 
@@ -54,6 +62,12 @@ pub struct StateModulePath(pub String);
 impl AsRef<str> for StateModulePath {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl RegistryKey for StateModulePath {
+    fn from_module_path(module_path: String) -> Self {
+        Self(module_path)
     }
 }
 
@@ -143,51 +157,38 @@ impl ToTokens for EnumInfo {
 
 // Global storage for `#[state]` enums
 
-static STATE_ENUMS: OnceLock<RwLock<HashMap<StateModulePath, EnumInfo>>> = OnceLock::new();
+static STATE_ENUMS: StaticRegistry<StateModulePath, EnumInfo> = StaticRegistry::new();
 
-fn get_state_enum_map() -> &'static RwLock<HashMap<StateModulePath, EnumInfo>> {
-    STATE_ENUMS.get_or_init(|| RwLock::new(HashMap::new()))
+struct StateRegistryDomain;
+
+impl RegistryDomain for StateRegistryDomain {
+    type Key = StateModulePath;
+    type Value = EnumInfo;
+    type Entry = EnumEntry;
+
+    fn entries(analysis: &FileAnalysis) -> &[Self::Entry] {
+        &analysis.enums
+    }
+
+    fn entry_line(entry: &Self::Entry) -> usize {
+        entry.line_number
+    }
+
+    fn build_value(entry: &Self::Entry, module_path: &Self::Key) -> Option<Self::Value> {
+        EnumInfo::from_item_enum_with_module(&entry.item, module_path.clone()).ok()
+    }
+
+    fn matches_entry(entry: &Self::Entry) -> bool {
+        entry.attrs.iter().any(|attr| attr == "state")
+    }
 }
 
 pub fn get_state_enum(enum_path: &StateModulePath) -> Option<EnumInfo> {
-    get_state_enum_map().read().ok()?.get(enum_path).cloned()
+    STATE_ENUMS.get_cloned(enum_path)
 }
 
 pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo> {
-    let source_info = get_source_info();
-    if source_info.is_none() {
-        return get_state_enum(enum_path);
-    }
-    let file_path = source_info?.0;
-    if let Some(info) = get_state_enum(enum_path) {
-        if info.file_path.as_deref() == Some(file_path.as_str()) {
-            return Some(info);
-        }
-    }
-
-    let analysis = get_file_analysis(&file_path)?;
-    let allow_any_module = enum_path.as_ref() == "unknown";
-
-    let mut found: Option<EnumInfo> = None;
-    for entry in &analysis.state_enums {
-        let enum_item = &entry.item;
-        let line_number = entry.line_number;
-        let module_path = find_module_path(&file_path, line_number)?;
-        if !allow_any_module && &module_path != enum_path.as_ref() {
-            continue;
-        }
-
-        let mut enum_info = EnumInfo::from_item_enum_with_module(enum_item, module_path.into()).ok()?;
-        enum_info.file_path = Some(file_path.clone());
-        found = Some(enum_info);
-        break;
-    }
-
-    if let Some(enum_info) = found.clone() {
-        store_state_enum(&enum_info);
-    }
-
-    found
+    ensure_loaded::<StateRegistryDomain>(&STATE_ENUMS, enum_path)
 }
 /// Extracts `#[derive(...)]` attributes from an enum
 pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
@@ -209,8 +210,8 @@ pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
 
 impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
-        let module_path = get_pseudo_module_path();
-        let file_path = get_source_info().map(|(path, _)| path);
+        let module_path = current_module_path();
+        let file_path = current_source_info().map(|(path, _)| path);
         Self::from_item_enum_with_module_and_file(item, module_path.into(), file_path)
     }
 
@@ -218,7 +219,7 @@ impl EnumInfo {
         item: &ItemEnum,
         module_path: StateModulePath,
     ) -> syn::Result<Self> {
-        let file_path = get_source_info().map(|(path, _)| path);
+        let file_path = current_source_info().map(|(path, _)| path);
         Self::from_item_enum_with_module_and_file(item, module_path, file_path)
     }
 
@@ -288,14 +289,7 @@ impl EnumInfo {
 }
 
 pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenStream {
-    let enum_info = {
-        get_state_enum_map()
-            .read()
-            .expect("Failed to acquire read lock on state_enum_map.")
-            .get(enum_path)
-            .expect("Enum not found in state_enum_map.")
-            .clone()
-    };
+    let enum_info = get_state_enum(enum_path).expect("Enum not found in state_enum_map.");
 
     let state_trait_ident = enum_info.get_trait_name();
 
@@ -429,6 +423,5 @@ pub fn validate_state_enum(item: &ItemEnum) -> Option<TokenStream> {
 }
 
 pub fn store_state_enum(enum_info: &EnumInfo) {
-    let mut map = get_state_enum_map().write().unwrap();
-    map.insert(enum_info.module_path.clone(), enum_info.clone());
+    STATE_ENUMS.insert(enum_info.module_path.clone(), enum_info.clone());
 }

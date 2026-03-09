@@ -3,7 +3,6 @@ moddef::moddef!(
     flat (pub) mod {
     },
     flat (pub(crate)) mod {
-        source_cache,
         state,
         machine,
         transition,
@@ -14,10 +13,9 @@ moddef::moddef!(
 use crate::{
     MachinePath, StateModulePath, ensure_machine_loaded, ensure_state_enum_loaded, get_machine,
 };
+use macro_registry::callsite::current_module_path;
 use proc_macro::TokenStream;
 use syn::{ItemEnum, ItemImpl, ItemStruct, parse_macro_input};
-
-use module_path_extractor::get_pseudo_module_path;
 
 #[proc_macro_attribute]
 pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -72,7 +70,7 @@ pub fn transition(
     // -- Step 1: Parse
     let tr_impl = parse_transition_impl(&input);
 
-    let module_path = get_pseudo_module_path();
+    let module_path = current_module_path();
 
     let state_path: StateModulePath = module_path.clone().into();
     let machine_path: MachinePath = module_path.clone().into();
@@ -98,6 +96,6 @@ pub fn transition(
 
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let module_path = get_pseudo_module_path();
+    let module_path = current_module_path();
     parse_validators(attr, item, &module_path)
 }

@@ -1,12 +1,15 @@
-use module_path_extractor::{find_module_path, get_pseudo_module_path, get_source_info};
+use macro_registry::analysis::{FileAnalysis, StructEntry};
+use macro_registry::callsite::{current_module_path, current_source_info};
+use macro_registry::registry::{
+    RegistryDomain, RegistryKey, RegistryValue, StaticRegistry, ensure_loaded,
+};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
+use std::sync::RwLock;
 use syn::{Attribute, Generics, Ident, ItemStruct, LitStr, Visibility};
 
 use crate::{ensure_state_enum_loaded, to_snake_case, EnumInfo, StateModulePath};
-use crate::source_cache::get_file_analysis;
 
 impl<T: ToString> From<T> for MachinePath {
     fn from(value: T) -> Self {
@@ -57,6 +60,16 @@ impl MachineInfo {
     }
 }
 
+impl RegistryValue for MachineInfo {
+    fn file_path(&self) -> Option<&str> {
+        self.file_path.as_deref()
+    }
+
+    fn set_file_path(&mut self, file_path: String) {
+        self.file_path = Some(file_path);
+    }
+}
+
 // Structure to store each field in the struct
 #[derive(Debug, Clone)]
 pub struct MachineField {
@@ -68,53 +81,55 @@ pub struct MachineField {
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct MachinePath(pub String);
 
+impl AsRef<str> for MachinePath {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl RegistryKey for MachinePath {
+    fn from_module_path(module_path: String) -> Self {
+        Self(module_path)
+    }
+}
+
 // Global storage for all `#[machine]` structs
-static MACHINE_MAP: OnceLock<RwLock<HashMap<MachinePath, MachineInfo>>> = OnceLock::new();
+static MACHINE_MAP: StaticRegistry<MachinePath, MachineInfo> = StaticRegistry::new();
+
+struct MachineRegistryDomain;
+
+impl RegistryDomain for MachineRegistryDomain {
+    type Key = MachinePath;
+    type Value = MachineInfo;
+    type Entry = StructEntry;
+
+    fn entries(analysis: &FileAnalysis) -> &[Self::Entry] {
+        &analysis.structs
+    }
+
+    fn entry_line(entry: &Self::Entry) -> usize {
+        entry.line_number
+    }
+
+    fn build_value(entry: &Self::Entry, module_path: &Self::Key) -> Option<Self::Value> {
+        MachineInfo::from_item_struct_with_module(&entry.item, module_path)
+    }
+
+    fn matches_entry(entry: &Self::Entry) -> bool {
+        entry.attrs.iter().any(|attr| attr == "machine")
+    }
+}
 
 pub fn get_machine_map() -> &'static RwLock<HashMap<MachinePath, MachineInfo>> {
-    MACHINE_MAP.get_or_init(|| RwLock::new(HashMap::new()))
+    MACHINE_MAP.map()
 }
 
 pub fn get_machine(machine_path: &MachinePath) -> Option<MachineInfo> {
-    get_machine_map().read().ok()?.get(machine_path).cloned()
+    MACHINE_MAP.get_cloned(machine_path)
 }
 
 pub fn ensure_machine_loaded(machine_path: &MachinePath) -> Option<MachineInfo> {
-    let source_info = get_source_info();
-    if source_info.is_none() {
-        return get_machine(machine_path);
-    }
-    let file_path = source_info?.0;
-    if let Some(info) = get_machine(machine_path) {
-        if info.file_path.as_deref() == Some(file_path.as_str()) {
-            return Some(info);
-        }
-    }
-
-    let analysis = get_file_analysis(&file_path)?;
-    let allow_any_module = machine_path.0 == "unknown";
-
-    let mut found: Option<MachineInfo> = None;
-    for entry in &analysis.machine_structs {
-        let struct_item = &entry.item;
-        let line_number = entry.line_number;
-        let module_path = find_module_path(&file_path, line_number)?;
-        if !allow_any_module && &module_path != &machine_path.0 {
-            continue;
-        }
-
-        let mut machine_info =
-            MachineInfo::from_item_struct_with_module(struct_item, machine_path)?;
-        machine_info.file_path = Some(file_path.clone());
-        found = Some(machine_info);
-        break;
-    }
-
-    if let Some(machine_info) = found.clone() {
-        store_machine_struct(&machine_info);
-    }
-
-    found
+    ensure_loaded::<MachineRegistryDomain>(&MACHINE_MAP, machine_path)
 }
 // Extract derives from `#[derive(Debug, Clone, ...)]`
 
@@ -149,8 +164,8 @@ impl MachineInfo {
             })
             .collect();
 
-        let module_path = get_pseudo_module_path();
-        let file_path = get_source_info().map(|(path, _)| path);
+        let module_path = current_module_path();
+        let file_path = current_source_info().map(|(path, _)| path);
 
         Self {
             name: item.ident.to_string(),
@@ -187,7 +202,7 @@ impl MachineInfo {
             return None;
         }
 
-        let file_path = get_source_info().map(|(path, _)| path);
+        let file_path = current_source_info().map(|(path, _)| path);
         Some(Self {
             name: item.ident.to_string(),
             vis: item.vis.to_token_stream().to_string(),
@@ -631,6 +646,5 @@ fn is_rust_analyzer() -> bool {
 }
 
 pub fn store_machine_struct(machine_info: &MachineInfo) {
-    let mut map = get_machine_map().write().unwrap();
-    map.insert(machine_info.module_path.clone(), machine_info.clone());
+    MACHINE_MAP.insert(machine_info.module_path.clone(), machine_info.clone());
 }

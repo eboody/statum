@@ -1,0 +1,16 @@
+[package]
+name = "macro_registry"
+version = "0.1.1"
+edition = "2021"
+authors = ["Eran Boodnero <eran@eran.codes>"]
+description = "Reusable proc-macro registry and source analysis infrastructure"
+documentation = "https://docs.rs/macro_registry"
+readme = "README.md"
+keywords = ["proc-macro", "registry", "syn", "ast", "codegen"]
+categories = ["development-tools::procedural-macro-helpers", "rust-patterns"]
+license = "MIT"
+repository = "https://github.com/eboody/statum"
+
+[dependencies]
+module_path_extractor = { path = "../module_path_extractor", version = "0.2.4" }
+syn = { version = "2.0", features = ["full"] }
