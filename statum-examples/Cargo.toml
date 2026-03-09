@@ -2,9 +2,11 @@
 name = "statum-examples"
 version = "0.3.6"
 edition = "2024"
+rust-version = "1.94"
+license = "MIT"
 
 [dependencies]
 statum = { path = "../statum" }
-tokio = { version = "*", features = ["full"] }
-bon = "*"
-futures = "*"
+tokio = { version = "1", features = ["full"] }
+bon = "3.9.0"
+futures = "0.3"

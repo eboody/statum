@@ -4,13 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
-  test:
+  stable:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -19,7 +22,84 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Format check
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Build
         run: cargo build --workspace
       - name: Test
         run: cargo test --workspace
+      - name: Doc tests
+        run: cargo test --doc --workspace
+      - name: Build docs
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+  msrv-1-94:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-1-94-${{ hashFiles('**/Cargo.lock') }}
+      - name: Check
+        run: cargo check --workspace
+      - name: Format check
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Doc tests
+        run: cargo test --doc --workspace
+      - name: Build docs
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+  security-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - uses: taiki-e/install-action@cargo-deny
+      - name: cargo-deny
+        run: cargo deny check advisories bans licenses sources
+
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - uses: taiki-e/install-action@cargo-audit
+      - name: cargo-audit
+        run: cargo audit -d /tmp/advisory-db
+
+  publish-dry-run:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - name: Publish dry-run (ordered)
+        run: |
+          cargo publish -p module_path_extractor --dry-run
+          cargo publish -p macro_registry --dry-run
+          cargo publish -p statum-core --dry-run
+          cargo publish -p statum-macros --dry-run
+          cargo publish -p statum --dry-run
+
+  nightly-canary:
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Nightly build
+        run: cargo build --workspace
