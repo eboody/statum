@@ -215,4 +215,10 @@ mod tests {
         assert!(cache_matches_file(&value, "/tmp/a.rs"));
         assert!(!cache_matches_file(&value, "/tmp/b.rs"));
     }
+
+    #[test]
+    fn cache_match_requires_tracked_file_path() {
+        let value = TestValue { file_path: None };
+        assert!(!cache_matches_file(&value, "/tmp/a.rs"));
+    }
 }

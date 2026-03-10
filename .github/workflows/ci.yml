@@ -24,6 +24,8 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Format check
         run: cargo fmt --all --check
+      - name: README link check
+        run: bash scripts/check_readme_links.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Build
@@ -54,6 +56,8 @@ jobs:
         run: cargo check --workspace
       - name: Format check
         run: cargo fmt --all --check
+      - name: README link check
+        run: bash scripts/check_readme_links.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test

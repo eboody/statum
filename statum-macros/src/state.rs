@@ -282,7 +282,8 @@ impl EnumInfo {
     ) -> syn::Result<Self> {
         let name = item.ident.to_string();
         let vis = item.vis.to_token_stream().to_string();
-        // TODO: Support lifetimes/generics on #[state] enums.
+        // 1.0 policy: generics on `#[state]` enums are intentionally unsupported.
+        // `validate_state_enum` emits a compile error when generics are present.
         let generics = item.generics.clone().to_token_stream().to_string();
 
         let derives = item

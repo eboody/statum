@@ -81,20 +81,20 @@ fn read_line_trimmed() -> Result<String, Box<dyn std::error::Error>> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     ensure_clean_worktree()?;
 
-    println!("Enter version increment (e.g. 0.0.1):");
-    let increment = read_line_trimmed()?;
-    if increment.is_empty() {
-        return Err("Version increment cannot be empty".into());
+    println!("Enter target version (e.g. 1.0.0):");
+    let target_version = read_line_trimmed()?;
+    if target_version.is_empty() {
+        return Err("Target version cannot be empty".into());
     }
 
-    println!("\nIncrementing versions...");
+    println!("\nUpdating versions...");
     run(
         {
             let mut cmd = Command::new("cargo");
-            cmd.args(["script", "scripts/update_version.rs", "--", &increment]);
+            cmd.args(["script", "scripts/update_version.rs", "--", &target_version]);
             cmd
         },
-        "Version increment",
+        "Version update",
     )?;
 
     let version = verify_versions_match()?;

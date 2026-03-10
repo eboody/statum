@@ -89,11 +89,12 @@ fn apply_internal_versions(doc: &mut Value, new_version: &str) {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
-        eprintln!("Usage: {} <version_increment> (e.g. 0.0.1)", args[0]);
+        eprintln!("Usage: {} <target_version> (e.g. 1.0.0)", args[0]);
         std::process::exit(1);
     }
 
-    let increment = parse_semver_triplet(&args[1], "Version increment")?;
+    let new_version = args[1].trim().to_string();
+    parse_semver_triplet(&new_version, "Target version")?;
 
     let root_cargo_path = "statum/Cargo.toml";
     let cargo_content = fs::read_to_string(root_cargo_path)?;
@@ -102,23 +103,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .as_str()
         .ok_or("Version not found")?;
 
-    let mut current = parse_semver_triplet(current_version, "Current version")?;
-    for i in 0..3 {
-        current[i] += increment[i];
+    if current_version == new_version {
+        return Err(format!("Target version matches current version: {current_version}").into());
     }
-
-    let new_version = format!("{}.{}.{}", current[0], current[1], current[2]);
-    println!(
-        "Incrementing version from {} to {}",
-        current_version, new_version
-    );
-
-    let root_readme_content = fs::read_to_string("README.md")?;
-    if root_readme_content.trim().is_empty() {
-        return Err(
-            "Root README.md is empty. Refusing to copy empty README into crate packages.".into(),
-        );
-    }
+    println!("Updating versions from {} to {}", current_version, new_version);
 
     for crate_path in &ALL_CRATES {
         let cargo_path = format!("{}/Cargo.toml", crate_path);
@@ -129,10 +117,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         fs::write(&cargo_path, toml::to_string_pretty(&doc)?)?;
         println!("Updated version metadata in {}", cargo_path);
-
-        let readme_dest = format!("{}/README.md", crate_path);
-        fs::copy("README.md", &readme_dest)?;
-        println!("Copied README.md to {}", readme_dest);
     }
 
     Ok(())

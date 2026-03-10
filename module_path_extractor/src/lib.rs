@@ -219,3 +219,85 @@ pub fn get_pseudo_module_path() -> String {
         .and_then(|(file, line)| find_module_path(&file, line))
         .unwrap_or_else(|| "unknown".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("statum_module_path_{label}_{nanos}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn write_file(path: &Path, contents: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent");
+        }
+        fs::write(path, contents).expect("write file");
+    }
+
+    #[test]
+    fn module_path_from_file_handles_lib_mod_and_nested_paths() {
+        assert_eq!(module_path_from_file("/tmp/project/src/lib.rs"), "crate");
+        assert_eq!(module_path_from_file("/tmp/project/src/main.rs"), "crate");
+        assert_eq!(
+            module_path_from_file("/tmp/project/src/foo/bar.rs"),
+            "foo::bar"
+        );
+        assert_eq!(module_path_from_file("/tmp/project/src/foo/mod.rs"), "foo");
+    }
+
+    #[test]
+    fn module_path_to_file_resolves_crate_rs_and_mod_rs() {
+        let crate_dir = unique_temp_dir("to_file");
+        let src = crate_dir.join("src");
+        let lib = src.join("lib.rs");
+        let workflow = src.join("workflow.rs");
+        let worker_mod = src.join("worker").join("mod.rs");
+
+        write_file(&lib, "pub mod workflow; pub mod worker;");
+        write_file(&workflow, "pub fn run() {}");
+        write_file(&worker_mod, "pub fn spawn() {}");
+
+        let current = workflow.to_string_lossy().into_owned();
+        let module_root = src;
+
+        assert_eq!(
+            module_path_to_file("crate", &current, &module_root),
+            Some(lib.clone())
+        );
+        assert_eq!(
+            module_path_to_file("crate::workflow", &current, &module_root),
+            Some(workflow.clone())
+        );
+        assert_eq!(
+            module_path_to_file("crate::worker", &current, &module_root),
+            Some(worker_mod.clone())
+        );
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
+    fn find_module_path_in_file_resolves_nested_inline_modules() {
+        let crate_dir = unique_temp_dir("nested_mods");
+        let src = crate_dir.join("src");
+        let lib = src.join("lib.rs");
+
+        write_file(
+            &lib,
+            "mod outer {\n    mod inner {\n        pub fn marker() {}\n    }\n}\n",
+        );
+
+        let found = find_module_path_in_file(&lib.to_string_lossy(), 3, &src);
+        assert_eq!(found.as_deref(), Some("outer::inner"));
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+}

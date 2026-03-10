@@ -1,4 +1,4 @@
-error: Error: is_in_progress must return `Result<Progress` but found `Result<(),statum_core::Error>`
+error: Error: is_in_progress must return `Result<Progress, _>` (or an equivalent alias) but found `Result < (), statum_core :: Error >` with payload `()`
   --> tests/ui/invalid_validators_wrong_return.rs:27:1
    |
 27 | #[validators(TaskMachine)]

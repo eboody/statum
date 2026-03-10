@@ -157,4 +157,30 @@ pub struct MyMachine<MyState> {
 
         let _ = fs::remove_file(path);
     }
+
+    #[test]
+    fn file_analysis_cache_is_scoped_per_file_path() {
+        let path_a = write_temp_rust_file(
+            r#"
+#[state]
+enum StateA { A }
+"#,
+        );
+        let path_b = write_temp_rust_file(
+            r#"
+#[state]
+enum StateB { B }
+"#,
+        );
+
+        let a_first = get_file_analysis(path_a.to_str().expect("a path")).expect("analysis a1");
+        let a_second = get_file_analysis(path_a.to_str().expect("a path")).expect("analysis a2");
+        let b_first = get_file_analysis(path_b.to_str().expect("b path")).expect("analysis b1");
+
+        assert!(Rc::ptr_eq(&a_first, &a_second));
+        assert!(!Rc::ptr_eq(&a_first, &b_first));
+
+        let _ = fs::remove_file(path_a);
+        let _ = fs::remove_file(path_b);
+    }
 }
