@@ -141,13 +141,21 @@ Ensure the enum is in the same module as the machine and validators, and that th
                     }
                     .into();
                 }
-                if let FnArg::Typed(arg) = &func.sig.inputs[0]
-                    && !matches!(*arg.ty, Type::Reference(_))
-                {
-                    return quote! {
-                        compile_error!(concat!("Error: ", #func_name, " must take `&self` as the first argument"));
+                match &func.sig.inputs[0] {
+                    FnArg::Receiver(receiver) => {
+                        if receiver.reference.is_none() || receiver.mutability.is_some() {
+                            return quote! {
+                                compile_error!(concat!("Error: ", #func_name, " must take `&self` as the first argument"));
+                            }
+                            .into();
+                        }
                     }
-                    .into();
+                    FnArg::Typed(_) => {
+                        return quote! {
+                            compile_error!(concat!("Error: ", #func_name, " must take `&self` as the first argument"));
+                        }
+                        .into();
+                    }
                 }
 
                 // Get expected return type based on state variant data
@@ -331,7 +339,7 @@ pub fn batch_builder_implementation(
         }
 
         #[derive(statum::bon::Builder)]
-        #[builder(finish_fn = __private_build)]
+        #[builder(crate = ::statum::bon, finish_fn = __private_build)]
         struct #builder_ident {
             #[builder(default)]
             items: Vec<#struct_ident>,  // ✅ Now only stores Vec<T>

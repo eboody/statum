@@ -113,6 +113,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         current_version, new_version
     );
 
+    let root_readme_content = fs::read_to_string("README.md")?;
+    if root_readme_content.trim().is_empty() {
+        return Err(
+            "Root README.md is empty. Refusing to copy empty README into crate packages.".into(),
+        );
+    }
+
     for crate_path in &ALL_CRATES {
         let cargo_path = format!("{}/Cargo.toml", crate_path);
         let content = fs::read_to_string(&cargo_path)?;

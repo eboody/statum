@@ -1,0 +1,7 @@
+error: Error: is_draft must take `&self` as the first argument
+  --> tests/ui/invalid_validators_wrong_receiver.rs:22:1
+   |
+22 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -7,7 +7,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashMap;
 use std::sync::RwLock;
-use syn::{Attribute, Generics, Ident, ItemStruct, LitStr, Visibility};
+use syn::{Attribute, GenericParam, Generics, Ident, ItemStruct, LitStr, Visibility};
 
 use crate::{ensure_state_enum_loaded, to_snake_case, EnumInfo, StateModulePath};
 
@@ -77,6 +77,7 @@ impl RegistryValue for MachineInfo {
 #[derive(Debug, Clone)]
 pub struct MachineField {
     pub name: String,
+    pub vis: String,
     pub field_type: String,
 }
 
@@ -193,6 +194,7 @@ impl MachineInfo {
             .filter_map(|field| {
                 field.ident.as_ref().map(|ident| MachineField {
                     name: ident.to_string(),
+                    vis: field.vis.to_token_stream().to_string(),
                     field_type: field.ty.to_token_stream().to_string(),
                 })
             })
@@ -227,6 +229,7 @@ impl MachineInfo {
             .filter_map(|field| {
                 field.ident.as_ref().map(|ident| MachineField {
                     name: ident.to_string(),
+                    vis: field.vis.to_token_stream().to_string(),
                     field_type: field.ty.to_token_stream().to_string(),
                 })
             })
@@ -309,7 +312,16 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
         Ok(generics) => generics,
         Err(err) => return err,
     };
-    let struct_def = match generate_struct_definition(machine_info, &name_ident, &generics) {
+    let state_generic_ident = match extract_state_generic_ident(&generics) {
+        Ok(ident) => ident,
+        Err(err) => return err,
+    };
+    let struct_def = match generate_struct_definition(
+        machine_info,
+        &name_ident,
+        &generics,
+        &state_generic_ident,
+    ) {
         Ok(def) => def,
         Err(err) => return err,
     };
@@ -330,15 +342,70 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
 }
 
 fn parse_generics(machine_info: &MachineInfo, state_enum: &EnumInfo) -> Result<Generics, TokenStream> {
-    let generics_str = machine_info.generics.trim().replace(
-        &state_enum.name,
-        &format!(
-            "S: {} = Uninitialized{}",
-            state_enum.get_trait_name(),
-            &state_enum.name
-        ),
-    );
-    syn::parse_str::<Generics>(&generics_str).map_err(|err| err.to_compile_error())
+    let mut generics =
+        syn::parse_str::<Generics>(&machine_info.generics).map_err(|err| err.to_compile_error())?;
+
+    let Some(first_param) = generics.params.first_mut() else {
+        return Err(
+            syn::Error::new(
+                Span::call_site(),
+                "Machine struct must have a state generic as its first type parameter.",
+            )
+            .to_compile_error(),
+        );
+    };
+
+    let GenericParam::Type(first_type) = first_param else {
+        return Err(
+            syn::Error::new(
+                Span::call_site(),
+                "Machine state generic must be a type parameter.",
+            )
+            .to_compile_error(),
+        );
+    };
+
+    let state_trait_ident = state_enum.get_trait_name();
+    let has_state_trait_bound = first_type.bounds.iter().any(|bound| {
+        matches!(
+            bound,
+            syn::TypeParamBound::Trait(trait_bound)
+            if trait_bound.path.is_ident(&state_trait_ident)
+        )
+    });
+    if !has_state_trait_bound {
+        first_type.bounds.push(syn::parse_quote!(#state_trait_ident));
+    }
+
+    let default_state_ident = format_ident!("Uninitialized{}", state_enum.name);
+    first_type.default = Some(syn::parse_quote!(#default_state_ident));
+    first_type.eq_token = Some(syn::Token![=](Span::call_site()));
+
+    Ok(generics)
+}
+
+fn extract_state_generic_ident(generics: &Generics) -> Result<Ident, TokenStream> {
+    let Some(first_param) = generics.params.first() else {
+        return Err(
+            syn::Error::new(
+                Span::call_site(),
+                "Machine struct must have a state generic as its first type parameter.",
+            )
+            .to_compile_error(),
+        );
+    };
+
+    if let GenericParam::Type(first_type) = first_param {
+        return Ok(first_type.ident.clone());
+    }
+
+    Err(
+        syn::Error::new(
+            Span::call_site(),
+            "Machine state generic must be a type parameter.",
+        )
+        .to_compile_error(),
+    )
 }
 
 fn transition_traits(machine_info: &MachineInfo, state_enum: &EnumInfo) -> TokenStream {
@@ -403,13 +470,16 @@ fn generate_struct_definition(
     machine_info: &MachineInfo,
     name_ident: &Ident,
     generics: &Generics,
+    state_generic_ident: &Ident,
 ) -> Result<TokenStream, TokenStream> {
     let mut field_tokens = Vec::with_capacity(machine_info.fields.len());
     for field in &machine_info.fields {
         let field_ident = format_ident!("{}", field.name);
+        let field_vis =
+            syn::parse_str::<Visibility>(&field.vis).map_err(|err| err.to_compile_error())?;
         let field_ty = syn::parse_str::<syn::Type>(&field.field_type)
             .map_err(|err| err.to_compile_error())?;
-        field_tokens.push(quote! { pub #field_ident: #field_ty });
+        field_tokens.push(quote! { #field_vis #field_ident: #field_ty });
     }
 
     let derives = if machine_info.derives.is_empty() {
@@ -431,8 +501,8 @@ fn generate_struct_definition(
     Ok(quote! {
         #derives
         #vis struct #name_ident #generics {
-            marker: core::marker::PhantomData<S>,
-            pub state_data: S::Data,
+            marker: core::marker::PhantomData<#state_generic_ident>,
+            pub state_data: #state_generic_ident::Data,
             #( #field_tokens ),*
         }
     })
@@ -712,6 +782,19 @@ Expected:\n\
 pub struct {machine_name}<{state_name}> {{ ... }}\n\n\
 Found:\n\
 pub struct {machine_name}<{found}> {{ ... }}"
+        );
+        let message = LitStr::new(&message, Span::call_site());
+        return Some(quote! {
+            compile_error!(#message);
+        });
+    }
+
+    if item.generics.params.len() > 1 {
+        let message = format!(
+            "Error: #[machine] currently supports exactly one generic type parameter: `{state_name}`.\n\n\
+Fix: Remove additional generics from `{machine_name}` and keep stateful context in fields.\n\n\
+Expected:\n\
+pub struct {machine_name}<{state_name}> {{ ... }}"
         );
         let message = LitStr::new(&message, Span::call_site());
         return Some(quote! {

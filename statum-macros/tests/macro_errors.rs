@@ -15,6 +15,8 @@ fn test_invalid_machine_usage() {
     t.compile_fail("tests/ui/invalid_machine_no_state_generic.rs");
     t.compile_fail("tests/ui/invalid_machine_wrong_generic.rs");
     t.compile_fail("tests/ui/invalid_machine_generic_not_first.rs");
+    t.compile_fail("tests/ui/invalid_machine_multiple_generics.rs");
+    t.compile_fail("tests/ui/invalid_machine_private_field_access.rs");
     t.compile_fail("tests/ui/invalid_machine_missing_state_derive.rs");
 }
 
@@ -33,6 +35,7 @@ fn test_invalid_validators_usage() {
     t.compile_fail("tests/ui/invalid_validators_missing_variant.rs");
     t.compile_fail("tests/ui/invalid_validators_wrong_return.rs");
     t.compile_fail("tests/ui/invalid_validators_wrong_signature.rs");
+    t.compile_fail("tests/ui/invalid_validators_wrong_receiver.rs");
     t.compile_fail("tests/ui/invalid_validators_no_methods.rs");
     t.compile_fail("tests/ui/invalid_validators_unknown_machine.rs");
 }

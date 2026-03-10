@@ -4,7 +4,7 @@ futures = "0.3"
 
 [dependencies.statum]
 path = "../statum"
-version = "0.3.13"
+version = "0.3.14"
 
 [dependencies.tokio]
 features = ["full"]
@@ -15,4 +15,4 @@ edition = "2024"
 license = "MIT"
 name = "statum-examples"
 rust-version = "1.94"
-version = "0.3.13"
+version = "0.3.14"

@@ -1,0 +1,12 @@
+error: Error: #[machine] currently supports exactly one generic type parameter: `WorkflowState`.
+
+       Fix: Remove additional generics from `Workflow` and keep stateful context in fields.
+
+       Expected:
+       pub struct Workflow<WorkflowState> { ... }
+  --> tests/ui/invalid_machine_multiple_generics.rs:12:1
+   |
+12 | #[machine]
+   | ^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
