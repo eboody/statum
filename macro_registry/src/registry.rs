@@ -96,13 +96,22 @@ where
 
     let analysis = get_file_analysis(&file_path)?;
     let mut found: Option<(D::Key, D::Value)> = None;
+    let mut line_module_cache: HashMap<usize, Option<String>> = HashMap::new();
     for entry in D::entries(&analysis) {
         if !D::matches_entry(entry) {
             continue;
         }
 
-        let Some(resolved_module_path) = module_path_for_line(&file_path, D::entry_line(entry))
-        else {
+        let line_number = D::entry_line(entry);
+        let resolved_module_path = if let Some(cached) = line_module_cache.get(&line_number) {
+            cached.clone()
+        } else {
+            let resolved = module_path_for_line(&file_path, line_number);
+            line_module_cache.insert(line_number, resolved.clone());
+            resolved
+        };
+
+        let Some(resolved_module_path) = resolved_module_path else {
             continue;
         };
         if !module_matches(requested_key, &resolved_module_path) {

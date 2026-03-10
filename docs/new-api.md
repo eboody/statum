@@ -107,8 +107,9 @@ impl MyPersistentData {
   - may be `async` (if any validator is async, generated builders are async).
 
 ### Generated Items
-- A superstate enum `MyMachineSuperState` with variants for each state, each wrapping `MyMachine<State>`.
-- A builder `machine_builder()` on the persistent data type that returns `Result<SuperState, statum::Error>`.
+- A machine-scoped enum `my_machine::State` with variants for each state, each wrapping `MyMachine<State>`.
+- A hidden compatibility alias like `MyMachineSuperState`.
+- A builder `machine_builder()` on the persistent data type that returns `Result<my_machine::State, statum::Error>`.
 - A batch builder for processing lists of persistent data items.
 
 ## Quick Example (Inferred)

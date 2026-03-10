@@ -13,225 +13,99 @@
 
 # Statum
 
-### Why Use Statum?
-- **Compile-Time Safety**: State transitions are validated at compile time, ensuring no invalid transitions.
-- **Ergonomic Macros**: Define typestate lifecycles with minimal boilerplate.
-- **State-Specific Data**: Add and access data tied to individual states easily.
-- **Persistence-Friendly**: Reconstruct typed machines seamlessly from external data sources.
+Statum helps you model workflows where phase order matters and invalid transitions are expensive. You describe lifecycle phases with `#[state]`, durable context with `#[machine]`, legal moves with `#[transition]`, and typed rehydration from existing data with `#[validators]`.
 
+It is opinionated on purpose: explicit transitions, state-specific data, and compile-time method gating. If that is the shape of your problem, the API stays small and the safety payoff is high.
 
-## Table of Contents
-- [Quick Start](#quick-start)
-- [Stability and MSRV](#stability-and-msrv)
-- [Additional Features & Examples](#additional-features--examples)
-  - [Adding `Debug`, `Clone`, or Other Derives](#1-adding-debug-clone-or-other-derives)
-  - [Complex Transitions & Data-Bearing States](#2-complex-transitions--data-bearing-states)
-  - [Reconstructing State Machines from Persistent Data](#3-reconstructing-state-machines-from-persistent-data)
-  - [Typestate Builder Ergonomics](#4-typestate-builder-ergonomics)
-- [Typestate Builder Design Playbook](#typestate-builder-design-playbook)
-  - [Manual Typestate Builder vs Statum Ergonomics](#manual-typestate-builder-vs-statum-ergonomics)
-- [Examples](#examples)
-- [Patterns & Guidance](#patterns--guidance)
-- [API Rules (Current)](#api-rules-current)
-- [Common Errors and Tips](#common-errors-and-tips)
-- [API Reference](#api-reference)
-
-## Quick Start
-
-To start, it provides three attribute macros:
-
-- **`#[state]`** for defining states (as enums).
-- **`#[machine]`** for creating a state machine struct that tracks which state you are in at compile time.
-- **`#[transition]`** for validating transition method signatures.
-
-Here is the simplest usage of Statum without any extra features:
+## 60-Second Example
 
 ```rust
 use statum::{machine, state, transition};
 
-// 1. Define your states as an enum.
 #[state]
-pub enum LightState {
+enum LightState {
     Off,
     On,
 }
 
-// 2. Define your machine with the #[machine] attribute.
 #[machine]
-pub struct LightSwitch<LightState> {
-    name: String, // Contextual, machine-wide fields go here.
+struct LightSwitch<LightState> {
+    name: String,
 }
 
-// 3. Implement transitions for each state.
 #[transition]
 impl LightSwitch<Off> {
-    pub fn switch_on(self) -> LightSwitch<On> {
+    fn switch_on(self) -> LightSwitch<On> {
         self.transition()
     }
 }
 
 #[transition]
 impl LightSwitch<On> {
-    pub fn switch_off(self) -> LightSwitch<Off> {
+    fn switch_off(self) -> LightSwitch<Off> {
         self.transition()
     }
 }
 
 fn main() {
-    // 4. Create a machine with the "Off" state.
     let light = LightSwitch::<Off>::builder()
         .name("desk lamp".to_owned())
         .build();
 
-    // 5. Transition from Off -> On, On -> Off, etc.
-    let light = light.switch_on(); // type: LightSwitch<On>
-    let _light = light.switch_off(); // type: LightSwitch<Off>
+    let light = light.switch_on();
+    let _light = light.switch_off();
 }
 ```
 
-Example: [statum-examples/src/examples/example_01_setup.rs](statum-examples/src/examples/example_01_setup.rs).
+Example: [statum-examples/src/examples/example_01_setup.rs](statum-examples/src/examples/example_01_setup.rs)
 
-### How It Works
-
-- `#[state]` transforms your enum, generating one struct per variant (like `Off` and `On`), plus a trait `LightState`.
-- `#[machine]` injects extra fields (`marker`, `state_data`) to track which state you are in, letting you define transitions that change the state at the type level.
-- `#[transition]` validates method signatures and ties them to a concrete next state.
-
-That is it. You now have a compile-time guaranteed state machine where invalid transitions are impossible.
-
----
-
-## Stability and MSRV
-
-- Stable-only support: Statum is intended to compile and run on stable Rust.
-- MSRV: `1.93`.
-- Compatibility policy: semantic versioning is enforced; breaking API changes require a major version bump.
-
----
-
-## Additional Features & Examples
-
-### 1. Adding `Debug`, `Clone`, or Other Derives
-
-By default, you can add normal Rust derives on your enum and struct. For example:
+If you add derives, place them below `#[state]` and `#[machine]`:
 
 ```rust
-#[state]
-#[derive(Debug, Clone)]
-pub enum LightState {
-    Off,
-    On,
-}
-
 #[machine]
 #[derive(Debug, Clone)]
-pub struct LightSwitch<LightState> {
+struct LightSwitch<LightState> {
     name: String,
 }
 ```
 
-**Important**: If you place `#[derive(...)]` above `#[machine]`, you may see an error like:
+That avoids the common `missing fields marker and state_data` error.
 
-```
-error[E0063]: missing fields `marker` and `state_data` in initializer of `Light<_>`
-   |
-14 | #[derive(Debug, Clone)]
-   |          ^ missing `marker` and `state_data`
-```
+## Mental Model
 
-**To avoid this**, put `#[machine]` above the derive(s).
-
-```rust
-// ❌ This will NOT work
-#[derive(Debug)] // note the position of the derive
-#[machine]
-pub struct LightSwitch<LightState>;
-
-// ✅ This will work
-#[machine]
-#[derive(Debug)]
-pub struct LightSwitch<LightState>;
+```text
+#[state]      -> lifecycle phases
+#[machine]    -> durable machine context
+#[transition] -> legal edges between phases
+#[validators] -> typed rehydration from stored data
 ```
 
-Example: [statum-examples/src/examples/03-derives.rs](statum-examples/src/examples/03-derives.rs).
+Roughly, Statum generates:
 
----
+- Marker types for each state variant, such as `Off` and `On`.
+- A machine type parameterized by the current state, with hidden `marker` and `state_data` fields.
+- Builders for new machines, such as `LightSwitch::<Off>::builder()`.
+- A machine-scoped enum like `task_machine::State` for matching reconstructed machines.
 
-### 2. Complex Transitions & Data-Bearing States
+This is the whole model. The rest of the crate is about making those four pieces ergonomic.
 
-#### Defining State Data
-States can hold data. For example:
+> Typed rehydration is the unusual part: if you already have rows, events, or persisted workflow data, `#[validators]` can rebuild them into typed machines. Full example below.
 
-```rust
-#[state]
-pub enum ReviewState {
-    Draft,
-    InReview(ReviewData), // State data
-    Published,
-}
+## Typed Rehydration
 
-pub struct ReviewData {
-    reviewer: String,
-    notes: Vec<String>,
-}
-
-#[machine]
-pub struct Document<ReviewState> {
-    id: String,
-}
-
-#[transition]
-impl Document<Draft> {
-    pub fn submit_for_review(self, reviewer: String) -> Document<InReview> {
-        let data = ReviewData { reviewer, notes: vec![] };
-        self.transition_with(data)
-    }
-}
-```
-
-> Note: We use `self.transition_with(data)` instead of `self.transition()` to transition to a state that carries data.
-
-#### Accessing State Data
-
-State data is available as `self.state_data` in the concrete machine type:
-
-```rust
-impl Document<InReview> {
-    fn add_note(&mut self, note: String) {
-        self.state_data.notes.push(note);
-    }
-
-    fn approve(self) -> Document<Published> {
-        self.transition()
-    }
-}
-```
-
-Examples: [statum-examples/src/examples/07-state-data.rs](statum-examples/src/examples/07-state-data.rs), [statum-examples/src/examples/08-transition-with-data.rs](statum-examples/src/examples/08-transition-with-data.rs).
-
----
-
-### 3. Reconstructing State Machines from Persistent Data
-
-State machines often need to persist their state. Saving to and loading from external storage like databases should be both robust and type-safe. Statum's `#[validators]` macro simplifies this process, ensuring seamless integration between your persistent data and state machine logic.
-
-The key pieces are:
-- `#[validators]` macro on your data type impl block.
-- `into_machine()` generated on the data type to reconstruct the machine (with `machine_builder()` kept for compatibility).
-
-#### Example
+`#[validators]` is the feature that turns stored data back into typed machines. Each `is_*` method checks whether the persisted value belongs to a state, returns `()` or state-specific data, and Statum builds the right typed output:
 
 ```rust
 use statum::{machine, state, validators};
 
 #[state]
-pub enum TaskState {
+enum TaskState {
     Draft,
     InReview(ReviewData),
     Published,
 }
 
-pub struct ReviewData {
+struct ReviewData {
     reviewer: String,
 }
 
@@ -239,7 +113,6 @@ pub struct ReviewData {
 struct TaskMachine<TaskState> {
     client: String,
     name: String,
-    priority: u8,
 }
 
 enum Status {
@@ -248,525 +121,145 @@ enum Status {
     Published,
 }
 
-struct DbData {
-    state: Status,
+struct DbRow {
+    status: Status,
 }
 
 #[validators(TaskMachine)]
-impl DbData {
+impl DbRow {
     fn is_draft(&self) -> statum::Result<()> {
-        match self.state {
-            Status::Draft => {
-                // Note: machine fields are available here (client, name, priority).
-                println!("Client: {}, Name: {}, Priority: {}", client, name, priority);
-                Ok(())
-            }
-            _ => Err(statum::Error::InvalidState),
+        let _ = (&client, &name);
+        if matches!(self.status, Status::Draft) {
+            Ok(())
+        } else {
+            Err(statum::Error::InvalidState)
         }
     }
 
     fn is_in_review(&self) -> statum::Result<ReviewData> {
-        match self.state {
-            Status::InReview => Ok(ReviewData { reviewer: "sam".into() }),
-            _ => Err(statum::Error::InvalidState),
+        let _ = &name;
+        if matches!(self.status, Status::InReview) {
+            Ok(ReviewData {
+                reviewer: format!("reviewer-for-{client}"),
+            })
+        } else {
+            Err(statum::Error::InvalidState)
         }
     }
 
     fn is_published(&self) -> statum::Result<()> {
-        match self.state {
-            Status::Published => Ok(()),
-            _ => Err(statum::Error::InvalidState),
-        }
-    }
-}
-
-fn main() {
-    let db_data = DbData { state: Status::InReview };
-
-    let machine = db_data
-        .into_machine()
-        .client("acme".to_owned())
-        .name("doc".to_owned())
-        .priority(1)
-        .build()
-        .unwrap();
-
-    match machine {
-        task_machine::State::Draft(_draft_machine) => { /* ... */ }
-        task_machine::State::InReview(_in_review_machine) => { /* ... */ }
-        task_machine::State::Published(_published_machine) => { /* ... */ }
-    }
-}
-```
-
-Examples: [statum-examples/src/examples/09-persistent-data.rs](statum-examples/src/examples/09-persistent-data.rs), [statum-examples/src/examples/10-persistent-data-vecs.rs](statum-examples/src/examples/10-persistent-data-vecs.rs).
-
-### 4. Typestate Builder Ergonomics
-
-The validators macro also generates a machine-scoped module that exposes a short alias:
-
-```rust
-pub mod task_machine {
-    pub type State = TaskMachineSuperState;
-}
-```
-
-You can use it to shorten matches without introducing collisions:
-
-```rust
-fn rebuild_task(row: &DbData) -> statum::Result<task_machine::State> {
-    row.into_machine()
-        .client("acme".to_owned())
-        .name("doc".to_owned())
-        .priority(1)
-        .build()
-}
-
-let row = DbData { state: Status::Draft };
-
-match rebuild_task(&row)? {
-    task_machine::State::Draft(m) => { /* ... */ }
-    task_machine::State::InReview(m) => { /* ... */ }
-    task_machine::State::Published(m) => { /* ... */ }
-}
-```
-
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs).
-
-## Typestate Builder Design Playbook
-
-If an abstract entity moves through meaningful stages with real ordering constraints, it is a strong typestate candidate.
-
-Applied well, this approach should improve readability, modularity, extensibility, expressiveness, idiomaticity, and correctness.
-
-In practice, design in this order:
-
-1. Identify the staged entity and write its lifecycle in plain language.
-2. Define finite states first with `#[state]` (and attach phase-specific data only where it is truly invariant).
-3. Define machine context with `#[machine]` (long-lived dependencies, IDs, shared context).
-4. Encode legal transitions with `#[transition]` on concrete source states.
-5. Keep runtime branching in normal methods, then dispatch into explicit transition methods.
-6. Use `#[validators]` to safely rehydrate from persistence back into typed machine states.
-7. Keep a hybrid boundary: stable protocol core in typestate, highly dynamic edges in runtime validation.
-
-Use this compact checklist to decide fit quickly:
-
-1. Finite states exist.
-2. Legal transitions are mostly compile-time known.
-3. Invalid transitions are expensive.
-4. API behavior differs by state.
-5. Some data is only valid in specific states.
-6. Workflow is stable enough to justify type-level encoding.
-
-Interpretation:
-
-- 5-6 yes: strong typestate candidate.
-- 3-4 yes: hybrid approach.
-- 0-2 yes: runtime model is likely better for now.
-
-Quick quality check:
-
-- Readability + expressiveness: state names and method availability make lifecycle intent obvious.
-- Modularity + extensibility: most changes are localized to a specific state impl, and adding a stable new state does not cause broad rewrites.
-- Idiomaticity + correctness: ownership is straightforward and illegal protocol paths are blocked at compile time where possible.
-
-### Manual Typestate Builder vs Statum Ergonomics
-
-If you have seen this walkthrough ([YouTube](https://www.youtube.com/watch?v=pwmIQzLuYl0)), the core idea is:
-
-- move missing required fields (like URL or method) from runtime checks into compile-time typestate constraints.
-- expose `build()` only when the builder is in a "ready" type state.
-
-That pattern works great, but a manual implementation usually requires:
-
-1. Multiple marker/data state types (`NoUrl`, `Url`, `NoMethod`, `Method`, `Sealed`, `NotSealed`).
-2. A generic builder with a type matrix (for example `Builder<U, M, S>`).
-3. Several specialized impl blocks to control method availability.
-4. `PhantomData` marker fields when a state generic carries no runtime data.
-
-Statum keeps the same compile-time guarantees and removes most of that boilerplate.
-
-In practice, that means cleaner code, easier extension points, and more explicit protocol intent.
-
-Manual approach -> Statum equivalent:
-
-- Hand-written marker types -> `#[state]` generates variant marker types and state trait wiring.
-- Generic matrix (`Builder<U, M, S>`) -> `#[machine]` gives a single machine type parameterized by current state.
-- Manual method gating -> Write methods in concrete `impl Machine<StateX>` blocks.
-- Manual transition plumbing -> `#[transition]` validates transition signatures and target states.
-- Manual `PhantomData` marker plumbing -> `#[machine]` handles state marker tracking for you.
-- Manual rehydration checks -> `#[validators]` maps persisted data back into typed machine states.
-
-Minimal shape in Statum:
-
-```rust
-use statum::{machine, state, transition};
-
-struct UrlOnly {
-    url: String,
-}
-
-struct MethodOnly {
-    method: String,
-}
-
-struct ReadyData {
-    url: String,
-    method: String,
-}
-
-#[state]
-enum RequestState {
-    MissingBoth,
-    HasUrl(UrlOnly),
-    HasMethod(MethodOnly),
-    Ready(ReadyData),
-}
-
-#[machine]
-struct RequestBuilder<RequestState> {
-    headers: Vec<(String, String)>,
-}
-
-#[transition]
-impl RequestBuilder<HasUrl> {
-    fn set_method(self, method: String) -> RequestBuilder<Ready> {
-        let url = self.state_data.url.clone();
-        self.transition_with(ReadyData { url, method })
-    }
-}
-
-impl RequestBuilder<Ready> {
-    fn build(self) -> Request {
-        // build is only available in Ready state
-        Request {}
-    }
-}
-
-struct Request {}
-```
-
-You still get compile-time errors when calling methods in the wrong state. The difference is that Statum lets you focus on lifecycle design instead of generic/marker plumbing.
-
-Full guide: [Typestate Builder Design Playbook (Step-by-Step)](docs/typestate-builder-design-playbook.md).
-
-## Examples
-
-See `statum-examples/src/examples/` for the full suite of examples.
-
----
-
-## Patterns & Guidance
-
-Decision guide: [Typestate Builder Design Playbook (Step-by-Step)](docs/typestate-builder-design-playbook.md)
-
-### Conditional transitions (branching decisions)
-Transition methods must return a single next state. Put branching logic in a normal method and call explicit transition methods:
-
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (event-driven transitions).
-
-Tip: Keep the decision enum variant names aligned with your `#[state]` variants. It makes matches read the same way while still carrying typed machines.
-
-```rust
-#[transition]
-impl ProcessMachine<Init> {
-    fn to_next(self) -> ProcessMachine<NextState> {
-        self.transition()
-    }
-
-    fn to_other(self) -> ProcessMachine<OtherState> {
-        self.transition()
-    }
-}
-
-enum Decision {
-    Next(ProcessMachine<NextState>),
-    Other(ProcessMachine<OtherState>),
-}
-
-impl ProcessMachine<Init> {
-    fn decide(self, event: u8) -> Decision {
-        if event == 0 {
-            Decision::Next(self.to_next())
-        } else {
-            Decision::Other(self.to_other())
-        }
-    }
-}
-```
-
-### Event-driven transitions
-Model events as an enum and route them to explicit transition methods:
-
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (event-driven transitions).
-
-```rust
-enum Event {
-    Go,
-    Alternative,
-}
-
-enum Decision {
-    Next(ProcessMachine<NextState>),
-    Other(ProcessMachine<OtherState>),
-}
-
-impl ProcessMachine<Init> {
-    fn handle_event(self, event: Event) -> Decision {
-        match event {
-            Event::Go => Decision::Next(self.to_next()),
-            Event::Alternative => Decision::Other(self.to_other()),
-        }
-    }
-}
-```
-
-### Guarded transitions
-Keep preconditions in a guard method and return a `Result` before transitioning:
-
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (guarded transitions).
-
-```rust
-impl Machine<Pending> {
-    fn can_activate(&self) -> bool {
-        self.allowed
-    }
-
-    fn try_activate(self) -> statum::Result<Machine<Active>> {
-        if self.can_activate() {
-            Ok(self.activate())
+        if matches!(self.status, Status::Published) {
+            Ok(())
         } else {
             Err(statum::Error::InvalidState)
         }
     }
 }
-```
 
-### Hierarchical machines (state data as a nested machine)
-Use a nested machine as state data to model parent and child flows:
+fn main() -> statum::Result<()> {
+    let row = DbRow {
+        status: Status::InReview,
+    };
 
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (hierarchical machines). Example: [statum-examples/src/examples/11-hierarchical-machines.rs](statum-examples/src/examples/11-hierarchical-machines.rs).
+    let machine = row
+        .into_machine()
+        .client("acme".to_owned())
+        .name("spec".to_owned())
+        .build()?;
 
-```rust
-#[state]
-enum SubState {
-    Idle,
-    Running,
-}
-
-#[machine]
-struct SubMachine<SubState> {}
-
-#[state]
-enum ParentState {
-    NotStarted,
-    InProgress(SubMachine<Running>),
-    Done,
-}
-
-#[machine]
-struct ParentMachine<ParentState> {}
-```
-
-### State snapshots (carry previous state data forward)
-Capture the prior state's data inside the next state to keep history:
-
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (state snapshots).
-
-```rust
-#[transition]
-impl Machine<Draft> {
-    fn publish(self) -> Machine<Published> {
-        let previous = self.state_data.clone();
-        self.transition_with(PublishData { previous })
-    }
-}
-```
-
-### Rollbacks / undo transitions
-Model rollbacks by returning to a previous state explicitly, often with stored state data:
-
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (rollbacks). Example: [statum-examples/src/examples/12-rollbacks.rs](statum-examples/src/examples/12-rollbacks.rs).
-
-```rust
-#[transition]
-impl Document<Published> {
-    fn rollback(self) -> Document<Draft> {
-        self.transition()
-    }
-}
-```
-
-### Async transitions (side effects before transition)
-Keep side effects in async methods and call a sync transition at the end:
-
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (async side-effects). Example: [statum-examples/src/examples/06-async-transitions.rs](statum-examples/src/examples/06-async-transitions.rs).
-
-```rust
-#[transition]
-impl Job<Queued> {
-    fn start(self) -> Job<Running> {
-        self.transition()
-    }
-}
-
-impl Job<Queued> {
-    async fn start_with_effects(self) -> Job<Running> {
-        do_io().await;
-        self.start()
-    }
-}
-```
-
-### Rehydration with extra fetch
-Use machine fields inside validators to fetch extra data for state reconstruction:
-
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (rehydration with fetch).
-
-```rust
-#[validators(TaskMachine)]
-impl DbData {
-    fn is_in_review(&self) -> statum::Result<ReviewData> {
-        match self.state {
-            Status::InReview => Ok(ReviewData { reviewer: fetch_reviewer(client) }),
-            _ => Err(statum::Error::InvalidState),
+    match machine {
+        task_machine::State::Draft(_) => {}
+        task_machine::State::InReview(task) => {
+            assert_eq!(task.state_data.reviewer.as_str(), "reviewer-for-acme");
         }
+        task_machine::State::Published(_) => {}
     }
+
+    Ok(())
 }
 ```
 
-### Persistent batches
-When reconstructing many rows, use the batch builder on collections:
+Key details:
 
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (parallel reconstruction, batch builder). Example: [statum-examples/src/examples/10-persistent-data-vecs.rs](statum-examples/src/examples/10-persistent-data-vecs.rs).
+- Validator methods run against your persisted type and return either `Ok(...)` for the matching state or `Err(statum::Error::InvalidState)`.
+- Machine fields are available by name inside validator methods through generated bindings, so `client` and `name` are usable without boilerplate parameter plumbing.
+- Unit states return `statum::Result<()>`; data-bearing states return `statum::Result<StateData>`.
+- `.build()` returns the generated wrapper enum, which you can match as `task_machine::State`.
+- If any validator is `async`, the generated builder becomes `async`.
+- If no validator matches, `.build()` returns `statum::Error::InvalidState`.
 
-```rust
-let results = rows
-    .machines_builder()
-    .client(client)
-    .build();
-```
+Examples: [statum-examples/src/examples/09-persistent-data.rs](statum-examples/src/examples/09-persistent-data.rs), [statum-examples/src/examples/10-persistent-data-vecs.rs](statum-examples/src/examples/10-persistent-data-vecs.rs)
 
-If you want a plain `statum::Result<Vec<Machine>>` without skipping invalid rows, map and collect:
+More detail: [docs/persistence-and-validators.md](docs/persistence-and-validators.md)
 
-```rust
-let machines: statum::Result<Vec<task_machine::State>> = rows
-    .into_iter()
-    .map(|row| {
-        row.into_machine()
-            .client(client.clone())
-            .name(name.clone())
-            .priority(priority)
-            .build()
-    })
-    .collect();
-```
+## Core Rules
 
-### Parallel reconstruction (async validators)
-If validators are async, the batch builder returns results in parallel:
+`#[state]`
 
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (parallel reconstruction).
+- Apply it to an enum.
+- Variants must be unit variants or single-field tuple variants.
+- Generics on the state enum are not supported.
 
-```rust
-let results = rows
-        .machines_builder()
-        .tenant(tenant)
-        .build()
-        .await;
-```
+`#[machine]`
 
-### Type-erased storage (collecting superstates)
-Store `*SuperState` values in a collection and match later:
+- Apply it to a struct.
+- The first generic parameter must match the `#[state]` enum name.
+- Put `#[machine]` above `#[derive(...)]`.
 
-Tested in [statum-examples/tests/patterns.rs](statum-examples/tests/patterns.rs) (type-erased storage).
+`#[transition]`
 
-```rust
-let items: Vec<task_machine::State> = vec![machine];
-for item in items {
-    match item {
-        task_machine::State::Draft(m) => { /* ... */ }
-        _ => {}
-    }
-}
-```
+- Apply it to `impl Machine<State>` blocks that define legal transitions.
+- Transition methods must take `self` or `mut self`.
+- Return `Machine<NextState>` directly, or wrap it in `Result` / `Option` when the transition is conditional.
+- Use `transition_with(data)` when the target state carries data.
 
----
+`#[validators]`
 
-## API Rules (Current)
+- Use `#[validators(Machine)]` on an `impl` block for your persisted type.
+- Define one `is_{state}` method per state variant.
+- Return `statum::Result<()>` for unit states or `statum::Result<StateData>` for data-bearing states.
+- Prefer `into_machine()` for single-item reconstruction and `machines_builder()` for collections.
 
-### `#[state]`
-- Must be an enum.
-- Must have at least one variant.
-- Variants must be unit or single-field tuple variants.
-- Generics on the enum are not supported.
+## When To Use Statum
 
-### `#[machine]`
-- Must be a struct.
-- First generic parameter must match the `#[state]` enum name.
-- Derives on `#[state]` are propagated to generated variant types.
-- Prefer `#[machine]` above `#[derive(..)]` to avoid derive ordering surprises.
+Use Statum when:
 
-### `#[transition]`
-- Must be applied to `impl Machine<State>` blocks.
-- Methods must take `self` or `mut self` as the first argument.
-- Return type must be `Machine<NextState>` or `Option<Result<...>>` wrappers.
-- Data-bearing states must use `transition_with(data)`.
+- Workflow order is stable and meaningful.
+- Invalid transitions are expensive.
+- Available methods should change by phase.
+- Some data is only valid in specific states.
 
-### `#[validators]`
-- Use `#[validators(Machine)]` on an `impl` block for your persistent data type.
-- Must define an `is_{state}` method for every state variant (snake_case).
-- Each method returns `statum::Result<()>` for unit states or `statum::Result<StateData>` for data states.
-- Async validators are supported; if any validator is async, the generated builder is async.
-- The `{Machine}SuperState` enum and machine-scoped module alias are generated by `#[machine]`, and validators return that type for reconstruction (typestate builder pattern).
+Do not use Statum when:
 
----
+- The workflow is highly ad hoc or user-authored.
+- Branching is mostly runtime business logic.
+- States are still changing faster than the API around them.
 
-## Common Errors and Tips
+More design guidance: [docs/typestate-builder-design-playbook.md](docs/typestate-builder-design-playbook.md)
 
-1. **`missing fields marker and state_data`**  
-   - Usually means your derive macros (e.g., `Clone` or `Debug`) expanded before Statum could inject those fields. Move `#[machine]` above your derives, or remove them.
+## Common Gotchas
 
-2. **`cannot find type X in this scope`**  
-   - Ensure that you define your `#[machine]` struct before you reference it in `impl` blocks or function calls.
+**`missing fields marker and state_data`**
 
-3. **`Invalid transition return type`**  
-   - Transition methods must return `Machine<NextState>` (optionally wrapped in `Option` or `Result`).
+Your derives expanded before `#[machine]`. Put `#[machine]` above `#[derive(...)]`.
 
----
+**Transition helpers in the wrong place**
 
-## API Reference
+Keep non-transition helpers in normal `impl` blocks. `#[transition]` is for protocol edges, not general utility methods.
 
-### **Core Macros**
+**State shape errors**
 
-| Macro       | Description                                                                                   | Example Usage                                                |
-|-------------|-----------------------------------------------------------------------------------------------|-------------------------------------------------------------|
-| `#[state]`  | Defines states as an enum. Each variant becomes its own struct implementing the `State` trait. | `#[state] pub enum LightState { Off, On }`                  |
-| `#[machine]`| Defines a state machine struct and injects fields for state tracking and transitions.          | `#[machine] pub struct Light<LightState> { name: String }`  |
-| `#[transition]`| Validates transition methods and generates the proper transition helpers.                   | `#[transition] impl Light<Off> { fn on(self)->Light<On>{...} }` |
-| `#[validators]` | Defines validation methods to map persistent data to specific states.                      | `#[validators(TaskMachine)]`                                |
+`#[state]` accepts unit variants and single-field tuple variants only.
 
----
+## Learn More
 
-### **State Machine Methods / Fields**
+- Examples: [statum-examples/src/examples/](statum-examples/src/examples/)
+- Typed rehydration and validators: [docs/persistence-and-validators.md](docs/persistence-and-validators.md)
+- Patterns and advanced usage: [docs/patterns.md](docs/patterns.md)
+- Typestate builder design playbook: [docs/typestate-builder-design-playbook.md](docs/typestate-builder-design-playbook.md)
+- API docs: [docs.rs/statum](https://docs.rs/statum)
 
-| Item                | Description                                                                                           | Example Usage                                                |
-|---------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
-| `.builder()`        | Builds a new machine in a specific state.                                                             | `LightSwitch::<Off>::builder().name("lamp").build()`       |
-| `.transition()`     | Transitions to a unit state.                                                                           | `let light = light.switch_on();`                            |
-| `.transition_with(data)` | Transitions to a state that carries data.                                                        | `self.transition_with(data)`                                |
-| `.state_data`       | Accesses the data of the current state (if available).                                                 | `let notes = &self.state_data.notes;`                       |
+## Stability
 
----
-
-### **Validators Output**
-
-| Item                | Description                                                                                           | Example Usage                                                |
-|---------------------|-------------------------------------------------------------------------------------------------------|-------------------------------------------------------------|
-| `{Machine}SuperState` | Wrapper enum for all machine states, used for matching.                                               | `match machine { task_machine::State::Draft(m) => ... }`  |
-| `into_machine()` | Builder generated on the data type to reconstruct a machine from stored data.                         | `row.into_machine().client(c).build()`                   |
-
----
-
-### **Type Aliases**
-
-`statum::Result<T>` is a convenience alias for `Result<T, statum::Error>`.
+- Stable Rust is the target.
+- MSRV: `1.93`

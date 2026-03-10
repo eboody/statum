@@ -59,7 +59,7 @@ mod rehydration_with_fetch {
             .unwrap();
 
         match machine {
-            MachineSuperState::InReview(m) => {
+            machine::State::InReview(m) => {
                 assert_eq!(m.state_data.reviewer.as_str(), "reviewer:acme");
             }
             _ => panic!("unexpected state"),
@@ -339,14 +339,15 @@ mod type_erased_storage {
     pub fn run() {
         let row = Row { status: "a" };
         let machine = row.machine_builder().build().unwrap();
+        // The legacy root alias still works, but machine::State is the canonical surface.
         let items: Vec<MachineSuperState> = vec![machine];
 
         for item in items {
             match item {
-                MachineSuperState::A(machine) => {
+                machine::State::A(machine) => {
                     let _ = machine.to_b();
                 }
-                MachineSuperState::B(_machine) => {}
+                machine::State::B(_machine) => {}
             }
         }
     }
@@ -373,7 +374,7 @@ mod superstate_without_validators {
 
     pub fn run() {
         let machine = WorkflowMachine::<Draft>::builder().build();
-        let wrapper = WorkflowMachineSuperState::Draft(machine);
+        let wrapper = workflow_machine::State::Draft(machine);
 
         match wrapper {
             workflow_machine::State::Draft(m) => {

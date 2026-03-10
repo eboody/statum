@@ -27,9 +27,8 @@ struct Article {
 #[validators(Machine)]
 impl Article {
     pub async fn is_draft(&self) -> Result<Article, statum::Error> {
-        //NOTE: we have access to references of all of the machine's fields!
-        //this way if we need to make, for example, network requests as a part of the validation
-        //we can do that 🧙🪄
+        // Generated bindings make machine fields available inside validator methods.
+        // That lets rehydration fetch extra data without manual parameter plumbing.
 
         let is_valid = pretend_validation_call(client).await?;
 
@@ -70,21 +69,19 @@ pub async fn run() {
 
     let my_client = "my_client".to_string();
 
-    //NOTE: machine_builder gives us MachineSuperState, an enum that represents all possible states
-    // and their respective machines
-
-    let machine_super_state: MachineSuperState = article
+    // machine::State is the generated sum type for all possible typed machine states.
+    let machine_state: machine::State = article
         .machine_builder()
         .client(my_client)
         .build()
         .await
         .unwrap();
 
-    //NOTE: because MachineSuperState is just an enum, we can match on it however we want to get the specific machine
-    match machine_super_state {
-        MachineSuperState::Draft(_machine) => println!("do thing with Machine<Draft>"),
-        MachineSuperState::InReview(_machine) => println!("do thing with Machine<InReview>"),
-        MachineSuperState::Published(_machine) => println!("do thing with Machine<Published>"),
+    // Match once to recover the concrete typed machine.
+    match machine_state {
+        machine::State::Draft(_machine) => println!("do thing with Machine<Draft>"),
+        machine::State::InReview(_machine) => println!("do thing with Machine<InReview>"),
+        machine::State::Published(_machine) => println!("do thing with Machine<Published>"),
     }
 
     // Output:

@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::rc::Rc;
+use std::time::UNIX_EPOCH;
 
 /// Cached enum entry extracted from a parsed source file.
 #[derive(Clone)]
@@ -26,23 +27,56 @@ pub struct FileAnalysis {
     pub structs: Vec<StructEntry>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileFingerprint {
+    len: u64,
+    modified_ns: Option<u128>,
+}
+
+#[derive(Clone)]
+struct CachedFileAnalysis {
+    fingerprint: FileFingerprint,
+    analysis: Rc<FileAnalysis>,
+}
+
 thread_local! {
-    static FILE_ANALYSIS_CACHE: RefCell<HashMap<String, Rc<FileAnalysis>>> = RefCell::new(HashMap::new());
+    static FILE_ANALYSIS_CACHE: RefCell<HashMap<String, CachedFileAnalysis>> = RefCell::new(HashMap::new());
 }
 
 /// Returns cached analysis for `file_path`, parsing and caching on first access.
 pub fn get_file_analysis(file_path: &str) -> Option<Rc<FileAnalysis>> {
+    let fingerprint = file_fingerprint(file_path)?;
+
     if let Some(cached) = FILE_ANALYSIS_CACHE.with(|cache| cache.borrow().get(file_path).cloned()) {
-        return Some(cached);
+        if cached.fingerprint == fingerprint {
+            return Some(cached.analysis);
+        }
     }
 
     let analysis = Rc::new(build_file_analysis(file_path)?);
     FILE_ANALYSIS_CACHE.with(|cache| {
-        cache
-            .borrow_mut()
-            .insert(file_path.to_string(), analysis.clone());
+        cache.borrow_mut().insert(
+            file_path.to_string(),
+            CachedFileAnalysis {
+                fingerprint,
+                analysis: analysis.clone(),
+            },
+        );
     });
     Some(analysis)
+}
+
+fn file_fingerprint(file_path: &str) -> Option<FileFingerprint> {
+    let metadata = fs::metadata(file_path).ok()?;
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos());
+    Some(FileFingerprint {
+        len: metadata.len(),
+        modified_ns,
+    })
 }
 
 fn build_file_analysis(file_path: &str) -> Option<FileAnalysis> {
@@ -104,12 +138,9 @@ fn attribute_names(attrs: &[syn::Attribute]) -> Vec<String> {
 }
 
 fn find_item_line(contents: &str, kind: &str, item_name: &str) -> Option<usize> {
-    let plain = format!("{kind} {item_name}");
-    let pub_plain = format!("pub {kind} {item_name}");
-
     for (idx, line) in contents.lines().enumerate() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with(&plain) || trimmed.starts_with(&pub_plain) {
+        if line_starts_item_decl(trimmed, kind, item_name) {
             return Some(idx + 1);
         }
     }
@@ -117,10 +148,77 @@ fn find_item_line(contents: &str, kind: &str, item_name: &str) -> Option<usize> 
     None
 }
 
+fn line_starts_item_decl(line: &str, kind: &str, item_name: &str) -> bool {
+    let mut rest = line.trim_start();
+
+    if let Some(after_pub) = consume_keyword(rest, "pub") {
+        rest = after_pub.trim_start();
+        if rest.starts_with('(') {
+            let Some(after_vis) = consume_parenthesized(rest) else {
+                return false;
+            };
+            rest = after_vis.trim_start();
+        }
+    }
+
+    if let Some(after_unsafe) = consume_keyword(rest, "unsafe") {
+        rest = after_unsafe.trim_start();
+    }
+
+    let Some(after_kind) = consume_keyword(rest, kind) else {
+        return false;
+    };
+    let rest = after_kind.trim_start();
+    let Some(after_name) = rest.strip_prefix(item_name) else {
+        return false;
+    };
+
+    after_name
+        .chars()
+        .next()
+        .is_none_or(|ch| ch.is_whitespace() || matches!(ch, '<' | '{' | '(' | ';' | ':'))
+}
+
+fn consume_keyword<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
+    let rest = input.strip_prefix(keyword)?;
+    if rest
+        .chars()
+        .next()
+        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    {
+        return None;
+    }
+    Some(rest)
+}
+
+fn consume_parenthesized(input: &str) -> Option<&str> {
+    let mut chars = input.char_indices();
+    let Some((_, '(')) = chars.next() else {
+        return None;
+    };
+
+    let mut depth = 1usize;
+    for (idx, ch) in chars {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&input[idx + 1..]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::thread;
+    use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn write_temp_rust_file(contents: &str) -> PathBuf {
@@ -182,5 +280,75 @@ enum StateB { B }
 
         let _ = fs::remove_file(path_a);
         let _ = fs::remove_file(path_b);
+    }
+
+    #[test]
+    fn analysis_cache_reuses_when_file_unchanged() {
+        let path = write_temp_rust_file(
+            r#"
+#[state]
+enum ReuseState { A }
+"#,
+        );
+        let path_str = path.to_str().expect("path").to_string();
+
+        let first = get_file_analysis(&path_str).expect("analysis first");
+        let second = get_file_analysis(&path_str).expect("analysis second");
+
+        assert!(Rc::ptr_eq(&first, &second));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn analysis_cache_invalidates_when_file_changes() {
+        let path = write_temp_rust_file(
+            r#"
+#[state]
+enum BeforeState { A }
+"#,
+        );
+        let path_str = path.to_str().expect("path").to_string();
+
+        let first = get_file_analysis(&path_str).expect("analysis first");
+        assert_eq!(first.enums.len(), 1);
+        assert_eq!(first.enums[0].item.ident.to_string(), "BeforeState");
+
+        // Give coarse filesystems time to advance mtime.
+        thread::sleep(Duration::from_millis(2));
+        fs::write(
+            &path,
+            r#"
+#[state]
+enum ChangedState { A, B }
+"#,
+        )
+        .expect("rewrite file");
+
+        let second = get_file_analysis(&path_str).expect("analysis second");
+        assert!(!Rc::ptr_eq(&first, &second));
+        assert_eq!(second.enums.len(), 1);
+        assert_eq!(second.enums[0].item.ident.to_string(), "ChangedState");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn fallback_line_match_handles_visibility_modifiers() {
+        assert!(line_starts_item_decl(
+            "pub(crate) struct Machine<State> {",
+            "struct",
+            "Machine",
+        ));
+        assert!(line_starts_item_decl(
+            "pub(in crate::x) enum WorkflowState {",
+            "enum",
+            "WorkflowState",
+        ));
+        assert!(!line_starts_item_decl(
+            "pub(crate) struct NotMachine<State> {",
+            "struct",
+            "Machine",
+        ));
     }
 }

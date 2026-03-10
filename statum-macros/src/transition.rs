@@ -271,40 +271,48 @@ use syn::{AngleBracketedGenericArguments, GenericArgument, PathArguments, TypePa
 ///
 /// On success, returns ("Machine", "SomeState").
 ///
-/// Recurses on the *first* generic argument if the last segment is `Result` or `Option`.
+/// Walks through wrapper types (`Option`/`Result`) via their first generic argument.
 pub fn parse_machine_and_state(ty: &Type, target_machine_ident: Ident) -> Option<(String, String)> {
-    // We only handle `Type::Path` (e.g. `Machine<...>`, `Option<...>`, `Result<...>`, etc.)
+    let mut current = ty;
+    loop {
+        match classify_return_wrapper(current, &target_machine_ident)? {
+            ReturnWrapper::Machine(segment) => {
+                return extract_machine_generic(&segment.arguments, target_machine_ident);
+            }
+            ReturnWrapper::Option(inner) | ReturnWrapper::Result(inner) => {
+                current = inner;
+            }
+        }
+    }
+}
+
+enum ReturnWrapper<'a> {
+    Machine(&'a syn::PathSegment),
+    Option(&'a Type),
+    Result(&'a Type),
+}
+
+fn classify_return_wrapper<'a>(
+    ty: &'a Type,
+    target_machine_ident: &Ident,
+) -> Option<ReturnWrapper<'a>> {
     let Type::Path(TypePath { path, .. }) = ty else {
         return None;
     };
+    let segment = path.segments.last()?;
 
-    // Extract the LAST segment in the path, even if it has multiple segments (e.g. `some::error::Result`)
-    let last_segment = path.segments.last()?;
-
-    let return_machine_ident = last_segment.ident.clone();
-
-    // 1) If it's `Machine`, parse the single generic as `SomeState`.
-    if target_machine_ident == return_machine_ident {
-        return extract_machine_generic(&last_segment.arguments, target_machine_ident);
+    if &segment.ident == target_machine_ident {
+        return Some(ReturnWrapper::Machine(segment));
     }
 
-    // 2) If it's `Option`, parse the first generic argument -> presumably `Machine<SomeState>`.
-    if return_machine_ident == "Option" {
-        if let Some(inner_ty) = extract_first_generic_type(&last_segment.arguments) {
-            return parse_machine_and_state(&inner_ty, target_machine_ident);
-        }
-        return None;
+    if segment.ident == "Option" {
+        return extract_first_generic_type_ref(&segment.arguments).map(ReturnWrapper::Option);
     }
 
-    // 3) If it's `Result`, parse the first generic argument -> presumably `Machine<SomeState>`.
-    if return_machine_ident == "Result" {
-        if let Some(inner_ty) = extract_first_generic_type(&last_segment.arguments) {
-            return parse_machine_and_state(&inner_ty, target_machine_ident);
-        }
-        return None;
+    if segment.ident == "Result" {
+        return extract_first_generic_type_ref(&segment.arguments).map(ReturnWrapper::Result);
     }
 
-    // 4) If the last segment isn't recognized, no match.
     None
 }
 
@@ -335,12 +343,7 @@ fn extract_machine_generic(
     ))
 }
 
-/// Extracts the *first* generic type from an angle-bracketed path, e.g:
-///   `Option< T >` -> returns `Some(T)`
-///   `Result< T, E >` -> returns `Some(T)`
-///
-/// Otherwise returns `None`.
-fn extract_first_generic_type(args: &PathArguments) -> Option<Type> {
+fn extract_first_generic_type_ref(args: &PathArguments) -> Option<&Type> {
     let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
         args: generic_args, ..
     }) = args
@@ -353,5 +356,5 @@ fn extract_first_generic_type(args: &PathArguments) -> Option<Type> {
     let GenericArgument::Type(ty) = &generic_args[0] else {
         return None;
     };
-    Some(ty.clone())
+    Some(ty)
 }

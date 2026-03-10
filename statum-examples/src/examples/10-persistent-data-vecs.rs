@@ -56,29 +56,26 @@ impl Article {
 pub async fn run() {
     let articles: Vec<Article> = pretend_db_call().await.unwrap();
 
-    //NOTE: the builder is async because we have an async validator
-    let machine_super_states = articles
+    // The builder is async because one validator is async.
+    let machine_states = articles
         .machines_builder()
         .client("client".to_string())
         .build()
         .await;
 
-    //NOTE: im throwing away the errors here, but in a real application you would want to handle
-    //them
-    let machine_super_states: Vec<MachineSuperState> = machine_super_states
-        .into_iter()
-        .filter_map(Result::ok)
-        .collect();
+    // Real applications should handle invalid rows instead of discarding them.
+    let machine_states: Vec<machine::State> =
+        machine_states.into_iter().filter_map(Result::ok).collect();
 
-    for machine in machine_super_states {
+    for machine in machine_states {
         match machine {
-            MachineSuperState::Draft(_machine) => {
+            machine::State::Draft(_machine) => {
                 println!("_machine is Machine<Draft>");
             }
-            MachineSuperState::InReview(_machine) => {
+            machine::State::InReview(_machine) => {
                 println!("_machine is Machine<InReview>");
             }
-            MachineSuperState::Published(_machine) => {
+            machine::State::Published(_machine) => {
                 println!("_machine is Machine<Published>");
             }
         }

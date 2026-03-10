@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 use syn::{Attribute, GenericParam, Generics, Ident, ItemStruct, LitStr, Visibility};
 
-use crate::{ensure_state_enum_loaded, to_snake_case, EnumInfo, StateModulePath};
+use crate::{ensure_state_enum_loaded, to_snake_case, EnumInfo, StateModulePath, VariantInfo};
 
 impl<T: ToString> From<T> for MachinePath {
     fn from(value: T) -> Self {
@@ -44,22 +44,45 @@ impl MachineInfo {
             .collect::<Vec<_>>()
     }
 
-    pub fn fields_with_types(&self) -> Result<Vec<TokenStream>, syn::Error> {
-        let mut fields = Vec::with_capacity(self.fields.len());
+    pub(crate) fn parsed_field_idents_and_types(&self) -> Result<Vec<(Ident, syn::Type)>, TokenStream> {
+        let mut parsed = Vec::with_capacity(self.fields.len());
         for field in &self.fields {
             let field_ident = format_ident!("{}", field.name);
-            let field_ty = syn::parse_str::<syn::Type>(&field.field_type).map_err(|_| {
-                syn::Error::new(
-                    Span::call_site(),
-                    format!(
-                        "Failed to parse machine field type `{}` for field `{}`.",
-                        field.field_type, field.name
-                    ),
-                )
-            })?;
-            fields.push(quote! { #field_ident: #field_ty });
+            let field_ty = syn::parse_str::<syn::Type>(&field.field_type)
+                .map_err(|err| err.to_compile_error())?;
+            parsed.push((field_ident, field_ty));
         }
-        Ok(fields)
+        Ok(parsed)
+    }
+
+    fn parsed_fields(&self) -> Result<Vec<(Ident, Visibility, syn::Type)>, TokenStream> {
+        let mut parsed = Vec::with_capacity(self.fields.len());
+        for field in &self.fields {
+            let field_ident = format_ident!("{}", field.name);
+            let field_vis =
+                syn::parse_str::<Visibility>(&field.vis).map_err(|err| err.to_compile_error())?;
+            let field_ty = syn::parse_str::<syn::Type>(&field.field_type)
+                .map_err(|err| err.to_compile_error())?;
+            parsed.push((field_ident, field_vis, field_ty));
+        }
+        Ok(parsed)
+    }
+
+    fn parsed_vis(&self) -> Result<Visibility, TokenStream> {
+        syn::parse_str::<Visibility>(&self.vis).map_err(|err| err.to_compile_error())
+    }
+
+    fn parsed_generics(&self) -> Result<Generics, TokenStream> {
+        syn::parse_str::<Generics>(&self.generics).map_err(|err| err.to_compile_error())
+    }
+
+    fn parsed_derives(&self) -> Result<Vec<syn::Path>, TokenStream> {
+        let mut derives = Vec::with_capacity(self.derives.len());
+        for derive in &self.derives {
+            let parsed = syn::parse_str::<syn::Path>(derive).map_err(|err| err.to_compile_error())?;
+            derives.push(parsed);
+        }
+        Ok(derives)
     }
 }
 
@@ -307,7 +330,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
         Err(err) => return err,
     };
     let name_ident = format_ident!("{}", machine_info.name);
-    let superstate_ident = format_ident!("{}SuperState", machine_info.name);
+    let legacy_superstate_ident = format_ident!("{}SuperState", machine_info.name);
     let generics = match parse_generics(machine_info, &state_enum) {
         Ok(generics) => generics,
         Err(err) => return err,
@@ -327,8 +350,12 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
     };
     let builder_methods = machine_info.generate_builder_methods(&state_enum);
     let transition_traits = transition_traits(machine_info, &state_enum);
-    let superstate =
-        match generate_superstate(machine_info, &state_enum, &name_ident, &superstate_ident) {
+    let superstate = match generate_superstate(
+        machine_info,
+        &state_enum,
+        &name_ident,
+        &legacy_superstate_ident,
+    ) {
             Ok(state) => state,
             Err(err) => return err,
         };
@@ -342,8 +369,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
 }
 
 fn parse_generics(machine_info: &MachineInfo, state_enum: &EnumInfo) -> Result<Generics, TokenStream> {
-    let mut generics =
-        syn::parse_str::<Generics>(&machine_info.generics).map_err(|err| err.to_compile_error())?;
+    let mut generics = machine_info.parsed_generics()?;
 
     let Some(first_param) = generics.params.first_mut() else {
         return Err(
@@ -427,24 +453,23 @@ fn generate_superstate(
     machine_info: &MachineInfo,
     state_enum: &EnumInfo,
     machine_ident: &Ident,
-    superstate_ident: &Ident,
+    legacy_superstate_ident: &Ident,
 ) -> Result<TokenStream, TokenStream> {
-    let superstate_variants = state_enum.variants.iter().map(|variant| {
+    let state_variants = state_enum.variants.iter().map(|variant| {
         let variant_ident = format_ident!("{}", variant.name);
         quote! {
-            #variant_ident(#machine_ident<#variant_ident>)
+            #variant_ident(super::#machine_ident<super::#variant_ident>)
         }
     });
 
-    let vis: Visibility =
-        syn::parse_str(&machine_info.vis).map_err(|err| err.to_compile_error())?;
+    let vis = machine_info.parsed_vis()?;
 
     let is_methods = state_enum.variants.iter().map(|variant| {
         let variant_ident = format_ident!("{}", variant.name);
         let fn_name = format_ident!("is_{}", to_snake_case(&variant.name));
         quote! {
             pub fn #fn_name(&self) -> bool {
-                matches!(self, #superstate_ident::#variant_ident(_))
+                matches!(self, Self::#variant_ident(_))
             }
         }
     });
@@ -452,17 +477,18 @@ fn generate_superstate(
     let module_ident = format_ident!("{}", to_snake_case(&machine_info.name));
 
     Ok(quote! {
-        #vis enum #superstate_ident {
-            #(#superstate_variants),*
-        }
-
-        impl #superstate_ident {
-            #(#is_methods)*
-        }
-
         #vis mod #module_ident {
-            pub type State = super::#superstate_ident;
+            pub enum State {
+                #(#state_variants),*
+            }
+
+            impl State {
+                #(#is_methods)*
+            }
         }
+
+        #[doc(hidden)]
+        #vis type #legacy_superstate_ident = #module_ident::State;
     })
 }
 
@@ -472,31 +498,22 @@ fn generate_struct_definition(
     generics: &Generics,
     state_generic_ident: &Ident,
 ) -> Result<TokenStream, TokenStream> {
-    let mut field_tokens = Vec::with_capacity(machine_info.fields.len());
-    for field in &machine_info.fields {
-        let field_ident = format_ident!("{}", field.name);
-        let field_vis =
-            syn::parse_str::<Visibility>(&field.vis).map_err(|err| err.to_compile_error())?;
-        let field_ty = syn::parse_str::<syn::Type>(&field.field_type)
-            .map_err(|err| err.to_compile_error())?;
+    let parsed_fields = machine_info.parsed_fields()?;
+    let mut field_tokens = Vec::with_capacity(parsed_fields.len());
+    for (field_ident, field_vis, field_ty) in parsed_fields {
         field_tokens.push(quote! { #field_vis #field_ident: #field_ty });
     }
 
     let derives = if machine_info.derives.is_empty() {
         quote! {}
     } else {
-        let mut derive_tokens = Vec::with_capacity(machine_info.derives.len());
-        for derive in &machine_info.derives {
-            let parsed = syn::parse_str::<syn::Path>(derive).map_err(|err| err.to_compile_error())?;
-            derive_tokens.push(parsed);
-        }
+        let derive_tokens = machine_info.parsed_derives()?;
         quote! {
             #[derive(#(#derive_tokens),*)]
         }
     };
 
-    let vis: Visibility =
-        syn::parse_str(&machine_info.vis).map_err(|err| err.to_compile_error())?;
+    let vis = machine_info.parsed_vis()?;
 
     Ok(quote! {
         #derives
@@ -510,7 +527,7 @@ fn generate_struct_definition(
 
 impl MachineInfo {
     pub(crate) fn expected_state_name(&self) -> Option<String> {
-        let generics = syn::parse_str::<Generics>(&self.generics).ok()?;
+        let generics = self.parsed_generics().ok()?;
         let first_param = generics.params.first()?;
         if let syn::GenericParam::Type(ty) = first_param {
             Some(ty.ident.to_string())
@@ -528,172 +545,179 @@ impl MachineInfo {
     }
 
     pub fn generate_builder_methods(&self, state_enum: &EnumInfo) -> TokenStream {
-        let mut fields_map = Vec::with_capacity(self.fields.len());
-        for field in &self.fields {
-            let field_ident = format_ident!("{}", field.name);
-            let field_ty = match syn::parse_str::<syn::Type>(&field.field_type) {
-                Ok(ty) => ty,
-                Err(err) => return err.to_compile_error(),
-            };
-            fields_map.push(quote! { #field_ident: #field_ty });
-        }
-
-        let field_names = self
-            .fields
+        let parsed_fields = match self.parsed_field_idents_and_types() {
+            Ok(fields) => fields,
+            Err(err) => return err,
+        };
+        let fields_map = parsed_fields
             .iter()
-            .map(|field| {
-                let field_ident = format_ident!("{}", field.name);
-                quote! { #field_ident }
-            })
+            .map(|(field_ident, field_ty)| quote! { #field_ident: #field_ty })
             .collect::<Vec<_>>();
-        let mut field_types = Vec::with_capacity(self.fields.len());
-        for field in &self.fields {
-            let ty = match syn::parse_str::<syn::Type>(&field.field_type) {
-                Ok(ty) => ty,
-                Err(err) => return err.to_compile_error(),
-            };
-            field_types.push(ty);
-        }
+        let field_names = parsed_fields
+            .iter()
+            .map(|(field_ident, _)| field_ident.clone())
+            .collect::<Vec<_>>();
+        let field_types = parsed_fields
+            .iter()
+            .map(|(_, field_ty)| field_ty.clone())
+            .collect::<Vec<_>>();
 
         let name_ident = format_ident!("{}", self.name);
-
+        let has_fields = !self.fields.is_empty();
         let use_ra_shim = is_rust_analyzer();
-        // Generate a builder method for each variant in the state enum.
         let builder_methods = state_enum.variants.iter().map(|variant| {
-            let variant_ident = format_ident!("{}", variant.name);
-            let variant_builder_ident = format_ident!("{}Builder", variant.name);
-            let lowercase_variant_name = format_ident!("{}_builder", variant.name.to_lowercase());
-
-            if let Some(ref data_type_str) = variant.data_type {
-                // For variants with associated data, parse the type.
-                let parsed_data_type = match syn::parse_str::<syn::Type>(data_type_str) {
-                    Ok(ty) => ty,
-                    Err(err) => return err.to_compile_error(),
-                };
-
-                let struct_initialization = if self.fields.is_empty() {
-                    quote! {
-                        #name_ident {
-                            marker: core::marker::PhantomData,
-                            state_data,
-                        }
-                    }
-                } else {
-                    quote! {
-                        #name_ident {
-                            marker: core::marker::PhantomData,
-                            state_data,
-                            #(#field_names,)*
-                        }
-                    }
-                };
-
-                let constructor_signature = if self.fields.is_empty() {
-                    quote! {
-                        pub fn new(state_data: #parsed_data_type) -> #name_ident<#variant_ident>
-                    }
-                } else {
-                    quote! {
-                        pub fn new(#(#fields_map,)* state_data: #parsed_data_type) -> #name_ident<#variant_ident>
-                    }
-                };
-
-                if use_ra_shim {
-                    quote! {
-                        pub struct #variant_builder_ident;
-
-                        impl #variant_builder_ident {
-                            pub fn state_data(self, _data: #parsed_data_type) -> Self {
-                                self
-                            }
-
-                            #(pub fn #field_names(self, _value: #field_types) -> Self { self })*
-
-                            pub fn build(self) -> #name_ident<#variant_ident> {
-                                panic!("statum rust-analyzer shim: builder values are not constructed at runtime")
-                            }
-                        }
-
-                        impl #name_ident<#variant_ident> {
-                            pub fn builder() -> #variant_builder_ident {
-                                #variant_builder_ident
-                            }
-                        }
-                    }
-                } else {
-                    quote! {
-                        #[statum::bon::bon(crate = ::statum::bon)]
-                        impl #name_ident<#variant_ident> {
-                            #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
-                            #constructor_signature {
-                                #struct_initialization
-                            }
-                        }
-                    }
-                }
-            } else {
-                // For unit variants (no state data)
-                let struct_initialization = if self.fields.is_empty() {
-                    quote! {
-                        #name_ident {
-                            marker: core::marker::PhantomData,
-                            state_data: (),
-                        }
-                    }
-                } else {
-                    quote! {
-                        #name_ident {
-                            marker: core::marker::PhantomData,
-                            state_data: (),
-                            #(#field_names),*
-                        }
-                    }
-                };
-
-                let constructor_signature = if self.fields.is_empty() {
-                    quote! {
-                        pub fn new() -> #name_ident<#variant_ident>
-                    }
-                } else {
-                    quote! {
-                        pub fn new(#(#fields_map),*) -> #name_ident<#variant_ident>
-                    }
-                };
-
-                if use_ra_shim {
-                    quote! {
-                        pub struct #variant_builder_ident;
-
-                        impl #variant_builder_ident {
-                            #(pub fn #field_names(self, _value: #field_types) -> Self { self })*
-
-                            pub fn build(self) -> #name_ident<#variant_ident> {
-                                panic!("statum rust-analyzer shim: builder values are not constructed at runtime")
-                            }
-                        }
-
-                        impl #name_ident<#variant_ident> {
-                            pub fn builder() -> #variant_builder_ident {
-                                #variant_builder_ident
-                            }
-                        }
-                    }
-                } else {
-                    quote! {
-                        #[statum::bon::bon(crate = ::statum::bon)]
-                        impl #name_ident<#variant_ident> {
-                            #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
-                            #constructor_signature {
-                                #struct_initialization
-                            }
-                        }
-                    }
-                }
-            }
+            generate_variant_builder_tokens(
+                &name_ident,
+                &fields_map,
+                &field_names,
+                &field_types,
+                has_fields,
+                variant,
+                use_ra_shim,
+            )
         });
 
         quote! {
             #(#builder_methods)*
+        }
+    }
+}
+
+fn generate_variant_builder_tokens(
+    machine_ident: &Ident,
+    fields_map: &[TokenStream],
+    field_names: &[Ident],
+    field_types: &[syn::Type],
+    has_fields: bool,
+    variant: &VariantInfo,
+    use_ra_shim: bool,
+) -> TokenStream {
+    let variant_ident = format_ident!("{}", variant.name);
+    let variant_builder_ident = format_ident!("{}Builder", variant.name);
+    let lowercase_variant_name = format_ident!("{}_builder", variant.name.to_lowercase());
+
+    if let Some(ref data_type_str) = variant.data_type {
+        let parsed_data_type = match syn::parse_str::<syn::Type>(data_type_str) {
+            Ok(ty) => ty,
+            Err(err) => return err.to_compile_error(),
+        };
+
+        let struct_initialization = if has_fields {
+            quote! {
+                #machine_ident {
+                    marker: core::marker::PhantomData,
+                    state_data,
+                    #(#field_names,)*
+                }
+            }
+        } else {
+            quote! {
+                #machine_ident {
+                    marker: core::marker::PhantomData,
+                    state_data,
+                }
+            }
+        };
+
+        let constructor_signature = if has_fields {
+            quote! {
+                pub fn new(#(#fields_map,)* state_data: #parsed_data_type) -> #machine_ident<#variant_ident>
+            }
+        } else {
+            quote! {
+                pub fn new(state_data: #parsed_data_type) -> #machine_ident<#variant_ident>
+            }
+        };
+
+        if use_ra_shim {
+            quote! {
+                pub struct #variant_builder_ident;
+
+                impl #variant_builder_ident {
+                    pub fn state_data(self, _data: #parsed_data_type) -> Self {
+                        self
+                    }
+
+                    #(pub fn #field_names(self, _value: #field_types) -> Self { self })*
+
+                    pub fn build(self) -> #machine_ident<#variant_ident> {
+                        panic!("statum rust-analyzer shim: builder values are not constructed at runtime")
+                    }
+                }
+
+                impl #machine_ident<#variant_ident> {
+                    pub fn builder() -> #variant_builder_ident {
+                        #variant_builder_ident
+                    }
+                }
+            }
+        } else {
+            quote! {
+                #[statum::bon::bon(crate = ::statum::bon)]
+                impl #machine_ident<#variant_ident> {
+                    #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
+                    #constructor_signature {
+                        #struct_initialization
+                    }
+                }
+            }
+        }
+    } else {
+        let struct_initialization = if has_fields {
+            quote! {
+                #machine_ident {
+                    marker: core::marker::PhantomData,
+                    state_data: (),
+                    #(#field_names),*
+                }
+            }
+        } else {
+            quote! {
+                #machine_ident {
+                    marker: core::marker::PhantomData,
+                    state_data: (),
+                }
+            }
+        };
+
+        let constructor_signature = if has_fields {
+            quote! {
+                pub fn new(#(#fields_map),*) -> #machine_ident<#variant_ident>
+            }
+        } else {
+            quote! {
+                pub fn new() -> #machine_ident<#variant_ident>
+            }
+        };
+
+        if use_ra_shim {
+            quote! {
+                pub struct #variant_builder_ident;
+
+                impl #variant_builder_ident {
+                    #(pub fn #field_names(self, _value: #field_types) -> Self { self })*
+
+                    pub fn build(self) -> #machine_ident<#variant_ident> {
+                        panic!("statum rust-analyzer shim: builder values are not constructed at runtime")
+                    }
+                }
+
+                impl #machine_ident<#variant_ident> {
+                    pub fn builder() -> #variant_builder_ident {
+                        #variant_builder_ident
+                    }
+                }
+            }
+        } else {
+            quote! {
+                #[statum::bon::bon(crate = ::statum::bon)]
+                impl #machine_ident<#variant_ident> {
+                    #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
+                    #constructor_signature {
+                        #struct_initialization
+                    }
+                }
+            }
         }
     }
 }
