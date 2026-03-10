@@ -104,7 +104,7 @@ That is it. You now have a compile-time guaranteed state machine where invalid t
 ## Stability and MSRV
 
 - Stable-only support: Statum is intended to compile and run on stable Rust.
-- MSRV: `1.94`.
+- MSRV: `1.93`.
 - Compatibility policy: semantic versioning is enforced; breaking API changes require a major version bump.
 
 ---
