@@ -1,11 +1,11 @@
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./docs/static/image/logo-dark.png">
-    <img alt="statum logo" src="./docs/static/image/logo.png" width="300" height="128">
+    <img alt="statum logo" src="./docs/static/image/logo.png" width="420">
   </picture>
   <p>Statum is a framework for building protocol-safe, compile-time verified typestate workflows in Rust.</p>
   <p>
-    <a href="https://github.com/eboody/statum/actions/workflows/ci.yml"><img src="https://github.com/eboody/statum/actions/workflows/ci.yml/badge.svg" alt="build status" /></a>
+    <a href="https://github.com/eboody/statum/actions/workflows/ci.yml"><img src="https://github.com/eboody/statum/actions/workflows/ci.yml/badge.svg?branch=main&event=push" alt="build status" /></a>
     <a href="https://crates.io/crates/statum"><img src="https://img.shields.io/crates/v/statum.svg?logo=rust" alt="crates.io" /></a>
     <a href="https://docs.rs/statum"><img src="https://docs.rs/statum/badge.svg" alt="docs.rs" /></a>
   </p>
