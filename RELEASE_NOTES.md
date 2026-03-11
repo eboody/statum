@@ -1,5 +1,12 @@
 # Release Notes
 
+## v0.5.2 (2026-03-11)
+
+### Changes
+- Corrected crate metadata for docs.rs links and marked `statum-examples` as non-publishable.
+- Expanded docs link validation to include the root README and `docs/*.md`.
+- Hardened publish preflight so already-published versions fail early and downstream crates use package inspection when dry-runs are impossible before upstream publish.
+
 ## v0.5.1 (2026-03-10)
 
 ### Changes

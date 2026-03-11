@@ -11,10 +11,11 @@ path = "src/lib.rs"
 
 [package]
 description = "Derive a Rust module path from a macro call-site span"
+documentation = "https://docs.rs/module_path_extractor"
 edition = "2021"
 license = "MIT"
 name = "module_path_extractor"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.5.1"
+version = "0.5.2"

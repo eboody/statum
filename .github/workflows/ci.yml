@@ -24,7 +24,7 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       - name: Format check
         run: cargo fmt --all --check
-      - name: README link check
+      - name: Docs link check
         run: bash scripts/check_readme_links.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -56,7 +56,7 @@ jobs:
         run: cargo check --workspace
       - name: Format check
         run: cargo fmt --all --check
-      - name: README link check
+      - name: Docs link check
         run: bash scripts/check_readme_links.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -91,13 +91,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.93.1
-      - name: Publish dry-run (ordered)
-        run: |
-          cargo publish -p module_path_extractor --dry-run
-          cargo publish -p macro_registry --dry-run
-          cargo publish -p statum-core --dry-run
-          cargo publish -p statum-macros --dry-run
-          cargo publish -p statum --dry-run
+      - name: Publish readiness (ordered)
+        run: bash scripts/check_publish_dry_run.sh
 
   nightly-canary:
     continue-on-error: true

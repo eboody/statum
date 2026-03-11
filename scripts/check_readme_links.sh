@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readmes=(
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+docs_files=(
+  "README.md"
   "statum/README.md"
   "statum-core/README.md"
   "statum-macros/README.md"
@@ -10,16 +14,20 @@ readmes=(
   "statum-examples/README.md"
 )
 
+while IFS= read -r doc; do
+  docs_files+=("$doc")
+done < <(find docs -maxdepth 1 -type f -name '*.md' | sort)
+
 status=0
 
-for readme in "${readmes[@]}"; do
-  if [[ ! -f "$readme" ]]; then
-    echo "missing README: $readme"
+for doc in "${docs_files[@]}"; do
+  if [[ ! -f "$doc" ]]; then
+    echo "missing doc: $doc"
     status=1
     continue
   fi
 
-  base_dir=$(dirname "$readme")
+  base_dir=$(dirname "$doc")
 
   while IFS= read -r raw_link; do
     link="$raw_link"
@@ -41,14 +49,13 @@ for readme in "${readmes[@]}"; do
     fi
 
     if [[ ! -e "$target" ]]; then
-      echo "$readme: broken relative link -> $raw_link"
+      echo "$doc: broken relative link -> $raw_link"
       status=1
     fi
   done < <(
-    rg -o '\[[^\]]+\]\(([^)]+)\)' "$readme" \
+    rg -o '\[[^\]]+\]\(([^)]+)\)' "$doc" \
       | sed -E 's/^.*\(([^)]+)\)$/\1/'
   )
-
 done
 
 exit "$status"

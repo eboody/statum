@@ -16,18 +16,31 @@ const PUBLISH_ORDER: [&str; 5] = [
     "statum-macros",
     "statum",
 ];
+const VERSION_EXISTS_WARNING: &str = "already exists on crates.io index";
+
+fn has_publish_conflict(context: &str, stdout: &str, stderr: &str) -> bool {
+    context.contains("cargo publish")
+        && (stdout.contains(VERSION_EXISTS_WARNING) || stderr.contains(VERSION_EXISTS_WARNING))
+}
+
+fn can_publish_dry_run(crate_name: &str) -> bool {
+    matches!(crate_name, "module_path_extractor" | "statum-core")
+}
 
 fn run(mut cmd: Command, context: &str) -> Result<(), Box<dyn std::error::Error>> {
     let output = cmd.output()?;
-    if output.status.success() {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if output.status.success() && !has_publish_conflict(context, &stdout, &stderr) {
         return Ok(());
     }
 
     if !output.stdout.is_empty() {
-        println!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+        println!("stdout:\n{stdout}");
     }
     if !output.stderr.is_empty() {
-        eprintln!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+        eprintln!("stderr:\n{stderr}");
     }
     Err(format!("{context} failed").into())
 }
@@ -134,21 +147,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "cargo test",
     )?;
 
-    println!("\nRunning publish dry-runs in dependency order...");
+    println!("\nRunning publish readiness checks in dependency order...");
     for crate_name in PUBLISH_ORDER {
-        println!("Dry-run publishing {crate_name}...");
-        run(
-            {
-                let mut cmd = Command::new("cargo");
-                cmd.args(["publish", "-p", crate_name, "--dry-run"]);
-                cmd
-            },
-            &format!("cargo publish --dry-run for {crate_name}"),
-        )?;
+        if can_publish_dry_run(crate_name) {
+            println!("Dry-run publishing {crate_name}...");
+            run(
+                {
+                    let mut cmd = Command::new("cargo");
+                    cmd.args(["publish", "-p", crate_name, "--dry-run", "--allow-dirty"]);
+                    cmd
+                },
+                &format!("cargo publish --dry-run for {crate_name}"),
+            )?;
+        } else {
+            println!("Inspecting package contents for {crate_name}...");
+            run(
+                {
+                    let mut cmd = Command::new("cargo");
+                    cmd.args(["package", "-p", crate_name, "--allow-dirty", "--list"]);
+                    cmd
+                },
+                &format!("cargo package --list for {crate_name}"),
+            )?;
+        }
     }
 
     println!(
-        "\nDry-runs passed for version {version}. Type 'publish' to continue with actual publish:"
+        "\nPublish readiness checks passed for version {version}. Type 'publish' to continue with actual publish:"
     );
     let confirm = read_line_trimmed()?;
     if confirm != "publish" {

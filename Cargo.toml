@@ -11,4 +11,4 @@ statum = { path = "statum" }
 [workspace.metadata.scripts]
 version-bump = "cargo script scripts/update_version.rs -- 1.0.0"
 publish = "cargo publish -p module_path_extractor && cargo publish -p macro_registry && cargo publish -p statum-core && cargo publish -p statum-macros && cargo publish -p statum"
-publish-dry-run = "cargo publish -p module_path_extractor --dry-run && cargo publish -p macro_registry --dry-run && cargo publish -p statum-core --dry-run && cargo publish -p statum-macros --dry-run && cargo publish -p statum --dry-run"
+publish-dry-run = "bash scripts/check_publish_dry_run.sh"

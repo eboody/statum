@@ -4,7 +4,7 @@
 authors = ["Eran Boodnero <eran@eran.codes>"]
 categories = ["rust-patterns"]
 description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
-documentation = "https://docs.rs/statum"
+documentation = "https://docs.rs/statum-core"
 edition = "2021"
 keywords = [
     "enum",
@@ -18,4 +18,4 @@ name = "statum-core"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.5.1"
+version = "0.5.2"
