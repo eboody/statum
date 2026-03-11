@@ -71,7 +71,7 @@ pub async fn run() {
 
     // machine::State is the generated sum type for all possible typed machine states.
     let machine_state: machine::State = article
-        .machine_builder()
+        .into_machine()
         .client(my_client)
         .build()
         .await

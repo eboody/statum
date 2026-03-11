@@ -1,4 +1,4 @@
-error: Error: is_draft must take exactly one argument: `&self`
+error: Error: is_draft must declare only `&self`. Statum injects machine fields into validator methods by name automatically, so do not write extra parameters.
   --> tests/ui/invalid_validators_wrong_signature.rs:22:1
    |
 22 | #[validators(TaskMachine)]

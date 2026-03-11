@@ -5,13 +5,13 @@ error: Invalid transition return type for `to_b`: expected return type like `Mac
 
        Actual:
          u64
-  --> tests/ui/invalid_transition_wrong_return.rs:18:5
+  --> tests/ui/invalid_transition_wrong_return.rs:19:5
    |
-18 |     fn to_b(self) -> u64 {
+19 |     fn to_b(self) -> u64 {
    |     ^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_transition_wrong_return.rs:21:2
+  --> tests/ui/invalid_transition_wrong_return.rs:22:2
    |
-21 | }
+22 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_wrong_return.rs`

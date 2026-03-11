@@ -86,6 +86,7 @@ Roughly, Statum generates:
 - A machine type parameterized by the current state, with hidden `marker` and `state_data` fields.
 - Builders for new machines, such as `LightSwitch::<Off>::builder()`.
 - A machine-scoped enum like `task_machine::State` for matching reconstructed machines.
+- A machine-scoped batch rehydration trait like `task_machine::IntoMachinesExt`.
 
 This is the whole model. The rest of the crate is about making those four pieces ergonomic.
 
@@ -218,7 +219,9 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
 - Use `#[validators(Machine)]` on an `impl` block for your persisted type.
 - Define one `is_{state}` method per state variant.
 - Return `statum::Result<()>` for unit states or `statum::Result<StateData>` for data-bearing states.
-- Prefer `into_machine()` for single-item reconstruction and `machines_builder()` for collections.
+- Prefer `into_machine()` for single-item reconstruction.
+- For collections in the same module, call `.into_machines()` directly.
+- From other modules, import `machine::IntoMachinesExt as _` first.
 
 ## When To Use Statum
 

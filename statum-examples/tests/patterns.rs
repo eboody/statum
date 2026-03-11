@@ -53,7 +53,7 @@ mod rehydration_with_fetch {
     pub fn run() {
         let row = Row { status: "review" };
         let machine = row
-            .machine_builder()
+            .into_machine()
             .client("acme".to_string())
             .build()
             .unwrap();
@@ -282,11 +282,7 @@ mod parallel_reconstruction {
                 status: "published",
             },
         ];
-        let results = rows
-            .machines_builder()
-            .tenant("t".to_string())
-            .build()
-            .await;
+        let results = rows.into_machines().tenant("t".to_string()).build().await;
 
         assert_eq!(results.len(), 2);
         assert!(results[0].is_ok());
@@ -338,9 +334,8 @@ mod type_erased_storage {
 
     pub fn run() {
         let row = Row { status: "a" };
-        let machine = row.machine_builder().build().unwrap();
-        // The legacy root alias still works, but machine::State is the canonical surface.
-        let items: Vec<MachineSuperState> = vec![machine];
+        let machine = row.into_machine().build().unwrap();
+        let items: Vec<machine::State> = vec![machine];
 
         for item in items {
             match item {

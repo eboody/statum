@@ -11,17 +11,19 @@ mod signatures;
 mod type_equivalence;
 
 use emission::{
-    batch_builder_implementation, generate_validator_check, inject_machine_fields,
-    parsed_machine_fields,
+    BatchBuilderContext, batch_builder_implementation, generate_validator_check,
+    inject_machine_fields,
 };
-use resolution::{has_validators, resolve_machine_metadata, resolve_state_enum_info};
+use resolution::{
+    resolve_machine_metadata, resolve_state_enum_info, validate_validator_coverage,
+};
 use signatures::{
-    expected_ok_type_for_variant, validate_validator_return_type, validate_validator_signature,
-    validator_state_name_from_ident,
+    validate_validator_return_type, validate_validator_signature, validator_state_name_from_ident,
 };
 
-struct VariantSpec<'a> {
-    variant: &'a VariantInfo,
+struct VariantSpec {
+    variant_name: String,
+    has_state_data: bool,
     expected_ok_type: Type,
 }
 
@@ -35,10 +37,11 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         Err(err) => return err.into(),
     };
 
-    let parsed_fields = match parsed_machine_fields(&machine_metadata) {
+    let parsed_machine = match machine_metadata.parse() {
         Ok(parsed) => parsed,
         Err(err) => return err.into(),
     };
+    let parsed_fields = parsed_machine.field_idents_and_types();
 
     let modified_methods = match inject_machine_fields(&item_impl.items, &parsed_fields) {
         Ok(methods) => methods,
@@ -50,19 +53,22 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         Err(err) => return err.into(),
     };
 
-    let has_validators = has_validators(&item_impl, &state_enum_info.variants);
+    let validator_coverage = match validate_validator_coverage(&item_impl, &state_enum_info) {
+        Ok(()) => quote! {},
+        Err(err) => return err.into(),
+    };
 
     let field_names = parsed_fields
         .iter()
         .map(|(ident, _)| ident.clone())
         .collect::<Vec<_>>();
     let machine_module_ident = format_ident!("{}", crate::to_snake_case(&machine_ident.to_string()));
-    let superstate_ty = quote! { #machine_module_ident::State };
+    let machine_state_ty = quote! { #machine_module_ident::State };
 
     let (validator_checks, has_async) = match collect_validator_checks(
         &item_impl,
         &machine_ident,
-        &superstate_ty,
+        &machine_state_ty,
         &field_names,
         &state_enum_info.variants,
     ) {
@@ -82,10 +88,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         .into();
     }
 
-    let machine_vis: syn::Visibility = match syn::parse_str(&machine_metadata.vis) {
-        Ok(vis) => vis,
-        Err(_) => syn::parse_quote!( /* default or nothing */ ),
-    };
+    let machine_vis = parsed_machine.vis.clone();
 
     let async_token = if has_async {
         quote! { async }
@@ -93,27 +96,25 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         quote! {}
     };
 
-    let batch_builder_impl = batch_builder_implementation(
-        &machine_ident,
+    let batch_builder_impl = batch_builder_implementation(BatchBuilderContext {
+        machine_ident: &machine_ident,
+        machine_module_ident: &machine_module_ident,
         struct_ident,
-        &superstate_ty,
-        &fields_with_types,
-        &field_names,
-        async_token.clone(),
-        machine_vis.clone(),
-    );
+        machine_state_ty: &machine_state_ty,
+        fields_with_types: &fields_with_types,
+        field_names: &field_names,
+        async_token: async_token.clone(),
+        machine_vis: machine_vis.clone(),
+    });
 
     let machine_builder_impl = quote! {
+        #[allow(unused_imports)]
+        use #machine_module_ident::IntoMachinesExt as _;
+
         #[statum::bon::bon(crate = ::statum::bon)]
         impl #struct_ident {
-            #[builder(start_fn = machine_builder)]
-            #machine_vis #async_token fn new(&self #(, #fields_with_types)*) -> core::result::Result<#superstate_ty, statum::Error> {
-                #(#validator_checks)*
-
-                Err(statum::Error::InvalidState)
-            }
             #[builder(start_fn = into_machine, finish_fn = build)]
-            #machine_vis #async_token fn __statum_into_machine(&self #(, #fields_with_types)*) -> core::result::Result<#superstate_ty, statum::Error> {
+            #machine_vis #async_token fn __statum_into_machine(&self #(, #fields_with_types)*) -> core::result::Result<#machine_state_ty, statum::Error> {
                 #(#validator_checks)*
 
                 Err(statum::Error::InvalidState)
@@ -125,7 +126,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
     };
 
     let expanded = quote! {
-        #has_validators
+        #validator_coverage
         #machine_builder_impl
     };
 
@@ -135,7 +136,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
 fn collect_validator_checks(
     item_impl: &ItemImpl,
     machine_ident: &Ident,
-    superstate_ty: &proc_macro2::TokenStream,
+    machine_state_ty: &proc_macro2::TokenStream,
     field_names: &[Ident],
     variants: &[VariantInfo],
 ) -> Result<(Vec<proc_macro2::TokenStream>, bool), proc_macro2::TokenStream> {
@@ -164,9 +165,10 @@ fn collect_validator_checks(
         }
         checks.push(generate_validator_check(
             machine_ident,
-            superstate_ty,
+            machine_state_ty,
             field_names,
-            spec.variant,
+            &spec.variant_name,
+            spec.has_state_data,
             func.sig.asyncness.is_some(),
         ));
     }
@@ -176,14 +178,16 @@ fn collect_validator_checks(
 
 fn build_variant_lookup(
     variants: &[VariantInfo],
-) -> Result<(Vec<VariantSpec<'_>>, HashMap<String, usize>), proc_macro2::TokenStream> {
+) -> Result<(Vec<VariantSpec>, HashMap<String, usize>), proc_macro2::TokenStream> {
     let mut specs = Vec::with_capacity(variants.len());
     let mut variant_by_name = HashMap::with_capacity(variants.len() * 2);
 
     for variant in variants {
+        let state_data_type = variant.parse_data_type()?;
         specs.push(VariantSpec {
-            variant,
-            expected_ok_type: expected_ok_type_for_variant(variant)?,
+            variant_name: variant.name.clone(),
+            has_state_data: state_data_type.is_some(),
+            expected_ok_type: state_data_type.unwrap_or_else(|| syn::parse_quote!(())),
         });
         let idx = specs.len() - 1;
         variant_by_name.insert(variant.name.clone(), idx);

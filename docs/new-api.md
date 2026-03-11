@@ -33,11 +33,10 @@ pub enum DocumentState {
 The macro generates:
 - A trait named `DocumentStateTrait` with an associated type `Data`.
 - One struct per variant: `Draft`, `InReview(pub ReviewData)`, `Published`.
-- Marker traits:
-  - `DoesNotRequireStateData`
-  - `RequiresStateData`
-  - `StateVariant` (with associated `Data` type)
 - An uninitialized state marker: `UninitializedDocumentState`.
+- Implementations of the public advanced traits:
+  - `statum::StateMarker`
+  - `statum::UnitState` or `statum::DataState`
 
 ## `#[machine]` Macro
 ### Rules
@@ -69,11 +68,14 @@ let machine = Machine::<InReview>::builder()
 
 For data-bearing variants, the builder exposes `state_data(..)`; for unit variants it does not.
 
-## Transition Traits and `#[transition]`
-### Transition Traits
-The macro generates two traits for the machine:
-- `TransitionTo<NextState>` with `fn transition(self) -> Machine<NextState>`
-- `TransitionWith<T>` with `fn transition_with(self, data: T) -> Machine<NextState>`
+## Transition Helpers and `#[transition]`
+The macro generates internal helper traits so transition methods can call
+`self.transition()` or `self.transition_with(data)` inside `#[transition]`
+impls. Those helper traits are implementation details, not public API.
+
+It also implements the public advanced traits:
+- `statum::CanTransitionTo<Next>`
+- `statum::CanTransitionWith<Data>`
 
 ### `#[transition]` Rules
 - Must be applied to an `impl Machine<CurrentState>` block.
@@ -108,9 +110,9 @@ impl MyPersistentData {
 
 ### Generated Items
 - A machine-scoped enum `my_machine::State` with variants for each state, each wrapping `MyMachine<State>`.
-- A hidden compatibility alias like `MyMachineSuperState`.
-- A builder `machine_builder()` on the persistent data type that returns `Result<my_machine::State, statum::Error>`.
-- A batch builder for processing lists of persistent data items.
+- An `into_machine()` builder on the persistent data type that returns `Result<my_machine::State, statum::Error>`.
+- A machine-scoped `my_machine::IntoMachinesExt` trait for cross-module batch reconstruction with `.into_machines()`.
+- A same-module import so `.into_machines()` works directly next to the `#[validators]` impl.
 
 ## Quick Example (Inferred)
 ```rust

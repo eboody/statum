@@ -82,22 +82,16 @@ pub fn transition(
     let machine_info = match machine_info_owned.as_ref() {
         Some(info) => info,
         None => {
-            let message = syn::LitStr::new(
-                &format!(
-                    "No matching #[machine] metadata found for `{}` in this module. \
-Ensure #[machine] is applied to `{}` in the same module as this #[transition] impl.",
-                    tr_impl.machine_name, tr_impl.machine_name
-                ),
+            return missing_transition_machine_error(
+                &tr_impl.machine_name,
+                &module_path,
                 input.self_ty.span(),
-            );
-            return quote::quote_spanned! { input.self_ty.span() =>
-                compile_error!(#message);
-            }
+            )
             .into();
         }
     };
 
-    if let Some(err) = validate_transition_functions(&tr_impl.functions, machine_info) {
+    if let Some(err) = validate_transition_functions(&tr_impl, machine_info) {
         return err.into();
     }
 

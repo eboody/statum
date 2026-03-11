@@ -155,7 +155,7 @@ mod validators_sync_and_async {
     pub async fn run() {
         let row = Row { status: "review" };
         let state = row
-            .machine_builder()
+            .into_machine()
             .tenant("t".to_string())
             .build()
             .await

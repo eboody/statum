@@ -1,13 +1,15 @@
-error: Failed to resolve the #[state] enum for machine `Machine`. This can happen if proc-macro analysis runs before the enum is cached. Try reopening the file or running `cargo check`. If it persists, ensure the #[state] enum is in the same module.
- --> tests/ui/invalid_machine_no_state_generic.rs:7:1
+error: Error: #[machine] structs must declare exactly one generic type parameter naming the #[state] enum.
+
+       Fix: declare `Machine` like `pub struct Machine<State> { ... }`.
+ --> tests/ui/invalid_machine_no_state_generic.rs:8:1
   |
-7 | #[machine]
+8 | #[machine]
   | ^^^^^^^^^^
   |
   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_machine_no_state_generic.rs:10:2
+  --> tests/ui/invalid_machine_no_state_generic.rs:11:2
    |
-10 | }
+11 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_no_state_generic.rs`

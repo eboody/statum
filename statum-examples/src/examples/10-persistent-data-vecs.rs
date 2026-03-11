@@ -58,7 +58,7 @@ pub async fn run() {
 
     // The builder is async because one validator is async.
     let machine_states = articles
-        .machines_builder()
+        .into_machines()
         .client("client".to_string())
         .build()
         .await;

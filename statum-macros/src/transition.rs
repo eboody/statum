@@ -1,13 +1,15 @@
-use proc_macro2::TokenStream;
+use macro_registry::analysis::get_file_analysis;
+use macro_registry::callsite::{current_source_info, module_path_for_line};
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
+use syn::{
+    AngleBracketedGenericArguments, Block, FnArg, GenericArgument, Ident, ImplItem, ImplItemFn,
+    ItemImpl, LitStr, PathArguments, ReturnType, Type, TypePath,
+};
 
-use syn::{FnArg, ImplItem, ImplItemFn, ReturnType};
-
-use syn::Block;
-use syn::{Ident, ItemImpl, Type};
-
-use crate::MachineInfo;
+use crate::machine::transition_support_module_ident;
+use crate::{EnumInfo, MachineInfo};
 
 /// Stores all metadata for a single transition method in an `impl` block
 #[allow(unused)]
@@ -46,15 +48,16 @@ pub struct TransitionImpl {
     pub target_type: Type,
     /// The machine type name extracted from `target_type` (e.g. `Machine`)
     pub machine_name: String,
+    /// The source state extracted from `target_type` (e.g. `Draft`)
+    pub source_state: String,
     /// All transition methods extracted from the `impl`
     pub functions: Vec<TransitionFn>,
 }
 
 pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, TokenStream> {
-    // 1) Extract target type (e.g., `Machine<Draft>`)
     let target_type = *item_impl.self_ty.clone();
-    let Some(machine_name) = extract_machine_name(&target_type) else {
-        let message = syn::LitStr::new(
+    let Some((machine_name, source_state)) = extract_impl_machine_and_state(&target_type) else {
+        let message = LitStr::new(
             "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
             target_type.span(),
         );
@@ -63,7 +66,6 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, Tok
         });
     };
 
-    // 2) Collect all transition methods
     let mut functions = Vec::new();
     for item in &item_impl.items {
         if let ImplItem::Fn(method) = item {
@@ -74,22 +76,22 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, Tok
     Ok(TransitionImpl {
         target_type,
         machine_name,
+        source_state,
         functions,
     })
 }
 
-fn extract_machine_name(target_type: &Type) -> Option<String> {
+fn extract_impl_machine_and_state(target_type: &Type) -> Option<(String, String)> {
     let Type::Path(type_path) = target_type else {
         return None;
     };
     let segment = type_path.path.segments.last()?;
-    Some(segment.ident.to_string())
+    extract_machine_generic(&segment.arguments, segment.ident.clone())
 }
 
 pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> TransitionFn {
     let has_receiver = matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)));
 
-    // Collect return type if any
     let return_type = match &method.sig.output {
         ReturnType::Type(_, ty) => Some(*ty.clone()),
         ReturnType::Default => None,
@@ -111,9 +113,6 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> Transitio
 
     let is_async = method.sig.asyncness.is_some();
 
-    let vis = method.vis.to_owned();
-    let span = method.span();
-
     TransitionFn {
         name: method.sig.ident.clone(),
         has_receiver,
@@ -122,46 +121,71 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> Transitio
         generics,
         internals: method.block.clone(),
         is_async,
-        vis,
-        span,
+        vis: method.vis.to_owned(),
+        span: method.span(),
     }
 }
 
-/// Validate that the target type is a known Machine and the state is a valid variant.
-/// Returns `Some(error_tokens)` if there is a validation error; otherwise `None`.
-// Validation of machine/state names is handled by the type system now.
-/// Validate all transition function signatures:
-///  - must have exactly one argument: `self` or `mut self`
-///  - if the return type is Machine<T> where T is a state variant that carries data,
-///    then the function must call `.transition_with(..)` instead of `.transition()`
 pub fn validate_transition_functions(
-    functions: &[TransitionFn],
-    _machine_info: &MachineInfo,
-) -> Option<proc_macro2::TokenStream> {
-    if functions.is_empty() {
-        return Some(quote! {
-            compile_error!("#[transition] impl blocks must contain at least one method returning a valid machine.");
-        });
+    tr_impl: &TransitionImpl,
+    machine_info: &MachineInfo,
+) -> Option<TokenStream> {
+    if tr_impl.functions.is_empty() {
+        let message = format!(
+            "Error: #[transition] impl for `{}<{}>` must contain at least one method returning `{}` or a supported wrapper like `Option<{}>` / `Result<{}, E>`.",
+            tr_impl.machine_name,
+            tr_impl.source_state,
+            machine_return_signature(&tr_impl.machine_name),
+            machine_return_signature(&tr_impl.machine_name),
+            machine_return_signature(&tr_impl.machine_name),
+        );
+        return Some(compile_error_at(tr_impl.target_type.span(), &message));
     }
 
-    for func in functions {
+    let state_enum_info = match machine_info.get_matching_state_enum() {
+        Ok(enum_info) => enum_info,
+        Err(err) => return Some(err),
+    };
+
+    if state_enum_info
+        .get_variant_from_name(&tr_impl.source_state)
+        .is_none()
+    {
+        return Some(invalid_transition_state_error(
+            &tr_impl.target_type,
+            &tr_impl.machine_name,
+            &tr_impl.source_state,
+            &state_enum_info,
+            "source",
+        ));
+    }
+
+    for func in &tr_impl.functions {
         if !func.has_receiver {
             let func_name = &func.name;
             return Some(quote_spanned! { func.span =>
-                compile_error!(
-                    concat!(
-                        "Invalid function signature: ",
-                        stringify!(#func_name),
-                        " transition functions must be a method, that is, it must take 'self' or 'mut self' as its first argument."
-                    )
-                );
+                compile_error!(concat!(
+                    "Error: transition method `",
+                    stringify!(#func_name),
+                    "` must take `self` or `mut self` as its receiver."
+                ));
             });
         }
 
-        if let Err(err) = func.return_state() {
-            return Some(err);
+        let return_state = match func.return_state() {
+            Ok(state) => state,
+            Err(err) => return Some(err),
+        };
+        if state_enum_info.get_variant_from_name(&return_state).is_none() {
+            return Some(invalid_transition_method_state_error(
+                func,
+                &tr_impl.machine_name,
+                &return_state,
+                &state_enum_info,
+            ));
         }
     }
+
     None
 }
 
@@ -170,17 +194,16 @@ pub fn generate_transition_impl(
     tr_impl: &TransitionImpl,
     target_machine_info: &MachineInfo,
     _module_path: &str,
-) -> proc_macro2::TokenStream {
-    let target_type = &tr_impl.target_type; // e.g., `OrderMachine<Cart>`
+) -> TokenStream {
+    let target_type = &tr_impl.target_type;
     let machine_target_ident = format_ident!("{}", target_machine_info.name);
+    let transition_support_module_ident = transition_support_module_ident(target_machine_info);
     let field_names = target_machine_info.field_names();
     let state_enum_info = match target_machine_info.get_matching_state_enum() {
         Ok(enum_info) => enum_info,
         Err(err) => return err,
     };
-    let state_enum_name = state_enum_info.name.clone();
 
-    // Iterate over transition functions
     let transition_impls = tr_impl.functions.iter().map(|function| {
         let return_state = match function.return_state() {
             Ok(state) => state,
@@ -188,24 +211,18 @@ pub fn generate_transition_impl(
         };
         let return_state_ident = format_ident!("{}", return_state);
         let Some(variant_info) = state_enum_info.get_variant_from_name(&return_state) else {
-            return quote_spanned! { function.span =>
-                compile_error!(concat!(
-                    "Invalid state variant: ",
-                    #return_state,
-                    " is not a valid variant of a registered #[state] enum: ",
-                    #state_enum_name
-                ));
-            };
+            return invalid_transition_method_state_error(
+                function,
+                &tr_impl.machine_name,
+                &return_state,
+                &state_enum_info,
+            );
         };
 
-        match &variant_info.data_type {
-            Some(data_type) => {
-                let data_ty = match syn::parse_str::<Type>(data_type) {
-                    Ok(ty) => ty,
-                    Err(err) => return err.to_compile_error(),
-                };
+        match variant_info.parse_data_type() {
+            Ok(Some(data_ty)) => {
                 quote! {
-                    impl TransitionWith<#data_ty> for #target_type {
+                    impl #transition_support_module_ident::TransitionWith<#data_ty> for #target_type {
                         type NextState = #return_state_ident;
                         fn transition_with(self, data: #data_ty) -> #machine_target_ident<Self::NextState> {
                             #machine_target_ident {
@@ -215,11 +232,20 @@ pub fn generate_transition_impl(
                             }
                         }
                     }
+
+                    impl statum::CanTransitionWith<#data_ty> for #target_type {
+                        type NextState = #return_state_ident;
+                        type Output = #machine_target_ident<#return_state_ident>;
+
+                        fn transition_with_data(self, data: #data_ty) -> Self::Output {
+                            <Self as #transition_support_module_ident::TransitionWith<#data_ty>>::transition_with(self, data)
+                        }
+                    }
                 }
             }
-            None => {
+            Ok(None) => {
                 quote! {
-                    impl TransitionTo<#return_state_ident> for #target_type {
+                    impl #transition_support_module_ident::TransitionTo<#return_state_ident> for #target_type {
                         fn transition(self) -> #machine_target_ident<#return_state_ident> {
                             #machine_target_ident {
                                 marker: core::marker::PhantomData,
@@ -228,15 +254,107 @@ pub fn generate_transition_impl(
                             }
                         }
                     }
+
+                    impl statum::CanTransitionTo<#return_state_ident> for #target_type {
+                        type Output = #machine_target_ident<#return_state_ident>;
+
+                        fn transition_to(self) -> Self::Output {
+                            <Self as #transition_support_module_ident::TransitionTo<#return_state_ident>>::transition(self)
+                        }
+                    }
                 }
             }
+            Err(err) => err,
         }
     });
 
     quote! {
         #(#transition_impls)*
-        #input // Append the original impl block
+        #input
     }
+}
+
+pub fn missing_transition_machine_error(
+    machine_name: &str,
+    module_path: &str,
+    span: Span,
+) -> TokenStream {
+    let available = available_machine_names_in_module(module_path);
+    let available_line = if available.is_empty() {
+        "No `#[machine]` items were found in this module.".to_string()
+    } else {
+        format!(
+            "Available `#[machine]` items in this module: {}.",
+            available.join(", ")
+        )
+    };
+    let message = format!(
+        "Error: no `#[machine]` named `{machine_name}` was found in module `{module_path}`.\n{available_line}\nFix: apply `#[transition]` to an impl for the machine type generated by `#[machine]` in this module."
+    );
+    compile_error_at(span, &message)
+}
+
+fn available_machine_names_in_module(module_path: &str) -> Vec<String> {
+    let Some((file_path, _)) = current_source_info() else {
+        return Vec::new();
+    };
+    let Some(analysis) = get_file_analysis(&file_path) else {
+        return Vec::new();
+    };
+
+    let mut names = analysis
+        .structs
+        .iter()
+        .filter(|entry| entry.attrs.iter().any(|attr| attr == "machine"))
+        .filter(|entry| {
+            module_path_for_line(&file_path, entry.line_number).as_deref() == Some(module_path)
+        })
+        .map(|entry| entry.item.ident.to_string())
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn invalid_transition_state_error(
+    target_type: &Type,
+    machine_name: &str,
+    state_name: &str,
+    state_enum_info: &EnumInfo,
+    role: &str,
+) -> TokenStream {
+    let valid_states = state_enum_info
+        .variants
+        .iter()
+        .map(|variant| variant.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let target_type_display = format!("{machine_name}<{state_name}>");
+    let state_enum_name = &state_enum_info.name;
+    let message = format!(
+        "Error: {role} state `{state_name}` in `#[transition]` target `{target_type_display}` is not a variant of `#[state]` enum `{state_enum_name}`.\nValid states for `{machine_name}` are: {valid_states}."
+    );
+    compile_error_at(target_type.span(), &message)
+}
+
+fn invalid_transition_method_state_error(
+    func: &TransitionFn,
+    machine_name: &str,
+    return_state: &str,
+    state_enum_info: &EnumInfo,
+) -> TokenStream {
+    let valid_states = state_enum_info
+        .variants
+        .iter()
+        .map(|variant| variant.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let state_enum_name = &state_enum_info.name;
+    let func_name = &func.name;
+    let message = format!(
+        "Error: transition method `{func_name}` returns state `{return_state}`, but `{return_state}` is not a variant of `#[state]` enum `{state_enum_name}`.\nValid next states for `{machine_name}` are: {valid_states}."
+    );
+    compile_error_at(func.span, &message)
 }
 
 fn invalid_return_type_error(func: &TransitionFn, reason: &str) -> TokenStream {
@@ -253,14 +371,19 @@ fn invalid_return_type_error(func: &TransitionFn, reason: &str) -> TokenStream {
 Expected:\n  fn {func_name}(self) -> {machine_name}<NextState>\n\n\
 Actual:\n  {return_type}"
     );
-    let message = syn::LitStr::new(&message, func.span);
+    compile_error_at(func.span, &message)
+}
 
-    quote_spanned! { func.span =>
+fn machine_return_signature(machine_name: &str) -> String {
+    format!("{machine_name}<NextState>")
+}
+
+fn compile_error_at(span: Span, message: &str) -> TokenStream {
+    let message = LitStr::new(message, span);
+    quote_spanned! { span =>
         compile_error!(#message);
     }
 }
-
-use syn::{AngleBracketedGenericArguments, GenericArgument, PathArguments, TypePath};
 
 /// Attempts to parse `ty` into the form:
 ///
@@ -316,7 +439,6 @@ fn classify_return_wrapper<'a>(
     None
 }
 
-/// Extracts `Machine<SomeState>` from the angle brackets of the given path arguments.
 fn extract_machine_generic(
     args: &PathArguments,
     target_machine_ident: Ident,
@@ -327,16 +449,13 @@ fn extract_machine_generic(
     else {
         return None;
     };
-    // We expect exactly one generic argument: `Machine<OneThing>`
     if generic_args.len() != 1 {
         return None;
     }
-    // That one argument must be a `TypePath`, e.g. `InProgress`
     let GenericArgument::Type(Type::Path(state_path)) = &generic_args[0] else {
         return None;
     };
     let state_seg = state_path.path.segments.last()?;
-    // Return ("Machine", "InProgress") for example
     Some((
         target_machine_ident.to_string(),
         state_seg.ident.to_string(),

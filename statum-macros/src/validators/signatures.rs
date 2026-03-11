@@ -2,8 +2,6 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{FnArg, GenericArgument, Ident, PathArguments, ReturnType, Type};
 
-use crate::VariantInfo;
-
 use super::type_equivalence::types_equivalent;
 
 pub(super) fn validator_state_name_from_ident(ident: &Ident) -> Option<String> {
@@ -19,7 +17,11 @@ pub(super) fn validate_validator_signature(
     if func.sig.inputs.len() != 1 {
         let func_name = func.sig.ident.to_string();
         return Err(quote! {
-            compile_error!(concat!("Error: ", #func_name, " must take exactly one argument: `&self`"));
+            compile_error!(concat!(
+                "Error: ",
+                #func_name,
+                " must declare only `&self`. Statum injects machine fields into validator methods by name automatically, so do not write extra parameters."
+            ));
         });
     }
     match &func.sig.inputs[0] {
@@ -27,25 +29,26 @@ pub(super) fn validate_validator_signature(
             if receiver.reference.is_none() || receiver.mutability.is_some() {
                 let func_name = func.sig.ident.to_string();
                 return Err(quote! {
-                    compile_error!(concat!("Error: ", #func_name, " must take `&self` as the first argument"));
+                    compile_error!(concat!(
+                        "Error: ",
+                        #func_name,
+                        " must take `&self`. Statum injects machine fields into validator methods by name automatically."
+                    ));
                 });
             }
         }
         FnArg::Typed(_) => {
             let func_name = func.sig.ident.to_string();
             return Err(quote! {
-                compile_error!(concat!("Error: ", #func_name, " must take `&self` as the first argument"));
+                compile_error!(concat!(
+                    "Error: ",
+                    #func_name,
+                    " must take `&self`. Statum injects machine fields into validator methods by name automatically."
+                ));
             });
         }
     }
     Ok(())
-}
-
-pub(super) fn expected_ok_type_for_variant(variant: &VariantInfo) -> Result<Type, TokenStream> {
-    match &variant.data_type {
-        Some(data_type) => syn::parse_str::<Type>(data_type).map_err(|err| err.to_compile_error()),
-        None => Ok(syn::parse_quote!(())),
-    }
 }
 
 pub(super) fn validate_validator_return_type(

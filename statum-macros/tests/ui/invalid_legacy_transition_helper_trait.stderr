@@ -1,0 +1,5 @@
+error[E0405]: cannot find trait `WorkflowMachineTransitionTo` in this scope
+  --> tests/ui/invalid_legacy_transition_helper_trait.rs:25:31
+   |
+25 | fn assert_transition_trait<T: WorkflowMachineTransitionTo<Done>>(_machine: T) {}
+   |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope

@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 extern crate self as statum;
-pub use statum_core::Error;
+pub use statum_core::{CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState};
 pub use bon;
 use statum_macros::{machine, state, validators};
 use bon::builder as _;
@@ -58,10 +58,16 @@ impl DbRow {
 fn main() {
     let row = DbRow { status: "draft" };
     let machine = row.into_machine().name("todo".to_string()).build().unwrap();
+    let batch = vec![DbRow { status: "done" }]
+        .into_machines()
+        .name("todo".to_string())
+        .build();
 
     match machine {
         task_machine::State::Draft(_machine) => {}
         task_machine::State::InProgress(_machine) => {}
         task_machine::State::Done(_machine) => {}
     }
+
+    let _ = batch;
 }

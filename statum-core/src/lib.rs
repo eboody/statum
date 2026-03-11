@@ -1,5 +1,37 @@
 //! Core error and result types shared by Statum crates.
 
+/// A generated state marker type.
+pub trait StateMarker {
+    /// The payload type stored in machines for this state.
+    type Data;
+}
+
+/// A generated state marker with no payload.
+pub trait UnitState: StateMarker<Data = ()> {}
+
+/// A generated state marker that carries payload data.
+pub trait DataState: StateMarker {}
+
+/// A machine that can transition directly to `Next`.
+pub trait CanTransitionTo<Next> {
+    /// The transition result type.
+    type Output;
+
+    /// Perform the transition.
+    fn transition_to(self) -> Self::Output;
+}
+
+/// A machine that can transition using `Data`.
+pub trait CanTransitionWith<Data> {
+    /// The next state selected by this transition.
+    type NextState;
+    /// The transition result type.
+    type Output;
+
+    /// Perform the transition with payload data.
+    fn transition_with_data(self, data: Data) -> Self::Output;
+}
+
 /// Errors returned by Statum runtime helpers.
 #[derive(Debug)]
 pub enum Error {

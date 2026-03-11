@@ -1,21 +1,18 @@
-error: Error: #[machine] structs must have a generic type parameter that matches the #[state] enum.
+error: Error: #[machine] currently supports exactly one generic type parameter.
 
-       Fix: Change the generic type parameter of `BadMachine` to match `FooState`.
+       Fix: remove additional generics from `BadMachine` and keep durable context in fields.
 
        Expected:
-       pub struct BadMachine<FooState> { ... }
-
-       Found:
-       pub struct BadMachine<T> { ... }
-  --> tests/ui/invalid_machine_generic_not_first.rs:12:1
+       pub struct BadMachine<State> { ... }
+  --> tests/ui/invalid_machine_generic_not_first.rs:13:1
    |
-12 | #[machine]
+13 | #[machine]
    | ^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_machine_generic_not_first.rs:15:2
+  --> tests/ui/invalid_machine_generic_not_first.rs:16:2
    |
-15 | }
+16 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_generic_not_first.rs`

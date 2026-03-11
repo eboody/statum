@@ -3,6 +3,7 @@ use std::hash::Hash;
 use std::sync::{OnceLock, RwLock};
 
 use crate::analysis::{get_file_analysis, FileAnalysis};
+use crate::cache::tracked_file_matches;
 use crate::callsite::{current_source_info, module_path_for_line};
 
 /// Key type for registry lookups.
@@ -89,7 +90,7 @@ where
 
     let file_path = source_info?.0;
     if let Some(cached) = registry.get_cloned(requested_key) {
-        if cache_matches_file(&cached, &file_path) {
+        if tracked_file_matches(cached.file_path(), &file_path) {
             return Some(cached);
         }
     }
@@ -137,10 +138,6 @@ where
 
 fn module_matches<K: RegistryKey>(requested_key: &K, resolved_module_path: &str) -> bool {
     requested_key.is_unknown() || requested_key.as_ref() == resolved_module_path
-}
-
-fn cache_matches_file<V: RegistryValue>(value: &V, file_path: &str) -> bool {
-    value.file_path() == Some(file_path)
 }
 
 fn store_with_alias<K, V>(
@@ -221,13 +218,13 @@ mod tests {
         let value = TestValue {
             file_path: Some("/tmp/a.rs".into()),
         };
-        assert!(cache_matches_file(&value, "/tmp/a.rs"));
-        assert!(!cache_matches_file(&value, "/tmp/b.rs"));
+        assert!(tracked_file_matches(value.file_path(), "/tmp/a.rs"));
+        assert!(!tracked_file_matches(value.file_path(), "/tmp/b.rs"));
     }
 
     #[test]
     fn cache_match_requires_tracked_file_path() {
         let value = TestValue { file_path: None };
-        assert!(!cache_matches_file(&value, "/tmp/a.rs"));
+        assert!(!tracked_file_matches(value.file_path(), "/tmp/a.rs"));
     }
 }

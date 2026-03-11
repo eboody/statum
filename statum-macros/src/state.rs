@@ -5,10 +5,10 @@ use macro_registry::registry::{
 };
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
-use syn::{Attribute, Fields, Ident, ItemEnum, Path};
+use syn::{Attribute, Fields, Ident, ItemEnum, Path, Type, Visibility};
 
 // Structure to hold extracted enum data
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[allow(unused)]
 pub struct EnumInfo {
     pub derives: Vec<String>,
@@ -38,7 +38,7 @@ impl RegistryValue for EnumInfo {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct VariantInfo {
     pub name: String,
     pub data_type: Option<String>,
@@ -77,6 +77,48 @@ impl EnumInfo {
     pub fn get_trait_name(&self) -> Ident {
         format_ident!("{}Trait", self.name)
     }
+
+    pub(crate) fn parse(&self) -> Result<ParsedEnumInfo, TokenStream> {
+        let vis = syn::parse_str::<Visibility>(&self.vis).map_err(|err| err.to_compile_error())?;
+        let mut derives = Vec::with_capacity(self.derives.len());
+        for derive in &self.derives {
+            derives.push(syn::parse_str::<Path>(derive).map_err(|err| err.to_compile_error())?);
+        }
+
+        let mut variants = Vec::with_capacity(self.variants.len());
+        for variant in &self.variants {
+            variants.push(ParsedVariantInfo {
+                name: variant.name.clone(),
+                data_type: variant.parse_data_type()?,
+            });
+        }
+
+        Ok(ParsedEnumInfo {
+            vis,
+            derives,
+            variants,
+        })
+    }
+}
+
+impl VariantInfo {
+    pub(crate) fn parse_data_type(&self) -> Result<Option<Type>, TokenStream> {
+        self.data_type
+            .as_ref()
+            .map(|data_type| syn::parse_str::<Type>(data_type).map_err(|err| err.to_compile_error()))
+            .transpose()
+    }
+}
+
+pub(crate) struct ParsedEnumInfo {
+    pub(crate) vis: Visibility,
+    pub(crate) derives: Vec<Path>,
+    pub(crate) variants: Vec<ParsedVariantInfo>,
+}
+
+pub(crate) struct ParsedVariantInfo {
+    pub(crate) name: String,
+    pub(crate) data_type: Option<Type>,
 }
 
 /// Convert `StateEnumName` into a `TokenStream` (for procedural macros)
@@ -144,25 +186,20 @@ impl From<StateModulePath> for TokenStream {
 impl ToTokens for EnumInfo {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let name = format_ident!("{}", &self.name);
-        let vis = match syn::parse_str::<syn::Visibility>(&self.vis) {
-            Ok(vis) => vis,
+        let parsed = match self.parse() {
+            Ok(parsed) => parsed,
             Err(err) => {
-                tokens.extend(err.to_compile_error());
+                tokens.extend(err);
                 return;
             }
         };
+        let vis = parsed.vis;
 
-        let mut variants = Vec::with_capacity(self.variants.len());
-        for variant in &self.variants {
+        let mut variants = Vec::with_capacity(parsed.variants.len());
+        for variant in parsed.variants {
             let var_name = syn::Ident::new(&variant.name, proc_macro2::Span::call_site());
             let variant_tokens = match &variant.data_type {
-                Some(ty) => match syn::parse_str::<syn::Type>(ty) {
-                    Ok(ty) => quote! { #var_name(#ty) },
-                    Err(err) => {
-                        tokens.extend(err.to_compile_error());
-                        return;
-                    }
-                },
+                Some(ty) => quote! { #var_name(#ty) },
                 None => quote! { #var_name },
             };
             variants.push(variant_tokens);
@@ -353,67 +390,61 @@ pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenSt
     };
 
     let state_trait_ident = enum_info.get_trait_name();
-
-    let vis = match syn::parse_str::<syn::Visibility>(&enum_info.vis) {
-        Ok(vis) => vis,
-        Err(err) => return err.to_compile_error(),
+    let parsed_enum = match enum_info.parse() {
+        Ok(parsed) => parsed,
+        Err(err) => return err,
     };
-
-    let mut derives: Vec<syn::Path> = Vec::with_capacity(enum_info.derives.len());
-    for derive in &enum_info.derives {
-        let parsed = match syn::parse_str::<syn::Path>(derive) {
-            Ok(path) => path,
-            Err(err) => return err.to_compile_error(),
-        };
-        derives.push(parsed);
-    }
-    let derive_tokens = derives
+    let vis = parsed_enum.vis;
+    let derive_tokens = parsed_enum
+        .derives
         .iter()
         .map(quote::ToTokens::to_token_stream)
         .collect::<Vec<_>>();
 
     let mut variant_structs = Vec::with_capacity(enum_info.variants.len());
     // Generate one struct and implementation per variant
-    for variant in &enum_info.variants {
+    for variant in parsed_enum.variants {
         let variant_name = format_ident!("{}", variant.name);
+        let variant_derives = if derive_tokens.is_empty() {
+            quote! {}
+        } else {
+            quote! { #[derive(#(#derive_tokens),*)] }
+        };
 
         let tokens = match &variant.data_type {
             // Handle tuple variants (state has associated data)
             Some(field_type) => {
-                let field_ty = match syn::parse_str::<syn::Type>(field_type) {
-                    Ok(ty) => ty,
-                    Err(err) => return err.to_compile_error(),
-                };
+                let field_ty = field_type.clone();
                 quote! {
-                    #[derive(#(#derive_tokens),*)]
+                    #variant_derives
                     #vis struct #variant_name (pub #field_ty);
 
                     impl #state_trait_ident for #variant_name {
                         type Data = #field_ty;
                     }
-                    impl StateVariant for #variant_name {
+
+                    impl statum::StateMarker for #variant_name {
                         type Data = #field_ty;
                     }
-                    // Mark that this variant requires state data.
-                    impl RequiresStateData for #variant_name {}
 
+                    impl statum::DataState for #variant_name {}
                 }
             }
             // Handle unit variants (state has no associated data)
             None => {
                 quote! {
-                    #[derive(#(#derive_tokens),*)]
+                    #variant_derives
                     #vis struct #variant_name;
 
                     impl #state_trait_ident for #variant_name {
                         type Data = ();
                     }
-                    impl StateVariant for #variant_name {
+
+                    impl statum::StateMarker for #variant_name {
                         type Data = ();
                     }
 
-                    // Unit variants don’t require state data.
-                    impl DoesNotRequireStateData for #variant_name {}
+                    impl statum::UnitState for #variant_name {}
                 }
             }
         };
@@ -435,19 +466,16 @@ pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenSt
         impl #state_trait_ident for #uninitialized_state_name {
             type Data = ();
         }
-        impl StateVariant for #uninitialized_state_name {
+
+        impl statum::StateMarker for #uninitialized_state_name {
             type Data = ();
         }
+
+        impl statum::UnitState for #uninitialized_state_name {}
     };
 
     // Generate the trait definition and include all variant structs
     quote! {
-        pub trait DoesNotRequireStateData {}
-        pub trait RequiresStateData {}
-        pub trait StateVariant {
-            type Data;
-        }
-
         #state_trait
 
         #(#variant_structs)*
@@ -500,4 +528,50 @@ pub fn validate_state_enum(item: &ItemEnum) -> Option<TokenStream> {
 
 pub fn store_state_enum(enum_info: &EnumInfo) {
     STATE_ENUMS.insert(enum_info.module_path.clone(), enum_info.clone());
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::ToTokens;
+    use syn::parse_quote;
+
+    use super::{EnumInfo, StateModulePath};
+
+    #[test]
+    fn parse_round_trips_variant_payloads() {
+        let item: syn::ItemEnum = parse_quote! {
+            #[derive(Clone)]
+            pub enum TaskState {
+                Draft,
+                Review(String),
+            }
+        };
+
+        let info = EnumInfo::from_item_enum_with_module(&item, StateModulePath("crate::workflow".into()))
+            .expect("state metadata");
+        let parsed = info.parse().expect("parsed state metadata");
+
+        assert_eq!(parsed.vis.to_token_stream().to_string(), "pub");
+        assert_eq!(parsed.derives.len(), 1);
+        assert_eq!(parsed.variants.len(), 2);
+        assert!(parsed.variants[0].data_type.is_none());
+        assert_eq!(
+            parsed.variants[1]
+                .data_type
+                .as_ref()
+                .expect("review payload")
+                .to_token_stream()
+                .to_string(),
+            "String"
+        );
+        assert_eq!(
+            info.variants[1]
+                .parse_data_type()
+                .expect("variant payload parse")
+                .expect("payload")
+                .to_token_stream()
+                .to_string(),
+            "String"
+        );
+    }
 }

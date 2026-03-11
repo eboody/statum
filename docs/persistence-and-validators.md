@@ -14,10 +14,8 @@ You define:
 Statum generates:
 
 - `into_machine()` for rebuilding one machine.
-- `machine_builder()` as a compatibility alias with the same output shape.
-- `machines_builder()` for rebuilding a collection.
 - A machine-scoped enum like `task_machine::State`.
-- A hidden compatibility alias like `TaskMachineSuperState`.
+- A machine-scoped batch trait like `task_machine::IntoMachinesExt`.
 
 ## Single-Item Reconstruction
 
@@ -152,11 +150,23 @@ Example: [../statum-examples/src/examples/09-persistent-data.rs](../statum-examp
 
 ## Batch Reconstruction
 
-For collections, use `machines_builder()`:
+For collections in the same module as the `#[validators]` impl, `.into_machines()` works directly:
 
 ```rust
 let machines = rows
-    .machines_builder()
+    .into_machines()
+    .client("acme".to_owned())
+    .build()
+    .await;
+```
+
+From other modules, import the machine-scoped batch trait first:
+
+```rust
+use task_machine::IntoMachinesExt as _;
+
+let machines = rows
+    .into_machines()
     .client("acme".to_owned())
     .build()
     .await;

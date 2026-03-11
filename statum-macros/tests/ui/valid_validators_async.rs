@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 extern crate self as statum;
-pub use statum_core::Error;
+pub use statum_core::{CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState};
 pub use bon;
 use statum_macros::{machine, state, validators};
 use bon::builder as _;
@@ -57,5 +57,12 @@ impl JobRow {
 
 fn main() {
     let row = JobRow { status: "queued" };
-    let _ = row.machine_builder().worker("w1".to_string()).build();
+    let _ = row.into_machine().worker("w1".to_string()).build();
+    let _ = async {
+        vec![JobRow { status: "running" }]
+            .into_machines()
+            .worker("w1".to_string())
+            .build()
+            .await
+    };
 }

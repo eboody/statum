@@ -1,27 +1,33 @@
 use quote::{format_ident, quote};
 use syn::{Ident, ImplItem, ImplItemFn, Type};
 
-use crate::{MachineInfo, VariantInfo, to_snake_case};
+use crate::to_snake_case;
 
-pub(super) fn parsed_machine_fields(
-    machine_info: &MachineInfo,
-) -> Result<Vec<(Ident, Type)>, proc_macro2::TokenStream> {
-    machine_info.parsed_field_idents_and_types()
+pub(super) struct BatchBuilderContext<'a> {
+    pub(super) machine_ident: &'a Ident,
+    pub(super) machine_module_ident: &'a Ident,
+    pub(super) struct_ident: &'a Type,
+    pub(super) machine_state_ty: &'a proc_macro2::TokenStream,
+    pub(super) fields_with_types: &'a [proc_macro2::TokenStream],
+    pub(super) field_names: &'a [Ident],
+    pub(super) async_token: proc_macro2::TokenStream,
+    pub(super) machine_vis: syn::Visibility,
 }
 
 pub(super) fn generate_validator_check(
     machine_ident: &Ident,
-    superstate_ty: &proc_macro2::TokenStream,
+    machine_state_ty: &proc_macro2::TokenStream,
     field_names: &[Ident],
-    state_variant: &VariantInfo,
+    variant_name: &str,
+    has_state_data: bool,
     is_async: bool,
 ) -> proc_macro2::TokenStream {
-    let variant_ident = format_ident!("{}", state_variant.name);
-    let validator_fn_ident = format_ident!("is_{}", to_snake_case(&state_variant.name));
+    let variant_ident = format_ident!("{}", variant_name);
+    let validator_fn_ident = format_ident!("is_{}", to_snake_case(variant_name));
     let await_token = if is_async { quote! { .await } } else { quote! {} };
     let field_builder_chain = quote! { #(.#field_names(#field_names.clone()))* };
 
-    if state_variant.data_type.is_some() {
+    if has_state_data {
         let builder_call = quote! {
             #machine_ident::<#variant_ident>::builder()
                 #field_builder_chain
@@ -30,7 +36,7 @@ pub(super) fn generate_validator_check(
         };
         quote! {
             if let Ok(data) = self.#validator_fn_ident(#(&#field_names),*)#await_token {
-                return Ok(#superstate_ty::#variant_ident(
+                return Ok(#machine_state_ty::#variant_ident(
                     #builder_call
                 ));
             }
@@ -43,7 +49,7 @@ pub(super) fn generate_validator_check(
         };
         quote! {
             if self.#validator_fn_ident(#(&#field_names),*)#await_token.is_ok() {
-                return Ok(#superstate_ty::#variant_ident(
+                return Ok(#machine_state_ty::#variant_ident(
                     #builder_call
                 ));
             }
@@ -52,18 +58,18 @@ pub(super) fn generate_validator_check(
 }
 
 pub(super) fn batch_builder_implementation(
-    machine_ident: &Ident,
-    struct_ident: &Type,
-    superstate_ty: &proc_macro2::TokenStream,
-    fields_with_types: &[proc_macro2::TokenStream],
-    field_names: &[Ident],
-    async_token: proc_macro2::TokenStream,
-    machine_vis: syn::Visibility,
+    context: BatchBuilderContext<'_>,
 ) -> proc_macro2::TokenStream {
-    let trait_name_ident = format_ident!("{}BuilderExt", machine_ident);
-    let builder_ident = format_ident!("{}BatchBuilder", machine_ident);
+    let builder_ident = format_ident!("__Statum{}IntoMachines", context.machine_ident);
     let bon_builder_ident = format_ident!("{}Builder", builder_ident);
     let builder_module_name = format_ident!("{}", to_snake_case(&bon_builder_ident.to_string()));
+    let machine_module_ident = context.machine_module_ident;
+    let struct_ident = context.struct_ident;
+    let machine_state_ty = context.machine_state_ty;
+    let fields_with_types = context.fields_with_types;
+    let field_names = context.field_names;
+    let async_token = context.async_token;
+    let machine_vis = context.machine_vis;
 
     let field_builder_chain = quote! { #(.#field_names(self.#field_names.clone()))* };
 
@@ -75,22 +81,21 @@ pub(super) fn batch_builder_implementation(
     let implementation = generate_finalization_logic(&field_builder_chain, &async_token);
 
     quote! {
-        #machine_vis trait #trait_name_ident {
-             fn machines_builder(self) -> #bon_builder_ident<#builder_module_name::SetItems>;
-        }
-
-        impl<T> #trait_name_ident for T
+        impl<T> #machine_module_ident::IntoMachinesExt<#struct_ident> for T
         where
             T: Into<Vec<#struct_ident>>,
         {
-            fn machines_builder(self) -> #bon_builder_ident<#builder_module_name::SetItems> {
+            type Builder = #bon_builder_ident<#builder_module_name::SetItems>;
+
+            fn into_machines(self) -> Self::Builder {
                 #builder_ident::builder().items(self.into())
             }
         }
 
+        #[doc(hidden)]
         #[derive(statum::bon::Builder)]
         #[builder(crate = ::statum::bon, finish_fn = __private_build)]
-        struct #builder_ident {
+        #machine_vis struct #builder_ident {
             #[builder(default)]
             items: Vec<#struct_ident>,
             #(#fields_with_types),*
@@ -101,13 +106,13 @@ pub(super) fn batch_builder_implementation(
             S: #builder_module_name::IsComplete,
         {
             #[inline(always)]
-            pub #async_token fn build(self) -> Vec<core::result::Result<#superstate_ty, statum::Error>> {
+            #machine_vis #async_token fn build(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
                 self.__private_build().__private_finalize()#await_token
             }
         }
 
         impl #builder_ident {
-            #async_token fn __private_finalize(self) -> Vec<core::result::Result<#superstate_ty, statum::Error>> {
+            #async_token fn __private_finalize(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
                 #implementation
             }
         }

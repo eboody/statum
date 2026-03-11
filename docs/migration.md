@@ -87,12 +87,29 @@ You can also call the generated `new(..)` directly if you want a positional cons
 - Old examples under `statum/examples/*.rs` are removed.
 - New examples live under `statum-examples/src/examples/`.
 
+## 9) Rehydration naming is stricter
+- `machine_builder()` was removed. Use `into_machine()` instead.
+- `machines_builder()` was removed. Use `.into_machines()` instead.
+- In the same module as the `#[validators]` impl, no extra import is needed.
+- From other modules, import the machine-scoped batch trait first:
+
+```rust
+use machine::IntoMachinesExt as _;
+
+let machines = rows
+    .into_machines()
+    .tenant("acme".to_string())
+    .build();
+```
+
+- `TaskMachineSuperState`-style aliases were removed. Match on `task_machine::State`.
+- Generated helper traits like `TaskMachineTransitionTo` and `StateVariant` are no longer public API.
+
 ## Recommended Migration Order
 1. Update the state enum to comply with the variant restrictions.
 2. Update machine generics and derive placement.
 3. Add `#[transition]` to impl blocks.
 4. Update transitions to use `transition()` / `transition_with(..)` correctly.
-5. Update validators to the new attribute form and per-variant requirements.
+5. Update validators to the new attribute form, per-variant requirements, and `into_machine()` / `into_machines()` naming.
 6. Switch construction to the generated builders.
 7. Re-run `cargo test -p statum-macros` to confirm UI diagnostics.
-

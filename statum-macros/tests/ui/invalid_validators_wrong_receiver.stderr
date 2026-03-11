@@ -1,4 +1,4 @@
-error: Error: is_draft must take `&self` as the first argument
+error: Error: is_draft must take `&self`. Statum injects machine fields into validator methods by name automatically.
   --> tests/ui/invalid_validators_wrong_receiver.rs:22:1
    |
 22 | #[validators(TaskMachine)]

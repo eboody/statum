@@ -2,7 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
 use std::rc::Rc;
-use std::time::UNIX_EPOCH;
+
+use crate::cache::{file_fingerprint, fresh_cached_value, CachedValue};
 
 /// Cached enum entry extracted from a parsed source file.
 #[derive(Clone)]
@@ -27,17 +28,7 @@ pub struct FileAnalysis {
     pub structs: Vec<StructEntry>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FileFingerprint {
-    len: u64,
-    modified_ns: Option<u128>,
-}
-
-#[derive(Clone)]
-struct CachedFileAnalysis {
-    fingerprint: FileFingerprint,
-    analysis: Rc<FileAnalysis>,
-}
+type CachedFileAnalysis = CachedValue<Rc<FileAnalysis>>;
 
 thread_local! {
     static FILE_ANALYSIS_CACHE: RefCell<HashMap<String, CachedFileAnalysis>> = RefCell::new(HashMap::new());
@@ -47,36 +38,21 @@ thread_local! {
 pub fn get_file_analysis(file_path: &str) -> Option<Rc<FileAnalysis>> {
     let fingerprint = file_fingerprint(file_path)?;
 
-    if let Some(cached) = FILE_ANALYSIS_CACHE.with(|cache| cache.borrow().get(file_path).cloned()) {
-        if cached.fingerprint == fingerprint {
-            return Some(cached.analysis);
-        }
+    if let Some(cached) = fresh_cached_value(
+        FILE_ANALYSIS_CACHE.with(|cache| cache.borrow().get(file_path).cloned()),
+        fingerprint,
+    ) {
+        return Some(cached);
     }
 
     let analysis = Rc::new(build_file_analysis(file_path)?);
     FILE_ANALYSIS_CACHE.with(|cache| {
         cache.borrow_mut().insert(
             file_path.to_string(),
-            CachedFileAnalysis {
-                fingerprint,
-                analysis: analysis.clone(),
-            },
+            CachedFileAnalysis::new(fingerprint, analysis.clone()),
         );
     });
     Some(analysis)
-}
-
-fn file_fingerprint(file_path: &str) -> Option<FileFingerprint> {
-    let metadata = fs::metadata(file_path).ok()?;
-    let modified_ns = metadata
-        .modified()
-        .ok()
-        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos());
-    Some(FileFingerprint {
-        len: metadata.len(),
-        modified_ns,
-    })
 }
 
 fn build_file_analysis(file_path: &str) -> Option<FileAnalysis> {
