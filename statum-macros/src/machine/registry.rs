@@ -1,5 +1,5 @@
 use macro_registry::analysis::{FileAnalysis, StructEntry, get_file_analysis};
-use macro_registry::callsite::current_source_info;
+use macro_registry::callsite::{current_source_info, module_path_for_line};
 use macro_registry::registry::{
     RegistryDomain, StaticRegistry, ensure_loaded,
 };
@@ -62,6 +62,9 @@ pub fn ensure_machine_loaded_by_name(
         for entry in &analysis.structs {
             if entry.item.ident != machine_name || !entry.attrs.iter().any(|attr| attr == "machine")
             {
+                continue;
+            }
+            if module_path_for_line(&file_path, entry.line_number).as_deref() != Some(machine_path.as_ref()) {
                 continue;
             }
 

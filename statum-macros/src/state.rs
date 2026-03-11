@@ -1,11 +1,12 @@
 use macro_registry::analysis::{EnumEntry, FileAnalysis, get_file_analysis};
-use macro_registry::callsite::{current_module_path, current_source_info};
+use macro_registry::callsite::{current_module_path, current_source_info, module_path_for_line};
 use macro_registry::registry::{
     RegistryDomain, RegistryKey, RegistryValue, StaticRegistry, ensure_loaded,
 };
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
-use syn::{Attribute, Fields, Ident, ItemEnum, Path, Type, Visibility};
+use syn::spanned::Spanned;
+use syn::{Attribute, Fields, Ident, Item, ItemEnum, Path, Type, Visibility};
 
 // Structure to hold extracted enum data
 #[derive(Clone)]
@@ -128,7 +129,7 @@ impl ToTokens for StateModulePath {
             Ok(path) => path.to_tokens(tokens),
             Err(_) => {
                 let message = syn::LitStr::new(
-                    "Invalid state module path tokenization.",
+                    &format!("Invalid state module path tokenization for `{}`.", self.0),
                     proc_macro2::Span::call_site(),
                 );
                 tokens.extend(quote! { compile_error!(#message); });
@@ -247,6 +248,20 @@ pub fn get_state_enum(enum_path: &StateModulePath) -> Option<EnumInfo> {
     STATE_ENUMS.get_cloned(enum_path)
 }
 
+pub fn invalid_state_target_error(item: &Item) -> TokenStream {
+    let (kind, name, span) = item_kind_name_and_span(item);
+    let article = indefinite_article(kind);
+    let message = match name {
+        Some(name) => format!(
+            "Error: #[state] must be applied to an enum, but `{name}` is {article} {kind}.\nFix: declare `enum {name} {{ ... }}` with unit variants like `Draft` or single-payload variants like `InReview(ReviewData)`, or remove `#[state]`."
+        ),
+        None => format!(
+            "Error: #[state] must be applied to an enum, but this item is {article} {kind}.\nFix: apply `#[state]` to an enum with unit variants like `Draft` or single-payload variants like `InReview(ReviewData)`."
+        ),
+    };
+    syn::Error::new(span, message).to_compile_error()
+}
+
 pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo> {
     ensure_loaded::<StateRegistryDomain>(&STATE_ENUMS, enum_path)
 }
@@ -269,6 +284,9 @@ pub fn ensure_state_enum_loaded_by_name(
                 continue;
             }
             if !entry.attrs.iter().any(|attr| attr == "state") {
+                continue;
+            }
+            if module_path_for_line(&file_path, entry.line_number).as_deref() != Some(enum_path.as_ref()) {
                 continue;
             }
             if let Ok(info) = EnumInfo::from_item_enum_with_module(&entry.item, enum_path.clone()) {
@@ -317,6 +335,8 @@ impl EnumInfo {
         module_path: StateModulePath,
         file_path: Option<String>,
     ) -> syn::Result<Self> {
+        validate_state_enum_shape(item)?;
+
         let name = item.ident.to_string();
         let vis = item.vis.to_token_stream().to_string();
         // 1.0 policy: generics on `#[state]` enums are intentionally unsupported.
@@ -334,40 +354,15 @@ impl EnumInfo {
         for variant in &item.variants {
             let name = variant.ident.to_string();
             let data_type = match &variant.fields {
-                Fields::Unnamed(fields) if fields.unnamed.len() == 1 => match fields.unnamed.first() {
-                    Some(first) => Some(first.ty.to_token_stream().to_string()),
-                    None => {
-                        return Err(syn::Error::new_spanned(
-                            variant,
-                            format!(
-                                "Invalid variant `{}` in #[state] enum. \
-                                 Variants must be unit or single-field tuple variants.",
-                                name
-                            ),
-                        ));
-                    }
-                },
-                Fields::Unit => None, // ✅ Unit variant is allowed
-                _ => {
-                    return Err(syn::Error::new_spanned(
-                        variant,
-                        format!(
-                            "Invalid variant `{}` in #[state] enum. \
-                             Variants must be unit or single-field tuple variants.",
-                            name
-                        ),
-                    ));
-                }
+                Fields::Unnamed(fields) => fields
+                    .unnamed
+                    .first()
+                    .map(|first| first.ty.to_token_stream().to_string()),
+                Fields::Unit => None,
+                Fields::Named(_) => unreachable!("state shape already validated"),
             };
 
             variants.push(VariantInfo { name, data_type });
-        }
-
-        if variants.is_empty() {
-            return Err(syn::Error::new_spanned(
-                item,
-                "Error: #[state] enums must have at least one variant.",
-            ));
         }
 
         Ok(Self {
@@ -382,10 +377,65 @@ impl EnumInfo {
     }
 }
 
+fn validate_state_enum_shape(item: &ItemEnum) -> syn::Result<()> {
+    let enum_name = item.ident.to_string();
+
+    if !item.generics.params.is_empty() {
+        let generics_display = item.generics.to_token_stream().to_string();
+        return Err(syn::Error::new_spanned(
+            &item.generics,
+            format!(
+                "Error: #[state] enum `{enum_name}` cannot declare generics.\nFix: keep `{enum_name}` non-generic and move generic data into payload types.\nFound: `enum {enum_name}{generics_display} {{ ... }}`."
+            ),
+        ));
+    }
+
+    if item.variants.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &item.ident,
+            format!(
+                "Error: #[state] enum `{enum_name}` must declare at least one variant.\nFix: add unit variants like `Draft` or single-payload variants like `InReview(ReviewData)`."
+            ),
+        ));
+    }
+
+    for variant in &item.variants {
+        match &variant.fields {
+            Fields::Unit => {}
+            Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {}
+            Fields::Unnamed(fields) => {
+                let variant_name = variant.ident.to_string();
+                let field_count = fields.unnamed.len();
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    format!(
+                        "Error: #[state] enum `{enum_name}` variant `{variant_name}` carries {field_count} fields, but Statum supports at most one payload type per state.\nFix: wrap those fields in a separate payload type and use `{variant_name}({variant_name}Data)`."
+                    ),
+                ));
+            }
+            Fields::Named(_) => {
+                let variant_name = variant.ident.to_string();
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    format!(
+                        "Error: #[state] enum `{enum_name}` variant `{variant_name}` uses named fields, but Statum state variants must be unit variants like `{variant_name}` or single-payload tuple variants like `{variant_name}({variant_name}Data)`.\nFix: move the named fields into a payload type and reference that type as the only tuple field."
+                    ),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenStream {
     let Some(enum_info) = get_state_enum(enum_path) else {
+        let message = format!(
+            "Internal error: state metadata for module `{}` was not cached during code generation.\nEnsure `#[state]` is applied in that module and try re-running `cargo check`.",
+            enum_path.0
+        );
         return quote! {
-            compile_error!("Internal error: state metadata not found. Ensure #[state] is applied in this module.");
+            compile_error!(#message);
         };
     };
 
@@ -484,46 +534,35 @@ pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenSt
     }
 }
 pub fn validate_state_enum(item: &ItemEnum) -> Option<TokenStream> {
-    // Ensure it's applied to an enum
-    if !matches!(item, ItemEnum { .. }) {
-        return Some(quote! {
-            compile_error!("#[state] must be applied to an enum. Example:
-            
-            #[state]
-            enum ExampleState {
-                Draft,
-                InProgress(String),
-                Complete,
-            }");
-        });
-    }
+    validate_state_enum_shape(item).err().map(|err| err.to_compile_error())
+}
 
-    // Ensure the enum has at least one variant
-    if item.variants.is_empty() {
-        return Some(quote! {
-            compile_error!("#[state] enums must have at least one variant.");
-        });
+fn item_kind_name_and_span(item: &Item) -> (&'static str, Option<String>, proc_macro2::Span) {
+    match item {
+        Item::Const(item) => ("const item", Some(item.ident.to_string()), item.ident.span()),
+        Item::Enum(item) => ("enum", Some(item.ident.to_string()), item.ident.span()),
+        Item::ExternCrate(item) => ("extern crate item", Some(item.ident.to_string()), item.ident.span()),
+        Item::Fn(item) => ("function", Some(item.sig.ident.to_string()), item.sig.ident.span()),
+        Item::ForeignMod(item) => ("foreign module", None, item.span()),
+        Item::Impl(item) => ("impl block", None, item.impl_token.span()),
+        Item::Macro(item) => ("macro invocation", None, item.span()),
+        Item::Mod(item) => ("module", Some(item.ident.to_string()), item.ident.span()),
+        Item::Static(item) => ("static item", Some(item.ident.to_string()), item.ident.span()),
+        Item::Struct(item) => ("struct", Some(item.ident.to_string()), item.ident.span()),
+        Item::Trait(item) => ("trait", Some(item.ident.to_string()), item.ident.span()),
+        Item::TraitAlias(item) => ("trait alias", Some(item.ident.to_string()), item.ident.span()),
+        Item::Type(item) => ("type alias", Some(item.ident.to_string()), item.ident.span()),
+        Item::Union(item) => ("union", Some(item.ident.to_string()), item.ident.span()),
+        Item::Use(item) => ("use item", None, item.span()),
+        _ => ("item", None, item.span()),
     }
+}
 
-    // Ensure all variants are unit or single-field tuples
-    for variant in &item.variants {
-        if !matches!(&variant.fields, Fields::Unit | Fields::Unnamed(_)) {
-            let var_name = variant.ident.to_string();
-            return Some(quote! {
-                compile_error!(concat!(
-                    "Invalid variant '", #var_name, "' in #[state] enum. ",
-                    "Variants must be unit or single-field tuple variants. Example:\n\n",
-                    "enum ExampleState {\n",
-                    "    Draft,\n",
-                    "    InProgress(String),\n",
-                    "    Complete,\n",
-                    "}"
-                ));
-            });
-        }
+fn indefinite_article(kind: &str) -> &'static str {
+    match kind.chars().next() {
+        Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
+        _ => "a",
     }
-
-    None
 }
 
 pub fn store_state_enum(enum_info: &EnumInfo) {

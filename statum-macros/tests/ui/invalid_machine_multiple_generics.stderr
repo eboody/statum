@@ -1,12 +1,8 @@
-error: Error: #[machine] currently supports exactly one generic type parameter.
-
-       Fix: remove additional generics from `Workflow` and keep durable context in fields.
-
-       Expected:
-       pub struct Workflow<State> { ... }
-  --> tests/ui/invalid_machine_multiple_generics.rs:13:1
+error: Error: machine `Workflow` declares unsupported generics `< WorkflowState, Context >`.
+       Statum requires exactly one generic, and it must name the `#[state]` enum `WorkflowState`.
+       Found first generic `WorkflowState` and additional generics `Context`.
+       Fix: rewrite this as `struct Workflow<WorkflowState> { ... }` and move other generic data into fields or payload types.
+  --> tests/ui/invalid_machine_multiple_generics.rs:14:16
    |
-13 | #[machine]
-   | ^^^^^^^^^^
-   |
-   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
+14 | struct Workflow<WorkflowState, Context> {
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^

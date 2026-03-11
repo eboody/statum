@@ -76,6 +76,7 @@ impls. Those helper traits are implementation details, not public API.
 It also implements the public advanced traits:
 - `statum::CanTransitionTo<Next>`
 - `statum::CanTransitionWith<Data>`
+- `statum::CanTransitionMap<Next>`
 
 ### `#[transition]` Rules
 - Must be applied to an `impl Machine<CurrentState>` block.
@@ -86,6 +87,7 @@ It also implements the public advanced traits:
 ### Codegen Behavior
 - If `NextState` carries data, the generated implementation expects `transition_with(data)`.
 - If `NextState` is unit, the generated implementation expects `transition()`.
+- If the current state's payload should be transformed into the next state's payload, use `transition_map(|current| NextData { ... })`.
 
 ## Validators (`#[validators]`)
 ### Attribute Form
@@ -110,9 +112,21 @@ impl MyPersistentData {
 
 ### Generated Items
 - A machine-scoped enum `my_machine::State` with variants for each state, each wrapping `MyMachine<State>`.
+- A machine-scoped `my_machine::Fields` struct mirroring the user-defined machine fields.
 - An `into_machine()` builder on the persistent data type that returns `Result<my_machine::State, statum::Error>`.
 - A machine-scoped `my_machine::IntoMachinesExt` trait for cross-module batch reconstruction with `.into_machines()`.
+- The same batch trait also exposes `.into_machines_by(|item| my_machine::Fields { ... })` for per-item machine context.
 - A same-module import so `.into_machines()` works directly next to the `#[validators]` impl.
+
+## Projection Helpers
+
+`statum::projection` is the small helper layer for event-sourced or append-only persistence before validator rehydration.
+
+- `ProjectionReducer<Event>` defines a typed fold with `seed` and `apply`.
+- `reduce_one(events, &reducer)` folds one stream into one projection.
+- `reduce_grouped(events, key_fn, &reducer)` folds interleaved streams into grouped projections while preserving first-seen key order.
+
+This keeps `#[validators]` focused on "projection row -> typed machine" instead of trying to consume raw event streams directly.
 
 ## Quick Example (Inferred)
 ```rust

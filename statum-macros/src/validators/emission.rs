@@ -61,6 +61,7 @@ pub(super) fn batch_builder_implementation(
     context: BatchBuilderContext<'_>,
 ) -> proc_macro2::TokenStream {
     let builder_ident = format_ident!("__Statum{}IntoMachines", context.machine_ident);
+    let by_builder_ident = format_ident!("__Statum{}IntoMachinesBy", context.machine_ident);
     let bon_builder_ident = format_ident!("{}Builder", builder_ident);
     let builder_module_name = format_ident!("{}", to_snake_case(&bon_builder_ident.to_string()));
     let machine_module_ident = context.machine_module_ident;
@@ -70,8 +71,10 @@ pub(super) fn batch_builder_implementation(
     let field_names = context.field_names;
     let async_token = context.async_token;
     let machine_vis = context.machine_vis;
+    let fields_ty = quote! { #machine_module_ident::Fields };
 
     let field_builder_chain = quote! { #(.#field_names(self.#field_names.clone()))* };
+    let per_item_builder_chain = quote! { #(.#field_names(fields.#field_names))* };
 
     let await_token = async_token
         .is_empty()
@@ -79,6 +82,8 @@ pub(super) fn batch_builder_implementation(
         .unwrap_or(quote! { .await });
 
     let implementation = generate_finalization_logic(&field_builder_chain, &async_token);
+    let per_item_implementation =
+        generate_per_item_finalization_logic(&per_item_builder_chain, &async_token);
 
     quote! {
         impl<T> #machine_module_ident::IntoMachinesExt<#struct_ident> for T
@@ -86,9 +91,20 @@ pub(super) fn batch_builder_implementation(
             T: Into<Vec<#struct_ident>>,
         {
             type Builder = #bon_builder_ident<#builder_module_name::SetItems>;
+            type BuilderWithFields<F> = #by_builder_ident<F>;
 
             fn into_machines(self) -> Self::Builder {
                 #builder_ident::builder().items(self.into())
+            }
+
+            fn into_machines_by<F>(self, fields: F) -> Self::BuilderWithFields<F>
+            where
+                F: Fn(&#struct_ident) -> #fields_ty,
+            {
+                #by_builder_ident {
+                    items: self.into(),
+                    fields,
+                }
             }
         }
 
@@ -116,6 +132,26 @@ pub(super) fn batch_builder_implementation(
                 #implementation
             }
         }
+
+        #[doc(hidden)]
+        #machine_vis struct #by_builder_ident<F> {
+            items: Vec<#struct_ident>,
+            fields: F,
+        }
+
+        impl<F> #by_builder_ident<F>
+        where
+            F: Fn(&#struct_ident) -> #fields_ty,
+        {
+            #[inline(always)]
+            #machine_vis #async_token fn build(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
+                self.__private_finalize()#await_token
+            }
+
+            #async_token fn __private_finalize(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
+                #per_item_implementation
+            }
+        }
     }
 }
 
@@ -138,6 +174,38 @@ fn generate_finalization_logic(
         quote! {
             futures::future::join_all(
                 self.items.iter().map(|data| {
+                    data.into_machine()
+                        #field_builder_chain
+                        .build()
+                })
+            ).await
+        }
+    }
+}
+
+fn generate_per_item_finalization_logic(
+    field_builder_chain: &proc_macro2::TokenStream,
+    async_token: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    if async_token.is_empty() {
+        quote! {
+            let field_fn = self.fields;
+            self.items
+                .into_iter()
+                .map(|data| {
+                    let fields = field_fn(&data);
+                    data.into_machine()
+                        #field_builder_chain
+                        .build()
+                })
+                .collect()
+        }
+    } else {
+        quote! {
+            let field_fn = &self.fields;
+            futures::future::join_all(
+                self.items.iter().map(|data| {
+                    let fields = field_fn(data);
                     data.into_machine()
                         #field_builder_chain
                         .build()

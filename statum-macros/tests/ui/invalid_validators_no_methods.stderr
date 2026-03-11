@@ -1,4 +1,5 @@
-error: Error: No validator functions found in impl block. Add at least one `is_*` method.
+error: Error: `#[validators(TaskMachine)]` on `impl DbRow` must define at least one validator method.
+       Expected one method per `TaskState` variant: is_draft.
   --> tests/ui/invalid_validators_no_methods.rs:22:1
    |
 22 | #[validators(TaskMachine)]

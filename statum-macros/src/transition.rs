@@ -2,6 +2,7 @@ use macro_registry::analysis::get_file_analysis;
 use macro_registry::callsite::{current_source_info, module_path_for_line};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
+use std::collections::HashSet;
 use syn::spanned::Spanned;
 use syn::{
     AngleBracketedGenericArguments, Block, FnArg, GenericArgument, Ident, ImplItem, ImplItemFn,
@@ -11,13 +12,22 @@ use syn::{
 use crate::machine::transition_support_module_ident;
 use crate::{EnumInfo, MachineInfo};
 
+#[derive(Clone)]
+struct ItemCandidate {
+    name: String,
+    line_number: usize,
+    module_path: String,
+}
+
 /// Stores all metadata for a single transition method in an `impl` block
 #[allow(unused)]
 pub struct TransitionFn {
     pub name: Ident,
     pub has_receiver: bool,
     pub return_type: Option<Type>,
+    pub return_type_span: Option<Span>,
     pub machine_name: String,
+    pub source_state: String,
     pub generics: Vec<Ident>,
     pub internals: Block,
     pub is_async: bool,
@@ -48,15 +58,19 @@ pub struct TransitionImpl {
     pub target_type: Type,
     /// The machine type name extracted from `target_type` (e.g. `Machine`)
     pub machine_name: String,
+    pub machine_span: Span,
     /// The source state extracted from `target_type` (e.g. `Draft`)
     pub source_state: String,
+    pub source_state_span: Span,
     /// All transition methods extracted from the `impl`
     pub functions: Vec<TransitionFn>,
 }
 
 pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, TokenStream> {
     let target_type = *item_impl.self_ty.clone();
-    let Some((machine_name, source_state)) = extract_impl_machine_and_state(&target_type) else {
+    let Some((machine_name, machine_span, source_state, source_state_span)) =
+        extract_impl_machine_and_state(&target_type)
+    else {
         let message = LitStr::new(
             "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
             target_type.span(),
@@ -69,31 +83,45 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, Tok
     let mut functions = Vec::new();
     for item in &item_impl.items {
         if let ImplItem::Fn(method) = item {
-            functions.push(parse_transition_fn(method, &machine_name));
+            functions.push(parse_transition_fn(method, &machine_name, &source_state));
         }
     }
 
     Ok(TransitionImpl {
         target_type,
         machine_name,
+        machine_span,
         source_state,
+        source_state_span,
         functions,
     })
 }
 
-fn extract_impl_machine_and_state(target_type: &Type) -> Option<(String, String)> {
+fn extract_impl_machine_and_state(target_type: &Type) -> Option<(String, Span, String, Span)> {
     let Type::Path(type_path) = target_type else {
         return None;
     };
     let segment = type_path.path.segments.last()?;
     extract_machine_generic(&segment.arguments, segment.ident.clone())
+        .map(|(_, state_name, state_span)| {
+            (
+                segment.ident.to_string(),
+                segment.ident.span(),
+                state_name,
+                state_span,
+            )
+        })
 }
 
-pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> TransitionFn {
+pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str, source_state: &str) -> TransitionFn {
     let has_receiver = matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)));
 
     let return_type = match &method.sig.output {
         ReturnType::Type(_, ty) => Some(*ty.clone()),
+        ReturnType::Default => None,
+    };
+    let return_type_span = match &method.sig.output {
+        ReturnType::Type(_, ty) => Some(ty.span()),
         ReturnType::Default => None,
     };
 
@@ -117,7 +145,9 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str) -> Transitio
         name: method.sig.ident.clone(),
         has_receiver,
         return_type,
+        return_type_span,
         machine_name: machine_name.to_owned(),
+        source_state: source_state.to_owned(),
         generics,
         internals: method.block.clone(),
         is_async,
@@ -151,8 +181,8 @@ pub fn validate_transition_functions(
         .get_variant_from_name(&tr_impl.source_state)
         .is_none()
     {
-        return Some(invalid_transition_state_error(
-            &tr_impl.target_type,
+            return Some(invalid_transition_state_error(
+            tr_impl.source_state_span,
             &tr_impl.machine_name,
             &tr_impl.source_state,
             &state_enum_info,
@@ -162,14 +192,13 @@ pub fn validate_transition_functions(
 
     for func in &tr_impl.functions {
         if !func.has_receiver {
-            let func_name = &func.name;
-            return Some(quote_spanned! { func.span =>
-                compile_error!(concat!(
-                    "Error: transition method `",
-                    stringify!(#func_name),
-                    "` must take `self` or `mut self` as its receiver."
-                ));
-            });
+            let message = format!(
+                "Error: `#[transition]` method `{}<{}>::{}` must take `self` or `mut self` as its receiver.",
+                tr_impl.machine_name,
+                tr_impl.source_state,
+                func.name,
+            );
+            return Some(compile_error_at(func.span, &message));
         }
 
         let return_state = match func.return_state() {
@@ -203,23 +232,41 @@ pub fn generate_transition_impl(
         Ok(enum_info) => enum_info,
         Err(err) => return err,
     };
+    let Some(source_variant_info) = state_enum_info.get_variant_from_name(&tr_impl.source_state) else {
+        return invalid_transition_state_error(
+            tr_impl.source_state_span,
+            &tr_impl.machine_name,
+            &tr_impl.source_state,
+            &state_enum_info,
+            "source",
+        );
+    };
+    let source_data_ty = match source_variant_info.parse_data_type() {
+        Ok(Some(data_ty)) => quote! { #data_ty },
+        Ok(None) => quote! { () },
+        Err(err) => return err,
+    };
 
-    let transition_impls = tr_impl.functions.iter().map(|function| {
+    let mut emitted_states = HashSet::new();
+    let transition_impls = tr_impl.functions.iter().filter_map(|function| {
         let return_state = match function.return_state() {
             Ok(state) => state,
-            Err(err) => return err,
+            Err(err) => return Some(err),
         };
+        if !emitted_states.insert(return_state.clone()) {
+            return None;
+        }
         let return_state_ident = format_ident!("{}", return_state);
         let Some(variant_info) = state_enum_info.get_variant_from_name(&return_state) else {
-            return invalid_transition_method_state_error(
+            return Some(invalid_transition_method_state_error(
                 function,
                 &tr_impl.machine_name,
                 &return_state,
                 &state_enum_info,
-            );
+            ));
         };
 
-        match variant_info.parse_data_type() {
+        Some(match variant_info.parse_data_type() {
             Ok(Some(data_ty)) => {
                 quote! {
                     impl #transition_support_module_ident::TransitionWith<#data_ty> for #target_type {
@@ -239,6 +286,28 @@ pub fn generate_transition_impl(
 
                         fn transition_with_data(self, data: #data_ty) -> Self::Output {
                             <Self as #transition_support_module_ident::TransitionWith<#data_ty>>::transition_with(self, data)
+                        }
+                    }
+
+                    impl statum::CanTransitionMap<#return_state_ident> for #target_type {
+                        type CurrentData = #source_data_ty;
+                        type Output = #machine_target_ident<#return_state_ident>;
+
+                        fn transition_map<F>(self, f: F) -> Self::Output
+                        where
+                            F: FnOnce(Self::CurrentData) -> <#return_state_ident as statum::StateMarker>::Data,
+                        {
+                            let #machine_target_ident {
+                                marker: _,
+                                state_data,
+                                #(#field_names),*
+                            } = self;
+
+                            #machine_target_ident {
+                                marker: core::marker::PhantomData,
+                                state_data: f(state_data),
+                                #(#field_names),*
+                            }
                         }
                     }
                 }
@@ -265,7 +334,7 @@ pub fn generate_transition_impl(
                 }
             }
             Err(err) => err,
-        }
+        })
     });
 
     quote! {
@@ -279,22 +348,38 @@ pub fn missing_transition_machine_error(
     module_path: &str,
     span: Span,
 ) -> TokenStream {
-    let available = available_machine_names_in_module(module_path);
+    let available = available_machine_candidates_in_module(module_path);
+    let suggested_machine_name = available
+        .first()
+        .map(|candidate| candidate.name.as_str())
+        .unwrap_or(machine_name);
     let available_line = if available.is_empty() {
         "No `#[machine]` items were found in this module.".to_string()
     } else {
         format!(
             "Available `#[machine]` items in this module: {}.",
-            available.join(", ")
+            format_candidates(&available)
         )
     };
+    let elsewhere_line = same_named_machine_candidates_elsewhere(machine_name, module_path)
+        .map(|candidates| {
+            format!(
+                "Same-named `#[machine]` items elsewhere in this file: {}.",
+                format_candidates(&candidates)
+            )
+        })
+        .unwrap_or_else(|| "No same-named `#[machine]` items were found in other modules of this file.".to_string());
+    let missing_attr_line = plain_struct_line_in_module(module_path, machine_name).map(|line| {
+        format!("A struct named `{machine_name}` exists on line {line}, but it is not annotated with `#[machine]`.")
+    });
     let message = format!(
-        "Error: no `#[machine]` named `{machine_name}` was found in module `{module_path}`.\n{available_line}\nFix: apply `#[transition]` to an impl for the machine type generated by `#[machine]` in this module."
+        "Error: no `#[machine]` named `{machine_name}` was found in module `{module_path}`.\n{}\n{elsewhere_line}\n{available_line}\nHelp: apply `#[transition]` to an impl for the machine type generated by `#[machine]` in this module.\nCorrect shape: `#[transition] impl {suggested_machine_name}<CurrentState> {{ ... }}` where `{suggested_machine_name}` is declared with `#[machine]` in `{module_path}`.",
+        missing_attr_line.unwrap_or_else(|| "No plain struct with that name was found in this module either.".to_string())
     );
     compile_error_at(span, &message)
 }
 
-fn available_machine_names_in_module(module_path: &str) -> Vec<String> {
+fn available_machine_candidates_in_module(module_path: &str) -> Vec<ItemCandidate> {
     let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
@@ -306,18 +391,32 @@ fn available_machine_names_in_module(module_path: &str) -> Vec<String> {
         .structs
         .iter()
         .filter(|entry| entry.attrs.iter().any(|attr| attr == "machine"))
-        .filter(|entry| {
-            module_path_for_line(&file_path, entry.line_number).as_deref() == Some(module_path)
-        })
-        .map(|entry| entry.item.ident.to_string())
+        .filter_map(|entry| item_candidate_from_line(&file_path, entry.item.ident.to_string(), entry.line_number))
+        .filter(|candidate| candidate.module_path == module_path)
         .collect::<Vec<_>>();
-    names.sort();
-    names.dedup();
+    names.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then(left.module_path.cmp(&right.module_path))
+            .then(left.line_number.cmp(&right.line_number))
+    });
+    names.dedup_by(|left, right| left.name == right.name && left.line_number == right.line_number);
     names
 }
 
+fn plain_struct_line_in_module(module_path: &str, struct_name: &str) -> Option<usize> {
+    let (file_path, _) = current_source_info()?;
+    let analysis = get_file_analysis(&file_path)?;
+    analysis.structs.iter().find_map(|entry| {
+        (entry.item.ident == struct_name
+            && module_path_for_line(&file_path, entry.line_number).as_deref() == Some(module_path)
+            && !entry.attrs.iter().any(|attr| attr == "machine"))
+        .then_some(entry.line_number)
+    })
+}
+
 fn invalid_transition_state_error(
-    target_type: &Type,
+    state_span: Span,
     machine_name: &str,
     state_name: &str,
     state_enum_info: &EnumInfo,
@@ -332,9 +431,9 @@ fn invalid_transition_state_error(
     let target_type_display = format!("{machine_name}<{state_name}>");
     let state_enum_name = &state_enum_info.name;
     let message = format!(
-        "Error: {role} state `{state_name}` in `#[transition]` target `{target_type_display}` is not a variant of `#[state]` enum `{state_enum_name}`.\nValid states for `{machine_name}` are: {valid_states}."
+        "Error: {role} state `{state_name}` in `#[transition]` target `{target_type_display}` is not a variant of `#[state]` enum `{state_enum_name}`.\nValid states for `{machine_name}` are: {valid_states}.\nHelp: change the impl target to `impl {machine_name}<ValidState>` using one of those variants."
     );
-    compile_error_at(target_type.span(), &message)
+    compile_error_at(state_span, &message)
 }
 
 fn invalid_transition_method_state_error(
@@ -352,9 +451,9 @@ fn invalid_transition_method_state_error(
     let state_enum_name = &state_enum_info.name;
     let func_name = &func.name;
     let message = format!(
-        "Error: transition method `{func_name}` returns state `{return_state}`, but `{return_state}` is not a variant of `#[state]` enum `{state_enum_name}`.\nValid next states for `{machine_name}` are: {valid_states}."
+        "Error: transition method `{func_name}` returns state `{return_state}`, but `{return_state}` is not a variant of `#[state]` enum `{state_enum_name}`.\nValid next states for `{machine_name}` are: {valid_states}.\nHelp: return `{machine_name}<ValidState>` using one of those variants, or call `self.transition()` / `self.transition_with(...)`."
     );
-    compile_error_at(func.span, &message)
+    compile_error_at(func.return_type_span.unwrap_or(func.span), &message)
 }
 
 fn invalid_return_type_error(func: &TransitionFn, reason: &str) -> TokenStream {
@@ -367,11 +466,15 @@ fn invalid_return_type_error(func: &TransitionFn, reason: &str) -> TokenStream {
     let machine_name = &func.machine_name;
 
     let message = format!(
-        "Invalid transition return type for `{func_name}`: {reason}.\n\n\
+        "Invalid transition return type for `{}<{}>::{func_name}`: {reason}.\n\n\
 Expected:\n  fn {func_name}(self) -> {machine_name}<NextState>\n\n\
-Actual:\n  {return_type}"
+Actual:\n  {return_type}\n\n\
+Help:\n  return `{machine_name}<NextState>` directly, or wrap it in `Option<...>` / `Result<..., E>` and build the next state with `self.transition()` or `self.transition_with(...)`."
+        ,
+        machine_name,
+        func.source_state,
     );
-    compile_error_at(func.span, &message)
+    compile_error_at(func.return_type_span.unwrap_or(func.span), &message)
 }
 
 fn machine_return_signature(machine_name: &str) -> String {
@@ -400,7 +503,8 @@ pub fn parse_machine_and_state(ty: &Type, target_machine_ident: Ident) -> Option
     loop {
         match classify_return_wrapper(current, &target_machine_ident)? {
             ReturnWrapper::Machine(segment) => {
-                return extract_machine_generic(&segment.arguments, target_machine_ident);
+                return extract_machine_generic(&segment.arguments, target_machine_ident)
+                    .map(|(machine, state, _)| (machine, state));
             }
             ReturnWrapper::Option(inner) | ReturnWrapper::Result(inner) => {
                 current = inner;
@@ -442,7 +546,7 @@ fn classify_return_wrapper<'a>(
 fn extract_machine_generic(
     args: &PathArguments,
     target_machine_ident: Ident,
-) -> Option<(String, String)> {
+) -> Option<(String, String, Span)> {
     let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
         args: generic_args, ..
     }) = args
@@ -459,7 +563,48 @@ fn extract_machine_generic(
     Some((
         target_machine_ident.to_string(),
         state_seg.ident.to_string(),
+        state_seg.ident.span(),
     ))
+}
+
+fn same_named_machine_candidates_elsewhere(machine_name: &str, module_path: &str) -> Option<Vec<ItemCandidate>> {
+    let (file_path, _) = current_source_info()?;
+    let analysis = get_file_analysis(&file_path)?;
+    let mut candidates = analysis
+        .structs
+        .iter()
+        .filter(|entry| entry.item.ident == machine_name && entry.attrs.iter().any(|attr| attr == "machine"))
+        .filter_map(|entry| item_candidate_from_line(&file_path, entry.item.ident.to_string(), entry.line_number))
+        .filter(|candidate| candidate.module_path != module_path)
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.module_path
+            .cmp(&right.module_path)
+            .then(left.line_number.cmp(&right.line_number))
+    });
+    (!candidates.is_empty()).then_some(candidates)
+}
+
+fn item_candidate_from_line(file_path: &str, name: String, line_number: usize) -> Option<ItemCandidate> {
+    let module_path = module_path_for_line(file_path, line_number)?;
+    Some(ItemCandidate {
+        name,
+        line_number,
+        module_path,
+    })
+}
+
+fn format_candidates(candidates: &[ItemCandidate]) -> String {
+    candidates
+        .iter()
+        .map(|candidate| {
+            format!(
+                "`{}` in `{}` (line {})",
+                candidate.name, candidate.module_path, candidate.line_number
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn extract_first_generic_type_ref(args: &PathArguments) -> Option<&Type> {

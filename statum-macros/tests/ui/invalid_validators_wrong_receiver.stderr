@@ -1,7 +1,7 @@
-error: Error: is_draft must take `&self`. Statum injects machine fields into validator methods by name automatically.
-  --> tests/ui/invalid_validators_wrong_receiver.rs:22:1
+error: Error: validator `is_draft` for `impl DbRow` rebuilding `TaskMachine` state `TaskState::Draft` must take `&self`, not `self`.
+       Machine `TaskMachine` injects these fields by bare name inside validator bodies: `name`. Remove explicit parameters and use those bindings directly.
+       Correct shape: `fn is_draft(&self) -> Result<(), _>`.
+  --> tests/ui/invalid_validators_wrong_receiver.rs:24:17
    |
-22 | #[validators(TaskMachine)]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+24 |     fn is_draft(self) -> Result<(), statum_core::Error> {
+   |                 ^^^^

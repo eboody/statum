@@ -1,4 +1,4 @@
-error: Error: transition method `to_b` must take `self` or `mut self` as its receiver.
+error: Error: `#[transition]` method `Machine<A>::to_b` must take `self` or `mut self` as its receiver.
   --> tests/ui/invalid_transition_not_method.rs:19:5
    |
 19 |     fn to_b(_value: u64) -> Machine<B> {

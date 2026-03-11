@@ -13,14 +13,22 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
     let map_guard = match get_machine_map().read() {
         Ok(guard) => guard,
         Err(_) => {
+            let message = format!(
+                "Internal error: machine metadata lock poisoned while generating `{}` in module `{}`.",
+                machine_info.name, machine_info.module_path.0
+            );
             return quote! {
-                compile_error!("Internal error: machine metadata lock poisoned.");
+                compile_error!(#message);
             };
         }
     };
     let Some(machine_info) = map_guard.get(&machine_info.module_path) else {
+        let message = format!(
+            "Internal error: machine metadata for `{}` in module `{}` was not cached during code generation.\nTry re-running `cargo check` and make sure `#[machine]` is applied in that module.",
+            machine_info.name, machine_info.module_path.0
+        );
         return quote! {
-            compile_error!("Internal error: machine metadata not found. Try re-running `cargo check` or ensuring #[machine] is applied in this module.");
+            compile_error!(#message);
         };
     };
 
@@ -46,7 +54,13 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
         Err(err) => return err,
     };
     let struct_def =
-        match generate_struct_definition(&parsed_machine, &machine_ident, &generics, &state_generic_ident)
+        match generate_struct_definition(
+            &parsed_machine,
+            &machine_ident,
+            &generics,
+            &state_generic_ident,
+            &state_enum.get_trait_name(),
+        )
         {
             Ok(def) => def,
             Err(err) => return err,
@@ -219,6 +233,13 @@ fn generate_machine_state_surface(
     parsed_state: &ParsedEnumInfo,
     machine_ident: &Ident,
 ) -> Result<TokenStream, TokenStream> {
+    let fields_struct_fields = parsed_machine.fields.iter().map(|field| {
+        let field_ident = &field.ident;
+        let field_ty = &field.field_type;
+        quote! {
+            pub #field_ident: #field_ty
+        }
+    });
     let state_variants = parsed_state.variants.iter().map(|variant| {
         let variant_ident = format_ident!("{}", variant.name);
         quote! {
@@ -240,14 +261,23 @@ fn generate_machine_state_surface(
 
     Ok(quote! {
         #vis mod #module_ident {
+            pub struct Fields {
+                #(#fields_struct_fields),*
+            }
+
             pub enum State {
                 #(#state_variants),*
             }
 
             pub trait IntoMachinesExt<Item>: Sized {
                 type Builder;
+                type BuilderWithFields<F>;
 
                 fn into_machines(self) -> Self::Builder;
+
+                fn into_machines_by<F>(self, fields: F) -> Self::BuilderWithFields<F>
+                where
+                    F: Fn(&Item) -> Fields;
             }
 
             impl State {
@@ -269,6 +299,7 @@ fn generate_struct_definition(
     machine_ident: &Ident,
     generics: &Generics,
     state_generic_ident: &Ident,
+    state_trait_ident: &Ident,
 ) -> Result<TokenStream, TokenStream> {
     let mut field_tokens = Vec::with_capacity(parsed_machine.fields.len());
     for field in &parsed_machine.fields {
@@ -288,6 +319,7 @@ fn generate_struct_definition(
     };
 
     let vis = parsed_machine.vis.clone();
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     Ok(quote! {
         #derives
@@ -295,6 +327,17 @@ fn generate_struct_definition(
             marker: core::marker::PhantomData<#state_generic_ident>,
             pub state_data: #state_generic_ident::Data,
             #( #field_tokens ),*
+        }
+
+        impl #impl_generics #machine_ident #ty_generics #where_clause {
+            #vis fn transition_map<N, F>(self, f: F) -> #machine_ident<N>
+            where
+                N: #state_trait_ident + statum::StateMarker,
+                Self: statum::CanTransitionMap<N, Output = #machine_ident<N>>,
+                F: FnOnce(<Self as statum::CanTransitionMap<N>>::CurrentData) -> <N as statum::StateMarker>::Data,
+            {
+                <Self as statum::CanTransitionMap<N>>::transition_map(self, f)
+            }
         }
     })
 }

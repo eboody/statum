@@ -1,10 +1,8 @@
-error: Error: is_in_progress must return `Result<Progress, _>` (or an equivalent alias) but found `statum :: Result < () >` with payload `()`
-  --> tests/ui/invalid_validators_alias_wrong_payload.rs:29:1
+error: Error: validator `is_in_progress` for `impl DbRow` rebuilding `TaskMachine` state `TaskState::InProgress` must return `Result<Progress, _>` (or an equivalent alias), but found `statum :: Result < () >` with payload `()`.
+  --> tests/ui/invalid_validators_alias_wrong_payload.rs:40:33
    |
-29 | #[validators(TaskMachine)]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+40 |     fn is_in_progress(&self) -> statum::Result<()> {
+   |                                 ^^^^^^^^^^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_validators_alias_wrong_payload.rs:48:2

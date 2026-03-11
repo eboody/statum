@@ -1,12 +1,9 @@
-error: Error: #[machine] structs must declare exactly one generic type parameter naming the #[state] enum.
-
-       Fix: declare `Machine` like `pub struct Machine<State> { ... }`.
- --> tests/ui/invalid_machine_no_state_generic.rs:8:1
+error: Error: machine `Machine` is missing its `#[state]` generic.
+       Fix: declare `Machine<State>` where `State` is the `#[state]` enum in this module.
+ --> tests/ui/invalid_machine_no_state_generic.rs:9:8
   |
-8 | #[machine]
-  | ^^^^^^^^^^
-  |
-  = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
+9 | struct Machine {
+  |        ^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_machine_no_state_generic.rs:11:2

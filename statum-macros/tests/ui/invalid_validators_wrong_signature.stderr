@@ -1,10 +1,12 @@
-error: Error: is_draft must declare only `&self`. Statum injects machine fields into validator methods by name automatically, so do not write extra parameters.
-  --> tests/ui/invalid_validators_wrong_signature.rs:22:1
+error: Error: validator `is_draft` for `impl DbRow` rebuilding `TaskMachine` state `TaskState::Draft` must declare only `&self`.
+       Found parameters: `(& self, extra : u8)`.
+       Validator methods do not accept explicit machine-field parameters.
+       Machine `TaskMachine` injects these fields by bare name inside validator bodies: `name`. Remove explicit parameters and use those bindings directly.
+       Correct shape: `fn is_draft(&self) -> Result<(), _>`.
+  --> tests/ui/invalid_validators_wrong_signature.rs:24:24
    |
-22 | #[validators(TaskMachine)]
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
-   |
-   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+24 |     fn is_draft(&self, extra: u8) -> Result<(), statum_core::Error> {
+   |                        ^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_validators_wrong_signature.rs:33:2

@@ -1,20 +1,10 @@
-error[E0261]: use of undeclared lifetime name `'a`
- --> tests/ui/invalid_state_with_generics.rs:6:1
+error: Error: #[state] enum `GenericState` cannot declare generics.
+       Fix: keep `GenericState` non-generic and move generic data into payload types.
+       Found: `enum GenericState< 'a, T > { ... }`.
+ --> tests/ui/invalid_state_with_generics.rs:7:18
   |
-6 | #[state]
-  | ^^^^^^^^- lifetime `'a` is missing in item created through this procedural macro
-  | |
-  | undeclared lifetime
-  |
-  = note: this error originates in the attribute macro `state` (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0425]: cannot find type `T` in this scope
- --> tests/ui/invalid_state_with_generics.rs:6:1
-  |
-6 | #[state]
-  | ^^^^^^^^ not found in this scope
-  |
-  = note: this error originates in the attribute macro `state` (in Nightly builds, run with -Z macro-backtrace for more info)
+7 | enum GenericState<'a, T> {
+  |                  ^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_state_with_generics.rs:10:2

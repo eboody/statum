@@ -183,7 +183,7 @@ impl ToTokens for MachinePath {
             Ok(path) => path.to_tokens(tokens),
             Err(_) => {
                 let message = LitStr::new(
-                    "Invalid machine module path tokenization.",
+                    &format!("Invalid machine module path tokenization for `{}`.", self.0),
                     Span::call_site(),
                 );
                 tokens.extend(quote! { compile_error!(#message); });
@@ -250,21 +250,52 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
                 machine_info.name
             )
         });
-    let available = available_state_names_in_module(&machine_info.module_path.0);
+    let available = available_state_candidates_in_module(&machine_info.module_path.0);
     let available_line = if available.is_empty() {
         "No `#[state]` enums were found in that module.".to_string()
     } else {
-        format!("Available `#[state]` enums in that module: {}.", available.join(", "))
+        format!(
+            "Available `#[state]` enums in that module: {}.",
+            format_candidates(&available)
+        )
     };
+    let elsewhere_line = expected
+        .as_ref()
+        .and_then(|name| same_named_state_candidates_elsewhere(name, &machine_info.module_path.0))
+        .map(|candidates| {
+            format!(
+                "Same-named `#[state]` enums elsewhere in this file: {}.",
+                format_candidates(&candidates)
+            )
+        })
+        .unwrap_or_else(|| "No same-named `#[state]` enums were found in other modules of this file.".to_string());
+    let missing_attr_line = expected.as_ref().and_then(|name| {
+        plain_enum_line_in_module(&machine_info.module_path.0, name).map(|line| {
+            format!("An enum named `{name}` exists on line {line}, but it is not annotated with `#[state]`.")
+        })
+    });
     let message = format!(
-        "Failed to resolve the #[state] enum for machine `{}`.\n{}\n{}\nThis can happen if proc-macro analysis runs before the enum is cached. Try reopening the file or running `cargo check`.",
-        machine_info.name, expected_line, available_line
+        "Failed to resolve the #[state] enum for machine `{}`.\n{}\n{}\n{}\n{}\nHelp: make sure the machine's first generic names the right `#[state]` enum in this module.\nCorrect shape: `struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`.",
+        machine_info.name,
+        expected_line,
+        missing_attr_line.unwrap_or_else(|| "No plain enum with that expected name was found in that module either.".to_string()),
+        elsewhere_line,
+        available_line,
+        machine_info.name,
+        machine_info.module_path.0,
     );
     let message = LitStr::new(&message, Span::call_site());
     quote! { compile_error!(#message); }
 }
 
-fn available_state_names_in_module(module_path: &str) -> Vec<String> {
+#[derive(Clone)]
+struct ItemCandidate {
+    name: String,
+    line_number: usize,
+    module_path: String,
+}
+
+fn available_state_candidates_in_module(module_path: &str) -> Vec<ItemCandidate> {
     let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
@@ -276,12 +307,68 @@ fn available_state_names_in_module(module_path: &str) -> Vec<String> {
         .enums
         .iter()
         .filter(|entry| entry.attrs.iter().any(|attr| attr == "state"))
-        .filter(|entry| module_path_for_line(&file_path, entry.line_number).as_deref() == Some(module_path))
-        .map(|entry| entry.item.ident.to_string())
+        .filter_map(|entry| item_candidate_from_line(&file_path, entry.item.ident.to_string(), entry.line_number))
+        .filter(|candidate| candidate.module_path == module_path)
         .collect::<Vec<_>>();
-    names.sort();
-    names.dedup();
+    names.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then(left.module_path.cmp(&right.module_path))
+            .then(left.line_number.cmp(&right.line_number))
+    });
+    names.dedup_by(|left, right| left.name == right.name && left.line_number == right.line_number);
     names
+}
+
+fn plain_enum_line_in_module(module_path: &str, enum_name: &str) -> Option<usize> {
+    let (file_path, _) = current_source_info()?;
+    let analysis = get_file_analysis(&file_path)?;
+    analysis.enums.iter().find_map(|entry| {
+        (entry.item.ident == enum_name
+            && module_path_for_line(&file_path, entry.line_number).as_deref() == Some(module_path)
+            && !entry.attrs.iter().any(|attr| attr == "state"))
+        .then_some(entry.line_number)
+    })
+}
+
+fn same_named_state_candidates_elsewhere(enum_name: &str, module_path: &str) -> Option<Vec<ItemCandidate>> {
+    let (file_path, _) = current_source_info()?;
+    let analysis = get_file_analysis(&file_path)?;
+    let mut candidates = analysis
+        .enums
+        .iter()
+        .filter(|entry| entry.item.ident == enum_name && entry.attrs.iter().any(|attr| attr == "state"))
+        .filter_map(|entry| item_candidate_from_line(&file_path, entry.item.ident.to_string(), entry.line_number))
+        .filter(|candidate| candidate.module_path != module_path)
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.module_path
+            .cmp(&right.module_path)
+            .then(left.line_number.cmp(&right.line_number))
+    });
+    (!candidates.is_empty()).then_some(candidates)
+}
+
+fn item_candidate_from_line(file_path: &str, name: String, line_number: usize) -> Option<ItemCandidate> {
+    let module_path = module_path_for_line(file_path, line_number)?;
+    Some(ItemCandidate {
+        name,
+        line_number,
+        module_path,
+    })
+}
+
+fn format_candidates(candidates: &[ItemCandidate]) -> String {
+    candidates
+        .iter()
+        .map(|candidate| {
+            format!(
+                "`{}` in `{}` (line {})",
+                candidate.name, candidate.module_path, candidate.line_number
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 extern crate self as statum;
 pub use bon;
-pub use statum_core::{CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState};
+pub use statum_core::{CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState};
 pub type Result<T> = core::result::Result<T, Error>;
 
 use bon::builder as _;

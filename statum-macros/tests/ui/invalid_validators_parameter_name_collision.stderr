@@ -1,0 +1,9 @@
+error: Error: validator `is_draft` for `impl Row` rebuilding `TaskMachine` state `TaskState::Draft` must declare only `&self`.
+       Found parameters: `(& self, name : & str)`.
+       Parameter name collision: `name` collides with injected machine field binding.
+       Machine `TaskMachine` injects these fields by bare name inside validator bodies: `name`. Remove explicit parameters and use those bindings directly.
+       Correct shape: `fn is_draft(&self) -> Result<(), _>`.
+  --> tests/ui/invalid_validators_parameter_name_collision.rs:26:24
+   |
+26 |     fn is_draft(&self, name: &str) -> Result<(), statum_core::Error> {
+   |                        ^^^^^^^^^^

@@ -58,7 +58,7 @@ impl Document<Draft> {
 }
 ```
 
-Examples: [../statum-examples/src/examples/07-state-data.rs](../statum-examples/src/examples/07-state-data.rs), [../statum-examples/src/examples/08-transition-with-data.rs](../statum-examples/src/examples/08-transition-with-data.rs)
+Examples: [../statum-examples/src/toy_demos/07-state-data.rs](../statum-examples/src/toy_demos/07-state-data.rs), [../statum-examples/src/toy_demos/08-transition-with-data.rs](../statum-examples/src/toy_demos/08-transition-with-data.rs)
 
 ## Async Side Effects
 
@@ -80,7 +80,7 @@ impl Job<Queued> {
 }
 ```
 
-Example: [../statum-examples/src/examples/06-async-transitions.rs](../statum-examples/src/examples/06-async-transitions.rs)
+Example: [../statum-examples/src/toy_demos/06-async-transitions.rs](../statum-examples/src/toy_demos/06-async-transitions.rs)
 
 ## Nested Machines
 
@@ -95,7 +95,7 @@ enum ParentState {
 }
 ```
 
-Example: [../statum-examples/src/examples/11-hierarchical-machines.rs](../statum-examples/src/examples/11-hierarchical-machines.rs)
+Example: [../statum-examples/src/toy_demos/11-hierarchical-machines.rs](../statum-examples/src/toy_demos/11-hierarchical-machines.rs)
 
 ## Rollbacks and Snapshots
 
@@ -111,7 +111,7 @@ impl Machine<Draft> {
 }
 ```
 
-Examples: [../statum-examples/src/examples/12-rollbacks.rs](../statum-examples/src/examples/12-rollbacks.rs), [../statum-examples/tests/patterns.rs](../statum-examples/tests/patterns.rs)
+Examples: [../statum-examples/src/toy_demos/12-rollbacks.rs](../statum-examples/src/toy_demos/12-rollbacks.rs), [../statum-examples/tests/patterns.rs](../statum-examples/tests/patterns.rs)
 
 ## When To Stop
 

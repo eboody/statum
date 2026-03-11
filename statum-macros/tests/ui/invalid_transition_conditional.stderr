@@ -1,14 +1,17 @@
-error: Invalid transition return type for `decide`: expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`).
+error: Invalid transition return type for `ProcessMachine<Init>::decide`: expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`).
 
        Expected:
          fn decide(self) -> ProcessMachine<NextState>
 
        Actual:
          Decision
-  --> tests/ui/invalid_transition_conditional.rs:28:5
+
+       Help:
+         return `ProcessMachine<NextState>` directly, or wrap it in `Option<...>` / `Result<..., E>` and build the next state with `self.transition()` or `self.transition_with(...)`.
+  --> tests/ui/invalid_transition_conditional.rs:28:35
    |
 28 |     fn decide(self, event: u8) -> Decision {
-   |     ^^
+   |                                   ^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_transition_conditional.rs:35:2

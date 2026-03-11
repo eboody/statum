@@ -85,7 +85,8 @@ You can also call the generated `new(..)` directly if you want a positional cons
 
 ## 8) Examples moved to `statum-examples`
 - Old examples under `statum/examples/*.rs` are removed.
-- New examples live under `statum-examples/src/examples/`.
+- Toy demos now live under `statum-examples/src/toy_demos/`.
+- Showcase apps now live under `statum-examples/src/showcases/`.
 
 ## 9) Rehydration naming is stricter
 - `machine_builder()` was removed. Use `into_machine()` instead.
@@ -104,6 +105,11 @@ let machines = rows
 
 - `TaskMachineSuperState`-style aliases were removed. Match on `task_machine::State`.
 - Generated helper traits like `TaskMachineTransitionTo` and `StateVariant` are no longer public API.
+
+## 10) New additive helpers are available
+- Use `.into_machines_by(|row| machine::Fields { ... })` when batch reconstruction needs different machine fields per item.
+- Use `statum::projection::{ProjectionReducer, reduce_one, reduce_grouped}` to fold event streams into validator rows before calling `into_machine()` or `.into_machines()`.
+- Use `transition_map(|current| NextData { ... })` when the next state's payload should be built by consuming the current state's payload.
 
 ## Recommended Migration Order
 1. Update the state enum to comply with the variant restrictions.

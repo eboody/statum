@@ -14,12 +14,15 @@ use crate::{
 };
 use macro_registry::callsite::current_module_path;
 use proc_macro::TokenStream;
-use syn::spanned::Spanned;
-use syn::{ItemEnum, ItemImpl, ItemStruct, parse_macro_input};
+use syn::{Item, ItemImpl, parse_macro_input};
 
 #[proc_macro_attribute]
 pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemEnum);
+    let input = parse_macro_input!(item as Item);
+    let input = match input {
+        Item::Enum(item_enum) => item_enum,
+        other => return invalid_state_target_error(&other).into(),
+    };
 
     // Validate the enum before proceeding
     if let Some(error) = validate_state_enum(&input) {
@@ -42,7 +45,11 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemStruct);
+    let input = parse_macro_input!(item as Item);
+    let input = match input {
+        Item::Struct(item_struct) => item_struct,
+        other => return invalid_machine_target_error(&other).into(),
+    };
 
     let machine_info = MachineInfo::from_item_struct(&input);
 
@@ -85,7 +92,7 @@ pub fn transition(
             return missing_transition_machine_error(
                 &tr_impl.machine_name,
                 &module_path,
-                input.self_ty.span(),
+                tr_impl.machine_span,
             )
             .into();
         }

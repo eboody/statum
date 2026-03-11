@@ -1,0 +1,25 @@
+#![allow(unused_imports)]
+extern crate self as statum;
+pub use bon;
+pub use statum_core::{
+    CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState,
+};
+use bon::builder as _;
+use statum_macros::{state, transition};
+
+#[state]
+enum State {
+    A,
+    B,
+}
+
+struct Machine<State>(core::marker::PhantomData<State>);
+
+#[transition]
+impl Machine<A> {
+    fn to_b(self) -> Machine<B> {
+        Machine(core::marker::PhantomData)
+    }
+}
+
+fn main() {}

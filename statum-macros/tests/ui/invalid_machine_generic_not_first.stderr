@@ -1,15 +1,11 @@
-error: Error: #[machine] currently supports exactly one generic type parameter.
-
-       Fix: remove additional generics from `BadMachine` and keep durable context in fields.
-
-       Expected:
-       pub struct BadMachine<State> { ... }
-  --> tests/ui/invalid_machine_generic_not_first.rs:13:1
+error: Error: machine `BadMachine` declares unsupported generics `< T, FooState >`.
+       Statum requires exactly one generic, and it must name the `#[state]` enum `FooState`.
+       Found first generic `T` and additional generics `FooState`.
+       Fix: rewrite this as `struct BadMachine<FooState> { ... }` and move other generic data into fields or payload types.
+  --> tests/ui/invalid_machine_generic_not_first.rs:14:18
    |
-13 | #[machine]
-   | ^^^^^^^^^^
-   |
-   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
+14 | struct BadMachine<T, FooState> {
+   |                  ^^^^^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_machine_generic_not_first.rs:16:2

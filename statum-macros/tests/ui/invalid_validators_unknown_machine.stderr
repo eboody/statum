@@ -1,6 +1,9 @@
 error: Error: no `#[machine]` named `DoesNotExist` was found in module `invalid_validators_unknown_machine`.
-       Available `#[machine]` items in this module: TaskMachine.
-       Fix: point `#[validators(...)]` at the right machine type in this module.
+       No plain struct with that name was found in this module either.
+       No same-named `#[machine]` items were found in other modules of this file.
+       Available `#[machine]` items in this module: `TaskMachine` in `invalid_validators_unknown_machine` (line 22).
+       Help: point `#[validators(...)]` at the Statum machine type in this module.
+       Correct shape: `#[validators(TaskMachine)] impl PersistedRow { ... }` where `TaskMachine` is declared with `#[machine]` in `invalid_validators_unknown_machine`.
   --> tests/ui/invalid_validators_unknown_machine.rs:22:1
    |
 22 | #[validators(DoesNotExist)]

@@ -1,0 +1,14 @@
+error[E0277]: the trait bound `WorkflowMachine<Review>: CanTransitionMap<_>` is not satisfied
+  --> tests/ui/invalid_transition_map_undeclared_edge.rs:53:20
+   |
+53 |     let _ = review.transition_map(|data| data);
+   |                    ^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `CanTransitionMap<_>` is not implemented for `WorkflowMachine<Review>`
+      but trait `CanTransitionMap<Review>` is implemented for `WorkflowMachine<Draft>`
+  --> tests/ui/invalid_transition_map_undeclared_edge.rs:28:1
+   |
+28 | #[transition]
+   | ^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `Draft`, found `Review`
+   = note: this error originates in the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)

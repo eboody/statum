@@ -1,5 +1,7 @@
 //! Core error and result types shared by Statum crates.
 
+pub mod projection;
+
 /// A generated state marker type.
 pub trait StateMarker {
     /// The payload type stored in machines for this state.
@@ -30,6 +32,19 @@ pub trait CanTransitionWith<Data> {
 
     /// Perform the transition with payload data.
     fn transition_with_data(self, data: Data) -> Self::Output;
+}
+
+/// A machine that can transition by mapping its current state data into `Next`.
+pub trait CanTransitionMap<Next: StateMarker> {
+    /// The payload type stored in the current state.
+    type CurrentData;
+    /// The transition result type.
+    type Output;
+
+    /// Perform the transition by consuming the current state data and producing the next payload.
+    fn transition_map<F>(self, f: F) -> Self::Output
+    where
+        F: FnOnce(Self::CurrentData) -> Next::Data;
 }
 
 /// Errors returned by Statum runtime helpers.

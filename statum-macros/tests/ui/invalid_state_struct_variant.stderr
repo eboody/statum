@@ -1,16 +1,9 @@
-error: Invalid variant 'Draft' in #[state] enum. Variants must be unit or single-field tuple variants. Example:
-
-       enum ExampleState {
-           Draft,
-           InProgress(String),
-           Complete,
-       }
- --> tests/ui/invalid_state_struct_variant.rs:6:1
+error: Error: #[state] enum `BadState` variant `Draft` uses named fields, but Statum state variants must be unit variants like `Draft` or single-payload tuple variants like `Draft(DraftData)`.
+       Fix: move the named fields into a payload type and reference that type as the only tuple field.
+ --> tests/ui/invalid_state_struct_variant.rs:8:5
   |
-6 | #[state]
-  | ^^^^^^^^
-  |
-  = note: this error originates in the attribute macro `state` (in Nightly builds, run with -Z macro-backtrace for more info)
+8 |     Draft { version: u32 },
+  |     ^^^^^^^^^^^^^^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
  --> tests/ui/invalid_state_struct_variant.rs:9:2

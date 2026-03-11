@@ -57,7 +57,7 @@ fn main() {
 }
 ```
 
-Example: [statum-examples/src/examples/example_01_setup.rs](statum-examples/src/examples/example_01_setup.rs)
+Example: [statum-examples/src/toy_demos/example_01_setup.rs](statum-examples/src/toy_demos/example_01_setup.rs)
 
 If you add derives, place them below `#[state]` and `#[machine]`:
 
@@ -86,6 +86,7 @@ Roughly, Statum generates:
 - A machine type parameterized by the current state, with hidden `marker` and `state_data` fields.
 - Builders for new machines, such as `LightSwitch::<Off>::builder()`.
 - A machine-scoped enum like `task_machine::State` for matching reconstructed machines.
+- A machine-scoped `task_machine::Fields` struct for batch rebuilds where each row needs different machine context.
 - A machine-scoped batch rehydration trait like `task_machine::IntoMachinesExt`.
 
 This is the whole model. The rest of the crate is about making those four pieces ergonomic.
@@ -183,13 +184,15 @@ fn main() -> statum::Result<()> {
 Key details:
 
 - Validator methods run against your persisted type and return either `Ok(...)` for the matching state or `Err(statum::Error::InvalidState)`.
-- Machine fields are available by name inside validator methods through generated bindings, so `client` and `name` are usable without boilerplate parameter plumbing.
+- Machine fields are available by name inside validator methods through generated bindings, so `client` and `name` are usable without boilerplate parameter plumbing. Persisted-row fields still live on `self`.
 - Unit states return `statum::Result<()>`; data-bearing states return `statum::Result<StateData>`.
 - `.build()` returns the generated wrapper enum, which you can match as `task_machine::State`.
 - If any validator is `async`, the generated builder becomes `async`.
+- Use `.into_machines_by(|row| task_machine::Fields { ... })` when batch reconstruction needs different machine fields per row.
+- For append-only event logs, project events into validator rows first. `statum::projection::reduce_one` and `reduce_grouped` are the small helper layer for that.
 - If no validator matches, `.build()` returns `statum::Error::InvalidState`.
 
-Examples: [statum-examples/src/examples/09-persistent-data.rs](statum-examples/src/examples/09-persistent-data.rs), [statum-examples/src/examples/10-persistent-data-vecs.rs](statum-examples/src/examples/10-persistent-data-vecs.rs)
+Examples: [statum-examples/src/toy_demos/09-persistent-data.rs](statum-examples/src/toy_demos/09-persistent-data.rs), [statum-examples/src/toy_demos/10-persistent-data-vecs.rs](statum-examples/src/toy_demos/10-persistent-data-vecs.rs), [statum-examples/src/toy_demos/14-batch-machine-fields.rs](statum-examples/src/toy_demos/14-batch-machine-fields.rs), [statum-examples/src/showcases/sqlite_event_log_rebuild.rs](statum-examples/src/showcases/sqlite_event_log_rebuild.rs)
 
 More detail: [docs/persistence-and-validators.md](docs/persistence-and-validators.md)
 
@@ -220,7 +223,8 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
 - Define one `is_{state}` method per state variant.
 - Return `statum::Result<()>` for unit states or `statum::Result<StateData>` for data-bearing states.
 - Prefer `into_machine()` for single-item reconstruction.
-- For collections in the same module, call `.into_machines()` directly.
+- For collections that share machine fields, call `.into_machines()`.
+- For collections where machine fields vary per item, call `.into_machines_by(|row| machine::Fields { ... })`.
 - From other modules, import `machine::IntoMachinesExt as _` first.
 
 ## When To Use Statum
@@ -254,9 +258,33 @@ Keep non-transition helpers in normal `impl` blocks. `#[transition]` is for prot
 
 `#[state]` accepts unit variants and single-field tuple variants only.
 
+## Showcases
+
+For real service-shaped examples, run one of these:
+
+```bash
+cargo run -p statum-examples --bin axum-sqlite-review
+cargo run -p statum-examples --bin clap-sqlite-deploy-pipeline
+cargo run -p statum-examples --bin sqlite-event-log-rebuild
+cargo run -p statum-examples --bin tokio-sqlite-job-runner
+cargo run -p statum-examples --bin tokio-websocket-session
+```
+
+- `axum-sqlite-review` demonstrates `#[validators]` rebuilding typed machines from database rows before each HTTP transition.
+- `clap-sqlite-deploy-pipeline` demonstrates repeated CLI invocations, SQLite-backed typed rehydration, and explicit apply/failure/rollback phases.
+- `sqlite-event-log-rebuild` demonstrates append-only event storage, projection-based typed rehydration, and batch `.into_machines()` reconstruction.
+- `tokio-sqlite-job-runner` demonstrates retries, leases, async side effects, and typed rehydration in a background worker loop.
+- `tokio-websocket-session` demonstrates protocol-safe frame handling, phase-gated behavior, and a session lifecycle that is not persistence-driven.
+
 ## Learn More
 
-- Examples: [statum-examples/src/examples/](statum-examples/src/examples/)
+- Toy demos: [statum-examples/src/toy_demos/](statum-examples/src/toy_demos/)
+- Showcase apps: [statum-examples/src/showcases/](statum-examples/src/showcases/)
+- Review showcase binary: [statum-examples/src/bin/axum-sqlite-review.rs](statum-examples/src/bin/axum-sqlite-review.rs)
+- Deploy pipeline binary: [statum-examples/src/bin/clap-sqlite-deploy-pipeline.rs](statum-examples/src/bin/clap-sqlite-deploy-pipeline.rs)
+- Event log binary: [statum-examples/src/bin/sqlite-event-log-rebuild.rs](statum-examples/src/bin/sqlite-event-log-rebuild.rs)
+- Job runner binary: [statum-examples/src/bin/tokio-sqlite-job-runner.rs](statum-examples/src/bin/tokio-sqlite-job-runner.rs)
+- Session binary: [statum-examples/src/bin/tokio-websocket-session.rs](statum-examples/src/bin/tokio-websocket-session.rs)
 - Typed rehydration and validators: [docs/persistence-and-validators.md](docs/persistence-and-validators.md)
 - Patterns and advanced usage: [docs/patterns.md](docs/patterns.md)
 - Typestate builder design playbook: [docs/typestate-builder-design-playbook.md](docs/typestate-builder-design-playbook.md)

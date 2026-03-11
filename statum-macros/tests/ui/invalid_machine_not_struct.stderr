@@ -1,8 +1,9 @@
-error: expected `struct`
- --> tests/ui/invalid_machine_not_struct.rs:9:1
+error: Error: #[machine] must be applied to a struct, but `NotAStruct` is an enum.
+       Fix: declare `struct NotAStruct<State> { ... }` and apply `#[machine]` to that struct.
+ --> tests/ui/invalid_machine_not_struct.rs:9:6
   |
 9 | enum NotAStruct {
-  | ^^^^
+  |      ^^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_machine_not_struct.rs:11:2

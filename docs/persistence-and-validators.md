@@ -15,6 +15,7 @@ Statum generates:
 
 - `into_machine()` for rebuilding one machine.
 - A machine-scoped enum like `task_machine::State`.
+- A machine-scoped `task_machine::Fields` struct for heterogeneous batch reconstruction.
 - A machine-scoped batch trait like `task_machine::IntoMachinesExt`.
 
 ## Single-Item Reconstruction
@@ -118,7 +119,7 @@ struct TaskMachine<TaskState> {
 
 then `client` and `name` are available inside `is_draft`, `is_in_review`, and `is_published`.
 
-That is how typed rehydration can fetch extra data or use shared context without manual parameter threading.
+That is how typed rehydration can fetch extra data or use shared context without manual parameter threading. Persisted-row fields are not rebound: keep reading them from `self.status`, `self.id`, and so on.
 
 ## Return Types
 
@@ -146,11 +147,11 @@ let machine = row
 
 This is useful when typed rehydration requires a network call or a database fetch.
 
-Example: [../statum-examples/src/examples/09-persistent-data.rs](../statum-examples/src/examples/09-persistent-data.rs)
+Example: [../statum-examples/src/toy_demos/09-persistent-data.rs](../statum-examples/src/toy_demos/09-persistent-data.rs)
 
 ## Batch Reconstruction
 
-For collections in the same module as the `#[validators]` impl, `.into_machines()` works directly:
+For collections in the same module as the `#[validators]` impl, `.into_machines()` works directly when every item shares the same machine fields:
 
 ```rust
 let machines = rows
@@ -172,9 +173,42 @@ let machines = rows
     .await;
 ```
 
+If each row carries its own machine context, use `.into_machines_by(...)` and return the generated `machine::Fields` struct:
+
+```rust
+use task_machine::IntoMachinesExt as _;
+
+let machines = rows
+    .into_machines_by(|row| task_machine::Fields {
+        client: row.client.clone(),
+        name: row.name.clone(),
+    })
+    .build()
+    .await;
+```
+
 This returns a collection of per-item results, which lets you decide whether to fail fast, collect only valid machines, or report partial errors.
 
-Example: [../statum-examples/src/examples/10-persistent-data-vecs.rs](../statum-examples/src/examples/10-persistent-data-vecs.rs)
+Examples: [../statum-examples/src/toy_demos/10-persistent-data-vecs.rs](../statum-examples/src/toy_demos/10-persistent-data-vecs.rs), [../statum-examples/src/toy_demos/14-batch-machine-fields.rs](../statum-examples/src/toy_demos/14-batch-machine-fields.rs)
+
+## Event Logs: Project First, Rehydrate Second
+
+`#[validators]` works on one persisted shape at a time. For append-only event logs, project the stream into a row-like snapshot first, then rebuild typed machines from that projection.
+
+Statum ships small projection helpers for that layer:
+
+```rust
+use statum::projection::{ProjectionReducer, reduce_grouped};
+
+let projections = reduce_grouped(events, |event| event.order_id, &OrderProjector)?;
+let machines = projections
+    .into_machines()
+    .build();
+```
+
+`ProjectionReducer` gives you a typed fold, `reduce_one(...)` handles a single stream, and `reduce_grouped(...)` handles interleaved streams keyed by something like `order_id` while preserving first-seen key order.
+
+Example: [../statum-examples/src/showcases/sqlite_event_log_rebuild.rs](../statum-examples/src/showcases/sqlite_event_log_rebuild.rs)
 
 ## Failure Model
 

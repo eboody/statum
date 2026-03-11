@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{ToTokens, format_ident, quote};
 use std::collections::HashMap;
 use syn::{Ident, ItemImpl, Type, parse_macro_input};
 
@@ -18,7 +18,8 @@ use resolution::{
     resolve_machine_metadata, resolve_state_enum_info, validate_validator_coverage,
 };
 use signatures::{
-    validate_validator_return_type, validate_validator_signature, validator_state_name_from_ident,
+    ValidatorDiagnosticContext, validate_validator_return_type, validate_validator_signature,
+    validator_state_name_from_ident,
 };
 
 struct VariantSpec {
@@ -27,10 +28,20 @@ struct VariantSpec {
     expected_ok_type: Type,
 }
 
+struct CollectValidatorContext<'a> {
+    machine_ident: &'a Ident,
+    machine_state_ty: &'a proc_macro2::TokenStream,
+    field_names: &'a [Ident],
+    persisted_type_display: &'a str,
+    machine_name: &'a str,
+    state_enum_name: &'a str,
+}
+
 pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str) -> TokenStream {
     let machine_ident = parse_macro_input!(attr as Ident);
     let item_impl = parse_macro_input!(item as ItemImpl);
     let struct_ident = &item_impl.self_ty;
+    let persisted_type_display = struct_ident.to_token_stream().to_string();
 
     let machine_metadata = match resolve_machine_metadata(module_path, &machine_ident) {
         Ok(metadata) => metadata,
@@ -53,7 +64,12 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         Err(err) => return err.into(),
     };
 
-    let validator_coverage = match validate_validator_coverage(&item_impl, &state_enum_info) {
+    let validator_coverage = match validate_validator_coverage(
+        &item_impl,
+        &state_enum_info,
+        &persisted_type_display,
+        &machine_ident.to_string(),
+    ) {
         Ok(()) => quote! {},
         Err(err) => return err.into(),
     };
@@ -64,13 +80,21 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         .collect::<Vec<_>>();
     let machine_module_ident = format_ident!("{}", crate::to_snake_case(&machine_ident.to_string()));
     let machine_state_ty = quote! { #machine_module_ident::State };
+    let machine_name = machine_ident.to_string();
+
+    let collect_context = CollectValidatorContext {
+        machine_ident: &machine_ident,
+        machine_state_ty: &machine_state_ty,
+        field_names: &field_names,
+        persisted_type_display: &persisted_type_display,
+        machine_name: &machine_name,
+        state_enum_name: &state_enum_info.name,
+    };
 
     let (validator_checks, has_async) = match collect_validator_checks(
         &item_impl,
-        &machine_ident,
-        &machine_state_ty,
-        &field_names,
         &state_enum_info.variants,
+        &collect_context,
     ) {
         Ok(result) => result,
         Err(err) => return err.into(),
@@ -82,8 +106,26 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         .collect::<Vec<_>>();
 
     if item_impl.items.is_empty() {
+        let expected_methods = state_enum_info
+            .variants
+            .iter()
+            .map(|variant| format!("is_{}", crate::to_snake_case(&variant.name)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let state_enum_name = state_enum_info.name.clone();
         return quote! {
-            compile_error!("Error: No validator functions found in impl block. Add at least one `is_*` method.");
+            compile_error!(concat!(
+                "Error: `#[validators(",
+                stringify!(#machine_ident),
+                ")]` on `impl ",
+                #persisted_type_display,
+                "` must define at least one validator method.\n",
+                "Expected one method per `",
+                #state_enum_name,
+                "` variant: ",
+                #expected_methods,
+                "."
+            ));
         }
         .into();
     }
@@ -135,10 +177,8 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
 
 fn collect_validator_checks(
     item_impl: &ItemImpl,
-    machine_ident: &Ident,
-    machine_state_ty: &proc_macro2::TokenStream,
-    field_names: &[Ident],
     variants: &[VariantInfo],
+    context: &CollectValidatorContext<'_>,
 ) -> Result<(Vec<proc_macro2::TokenStream>, bool), proc_macro2::TokenStream> {
     let mut checks = Vec::new();
     let mut has_async = false;
@@ -152,21 +192,28 @@ fn collect_validator_checks(
         let Some(state_name) = validator_state_name_from_ident(&func.sig.ident) else {
             continue;
         };
-        validate_validator_signature(func)?;
-
         let Some(spec_idx) = variant_by_name.get(&state_name) else {
             continue;
         };
         let spec = &variant_specs[*spec_idx];
-        validate_validator_return_type(func, &spec.expected_ok_type)?;
+        let diagnostic_context = ValidatorDiagnosticContext {
+            persisted_type_display: context.persisted_type_display,
+            machine_name: context.machine_name,
+            state_enum_name: context.state_enum_name,
+            variant_name: &spec.variant_name,
+            machine_fields: context.field_names,
+            expected_ok_type: &spec.expected_ok_type,
+        };
+        validate_validator_signature(func, &diagnostic_context)?;
+        validate_validator_return_type(func, &spec.expected_ok_type, &diagnostic_context)?;
 
         if func.sig.asyncness.is_some() {
             has_async = true;
         }
         checks.push(generate_validator_check(
-            machine_ident,
-            machine_state_ty,
-            field_names,
+            context.machine_ident,
+            context.machine_state_ty,
+            context.field_names,
             &spec.variant_name,
             spec.has_state_data,
             func.sig.asyncness.is_some(),

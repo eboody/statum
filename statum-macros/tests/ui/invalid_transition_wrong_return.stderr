@@ -1,14 +1,17 @@
-error: Invalid transition return type for `to_b`: expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`).
+error: Invalid transition return type for `Machine<A>::to_b`: expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`).
 
        Expected:
          fn to_b(self) -> Machine<NextState>
 
        Actual:
          u64
-  --> tests/ui/invalid_transition_wrong_return.rs:19:5
+
+       Help:
+         return `Machine<NextState>` directly, or wrap it in `Option<...>` / `Result<..., E>` and build the next state with `self.transition()` or `self.transition_with(...)`.
+  --> tests/ui/invalid_transition_wrong_return.rs:19:22
    |
 19 |     fn to_b(self) -> u64 {
-   |     ^^
+   |                      ^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_transition_wrong_return.rs:22:2
