@@ -23,3 +23,7 @@ pub mod example_11_hierarchical_machines;
 pub mod example_12_rollbacks;
 #[path = "13-review-flow.rs"]
 pub mod example_13_review_flow;
+#[path = "14-batch-machine-fields.rs"]
+pub mod example_14_batch_machine_fields;
+#[path = "15-transition-map.rs"]
+pub mod example_15_transition_map;
