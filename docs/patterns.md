@@ -60,6 +60,26 @@ impl Document<Draft> {
 
 Examples: [../statum-examples/src/toy_demos/07-state-data.rs](../statum-examples/src/toy_demos/07-state-data.rs), [../statum-examples/src/toy_demos/08-transition-with-data.rs](../statum-examples/src/toy_demos/08-transition-with-data.rs)
 
+## Data-To-Data Edges
+
+When the next state's payload should be derived by consuming the current
+state's payload, use `transition_map(...)` instead of cloning fields into a new
+value first:
+
+```rust
+#[transition]
+impl Order<Packed> {
+    fn ship(self, tracking: String) -> Order<Shipped> {
+        self.transition_map(|packed| ShippedData {
+            order_id: packed.order_id,
+            tracking,
+        })
+    }
+}
+```
+
+Example: [../statum-examples/src/toy_demos/15-transition-map.rs](../statum-examples/src/toy_demos/15-transition-map.rs)
+
 ## Async Side Effects
 
 Keep side effects in async methods and call a synchronous transition at the end:
@@ -112,6 +132,44 @@ impl Machine<Draft> {
 ```
 
 Examples: [../statum-examples/src/toy_demos/12-rollbacks.rs](../statum-examples/src/toy_demos/12-rollbacks.rs), [../statum-examples/tests/patterns.rs](../statum-examples/tests/patterns.rs)
+
+## Batch Rehydration With Per-Item Machine Context
+
+Use `.into_machines_by(...)` when each persisted row needs different machine
+fields during rebuild:
+
+```rust
+let machines = rows
+    .into_machines_by(|row| workflow_machine::Fields {
+        tenant: row.tenant.clone(),
+        workflow_name: row.workflow_name.clone(),
+    })
+    .build();
+```
+
+Example: [../statum-examples/src/toy_demos/14-batch-machine-fields.rs](../statum-examples/src/toy_demos/14-batch-machine-fields.rs)
+
+## Event Logs + Projection Rows
+
+For append-only storage, project events into validator rows first and then
+rehydrate typed machines:
+
+```rust
+use statum::projection::{ProjectionReducer, reduce_grouped};
+
+let rows = reduce_grouped(events, |event| event.order_id, &OrderProjector)?;
+let machines = rows.into_machines().build();
+```
+
+Example: [../statum-examples/src/showcases/sqlite_event_log_rebuild.rs](../statum-examples/src/showcases/sqlite_event_log_rebuild.rs)
+
+## Protocol Sessions
+
+Not every Statum workflow is persistence-driven. Session and protocol lifecycles
+work well when legal frame order matters and method availability should change
+by phase.
+
+Example: [../statum-examples/src/showcases/tokio_websocket_session.rs](../statum-examples/src/showcases/tokio_websocket_session.rs)
 
 ## When To Stop
 

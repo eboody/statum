@@ -1,9 +1,23 @@
-# Migration Guide (Current -> New API)
+# Migrating to Statum 0.5
 
-This migration guide is inferred from the current macros and crate layout. It focuses on the differences implied by the code, not by the README.
+This guide is for code written against earlier Statum surfaces. If you are
+starting fresh on `0.5`, you can skip this page and start with the README plus
+`new-api.md`.
 
-## 1) `#[transition]` is now required on transition impls
-Old (implicit):
+## Migration Checklist
+
+1. Add `#[transition]` to transition impl blocks.
+2. Switch validators to `#[validators(Machine)]`.
+3. Rename rebuild entrypoints to `into_machine()`, `.into_machines()`, and
+   `.into_machines_by(...)`.
+4. Match rebuilt output on `machine::State`.
+5. Move code that relied on legacy generated helper traits to the crate-level
+   advanced traits or to direct machine methods.
+
+## `#[transition]` Is Explicit
+
+Before:
+
 ```rust
 impl Machine<Draft> {
     fn submit(self) -> Machine<InReview> {
@@ -12,7 +26,8 @@ impl Machine<Draft> {
 }
 ```
 
-New (explicit):
+After:
+
 ```rust
 #[transition]
 impl Machine<Draft> {
@@ -22,100 +37,130 @@ impl Machine<Draft> {
 }
 ```
 
-## 2) `#[validators]` attribute form changed
-Old (README-style):
+## `#[validators]` Uses the Machine Name Only
+
+Before:
+
 ```rust
 #[validators(state = TaskState, machine = TaskMachine)]
 impl StoredTask {
-    fn is_draft(&self) -> Result<()> { ... }
+    fn is_draft(&self) -> Result<()> { /* ... */ }
 }
 ```
 
-New (inferred from macro parsing):
+After:
+
 ```rust
 #[validators(TaskMachine)]
 impl StoredTask {
-    fn is_draft(&self) -> Result<()> { ... }
+    fn is_draft(&self) -> statum::Result<()> { /* ... */ }
 }
 ```
 
-## 3) Validators are stricter
-- Must include an `is_{state}` method for every state variant (snake_case).
-- Each validator must take exactly `&self` (machine fields are injected by the macro).
-- Return types must match the variant:
-  - unit state -> `Result<()>`
-  - data state -> `Result<StateData>`
-- If any validator is `async`, the generated builders become `async` too.
+Statum resolves the state family from the machine definition.
 
-## 4) State enum rules are enforced
-- State enums must have at least one variant.
-- Variants must be unit or single-field tuple variants.
-- Struct variants are rejected.
-- Generics on the `#[state]` enum are not supported.
+## Validator Expectations Are Stricter
 
-## 5) `#[machine]` generic must match the state enum name
-- The first generic parameter must be the state enum name (e.g. `Machine<State>`).
-- If the machine derives `Debug`, `Clone`, etc., the state enum must derive the same traits.
+- You need one `is_{state}` method per state variant.
+- Validator methods must take exactly `&self`.
+- Unit states return `statum::Result<()>`.
+- Data-bearing states return `statum::Result<StateData>`.
+- If any validator is `async`, the generated builders become `async`.
 
-## 6) Constructors now use `bon` builders
-The machine macro generates a per-state builder using `bon`.
+## Canonical Rebuild Names Changed
 
-Old (common style):
+Use these names in `0.5`:
+
+- `into_machine()` for one item
+- `.into_machines()` when machine fields are shared across the collection
+- `.into_machines_by(|row| machine::Fields { ... })` when machine fields vary
+  per item
+- `machine::State` when matching rebuilt output
+
+Removed names:
+
+- `machine_builder()`
+- `machines_builder()`
+- `TaskMachineSuperState`
+
+Cross-module batch rebuilds still need the machine-scoped trait import:
+
 ```rust
-let m = Machine::new(...);
+use task_machine::IntoMachinesExt as _;
 ```
 
-New (inferred):
+## Legacy Generated Traits Are Gone
+
+The old public generated helper traits, such as `TaskMachineTransitionTo` or
+`StateVariant`, are no longer the supported API.
+
+Use:
+
+- direct machine methods
+- `statum::StateMarker`
+- `statum::UnitState`
+- `statum::DataState`
+- `statum::CanTransitionTo<Next>`
+- `statum::CanTransitionWith<Data>`
+- `statum::CanTransitionMap<Next>`
+
+## State and Machine Definitions Are Checked More Strictly
+
+### `#[state]`
+
+- Must be an enum
+- Must have at least one variant
+- Variants must be unit or single-field tuple variants
+- Struct variants and generics are rejected
+
+### `#[machine]`
+
+- Must be a struct
+- The first generic parameter must match the `#[state]` enum name
+- Matching derives on the `#[state]` enum and machine are required when needed
+- `#[machine]` should sit above `#[derive(...)]`
+
+## Construction Is Builder-First
+
+Use the generated per-state builders:
+
 ```rust
-let m = Machine::<Draft>::builder()
+let draft = Machine::<Draft>::builder()
     .field_a(...)
     .build();
 
-let m = Machine::<InReview>::builder()
+let review = Machine::<InReview>::builder()
     .field_a(...)
     .state_data(ReviewData { ... })
     .build();
 ```
 
-You can also call the generated `new(..)` directly if you want a positional constructor.
+You can still use the generated positional constructor if you want it, but the
+builder is the intended path.
 
-## 7) Transition validation is type-based
-- The macro no longer inspects the function body for `transition()` vs `transition_with(..)`.
-- It chooses the transition trait implementation based on whether the target state carries data.
+## New Additive Helpers
 
-## 8) Examples moved to `statum-examples`
-- Old examples under `statum/examples/*.rs` are removed.
+`0.5` also adds surface area you may want during migration:
+
+- `.into_machines_by(...)` for heterogeneous batch machine context
+- `statum::projection::{ProjectionReducer, reduce_one, reduce_grouped}` for
+  event-log projection before rehydration
+- `transition_map(...)` for data-to-data transitions that should consume the
+  current state payload
+
+## Examples Moved
+
+- Old `statum/examples/*.rs` examples are gone.
 - Toy demos now live under `statum-examples/src/toy_demos/`.
-- Showcase apps now live under `statum-examples/src/showcases/`.
-
-## 9) Rehydration naming is stricter
-- `machine_builder()` was removed. Use `into_machine()` instead.
-- `machines_builder()` was removed. Use `.into_machines()` instead.
-- In the same module as the `#[validators]` impl, no extra import is needed.
-- From other modules, import the machine-scoped batch trait first:
-
-```rust
-use machine::IntoMachinesExt as _;
-
-let machines = rows
-    .into_machines()
-    .tenant("acme".to_string())
-    .build();
-```
-
-- `TaskMachineSuperState`-style aliases were removed. Match on `task_machine::State`.
-- Generated helper traits like `TaskMachineTransitionTo` and `StateVariant` are no longer public API.
-
-## 10) New additive helpers are available
-- Use `.into_machines_by(|row| machine::Fields { ... })` when batch reconstruction needs different machine fields per item.
-- Use `statum::projection::{ProjectionReducer, reduce_one, reduce_grouped}` to fold event streams into validator rows before calling `into_machine()` or `.into_machines()`.
-- Use `transition_map(|current| NextData { ... })` when the next state's payload should be built by consuming the current state's payload.
+- Service-shaped and protocol-shaped showcases live under
+  `statum-examples/src/showcases/`.
 
 ## Recommended Migration Order
-1. Update the state enum to comply with the variant restrictions.
-2. Update machine generics and derive placement.
-3. Add `#[transition]` to impl blocks.
-4. Update transitions to use `transition()` / `transition_with(..)` correctly.
-5. Update validators to the new attribute form, per-variant requirements, and `into_machine()` / `into_machines()` naming.
-6. Switch construction to the generated builders.
-7. Re-run `cargo test -p statum-macros` to confirm UI diagnostics.
+
+1. Update the `#[state]` enum to match the current variant rules.
+2. Update the machine generic and derive placement.
+3. Add `#[transition]` to protocol-edge impl blocks.
+4. Rename validators and rehydration entrypoints.
+5. Update match sites to use `machine::State`.
+6. Move any generic helper code off removed legacy traits.
+7. Re-run `cargo test -p statum-macros` and your workspace tests.

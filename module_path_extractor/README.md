@@ -12,7 +12,7 @@ Key APIs:
 
 ```toml
 [dependencies]
-module_path_extractor = "0.3"
+module_path_extractor = "0.5"
 ```
 
 ## Intended Use

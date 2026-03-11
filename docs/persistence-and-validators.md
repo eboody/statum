@@ -18,6 +18,15 @@ Statum generates:
 - A machine-scoped `task_machine::Fields` struct for heterogeneous batch reconstruction.
 - A machine-scoped batch trait like `task_machine::IntoMachinesExt`.
 
+## Pick The Right Entry Point
+
+Use:
+
+- `into_machine()` when rebuilding one persisted value
+- `.into_machines()` when every item shares the same machine fields
+- `.into_machines_by(|row| task_machine::Fields { ... })` when each item needs
+  different machine fields
+
 ## Single-Item Reconstruction
 
 ```rust
@@ -189,6 +198,9 @@ let machines = rows
 
 This returns a collection of per-item results, which lets you decide whether to fail fast, collect only valid machines, or report partial errors.
 
+In other words, batch rebuilds preserve per-item failure information instead of
+forcing one all-or-nothing result shape.
+
 Examples: [../statum-examples/src/toy_demos/10-persistent-data-vecs.rs](../statum-examples/src/toy_demos/10-persistent-data-vecs.rs), [../statum-examples/src/toy_demos/14-batch-machine-fields.rs](../statum-examples/src/toy_demos/14-batch-machine-fields.rs)
 
 ## Event Logs: Project First, Rehydrate Second
@@ -215,5 +227,7 @@ Example: [../statum-examples/src/showcases/sqlite_event_log_rebuild.rs](../statu
 - A validator that matches returns `Ok(...)` and selects that state.
 - A validator that does not match should return `Err(statum::Error::InvalidState)`.
 - Reconstruction fails when no validator matches.
+- Batch reconstruction returns one result per item, so callers can decide
+  whether to stop on the first invalid row or collect partial successes.
 
 Keep validators narrowly focused on state membership. Put cross-cutting orchestration around the rebuild call, not inside every validator.

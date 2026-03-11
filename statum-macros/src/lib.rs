@@ -7,10 +7,10 @@
 //!
 //! The public macros are:
 //!
-//! - [`state`](attr@state) for declaring legal lifecycle phases
-//! - [`machine`](attr@machine) for declaring the typed machine and durable context
-//! - [`transition`](attr@transition) for validating legal transition impls
-//! - [`validators`](attr@validators) for rebuilding typed machines from persisted data
+//! - [`state`] for declaring legal lifecycle phases
+//! - [`machine`] for declaring the typed machine and durable context
+//! - [`transition`] for validating legal transition impls
+//! - [`validators`] for rebuilding typed machines from persisted data
 
 moddef::moddef!(
     flat (pub) mod {

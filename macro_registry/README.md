@@ -11,7 +11,7 @@ Primary modules:
 
 ```toml
 [dependencies]
-macro_registry = "0.3"
+macro_registry = "0.5"
 ```
 
 ## Intended Use

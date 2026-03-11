@@ -1,6 +1,11 @@
 # statum-examples
 
-`statum-examples` is a runnable examples crate for the Statum workspace.
+`statum-examples` is the runnable examples crate for the Statum workspace.
+
+Use it in two modes:
+
+- `src/toy_demos/` for small syntax-first examples
+- `src/showcases/` for realistic service, CLI, worker, and protocol examples
 
 ## Run
 
@@ -15,12 +20,19 @@ cargo run -p statum-examples --bin tokio-websocket-session
 
 ## Contents
 
-- Small syntax-first demos in `src/toy_demos/`
-- Service-shaped showcase apps in `src/showcases/`
-- A multi-invocation CLI showcase in `src/bin/clap-sqlite-deploy-pipeline.rs`
-- An append-only event-log showcase in `src/bin/sqlite-event-log-rebuild.rs`
-- A session-protocol showcase in `src/bin/tokio-websocket-session.rs`
-- Integration-style scenario tests in `tests/toy_demos.rs`, `tests/showcases.rs`, `tests/patterns.rs`, and `tests/stress.rs`
+- Toy demos:
+  - `example_01_setup.rs` through `15-transition-map.rs`
+  - best when you are learning the macros or one helper at a time
+- Showcases:
+  - `axum-sqlite-review`: HTTP + SQLite + typed rehydration
+  - `clap-sqlite-deploy-pipeline`: multi-invocation CLI workflow
+  - `sqlite-event-log-rebuild`: append-only projection and rebuild
+  - `tokio-sqlite-job-runner`: retries, leases, and background work
+  - `tokio-websocket-session`: protocol-safe session lifecycle
+- Tests:
+  - `tests/toy_demos.rs` mirrors the syntax-first examples
+  - `tests/showcases.rs` exercises the realistic apps
+  - `tests/patterns.rs` and `tests/stress.rs` cover broader permutations
 
 ## Repository
 

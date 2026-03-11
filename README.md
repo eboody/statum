@@ -17,6 +17,15 @@ Statum helps you model workflows where phase order matters and invalid transitio
 
 It is opinionated on purpose: explicit transitions, state-specific data, and compile-time method gating. If that is the shape of your problem, the API stays small and the safety payoff is high.
 
+## Install
+
+Statum targets stable Rust and currently supports Rust `1.93+`.
+
+```toml
+[dependencies]
+statum = "0.5"
+```
+
 ## 60-Second Example
 
 ```rust
@@ -280,6 +289,7 @@ cargo run -p statum-examples --bin tokio-websocket-session
 
 - Toy demos: [statum-examples/src/toy_demos/](statum-examples/src/toy_demos/)
 - Showcase apps: [statum-examples/src/showcases/](statum-examples/src/showcases/)
+- Crate docs: [statum](https://docs.rs/statum), [statum-core](https://docs.rs/statum-core), [statum-macros](https://docs.rs/statum-macros)
 - Review showcase binary: [statum-examples/src/bin/axum-sqlite-review.rs](statum-examples/src/bin/axum-sqlite-review.rs)
 - Deploy pipeline binary: [statum-examples/src/bin/clap-sqlite-deploy-pipeline.rs](statum-examples/src/bin/clap-sqlite-deploy-pipeline.rs)
 - Event log binary: [statum-examples/src/bin/sqlite-event-log-rebuild.rs](statum-examples/src/bin/sqlite-event-log-rebuild.rs)

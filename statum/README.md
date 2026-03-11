@@ -1,18 +1,29 @@
 # statum
 
-`statum` provides an ergonomic typestate API for Rust with compile-time transition guarantees.
+`statum` provides compile-time verified typestate workflows for Rust.
 
 This crate re-exports:
-- Attribute macros: `#[state]`, `#[machine]`, `#[transition]`, `#[validators]`
-- Runtime types: `statum::Error`, `statum::Result<T>`
-- Builder support: `statum::bon`
+
+- attribute macros: `#[state]`, `#[machine]`, `#[transition]`, `#[validators]`
+- runtime types: `statum::Error`, `statum::Result<T>`
+- advanced traits: `StateMarker`, `UnitState`, `DataState`, `CanTransition*`
+- projection helpers: `statum::projection`
 
 ## Install
 
 ```toml
 [dependencies]
-statum = "0.3"
+statum = "0.5"
 ```
+
+Statum targets stable Rust and currently supports Rust `1.93+`.
+
+## Mental Model
+
+- `#[state]` defines the legal phases
+- `#[machine]` defines the durable context
+- `#[transition]` defines the legal edges
+- `#[validators]` rebuilds typed machines from stored data
 
 ## Minimal Example
 
@@ -48,5 +59,7 @@ impl Light<On> {
 ## Docs
 
 - API docs: <https://docs.rs/statum>
+- Repository README: <https://github.com/eboody/statum/blob/main/README.md>
+- Validators guide: <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>
+- Examples crate: <https://github.com/eboody/statum/tree/main/statum-examples>
 - Repository: <https://github.com/eboody/statum>
-- Workspace README: <https://github.com/eboody/statum/blob/main/README.md>

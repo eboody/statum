@@ -1,5 +1,21 @@
 # Release Notes
 
+## v0.5.1 (2026-03-10)
+
+### Changes
+- Expanded the public rustdoc surface for `statum` and `statum-core`.
+- Added runnable crate-level examples for the root API pages.
+- Clarified stable-toolchain guidance in internal docs.
+
+## v0.5.0 (2026-03-10)
+
+### Changes
+- Cleaned up the public API around `machine::State`, `into_machine()`, `.into_machines()`, and `.into_machines_by(...)`.
+- Added crate-level advanced traits such as `CanTransitionMap`.
+- Added `statum::projection` for event-log projection before typed rehydration.
+- Reworked macro diagnostics and UI coverage for more informative editor errors.
+- Split examples into toy demos plus showcase apps, including Axum, CLI, worker, event-log, and protocol examples.
+
 ## v0.3.5 (2026-02-03)
 
 ### Changes
