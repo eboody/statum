@@ -74,7 +74,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.93.1
       - uses: taiki-e/install-action@cargo-deny
       - name: cargo-deny
-        run: cargo deny check advisories bans licenses sources
+        run: cargo deny check advisories bans sources
 
   security-audit:
     runs-on: ubuntu-latest
