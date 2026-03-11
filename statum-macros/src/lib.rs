@@ -1,3 +1,17 @@
+//! Proc-macro implementation crate for Statum.
+//!
+//! Most users should depend on [`statum`](https://docs.rs/statum), which
+//! re-exports these macros with the public-facing documentation. This crate
+//! exists so the macro expansion logic can stay separate from the stable runtime
+//! traits in `statum-core`.
+//!
+//! The public macros are:
+//!
+//! - [`state`](attr@state) for declaring legal lifecycle phases
+//! - [`machine`](attr@machine) for declaring the typed machine and durable context
+//! - [`transition`](attr@transition) for validating legal transition impls
+//! - [`validators`](attr@validators) for rebuilding typed machines from persisted data
+
 moddef::moddef!(
     flat (pub) mod {
     },
@@ -16,6 +30,11 @@ use macro_registry::callsite::current_module_path;
 use proc_macro::TokenStream;
 use syn::{Item, ItemImpl, parse_macro_input};
 
+/// Define the legal lifecycle phases for a Statum machine.
+///
+/// Apply `#[state]` to an enum with unit variants and single-field tuple
+/// variants. Statum generates one marker type per variant plus the state-family
+/// traits used by `#[machine]`, `#[transition]`, and `#[validators]`.
 #[proc_macro_attribute]
 pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as Item);
@@ -43,6 +62,12 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+/// Define a typed machine that carries durable context across states.
+///
+/// Apply `#[machine]` to a struct whose first generic parameter is the
+/// `#[state]` enum family. Statum generates the typed machine surface, builders,
+/// the machine-scoped `machine::State` enum, and helper items such as
+/// `machine::Fields` for heterogeneous batch rebuilds.
 #[proc_macro_attribute]
 pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as Item);
@@ -67,6 +92,11 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+/// Validate and generate legal transitions for one source state.
+///
+/// Apply `#[transition]` to an `impl Machine<CurrentState>` block. Each method
+/// must consume `self` and return a legal `Machine<NextState>` shape or a
+/// supported wrapper around it, such as `Result<Machine<NextState>, E>`.
 #[proc_macro_attribute]
 pub fn transition(
     _attr: proc_macro::TokenStream,
@@ -110,6 +140,12 @@ pub fn transition(
     expanded.into()
 }
 
+/// Rebuild typed machines from persisted data.
+///
+/// Apply `#[validators(Machine)]` to an `impl PersistedRow` block. Statum
+/// expects one `is_{state}` method per state variant and generates
+/// `into_machine()`, `.into_machines()`, and `.into_machines_by(...)` helpers
+/// for typed rehydration.
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let module_path = current_module_path();
