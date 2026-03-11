@@ -23,7 +23,7 @@ version = "0.8"
 
 [dependencies.statum]
 path = "../statum"
-version = "0.5.0"
+version = "0.5.1"
 
 [dependencies.tokio]
 features = ["full"]
@@ -38,4 +38,4 @@ edition = "2024"
 license = "MIT"
 name = "statum-examples"
 rust-version = "1.93"
-version = "0.5.0"
+version = "0.5.1"
