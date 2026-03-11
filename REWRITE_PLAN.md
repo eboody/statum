@@ -7,7 +7,7 @@
 - Update examples, docs, and tests to reflect the new API surface and behaviors.
 
 ## Success Criteria
-- All workspace crates build and tests pass on nightly.
+- All workspace crates build and tests pass on the pinned stable toolchain.
 - New API is documented in the README and has at least one end-to-end example per major feature.
 - Macro UI tests cover all expected diagnostics and success paths.
 - Migration guide covers: state definition, machine definition, transitions, validators.

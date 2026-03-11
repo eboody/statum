@@ -1,20 +1,38 @@
-//! Core error and result types shared by Statum crates.
+//! Core traits and helper types shared by Statum crates.
+//!
+//! Most users reach these through the top-level `statum` crate. This crate
+//! holds the small runtime surface that macro-generated code targets:
+//!
+//! - state marker traits
+//! - transition capability traits
+//! - runtime error and result types
+//! - projection helpers for event-log style rebuilds
 
 pub mod projection;
 
 /// A generated state marker type.
+///
+/// Every `#[state]` variant produces one marker type that implements
+/// `StateMarker`. The associated `Data` type is `()` for unit states and the
+/// tuple payload type for data-bearing states.
 pub trait StateMarker {
     /// The payload type stored in machines for this state.
     type Data;
 }
 
 /// A generated state marker with no payload.
+///
+/// Implemented for unit state variants like `Draft` or `Published`.
 pub trait UnitState: StateMarker<Data = ()> {}
 
 /// A generated state marker that carries payload data.
+///
+/// Implemented for tuple variants like `InReview(Assignment)`.
 pub trait DataState: StateMarker {}
 
 /// A machine that can transition directly to `Next`.
+///
+/// This is the stable trait-level view of `self.transition()`.
 pub trait CanTransitionTo<Next> {
     /// The transition result type.
     type Output;
@@ -24,6 +42,8 @@ pub trait CanTransitionTo<Next> {
 }
 
 /// A machine that can transition using `Data`.
+///
+/// This is the stable trait-level view of `self.transition_with(data)`.
 pub trait CanTransitionWith<Data> {
     /// The next state selected by this transition.
     type NextState;
@@ -35,6 +55,8 @@ pub trait CanTransitionWith<Data> {
 }
 
 /// A machine that can transition by mapping its current state data into `Next`.
+///
+/// This is the stable trait-level view of `self.transition_map(...)`.
 pub trait CanTransitionMap<Next: StateMarker> {
     /// The payload type stored in the current state.
     type CurrentData;

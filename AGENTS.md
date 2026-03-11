@@ -39,7 +39,7 @@ Other notable paths: `scripts/` for release helpers and `logo.png` for branding.
 - Macro compile tests use `trybuild`; add new cases as `.rs` files under `statum-macros/tests/ui/` with matching `.stderr` expectations when relevant.
 
 ## Toolchain and Features
-- The repo pins nightly via `rust-toolchain.toml`; use nightly toolchain when building/testing.
+- The repo pins stable via `rust-toolchain.toml`; use the pinned stable toolchain when building/testing.
 
 ## Commit & Pull Request Guidelines
 - Recent history mixes conventional prefixes (`build:`, `refactor(scope):`) and informal messages; prefer `type(scope): short summary` when possible.

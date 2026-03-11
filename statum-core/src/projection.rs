@@ -1,3 +1,61 @@
+//! Event-stream projection helpers for Statum rebuild flows.
+//!
+//! `#[validators]` works on one persisted shape at a time. If your storage model
+//! is append-only, reduce events into a row-like projection first and then feed
+//! that projection into `into_machine()` or `.into_machines()`.
+//!
+//! ```
+//! use statum_core::projection::{reduce_grouped, ProjectionReducer};
+//!
+//! #[derive(Clone)]
+//! struct OrderEvent {
+//!     order_id: u64,
+//!     amount_cents: u64,
+//! }
+//!
+//! struct OrderTotals;
+//!
+//! impl ProjectionReducer<OrderEvent> for OrderTotals {
+//!     type Projection = (u64, u64);
+//!     type Error = core::convert::Infallible;
+//!
+//!     fn seed(&self, event: &OrderEvent) -> Result<Self::Projection, Self::Error> {
+//!         Ok((event.order_id, event.amount_cents))
+//!     }
+//!
+//!     fn apply(
+//!         &self,
+//!         projection: &mut Self::Projection,
+//!         event: &OrderEvent,
+//!     ) -> Result<(), Self::Error> {
+//!         projection.1 += event.amount_cents;
+//!         Ok(())
+//!     }
+//! }
+//!
+//! let projections = reduce_grouped(
+//!     vec![
+//!         OrderEvent {
+//!             order_id: 2,
+//!             amount_cents: 100,
+//!         },
+//!         OrderEvent {
+//!             order_id: 1,
+//!             amount_cents: 50,
+//!         },
+//!         OrderEvent {
+//!             order_id: 2,
+//!             amount_cents: 25,
+//!         },
+//!     ],
+//!     |event| event.order_id,
+//!     &OrderTotals,
+//! )?;
+//!
+//! assert_eq!(projections, vec![(2, 125), (1, 50)]);
+//! # Ok::<(), statum_core::projection::ProjectionError<core::convert::Infallible>>(())
+//! ```
+
 use core::fmt;
 use std::collections::{hash_map::Entry, HashMap};
 use std::hash::Hash;
