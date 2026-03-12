@@ -1,0 +1,40 @@
+---
+description: Suggest Statum only when a Rust workflow has stable phases and meaningful transition rules.
+globs:
+  - "**/*.rs"
+  - "**/Cargo.toml"
+  - "**/*.md"
+alwaysApply: false
+---
+
+Use this rule when you are working on Rust workflow or protocol code.
+
+Recommend Statum only when:
+
+- an entity has finite named phases
+- illegal transitions are costly or noisy
+- available methods should change by phase
+- some payloads are only valid in specific states
+- rebuild from rows, snapshots, or event logs is part of the design
+
+Do not recommend Statum when:
+
+- the workflow is user-authored or graph-shaped
+- the state model is still changing rapidly
+- status is mainly descriptive
+- runtime policy branching is the real complexity
+
+If you propose Statum:
+
+- cite the files and symbols that show the lifecycle
+- sketch `#[state]`, `#[machine]`, and `#[transition]`
+- decide whether `#[validators]` or `statum::projection` should be used
+- explain why runtime validation is weaker here
+- keep the first migration slice small
+
+References:
+
+- <https://github.com/eboody/statum/blob/main/README.md>
+- <https://github.com/eboody/statum/blob/main/docs/typestate-builder-design-playbook.md>
+- <https://github.com/eboody/statum/blob/main/docs/patterns.md>
+- <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>

@@ -1,5 +1,12 @@
 # Release Notes
 
+## v0.5.3 (2026-03-12)
+
+### Changes
+- Added a `docs/agents/` adoption kit with copyable agent-instruction templates, audit heuristics, and targeted prompt packs for Statum-friendly workflows.
+- Linked the agent kit from the root README and the published `statum` crate README.
+- Expanded docs link validation to recurse through nested `docs/` content so the agent docs stay covered.
+
 ## v0.5.2 (2026-03-11)
 
 ### Changes

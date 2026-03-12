@@ -13,7 +13,7 @@ This crate re-exports:
 
 ```toml
 [dependencies]
-statum = "0.5.2"
+statum = "0.5.3"
 ```
 
 Statum targets stable Rust and currently supports Rust `1.93+`.
@@ -60,6 +60,7 @@ impl Light<On> {
 
 - API docs: <https://docs.rs/statum>
 - Repository README: <https://github.com/eboody/statum/blob/main/README.md>
+- Coding-agent kit: <https://github.com/eboody/statum/blob/main/docs/agents/README.md>
 - Validators guide: <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>
 - Examples crate: <https://github.com/eboody/statum/tree/main/statum-examples>
 - Repository: <https://github.com/eboody/statum>

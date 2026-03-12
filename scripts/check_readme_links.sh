@@ -16,7 +16,7 @@ docs_files=(
 
 while IFS= read -r doc; do
   docs_files+=("$doc")
-done < <(find docs -maxdepth 1 -type f -name '*.md' | sort)
+done < <(find docs -type f -name '*.md' | sort)
 
 status=0
 

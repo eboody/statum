@@ -23,7 +23,7 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 
 ```toml
 [dependencies]
-statum = "0.5.2"
+statum = "0.5.3"
 ```
 
 ## 60-Second Example
@@ -285,6 +285,12 @@ cargo run -p statum-examples --bin tokio-websocket-session
 - `tokio-sqlite-job-runner` demonstrates retries, leases, async side effects, and typed rehydration in a background worker loop.
 - `tokio-websocket-session` demonstrates protocol-safe frame handling, phase-gated behavior, and a session lifecycle that is not persistence-driven.
 
+## Use With Coding Agents
+
+If you use coding agents, Statum ships an adoption kit with copyable instruction
+templates, audit heuristics, and prompts for targeted refactors and reviews.
+Start with [docs/agents/README.md](docs/agents/README.md).
+
 ## Learn More
 
 - Toy demos: [statum-examples/src/toy_demos/](statum-examples/src/toy_demos/)
@@ -295,6 +301,7 @@ cargo run -p statum-examples --bin tokio-websocket-session
 - Event log binary: [statum-examples/src/bin/sqlite-event-log-rebuild.rs](statum-examples/src/bin/sqlite-event-log-rebuild.rs)
 - Job runner binary: [statum-examples/src/bin/tokio-sqlite-job-runner.rs](statum-examples/src/bin/tokio-sqlite-job-runner.rs)
 - Session binary: [statum-examples/src/bin/tokio-websocket-session.rs](statum-examples/src/bin/tokio-websocket-session.rs)
+- Coding-agent kit: [docs/agents/README.md](docs/agents/README.md)
 - Typed rehydration and validators: [docs/persistence-and-validators.md](docs/persistence-and-validators.md)
 - Patterns and advanced usage: [docs/patterns.md](docs/patterns.md)
 - Typestate builder design playbook: [docs/typestate-builder-design-playbook.md](docs/typestate-builder-design-playbook.md)
