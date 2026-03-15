@@ -3,6 +3,8 @@ use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::{Item, ItemStruct};
 
+use crate::{StateModulePath, ensure_state_enum_loaded};
+
 use super::metadata::is_rust_analyzer;
 use super::MachineInfo;
 
@@ -34,16 +36,8 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
         );
     };
 
-    let matching_state_enum = match machine_info.get_matching_state_enum() {
-        Ok(enum_info) => Some(enum_info),
-        Err(err) => {
-            if item.generics.params.is_empty() {
-                None
-            } else {
-                return Some(err);
-            }
-        }
-    };
+    let state_path: StateModulePath = machine_info.module_path.clone().into();
+    let matching_state_enum = ensure_state_enum_loaded(&state_path);
 
     if item.generics.params.len() > 1 {
         let generics_display = item.generics.to_token_stream().to_string();
@@ -78,7 +72,13 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
             .to_compile_error(),
         );
     };
-    let matching_state_enum = matching_state_enum.expect("matching state enum already resolved");
+    let matching_state_enum = match matching_state_enum {
+        Some(enum_info) => enum_info,
+        None => match machine_info.get_matching_state_enum() {
+            Ok(enum_info) => enum_info,
+            Err(err) => return Some(err),
+        },
+    };
 
     let machine_derives = machine_info.derives.clone();
     let state_derives = matching_state_enum.derives.clone();

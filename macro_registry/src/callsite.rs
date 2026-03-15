@@ -19,8 +19,14 @@ pub fn current_source_info() -> Option<(String, usize)> {
 }
 
 /// Returns the best-effort module path for the current macro call-site.
+pub fn current_module_path_opt() -> Option<String> {
+    let (file_path, line_number) = current_source_info()?;
+    module_path_for_line(&file_path, line_number)
+}
+
+/// Returns the best-effort module path for the current macro call-site.
 pub fn current_module_path() -> String {
-    get_pseudo_module_path()
+    current_module_path_opt().unwrap_or_else(get_pseudo_module_path)
 }
 
 /// Resolves the module path for a specific source file and line number.

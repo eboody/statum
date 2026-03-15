@@ -60,7 +60,13 @@ fn build_file_analysis(file_path: &str) -> Option<FileAnalysis> {
     let parsed = syn::parse_file(&contents).ok()?;
     let mut analysis = FileAnalysis::default();
 
-    for item in parsed.items {
+    collect_items(parsed.items, &contents, &mut analysis)?;
+
+    Some(analysis)
+}
+
+fn collect_items(items: Vec<syn::Item>, contents: &str, analysis: &mut FileAnalysis) -> Option<()> {
+    for item in items {
         match item {
             syn::Item::Enum(item_enum) => {
                 let name = item_enum.ident.to_string();
@@ -68,7 +74,7 @@ fn build_file_analysis(file_path: &str) -> Option<FileAnalysis> {
                 let line_number = if span_line > 0 {
                     span_line
                 } else {
-                    find_item_line(&contents, "enum", &name)?
+                    find_item_line(contents, "enum", &name)?
                 };
                 analysis.enums.push(EnumEntry {
                     attrs: attribute_names(&item_enum.attrs),
@@ -82,7 +88,7 @@ fn build_file_analysis(file_path: &str) -> Option<FileAnalysis> {
                 let line_number = if span_line > 0 {
                     span_line
                 } else {
-                    find_item_line(&contents, "struct", &name)?
+                    find_item_line(contents, "struct", &name)?
                 };
                 analysis.structs.push(StructEntry {
                     attrs: attribute_names(&item_struct.attrs),
@@ -90,11 +96,16 @@ fn build_file_analysis(file_path: &str) -> Option<FileAnalysis> {
                     line_number,
                 });
             }
+            syn::Item::Mod(item_mod) => {
+                if let Some((_, nested_items)) = item_mod.content {
+                    collect_items(nested_items, contents, analysis)?;
+                }
+            }
             _ => {}
         }
     }
 
-    Some(analysis)
+    Some(())
 }
 
 fn attribute_names(attrs: &[syn::Attribute]) -> Vec<String> {
@@ -256,6 +267,33 @@ enum StateB { B }
 
         let _ = fs::remove_file(path_a);
         let _ = fs::remove_file(path_b);
+    }
+
+    #[test]
+    fn collects_items_from_inline_modules() {
+        let path = write_temp_rust_file(
+            r#"
+mod workflow {
+    #[state]
+    enum TaskState {
+        Draft,
+    }
+
+    #[machine]
+    struct TaskMachine<TaskState> {
+        id: u64,
+    }
+}
+"#,
+        );
+
+        let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
+        assert_eq!(analysis.enums.len(), 1);
+        assert_eq!(analysis.structs.len(), 1);
+        assert_eq!(analysis.enums[0].item.ident, "TaskState");
+        assert_eq!(analysis.structs[0].item.ident, "TaskMachine");
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]

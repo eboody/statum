@@ -1,11 +1,14 @@
-use macro_registry::analysis::get_file_analysis;
-use macro_registry::callsite::{current_module_path, current_source_info, module_path_for_line};
+use macro_registry::callsite::{current_source_info, module_path_for_line};
+use macro_registry::query::{
+    ItemCandidate, ItemKind, candidates_in_module, format_candidates, plain_item_line_in_module,
+    same_named_candidates_elsewhere,
+};
 use macro_registry::registry::{RegistryKey, RegistryValue};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use syn::{Attribute, Generics, Ident, ItemStruct, LitStr, Type, Visibility};
 
-use crate::{ensure_state_enum_loaded, EnumInfo, StateModulePath};
+use crate::{ensure_state_enum_loaded, ensure_state_enum_loaded_by_name, EnumInfo, StateModulePath};
 
 impl<T: ToString> From<T> for MachinePath {
     fn from(value: T) -> Self {
@@ -76,14 +79,38 @@ impl MachineInfo {
 
     pub fn get_matching_state_enum(&self) -> Result<EnumInfo, TokenStream> {
         let state_path: StateModulePath = self.module_path.clone().into();
-        let Some(state_enum) = ensure_state_enum_loaded(&state_path) else {
+        let state_enum = if let Some(expected_name) = self.expected_state_name().as_deref() {
+            ensure_state_enum_loaded_by_name(&state_path, expected_name)
+        } else {
+            ensure_state_enum_loaded(&state_path)
+        };
+        let Some(state_enum) = state_enum else {
             return Err(missing_state_enum_error(self));
         };
         Ok(state_enum)
     }
 
-    pub fn from_item_struct(item: &ItemStruct) -> Self {
-        Self {
+    pub fn from_item_struct(item: &ItemStruct) -> syn::Result<Self> {
+        let Some((file_path, line_number)) = current_source_info() else {
+            return Err(syn::Error::new(
+                item.ident.span(),
+                format!(
+                    "Internal error: could not read source information for `#[machine]` struct `{}`.",
+                    item.ident
+                ),
+            ));
+        };
+        let Some(module_path) = module_path_for_line(&file_path, line_number) else {
+            return Err(syn::Error::new(
+                item.ident.span(),
+                format!(
+                    "Internal error: could not resolve the module path for `#[machine]` struct `{}`.",
+                    item.ident
+                ),
+            ));
+        };
+
+        Ok(Self {
             name: item.ident.to_string(),
             vis: item.vis.to_token_stream().to_string(),
             derives: item
@@ -93,11 +120,11 @@ impl MachineInfo {
                 .flatten()
                 .collect(),
             fields: collect_fields(item),
-            module_path: current_module_path().into(),
+            module_path: module_path.into(),
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
-            file_path: current_source_info().map(|(path, _)| path),
-        }
+            file_path: Some(file_path),
+        })
     }
 
     pub fn from_item_struct_with_module(item: &ItemStruct, module_path: &MachinePath) -> Option<Self> {
@@ -288,87 +315,28 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
     quote! { compile_error!(#message); }
 }
 
-#[derive(Clone)]
-struct ItemCandidate {
-    name: String,
-    line_number: usize,
-    module_path: String,
-}
-
 fn available_state_candidates_in_module(module_path: &str) -> Vec<ItemCandidate> {
     let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
-    let Some(analysis) = get_file_analysis(&file_path) else {
-        return Vec::new();
-    };
-
-    let mut names = analysis
-        .enums
-        .iter()
-        .filter(|entry| entry.attrs.iter().any(|attr| attr == "state"))
-        .filter_map(|entry| item_candidate_from_line(&file_path, entry.item.ident.to_string(), entry.line_number))
-        .filter(|candidate| candidate.module_path == module_path)
-        .collect::<Vec<_>>();
-    names.sort_by(|left, right| {
-        left.name
-            .cmp(&right.name)
-            .then(left.module_path.cmp(&right.module_path))
-            .then(left.line_number.cmp(&right.line_number))
-    });
-    names.dedup_by(|left, right| left.name == right.name && left.line_number == right.line_number);
-    names
+    candidates_in_module(&file_path, module_path, ItemKind::Enum, Some("state"))
 }
 
 fn plain_enum_line_in_module(module_path: &str, enum_name: &str) -> Option<usize> {
     let (file_path, _) = current_source_info()?;
-    let analysis = get_file_analysis(&file_path)?;
-    analysis.enums.iter().find_map(|entry| {
-        (entry.item.ident == enum_name
-            && module_path_for_line(&file_path, entry.line_number).as_deref() == Some(module_path)
-            && !entry.attrs.iter().any(|attr| attr == "state"))
-        .then_some(entry.line_number)
-    })
+    plain_item_line_in_module(&file_path, module_path, ItemKind::Enum, enum_name, Some("state"))
 }
 
 fn same_named_state_candidates_elsewhere(enum_name: &str, module_path: &str) -> Option<Vec<ItemCandidate>> {
     let (file_path, _) = current_source_info()?;
-    let analysis = get_file_analysis(&file_path)?;
-    let mut candidates = analysis
-        .enums
-        .iter()
-        .filter(|entry| entry.item.ident == enum_name && entry.attrs.iter().any(|attr| attr == "state"))
-        .filter_map(|entry| item_candidate_from_line(&file_path, entry.item.ident.to_string(), entry.line_number))
-        .filter(|candidate| candidate.module_path != module_path)
-        .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        left.module_path
-            .cmp(&right.module_path)
-            .then(left.line_number.cmp(&right.line_number))
-    });
-    (!candidates.is_empty()).then_some(candidates)
-}
-
-fn item_candidate_from_line(file_path: &str, name: String, line_number: usize) -> Option<ItemCandidate> {
-    let module_path = module_path_for_line(file_path, line_number)?;
-    Some(ItemCandidate {
-        name,
-        line_number,
+    let candidates = same_named_candidates_elsewhere(
+        &file_path,
         module_path,
-    })
-}
-
-fn format_candidates(candidates: &[ItemCandidate]) -> String {
-    candidates
-        .iter()
-        .map(|candidate| {
-            format!(
-                "`{}` in `{}` (line {})",
-                candidate.name, candidate.module_path, candidate.line_number
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+        ItemKind::Enum,
+        enum_name,
+        Some("state"),
+    );
+    (!candidates.is_empty()).then_some(candidates)
 }
 
 #[cfg(test)]

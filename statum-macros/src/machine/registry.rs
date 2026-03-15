@@ -1,7 +1,6 @@
-use macro_registry::analysis::{FileAnalysis, StructEntry, get_file_analysis};
-use macro_registry::callsite::{current_source_info, module_path_for_line};
+use macro_registry::analysis::{FileAnalysis, StructEntry};
 use macro_registry::registry::{
-    RegistryDomain, StaticRegistry, ensure_loaded,
+    NamedRegistryDomain, RegistryDomain, StaticRegistry, ensure_loaded_by_name,
 };
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -32,6 +31,20 @@ impl RegistryDomain for MachineRegistryDomain {
     fn matches_entry(entry: &Self::Entry) -> bool {
         entry.attrs.iter().any(|attr| attr == "machine")
     }
+
+    fn entry_hint(entry: &Self::Entry) -> Option<String> {
+        Some(entry.item.ident.to_string())
+    }
+}
+
+impl NamedRegistryDomain for MachineRegistryDomain {
+    fn entry_name(entry: &Self::Entry) -> String {
+        entry.item.ident.to_string()
+    }
+
+    fn value_name(value: &Self::Value) -> String {
+        value.name.clone()
+    }
 }
 
 pub(super) fn get_machine_map() -> &'static RwLock<HashMap<MachinePath, MachineInfo>> {
@@ -40,10 +53,6 @@ pub(super) fn get_machine_map() -> &'static RwLock<HashMap<MachinePath, MachineI
 
 fn get_machine(machine_path: &MachinePath) -> Option<MachineInfo> {
     MACHINE_MAP.get_cloned(machine_path)
-}
-
-fn ensure_machine_loaded(machine_path: &MachinePath) -> Option<MachineInfo> {
-    ensure_loaded::<MachineRegistryDomain>(&MACHINE_MAP, machine_path)
 }
 
 pub fn ensure_machine_loaded_by_name(
@@ -56,27 +65,7 @@ pub fn ensure_machine_loaded_by_name(
         return Some(existing);
     }
 
-    if let Some((file_path, _)) = current_source_info()
-        && let Some(analysis) = get_file_analysis(&file_path)
-    {
-        for entry in &analysis.structs {
-            if entry.item.ident != machine_name || !entry.attrs.iter().any(|attr| attr == "machine")
-            {
-                continue;
-            }
-            if module_path_for_line(&file_path, entry.line_number).as_deref() != Some(machine_path.as_ref()) {
-                continue;
-            }
-
-            if let Some(info) = MachineInfo::from_item_struct_with_module(&entry.item, machine_path) {
-                MACHINE_MAP.insert(machine_path.clone(), info.clone());
-                return Some(info);
-            }
-        }
-    }
-
-    let loaded = ensure_machine_loaded(machine_path)?;
-    (loaded.name == machine_name).then_some(loaded)
+    ensure_loaded_by_name::<MachineRegistryDomain>(&MACHINE_MAP, machine_path, machine_name)
 }
 
 pub fn store_machine_struct(machine_info: &MachineInfo) {

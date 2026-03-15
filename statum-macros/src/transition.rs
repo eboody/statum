@@ -1,5 +1,8 @@
-use macro_registry::analysis::get_file_analysis;
-use macro_registry::callsite::{current_source_info, module_path_for_line};
+use macro_registry::callsite::current_source_info;
+use macro_registry::query::{
+    ItemCandidate, ItemKind, candidates_in_module, format_candidates, plain_item_line_in_module,
+    same_named_candidates_elsewhere,
+};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use std::collections::HashSet;
@@ -11,13 +14,6 @@ use syn::{
 
 use crate::machine::transition_support_module_ident;
 use crate::{EnumInfo, MachineInfo};
-
-#[derive(Clone)]
-struct ItemCandidate {
-    name: String,
-    line_number: usize,
-    module_path: String,
-}
 
 /// Stores all metadata for a single transition method in an `impl` block
 #[allow(unused)]
@@ -383,36 +379,18 @@ fn available_machine_candidates_in_module(module_path: &str) -> Vec<ItemCandidat
     let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
-    let Some(analysis) = get_file_analysis(&file_path) else {
-        return Vec::new();
-    };
-
-    let mut names = analysis
-        .structs
-        .iter()
-        .filter(|entry| entry.attrs.iter().any(|attr| attr == "machine"))
-        .filter_map(|entry| item_candidate_from_line(&file_path, entry.item.ident.to_string(), entry.line_number))
-        .filter(|candidate| candidate.module_path == module_path)
-        .collect::<Vec<_>>();
-    names.sort_by(|left, right| {
-        left.name
-            .cmp(&right.name)
-            .then(left.module_path.cmp(&right.module_path))
-            .then(left.line_number.cmp(&right.line_number))
-    });
-    names.dedup_by(|left, right| left.name == right.name && left.line_number == right.line_number);
-    names
+    candidates_in_module(&file_path, module_path, ItemKind::Struct, Some("machine"))
 }
 
 fn plain_struct_line_in_module(module_path: &str, struct_name: &str) -> Option<usize> {
     let (file_path, _) = current_source_info()?;
-    let analysis = get_file_analysis(&file_path)?;
-    analysis.structs.iter().find_map(|entry| {
-        (entry.item.ident == struct_name
-            && module_path_for_line(&file_path, entry.line_number).as_deref() == Some(module_path)
-            && !entry.attrs.iter().any(|attr| attr == "machine"))
-        .then_some(entry.line_number)
-    })
+    plain_item_line_in_module(
+        &file_path,
+        module_path,
+        ItemKind::Struct,
+        struct_name,
+        Some("machine"),
+    )
 }
 
 fn invalid_transition_state_error(
@@ -569,42 +547,14 @@ fn extract_machine_generic(
 
 fn same_named_machine_candidates_elsewhere(machine_name: &str, module_path: &str) -> Option<Vec<ItemCandidate>> {
     let (file_path, _) = current_source_info()?;
-    let analysis = get_file_analysis(&file_path)?;
-    let mut candidates = analysis
-        .structs
-        .iter()
-        .filter(|entry| entry.item.ident == machine_name && entry.attrs.iter().any(|attr| attr == "machine"))
-        .filter_map(|entry| item_candidate_from_line(&file_path, entry.item.ident.to_string(), entry.line_number))
-        .filter(|candidate| candidate.module_path != module_path)
-        .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        left.module_path
-            .cmp(&right.module_path)
-            .then(left.line_number.cmp(&right.line_number))
-    });
-    (!candidates.is_empty()).then_some(candidates)
-}
-
-fn item_candidate_from_line(file_path: &str, name: String, line_number: usize) -> Option<ItemCandidate> {
-    let module_path = module_path_for_line(file_path, line_number)?;
-    Some(ItemCandidate {
-        name,
-        line_number,
+    let candidates = same_named_candidates_elsewhere(
+        &file_path,
         module_path,
-    })
-}
-
-fn format_candidates(candidates: &[ItemCandidate]) -> String {
-    candidates
-        .iter()
-        .map(|candidate| {
-            format!(
-                "`{}` in `{}` (line {})",
-                candidate.name, candidate.module_path, candidate.line_number
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+        ItemKind::Struct,
+        machine_name,
+        Some("machine"),
+    );
+    (!candidates.is_empty()).then_some(candidates)
 }
 
 fn extract_first_generic_type_ref(args: &PathArguments) -> Option<&Type> {

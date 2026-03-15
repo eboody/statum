@@ -23,11 +23,11 @@ moddef::moddef!(
     }
 );
 
-use crate::{
-    MachinePath, StateModulePath, ensure_machine_loaded_by_name, ensure_state_enum_loaded,
-};
-use macro_registry::callsite::current_module_path;
+use crate::{MachinePath, ensure_machine_loaded_by_name};
+use macro_registry::callsite::current_module_path_opt;
 use proc_macro::TokenStream;
+use proc_macro2::Span;
+use quote::quote_spanned;
 use syn::{Item, ItemImpl, parse_macro_input};
 
 /// Define the legal lifecycle phases for a Statum machine.
@@ -76,7 +76,10 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
         other => return invalid_machine_target_error(&other).into(),
     };
 
-    let machine_info = MachineInfo::from_item_struct(&input);
+    let machine_info = match MachineInfo::from_item_struct(&input) {
+        Ok(info) => info,
+        Err(err) => return err.to_compile_error().into(),
+    };
 
     // Validate the struct before proceeding
     if let Some(error) = validate_machine_struct(&input, &machine_info) {
@@ -110,11 +113,12 @@ pub fn transition(
         Err(err) => return err.into(),
     };
 
-    let module_path = current_module_path();
+    let module_path = match resolved_current_module_path(tr_impl.machine_span, "#[transition]") {
+        Ok(path) => path,
+        Err(err) => return err,
+    };
 
-    let state_path: StateModulePath = module_path.clone().into();
     let machine_path: MachinePath = module_path.clone().into();
-    let _ = ensure_state_enum_loaded(&state_path);
     let machine_info_owned = ensure_machine_loaded_by_name(&machine_path, &tr_impl.machine_name);
     let machine_info = match machine_info_owned.as_ref() {
         Some(info) => info,
@@ -148,6 +152,21 @@ pub fn transition(
 /// for typed rehydration.
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let module_path = current_module_path();
+    let module_path = match resolved_current_module_path(Span::call_site(), "#[validators]") {
+        Ok(path) => path,
+        Err(err) => return err,
+    };
     parse_validators(attr, item, &module_path)
+}
+
+fn resolved_current_module_path(span: Span, macro_name: &str) -> Result<String, TokenStream> {
+    current_module_path_opt().ok_or_else(|| {
+        let message = format!(
+            "Internal error: could not resolve the module path for `{macro_name}` at this call site."
+        );
+        quote_spanned! { span =>
+            compile_error!(#message);
+        }
+        .into()
+    })
 }

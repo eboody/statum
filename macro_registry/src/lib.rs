@@ -5,4 +5,5 @@ mod cache;
 
 pub mod analysis;
 pub mod callsite;
+pub mod query;
 pub mod registry;

@@ -3,8 +3,11 @@ use quote::quote;
 use std::collections::HashSet;
 use syn::{Ident, ItemImpl};
 
-use macro_registry::analysis::get_file_analysis;
-use macro_registry::callsite::{current_source_info, module_path_for_line};
+use macro_registry::callsite::current_source_info;
+use macro_registry::query::{
+    ItemCandidate, ItemKind, candidates_in_module, format_candidates, plain_item_line_in_module,
+    same_named_candidates_elsewhere,
+};
 
 use crate::{
     EnumInfo, MachineInfo, MachinePath, StateModulePath, ensure_machine_loaded_by_name,
@@ -12,13 +15,6 @@ use crate::{
 };
 
 use super::signatures::validator_state_name_from_ident;
-
-#[derive(Clone)]
-struct ItemCandidate {
-    name: String,
-    line_number: usize,
-    module_path: String,
-}
 
 pub(super) fn validate_validator_coverage(
     item: &ItemImpl,
@@ -223,142 +219,55 @@ pub(super) fn resolve_state_enum_info(
 }
 
 fn available_machine_candidates_in_module(module_path: &str) -> Vec<ItemCandidate> {
-    available_candidates_in_module(module_path, |analysis| {
-        analysis
-            .structs
-            .iter()
-            .filter(|entry| entry.attrs.iter().any(|attr| attr == "machine"))
-            .filter_map(|entry| item_candidate_from_line(entry.item.ident.to_string(), entry.line_number))
-            .collect()
-    })
-}
-
-fn available_state_candidates_in_module(module_path: &str) -> Vec<ItemCandidate> {
-    available_candidates_in_module(module_path, |analysis| {
-        analysis
-            .enums
-            .iter()
-            .filter(|entry| entry.attrs.iter().any(|attr| attr == "state"))
-            .filter_map(|entry| item_candidate_from_line(entry.item.ident.to_string(), entry.line_number))
-            .collect()
-    })
-}
-
-fn available_candidates_in_module<F>(module_path: &str, collect: F) -> Vec<ItemCandidate>
-where
-    F: FnOnce(&macro_registry::analysis::FileAnalysis) -> Vec<ItemCandidate>,
-{
     let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
-    let Some(analysis) = get_file_analysis(&file_path) else {
+    candidates_in_module(&file_path, module_path, ItemKind::Struct, Some("machine"))
+}
+
+fn available_state_candidates_in_module(module_path: &str) -> Vec<ItemCandidate> {
+    let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
-
-    let mut names = collect(&analysis)
-        .into_iter()
-        .filter(|candidate| candidate.module_path == module_path)
-        .collect::<Vec<_>>();
-    names.sort_by(|left, right| {
-        left.name
-            .cmp(&right.name)
-            .then(left.module_path.cmp(&right.module_path))
-            .then(left.line_number.cmp(&right.line_number))
-    });
-    names.dedup_by(|left, right| left.name == right.name && left.line_number == right.line_number);
-    names
+    candidates_in_module(&file_path, module_path, ItemKind::Enum, Some("state"))
 }
 
 fn same_named_machine_candidates_elsewhere(machine_name: &str, module_path: &str) -> Option<Vec<ItemCandidate>> {
-    same_named_candidates_elsewhere(module_path, |analysis| {
-        analysis
-            .structs
-            .iter()
-            .filter(|entry| entry.item.ident == machine_name && entry.attrs.iter().any(|attr| attr == "machine"))
-            .filter_map(|entry| item_candidate_from_line(entry.item.ident.to_string(), entry.line_number))
-            .collect()
-    })
-}
-
-fn same_named_state_candidates_elsewhere(state_name: &str, module_path: &str) -> Option<Vec<ItemCandidate>> {
-    same_named_candidates_elsewhere(module_path, |analysis| {
-        analysis
-            .enums
-            .iter()
-            .filter(|entry| entry.item.ident == state_name && entry.attrs.iter().any(|attr| attr == "state"))
-            .filter_map(|entry| item_candidate_from_line(entry.item.ident.to_string(), entry.line_number))
-            .collect()
-    })
-}
-
-fn same_named_candidates_elsewhere<F>(module_path: &str, collect: F) -> Option<Vec<ItemCandidate>>
-where
-    F: FnOnce(&macro_registry::analysis::FileAnalysis) -> Vec<ItemCandidate>,
-{
     let (file_path, _) = current_source_info()?;
-    let analysis = get_file_analysis(&file_path)?;
-    let mut candidates = collect(&analysis)
-        .into_iter()
-        .filter(|candidate| candidate.module_path != module_path)
-        .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        left.module_path
-            .cmp(&right.module_path)
-            .then(left.line_number.cmp(&right.line_number))
-    });
+    let candidates = same_named_candidates_elsewhere(
+        &file_path,
+        module_path,
+        ItemKind::Struct,
+        machine_name,
+        Some("machine"),
+    );
     (!candidates.is_empty()).then_some(candidates)
 }
 
-fn item_candidate_from_line(name: String, line_number: usize) -> Option<ItemCandidate> {
+fn same_named_state_candidates_elsewhere(state_name: &str, module_path: &str) -> Option<Vec<ItemCandidate>> {
     let (file_path, _) = current_source_info()?;
-    let module_path = module_path_for_line(&file_path, line_number)?;
-    Some(ItemCandidate {
-        name,
-        line_number,
+    let candidates = same_named_candidates_elsewhere(
+        &file_path,
         module_path,
-    })
+        ItemKind::Enum,
+        state_name,
+        Some("state"),
+    );
+    (!candidates.is_empty()).then_some(candidates)
 }
 
 fn plain_struct_line_in_module(module_path: &str, struct_name: &str) -> Option<usize> {
-    current_analysis_line_in_module(module_path, |analysis, file_path| {
-        analysis.structs.iter().find_map(|entry| {
-            (entry.item.ident == struct_name
-                && module_path_for_line(file_path, entry.line_number).as_deref() == Some(module_path)
-                && !entry.attrs.iter().any(|attr| attr == "machine"))
-            .then_some(entry.line_number)
-        })
-    })
+    let (file_path, _) = current_source_info()?;
+    plain_item_line_in_module(
+        &file_path,
+        module_path,
+        ItemKind::Struct,
+        struct_name,
+        Some("machine"),
+    )
 }
 
 fn plain_enum_line_in_module(module_path: &str, enum_name: &str) -> Option<usize> {
-    current_analysis_line_in_module(module_path, |analysis, file_path| {
-        analysis.enums.iter().find_map(|entry| {
-            (entry.item.ident == enum_name
-                && module_path_for_line(file_path, entry.line_number).as_deref() == Some(module_path)
-                && !entry.attrs.iter().any(|attr| attr == "state"))
-            .then_some(entry.line_number)
-        })
-    })
-}
-
-fn current_analysis_line_in_module<F>(module_path: &str, find_line: F) -> Option<usize>
-where
-    F: FnOnce(&macro_registry::analysis::FileAnalysis, &str) -> Option<usize>,
-{
     let (file_path, _) = current_source_info()?;
-    let analysis = get_file_analysis(&file_path)?;
-    find_line(&analysis, &file_path).filter(|_| !module_path.is_empty())
-}
-
-fn format_candidates(candidates: &[ItemCandidate]) -> String {
-    candidates
-        .iter()
-        .map(|candidate| {
-            format!(
-                "`{}` in `{}` (line {})",
-                candidate.name, candidate.module_path, candidate.line_number
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+    plain_item_line_in_module(&file_path, module_path, ItemKind::Enum, enum_name, Some("state"))
 }

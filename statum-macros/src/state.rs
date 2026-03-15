@@ -1,7 +1,8 @@
-use macro_registry::analysis::{EnumEntry, FileAnalysis, get_file_analysis};
-use macro_registry::callsite::{current_module_path, current_source_info, module_path_for_line};
+use macro_registry::analysis::{EnumEntry, FileAnalysis};
+use macro_registry::callsite::{current_source_info, module_path_for_line};
 use macro_registry::registry::{
-    RegistryDomain, RegistryKey, RegistryValue, StaticRegistry, ensure_loaded,
+    NamedRegistryDomain, RegistryDomain, RegistryKey, RegistryValue, StaticRegistry, ensure_loaded,
+    ensure_loaded_by_name,
 };
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
@@ -242,6 +243,20 @@ impl RegistryDomain for StateRegistryDomain {
     fn matches_entry(entry: &Self::Entry) -> bool {
         entry.attrs.iter().any(|attr| attr == "state")
     }
+
+    fn entry_hint(entry: &Self::Entry) -> Option<String> {
+        Some(entry.item.ident.to_string())
+    }
+}
+
+impl NamedRegistryDomain for StateRegistryDomain {
+    fn entry_name(entry: &Self::Entry) -> String {
+        entry.item.ident.to_string()
+    }
+
+    fn value_name(value: &Self::Value) -> String {
+        value.name.clone()
+    }
 }
 
 pub fn get_state_enum(enum_path: &StateModulePath) -> Option<EnumInfo> {
@@ -270,34 +285,7 @@ pub fn ensure_state_enum_loaded_by_name(
     enum_path: &StateModulePath,
     enum_name: &str,
 ) -> Option<EnumInfo> {
-    if let Some(existing) = get_state_enum(enum_path)
-        && existing.name == enum_name
-    {
-        return Some(existing);
-    }
-
-    if let Some((file_path, _)) = current_source_info()
-        && let Some(analysis) = get_file_analysis(&file_path)
-    {
-        for entry in &analysis.enums {
-            if entry.item.ident != enum_name {
-                continue;
-            }
-            if !entry.attrs.iter().any(|attr| attr == "state") {
-                continue;
-            }
-            if module_path_for_line(&file_path, entry.line_number).as_deref() != Some(enum_path.as_ref()) {
-                continue;
-            }
-            if let Ok(info) = EnumInfo::from_item_enum_with_module(&entry.item, enum_path.clone()) {
-                STATE_ENUMS.insert(enum_path.clone(), info.clone());
-                return Some(info);
-            }
-        }
-    }
-
-    let loaded = ensure_state_enum_loaded(enum_path)?;
-    (loaded.name == enum_name).then_some(loaded)
+    ensure_loaded_by_name::<StateRegistryDomain>(&STATE_ENUMS, enum_path, enum_name)
 }
 /// Extracts `#[derive(...)]` attributes from an enum
 pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
@@ -317,9 +305,25 @@ pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
 
 impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
-        let module_path = current_module_path();
-        let file_path = current_source_info().map(|(path, _)| path);
-        Self::from_item_enum_with_module_and_file(item, module_path.into(), file_path)
+        let Some((file_path, line_number)) = current_source_info() else {
+            return Err(syn::Error::new(
+                item.ident.span(),
+                format!(
+                    "Internal error: could not read source information for `#[state]` enum `{}`.",
+                    item.ident
+                ),
+            ));
+        };
+        let Some(module_path) = module_path_for_line(&file_path, line_number) else {
+            return Err(syn::Error::new(
+                item.ident.span(),
+                format!(
+                    "Internal error: could not resolve the module path for `#[state]` enum `{}`.",
+                    item.ident
+                ),
+            ));
+        };
+        Self::from_item_enum_with_module_and_file(item, module_path.into(), Some(file_path))
     }
 
     pub fn from_item_enum_with_module(

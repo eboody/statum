@@ -1,5 +1,13 @@
 # Release Notes
 
+## v0.5.4 (2026-03-15)
+
+### Changes
+- Expanded `macro_registry` with a reusable query layer for module-aware item discovery and typed registry lookup results.
+- Refactored `statum-macros` to use the shared `macro_registry` query and named-lookup APIs instead of local duplicate resolution logic.
+- Tightened proc-macro module-path resolution so metadata loading fails explicitly when the call-site module cannot be determined.
+- Refreshed the `module_path_extractor` and `macro_registry` READMEs around real proc-macro workflows and public entry points.
+
 ## v0.5.3 (2026-03-12)
 
 ### Changes
