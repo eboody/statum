@@ -90,7 +90,7 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
     store_machine_struct(&machine_info);
 
     // Generate any required structs or implementations dynamically
-    let expanded = generate_machine_impls(&machine_info);
+    let expanded = generate_machine_impls(&machine_info, &input);
 
     TokenStream::from(expanded)
 }

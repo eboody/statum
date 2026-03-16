@@ -1,15 +1,15 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{GenericParam, Generics, Ident};
+use syn::{GenericParam, Generics, Ident, ItemStruct};
 
 use crate::state::{ParsedEnumInfo, ParsedVariantInfo};
 use crate::{EnumInfo, to_snake_case};
 
-use super::metadata::{ParsedMachineInfo, is_rust_analyzer};
+use super::metadata::{ParsedMachineInfo, field_type_alias_name, is_rust_analyzer};
 use super::registry::get_machine_map;
 use super::MachineInfo;
 
-pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenStream {
+pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> proc_macro2::TokenStream {
     let map_guard = match get_machine_map().read() {
         Ok(guard) => guard,
         Err(_) => {
@@ -67,6 +67,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
         };
     let builder_methods = machine_info.generate_builder_methods(&parsed_machine, &parsed_state);
     let transition_support = transition_support(machine_info, &state_enum);
+    let field_type_aliases = generate_field_type_aliases(machine_info, item);
     let machine_state_surface = match generate_machine_state_surface(
         machine_info,
         &parsed_machine,
@@ -79,6 +80,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo) -> proc_macro2::TokenS
 
     quote! {
         #transition_support
+        #field_type_aliases
         #struct_def
         #builder_methods
         #machine_state_surface
@@ -235,9 +237,12 @@ fn generate_machine_state_surface(
 ) -> Result<TokenStream, TokenStream> {
     let fields_struct_fields = parsed_machine.fields.iter().map(|field| {
         let field_ident = &field.ident;
-        let field_ty = &field.field_type;
+        let alias_ident = format_ident!(
+            "{}",
+            field_type_alias_name(&machine_info.name, &field.ident.to_string())
+        );
         quote! {
-            pub #field_ident: #field_ty
+            pub #field_ident: super::#alias_ident
         }
     });
     let state_variants = parsed_state.variants.iter().map(|variant| {
@@ -285,6 +290,25 @@ fn generate_machine_state_surface(
             }
         }
     })
+}
+
+fn generate_field_type_aliases(machine_info: &MachineInfo, item: &ItemStruct) -> TokenStream {
+    let alias_vis = &item.vis;
+    let aliases = item.fields.iter().filter_map(|field| {
+        let field_ident = field.ident.as_ref()?;
+        let alias_ident =
+            format_ident!("{}", field_type_alias_name(&machine_info.name, &field_ident.to_string()));
+        let field_ty = &field.ty;
+        Some(quote! {
+            #[doc(hidden)]
+            #[allow(non_camel_case_types)]
+            #alias_vis type #alias_ident = #field_ty;
+        })
+    });
+
+    quote! {
+        #(#aliases)*
+    }
 }
 
 pub(crate) fn transition_support_module_ident(machine_info: &MachineInfo) -> Ident {

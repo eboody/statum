@@ -73,6 +73,11 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_transition_map.rs");
     t.pass("tests/ui/valid_visibility_and_reconstruction.rs");
     t.pass("tests/ui/valid_multiple_machines_same_module.rs");
+    t.pass("tests/ui/valid_machine_field_aliases.rs");
+    t.pass("tests/ui/valid_machine_field_aliases_batch.rs");
+    t.pass("tests/ui/valid_machine_field_aliases_local_validators.rs");
+    t.pass("tests/ui/valid_machine_field_module_paths.rs");
+    t.pass("tests/ui/valid_machine_field_aliases_renamed_import.rs");
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
 }

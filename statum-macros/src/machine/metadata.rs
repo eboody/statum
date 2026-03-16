@@ -110,6 +110,9 @@ impl MachineInfo {
             ));
         };
 
+        let module_path: MachinePath = module_path.into();
+        let fields = collect_fields(item);
+
         Ok(Self {
             name: item.ident.to_string(),
             vis: item.vis.to_token_stream().to_string(),
@@ -119,8 +122,8 @@ impl MachineInfo {
                 .filter_map(extract_derive)
                 .flatten()
                 .collect(),
-            fields: collect_fields(item),
-            module_path: module_path.into(),
+            module_path,
+            fields,
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
             file_path: Some(file_path),
@@ -240,14 +243,24 @@ pub(super) fn is_rust_analyzer() -> bool {
     std::env::var("RUST_ANALYZER_INTERNALS").is_ok()
 }
 
+pub(super) fn field_type_alias_name(machine_name: &str, field_name: &str) -> String {
+    let field_name = field_name.trim_start_matches("r#");
+    format!(
+        "__statum_{}_{}_field_type",
+        crate::to_snake_case(machine_name),
+        field_name
+    )
+}
+
 fn collect_fields(item: &ItemStruct) -> Vec<MachineField> {
+    let machine_name = item.ident.to_string();
     item.fields
         .iter()
         .filter_map(|field| {
             field.ident.as_ref().map(|ident| MachineField {
                 name: ident.to_string(),
                 vis: field.vis.to_token_stream().to_string(),
-                field_type: field.ty.to_token_stream().to_string(),
+                field_type: field_type_alias_name(&machine_name, &ident.to_string()),
             })
         })
         .collect()
@@ -356,17 +369,21 @@ mod tests {
             }
         };
 
+        let module_path = MachinePath("crate::workflow".into());
         let info =
-            MachineInfo::from_item_struct_with_module(&item, &MachinePath("crate::workflow".into()))
-                .expect("machine metadata");
+            MachineInfo::from_item_struct_with_module(&item, &module_path).expect("machine metadata");
         let parsed = info.parse().expect("parsed machine metadata");
 
         assert_eq!(info.state_generic_name.as_deref(), Some("TaskState"));
+        assert_eq!(info.fields[0].field_type, "__statum_task_machine_client_field_type");
         assert_eq!(parsed.generics.to_token_stream().to_string(), "< TaskState >");
         assert_eq!(parsed.derives.len(), 1);
         assert_eq!(parsed.fields.len(), 2);
         assert_eq!(parsed.fields[0].ident.to_string(), "client");
-        assert_eq!(parsed.fields[0].field_type.to_token_stream().to_string(), "String");
+        assert_eq!(
+            parsed.fields[0].field_type.to_token_stream().to_string(),
+            "__statum_task_machine_client_field_type"
+        );
         assert_eq!(parsed.fields[1].ident.to_string(), "priority");
         assert_eq!(parsed.fields[1].vis.to_token_stream().to_string(), "");
     }

@@ -1,0 +1,57 @@
+#![allow(unused_imports)]
+extern crate self as statum;
+pub use bon;
+pub use statum_core::{
+    CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState,
+};
+
+use bon::builder as _;
+use statum_macros::{machine, state, validators};
+
+mod web {
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct Router;
+}
+
+mod workflow {
+    use super::*;
+    use crate::web::Router as AppRouter;
+
+    #[state]
+    pub enum WorkflowState {
+        Draft,
+    }
+
+    #[machine]
+    pub struct WorkflowMachine<WorkflowState> {
+        pub router: AppRouter,
+    }
+
+    pub struct Row {
+        pub status: &'static str,
+    }
+
+    #[validators(WorkflowMachine)]
+    impl Row {
+        fn is_draft(&self) -> Result<(), statum_core::Error> {
+            let _ = &router;
+            if self.status == "draft" {
+                Ok(())
+            } else {
+                Err(statum_core::Error::InvalidState)
+            }
+        }
+    }
+}
+
+fn main() {
+    let direct = workflow::WorkflowMachine::<workflow::Draft>::builder().router(web::Router).build();
+    let _ = direct.router;
+
+    let rebuilt = workflow::Row { status: "draft" }.into_machine().router(web::Router).build().unwrap();
+    match rebuilt {
+        workflow::workflow_machine::State::Draft(machine) => {
+            let _ = machine.router;
+        }
+    }
+}

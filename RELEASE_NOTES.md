@@ -1,5 +1,10 @@
 # Release Notes
 
+## v0.5.5 (2026-03-16)
+
+### Changes
+- Restored ergonomic `#[machine]` field type handling so imported aliases, renamed imports, and module aliases no longer need to be rewritten as fully qualified paths.
+
 ## v0.5.4 (2026-03-15)
 
 ### Changes
