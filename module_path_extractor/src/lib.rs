@@ -6,9 +6,8 @@ mod pathing;
 
 use std::path::Path;
 
-use cache::{
+use crate::cache::{
     clear_line_cache_for_file, file_fingerprint, get_or_parse_file_modules, store_line_result,
-    CacheLookup,
 };
 use parser::{parse_file_modules, resolve_module_path_from_lines};
 use pathing::normalize_file_path;
@@ -42,11 +41,11 @@ pub fn find_module_path(file_path: &str, line_number: usize) -> Option<String> {
     let fingerprint = file_fingerprint(&normalized_file_path)?;
 
     match cache::cached_line_result(&normalized_file_path, line_number, fingerprint) {
-        CacheLookup::Fresh(module_path) => return module_path,
+        cache::CacheLookup::Fresh(module_path) => return module_path,
         // Cached line/module mappings are only valid as a set for one file fingerprint.
         // Once the file changes, drop every cached line for that file before reparsing.
-        CacheLookup::Stale => clear_line_cache_for_file(&normalized_file_path),
-        CacheLookup::Missing => {}
+        cache::CacheLookup::Stale => clear_line_cache_for_file(&normalized_file_path),
+        cache::CacheLookup::Missing => {}
     }
 
     let parsed_file = get_or_parse_file_modules(&normalized_file_path, fingerprint)?;

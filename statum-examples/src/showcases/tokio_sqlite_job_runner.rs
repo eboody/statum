@@ -1,4 +1,4 @@
-use sqlx::{FromRow, SqlitePool, sqlite::SqlitePoolOptions};
+use sqlx::{FromRow, SqlitePool, sqlite};
 use statum::{machine, state, transition, validators};
 
 pub const RETRY_DELAY_MS: i64 = 1_000;
@@ -271,7 +271,7 @@ enum ProcessedJob {
 }
 
 pub async fn build_runner() -> Result<JobRunner, RunnerError> {
-    let pool = SqlitePoolOptions::new()
+    let pool = sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
         .await?;

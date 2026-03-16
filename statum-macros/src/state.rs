@@ -1,9 +1,6 @@
 use macro_registry::analysis::{EnumEntry, FileAnalysis};
 use macro_registry::callsite::{current_source_info, module_path_for_line};
-use macro_registry::registry::{
-    NamedRegistryDomain, RegistryDomain, RegistryKey, RegistryValue, StaticRegistry, ensure_loaded,
-    ensure_loaded_by_name,
-};
+use macro_registry::registry;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use syn::spanned::Spanned;
@@ -30,7 +27,7 @@ impl EnumInfo {
     }
 }
 
-impl RegistryValue for EnumInfo {
+impl registry::RegistryValue for EnumInfo {
     fn file_path(&self) -> Option<&str> {
         self.file_path.as_deref()
     }
@@ -69,7 +66,7 @@ impl AsRef<str> for StateModulePath {
     }
 }
 
-impl RegistryKey for StateModulePath {
+impl registry::RegistryKey for StateModulePath {
     fn from_module_path(module_path: String) -> Self {
         Self(module_path)
     }
@@ -219,11 +216,12 @@ impl ToTokens for EnumInfo {
 
 // Global storage for `#[state]` enums
 
-static STATE_ENUMS: StaticRegistry<StateModulePath, EnumInfo> = StaticRegistry::new();
+static STATE_ENUMS: registry::StaticRegistry<StateModulePath, EnumInfo> =
+    registry::StaticRegistry::new();
 
 struct StateRegistryDomain;
 
-impl RegistryDomain for StateRegistryDomain {
+impl registry::RegistryDomain for StateRegistryDomain {
     type Key = StateModulePath;
     type Value = EnumInfo;
     type Entry = EnumEntry;
@@ -249,7 +247,7 @@ impl RegistryDomain for StateRegistryDomain {
     }
 }
 
-impl NamedRegistryDomain for StateRegistryDomain {
+impl registry::NamedRegistryDomain for StateRegistryDomain {
     fn entry_name(entry: &Self::Entry) -> String {
         entry.item.ident.to_string()
     }
@@ -278,14 +276,14 @@ pub fn invalid_state_target_error(item: &Item) -> TokenStream {
 }
 
 pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo> {
-    ensure_loaded::<StateRegistryDomain>(&STATE_ENUMS, enum_path)
+    registry::ensure_loaded::<StateRegistryDomain>(&STATE_ENUMS, enum_path)
 }
 
 pub fn ensure_state_enum_loaded_by_name(
     enum_path: &StateModulePath,
     enum_name: &str,
 ) -> Option<EnumInfo> {
-    ensure_loaded_by_name::<StateRegistryDomain>(&STATE_ENUMS, enum_path, enum_name)
+    registry::ensure_loaded_by_name::<StateRegistryDomain>(&STATE_ENUMS, enum_path, enum_name)
 }
 /// Extracts `#[derive(...)]` attributes from an enum
 pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {

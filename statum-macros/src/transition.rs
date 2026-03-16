@@ -1,10 +1,7 @@
 use macro_registry::callsite::current_source_info;
-use macro_registry::query::{
-    ItemCandidate, ItemKind, candidates_in_module, format_candidates, plain_item_line_in_module,
-    same_named_candidates_elsewhere,
-};
+use macro_registry::query;
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, quote_spanned, ToTokens};
+use quote::{format_ident, quote, ToTokens};
 use std::collections::HashSet;
 use syn::spanned::Spanned;
 use syn::{
@@ -71,7 +68,7 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, Tok
             "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
             target_type.span(),
         );
-        return Err(quote_spanned! { target_type.span() =>
+        return Err(quote::quote_spanned! { target_type.span() =>
             compile_error!(#message);
         });
     };
@@ -354,14 +351,14 @@ pub fn missing_transition_machine_error(
     } else {
         format!(
             "Available `#[machine]` items in this module: {}.",
-            format_candidates(&available)
+            query::format_candidates(&available)
         )
     };
     let elsewhere_line = same_named_machine_candidates_elsewhere(machine_name, module_path)
         .map(|candidates| {
             format!(
                 "Same-named `#[machine]` items elsewhere in this file: {}.",
-                format_candidates(&candidates)
+                query::format_candidates(&candidates)
             )
         })
         .unwrap_or_else(|| "No same-named `#[machine]` items were found in other modules of this file.".to_string());
@@ -375,19 +372,19 @@ pub fn missing_transition_machine_error(
     compile_error_at(span, &message)
 }
 
-fn available_machine_candidates_in_module(module_path: &str) -> Vec<ItemCandidate> {
+fn available_machine_candidates_in_module(module_path: &str) -> Vec<query::ItemCandidate> {
     let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
-    candidates_in_module(&file_path, module_path, ItemKind::Struct, Some("machine"))
+    query::candidates_in_module(&file_path, module_path, query::ItemKind::Struct, Some("machine"))
 }
 
 fn plain_struct_line_in_module(module_path: &str, struct_name: &str) -> Option<usize> {
     let (file_path, _) = current_source_info()?;
-    plain_item_line_in_module(
+    query::plain_item_line_in_module(
         &file_path,
         module_path,
-        ItemKind::Struct,
+        query::ItemKind::Struct,
         struct_name,
         Some("machine"),
     )
@@ -461,7 +458,7 @@ fn machine_return_signature(machine_name: &str) -> String {
 
 fn compile_error_at(span: Span, message: &str) -> TokenStream {
     let message = LitStr::new(message, span);
-    quote_spanned! { span =>
+    quote::quote_spanned! { span =>
         compile_error!(#message);
     }
 }
@@ -545,12 +542,15 @@ fn extract_machine_generic(
     ))
 }
 
-fn same_named_machine_candidates_elsewhere(machine_name: &str, module_path: &str) -> Option<Vec<ItemCandidate>> {
+fn same_named_machine_candidates_elsewhere(
+    machine_name: &str,
+    module_path: &str,
+) -> Option<Vec<query::ItemCandidate>> {
     let (file_path, _) = current_source_info()?;
-    let candidates = same_named_candidates_elsewhere(
+    let candidates = query::same_named_candidates_elsewhere(
         &file_path,
         module_path,
-        ItemKind::Struct,
+        query::ItemKind::Struct,
         machine_name,
         Some("machine"),
     );

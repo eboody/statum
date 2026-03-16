@@ -1,9 +1,6 @@
 use macro_registry::callsite::{current_source_info, module_path_for_line};
-use macro_registry::query::{
-    ItemCandidate, ItemKind, candidates_in_module, format_candidates, plain_item_line_in_module,
-    same_named_candidates_elsewhere,
-};
-use macro_registry::registry::{RegistryKey, RegistryValue};
+use macro_registry::query;
+use macro_registry::registry;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use syn::{Attribute, Generics, Ident, ItemStruct, LitStr, Type, Visibility};
@@ -153,7 +150,7 @@ impl MachineInfo {
     }
 }
 
-impl RegistryValue for MachineInfo {
+impl registry::RegistryValue for MachineInfo {
     fn file_path(&self) -> Option<&str> {
         self.file_path.as_deref()
     }
@@ -201,7 +198,7 @@ impl AsRef<str> for MachinePath {
     }
 }
 
-impl RegistryKey for MachinePath {
+impl registry::RegistryKey for MachinePath {
     fn from_module_path(module_path: String) -> Self {
         Self(module_path)
     }
@@ -296,7 +293,7 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
     } else {
         format!(
             "Available `#[state]` enums in that module: {}.",
-            format_candidates(&available)
+            query::format_candidates(&available)
         )
     };
     let elsewhere_line = expected
@@ -305,7 +302,7 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
         .map(|candidates| {
             format!(
                 "Same-named `#[state]` enums elsewhere in this file: {}.",
-                format_candidates(&candidates)
+                query::format_candidates(&candidates)
             )
         })
         .unwrap_or_else(|| "No same-named `#[state]` enums were found in other modules of this file.".to_string());
@@ -328,24 +325,33 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
     quote! { compile_error!(#message); }
 }
 
-fn available_state_candidates_in_module(module_path: &str) -> Vec<ItemCandidate> {
+fn available_state_candidates_in_module(module_path: &str) -> Vec<query::ItemCandidate> {
     let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
-    candidates_in_module(&file_path, module_path, ItemKind::Enum, Some("state"))
+    query::candidates_in_module(&file_path, module_path, query::ItemKind::Enum, Some("state"))
 }
 
 fn plain_enum_line_in_module(module_path: &str, enum_name: &str) -> Option<usize> {
     let (file_path, _) = current_source_info()?;
-    plain_item_line_in_module(&file_path, module_path, ItemKind::Enum, enum_name, Some("state"))
-}
-
-fn same_named_state_candidates_elsewhere(enum_name: &str, module_path: &str) -> Option<Vec<ItemCandidate>> {
-    let (file_path, _) = current_source_info()?;
-    let candidates = same_named_candidates_elsewhere(
+    query::plain_item_line_in_module(
         &file_path,
         module_path,
-        ItemKind::Enum,
+        query::ItemKind::Enum,
+        enum_name,
+        Some("state"),
+    )
+}
+
+fn same_named_state_candidates_elsewhere(
+    enum_name: &str,
+    module_path: &str,
+) -> Option<Vec<query::ItemCandidate>> {
+    let (file_path, _) = current_source_info()?;
+    let candidates = query::same_named_candidates_elsewhere(
+        &file_path,
+        module_path,
+        query::ItemKind::Enum,
         enum_name,
         Some("state"),
     );

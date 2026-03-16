@@ -27,7 +27,6 @@ use crate::{MachinePath, ensure_machine_loaded_by_name};
 use macro_registry::callsite::current_module_path_opt;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
-use quote::quote_spanned;
 use syn::{Item, ItemImpl, parse_macro_input};
 
 /// Define the legal lifecycle phases for a Statum machine.
@@ -164,7 +163,7 @@ fn resolved_current_module_path(span: Span, macro_name: &str) -> Result<String, 
         let message = format!(
             "Internal error: could not resolve the module path for `{macro_name}` at this call site."
         );
-        quote_spanned! { span =>
+        quote::quote_spanned! { span =>
             compile_error!(#message);
         }
         .into()

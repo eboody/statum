@@ -1,12 +1,11 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
+    http, response,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool, sqlite::SqlitePoolOptions};
+use sqlx::{FromRow, SqlitePool, sqlite};
 use statum::{machine, state, transition, validators};
 
 const STATUS_DRAFT: &str = "draft";
@@ -159,17 +158,17 @@ impl From<sqlx::Error> for AppError {
     }
 }
 
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
+impl response::IntoResponse for AppError {
+    fn into_response(self) -> response::Response {
         let (status, error) = match self {
-            Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
-            Self::NotFound => (StatusCode::NOT_FOUND, "document not found"),
-            Self::InvalidTransition(message) => (StatusCode::CONFLICT, message),
+            Self::BadRequest(message) => (http::StatusCode::BAD_REQUEST, message),
+            Self::NotFound => (http::StatusCode::NOT_FOUND, "document not found"),
+            Self::InvalidTransition(message) => (http::StatusCode::CONFLICT, message),
             Self::CorruptState => (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                http::StatusCode::INTERNAL_SERVER_ERROR,
                 "stored document row did not match any validator",
             ),
-            Self::Database(_) => (StatusCode::INTERNAL_SERVER_ERROR, "database error"),
+            Self::Database(_) => (http::StatusCode::INTERNAL_SERVER_ERROR, "database error"),
         };
 
         (status, Json(ErrorResponse { error })).into_response()
@@ -199,7 +198,7 @@ fn router(pool: SqlitePool) -> Router {
 }
 
 async fn build_pool() -> Result<SqlitePool, sqlx::Error> {
-    SqlitePoolOptions::new()
+    sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
         .await
@@ -226,7 +225,7 @@ async fn init_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 async fn create_document(
     State(app): State<AppState>,
     Json(request): Json<CreateDocumentRequest>,
-) -> Result<(StatusCode, Json<DocumentResponse>), AppError> {
+) -> Result<(http::StatusCode, Json<DocumentResponse>), AppError> {
     if request.title.trim().is_empty() {
         return Err(AppError::BadRequest("title is required"));
     }
@@ -247,7 +246,7 @@ async fn create_document(
     .await?;
 
     let row = fetch_document_row(&app.pool, result.last_insert_rowid()).await?;
-    Ok((StatusCode::CREATED, Json(row.into_response())))
+    Ok((http::StatusCode::CREATED, Json(row.into_response())))
 }
 
 async fn get_document(

@@ -1,9 +1,5 @@
-use sqlx::{FromRow, SqlitePool, sqlite::SqlitePoolOptions};
-use statum::{
-    machine,
-    projection::{ProjectionError, ProjectionReducer, reduce_grouped, reduce_one},
-    state, transition, validators,
-};
+use sqlx::{FromRow, SqlitePool, sqlite};
+use statum::{machine, projection, state, transition, validators};
 
 const EVENT_CREATED: &str = "created";
 const EVENT_PAID: &str = "paid";
@@ -311,7 +307,7 @@ impl From<sqlx::Error> for RebuildError {
 }
 
 pub async fn build_store() -> Result<OrderEventStore, RebuildError> {
-    let pool = SqlitePoolOptions::new()
+    let pool = sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
         .await?;
@@ -455,7 +451,7 @@ impl OrderEventStore {
 
     pub async fn load_state(&self, order_id: i64) -> Result<order_machine::State, RebuildError> {
         let events = self.events_for(order_id).await?;
-        let row = reduce_one(events, &OrderProjector)
+        let row = projection::reduce_one(events, &OrderProjector)
             .map_err(|error| map_projection_error(error, Some(order_id)))?;
         row.into_machine().build().map_err(|_| {
             RebuildError::CorruptEventLog("projected order row did not match any validator")
@@ -531,7 +527,7 @@ impl OrderEventStore {
         )
         .fetch_all(&self.pool)
         .await?;
-        reduce_grouped(events, |event| event.order_id, &OrderProjector)
+        projection::reduce_grouped(events, |event| event.order_id, &OrderProjector)
             .map_err(|error| map_projection_error(error, None))
     }
 }
@@ -564,19 +560,19 @@ fn required_event_value(event: &EventRow) -> Result<String, RebuildError> {
 }
 
 fn map_projection_error(
-    error: ProjectionError<RebuildError>,
+    error: projection::ProjectionError<RebuildError>,
     order_id: Option<i64>,
 ) -> RebuildError {
     match error {
-        ProjectionError::EmptyInput => order_id.map_or(
+        projection::ProjectionError::EmptyInput => order_id.map_or(
             RebuildError::CorruptEventLog("order event stream was empty"),
             RebuildError::NotFound,
         ),
-        ProjectionError::Reducer(error) => error,
+        projection::ProjectionError::Reducer(error) => error,
     }
 }
 
-impl ProjectionReducer<EventRow> for OrderProjector {
+impl projection::ProjectionReducer<EventRow> for OrderProjector {
     type Projection = OrderProjectionRow;
     type Error = RebuildError;
 

@@ -1,17 +1,15 @@
 use macro_registry::analysis::{FileAnalysis, StructEntry};
-use macro_registry::registry::{
-    NamedRegistryDomain, RegistryDomain, StaticRegistry, ensure_loaded_by_name,
-};
+use macro_registry::registry;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
 use super::{MachineInfo, MachinePath};
 
-static MACHINE_MAP: StaticRegistry<MachinePath, MachineInfo> = StaticRegistry::new();
+static MACHINE_MAP: registry::StaticRegistry<MachinePath, MachineInfo> = registry::StaticRegistry::new();
 
 struct MachineRegistryDomain;
 
-impl RegistryDomain for MachineRegistryDomain {
+impl registry::RegistryDomain for MachineRegistryDomain {
     type Key = MachinePath;
     type Value = MachineInfo;
     type Entry = StructEntry;
@@ -37,7 +35,7 @@ impl RegistryDomain for MachineRegistryDomain {
     }
 }
 
-impl NamedRegistryDomain for MachineRegistryDomain {
+impl registry::NamedRegistryDomain for MachineRegistryDomain {
     fn entry_name(entry: &Self::Entry) -> String {
         entry.item.ident.to_string()
     }
@@ -65,7 +63,7 @@ pub fn ensure_machine_loaded_by_name(
         return Some(existing);
     }
 
-    ensure_loaded_by_name::<MachineRegistryDomain>(&MACHINE_MAP, machine_path, machine_name)
+    registry::ensure_loaded_by_name::<MachineRegistryDomain>(&MACHINE_MAP, machine_path, machine_name)
 }
 
 pub fn store_machine_struct(machine_info: &MachineInfo) {

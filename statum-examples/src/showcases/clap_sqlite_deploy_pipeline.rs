@@ -1,8 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use sqlx::{
-    FromRow, SqlitePool,
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-};
+use sqlx::{FromRow, SqlitePool, sqlite};
 use statum::{machine, state, transition, validators};
 use std::{
     ffi::OsString,
@@ -428,10 +425,10 @@ impl DeploymentStore {
             fs::create_dir_all(parent)?;
         }
 
-        let options = SqliteConnectOptions::new()
+        let options = sqlite::SqliteConnectOptions::new()
             .filename(db_path)
             .create_if_missing(true);
-        let pool = SqlitePoolOptions::new()
+        let pool = sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(options)
             .await?;
