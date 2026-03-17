@@ -103,8 +103,10 @@ This is the whole model. The rest of the crate is about making those four pieces
 > Typed rehydration is the unusual part: if you already have rows, events, or persisted workflow data, `#[validators]` can rebuild them into typed machines. Full example below.
 
 If you are evaluating Statum from the outside, start with
-[docs/start-here.md](docs/start-here.md). For the flagship persistence story,
-see [docs/case-study-event-log-rebuild.md](docs/case-study-event-log-rebuild.md).
+[docs/start-here.md](docs/start-here.md). For a guided app-shaped walkthrough,
+see [docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md). For
+the flagship persistence story, see
+[docs/case-study-event-log-rebuild.md](docs/case-study-event-log-rebuild.md).
 
 ## Typed Rehydration
 
@@ -289,6 +291,10 @@ cargo run -p statum-examples --bin tokio-websocket-session
 - `tokio-sqlite-job-runner` demonstrates retries, leases, async side effects, and typed rehydration in a background worker loop.
 - `tokio-websocket-session` demonstrates protocol-safe frame handling, phase-gated behavior, and a session lifecycle that is not persistence-driven.
 
+Start with the guided review tutorial if you want one example explained in
+order:
+[docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md).
+
 Start with `sqlite-event-log-rebuild` if you want the strongest “why Statum”
 example:
 [docs/case-study-event-log-rebuild.md](docs/case-study-event-log-rebuild.md).
@@ -311,6 +317,7 @@ Start with [docs/agents/README.md](docs/agents/README.md).
 - Session binary: [statum-examples/src/bin/tokio-websocket-session.rs](statum-examples/src/bin/tokio-websocket-session.rs)
 - Coding-agent kit: [docs/agents/README.md](docs/agents/README.md)
 - Start here: [docs/start-here.md](docs/start-here.md)
+- Guided review tutorial: [docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md)
 - Event-log case study: [docs/case-study-event-log-rebuild.md](docs/case-study-event-log-rebuild.md)
 - Typed rehydration and validators: [docs/persistence-and-validators.md](docs/persistence-and-validators.md)
 - Patterns and advanced usage: [docs/patterns.md](docs/patterns.md)

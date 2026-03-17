@@ -14,7 +14,20 @@ Start with the root [README](../README.md):
 
 That is enough to decide whether the API shape is interesting.
 
-## 2. Read The Flagship Case Study
+## 2. Read The Guided Tutorial
+
+Then read [tutorial-review-workflow.md](tutorial-review-workflow.md).
+
+This is the step-by-step path for understanding how the pieces fit together in
+an app-shaped workflow:
+
+- `#[state]`
+- `#[machine]`
+- `#[transition]`
+- `#[validators]`
+- matching reconstructed machines at the HTTP boundary
+
+## 3. Read The Flagship Case Study
 
 Then read [case-study-event-log-rebuild.md](case-study-event-log-rebuild.md).
 
@@ -27,7 +40,7 @@ That is the strongest Statum story in this repo:
 
 If that problem shape matters to you, Statum is probably worth a deeper look.
 
-## 3. Open One App-Shaped Example
+## 4. Open One App-Shaped Example
 
 Use [axum-sqlite-review](../statum-examples/src/showcases/axum_sqlite_review.rs)
 if you want the most approachable service example.
@@ -38,7 +51,7 @@ It shows:
 - SQLite-backed typed rehydration on each request
 - transitions that stay explicit at the handler boundary
 
-## 4. Go Deeper Only Where Needed
+## 5. Go Deeper Only Where Needed
 
 Use the focused docs rather than reading everything:
 
@@ -48,7 +61,7 @@ Use the focused docs rather than reading everything:
 - [Typestate builder design playbook](typestate-builder-design-playbook.md) if
   you are deciding whether a workflow is a good fit
 
-## 5. Use The Agent Kit Only If It Matches Your Workflow
+## 6. Use The Agent Kit Only If It Matches Your Workflow
 
 If you work with coding agents and want them to spot Statum opportunities in
 your own repo, start with [agents/README.md](agents/README.md).
