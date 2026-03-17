@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http, response,
+    http, response as reply,
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -158,8 +158,8 @@ impl From<sqlx::Error> for AppError {
     }
 }
 
-impl response::IntoResponse for AppError {
-    fn into_response(self) -> response::Response {
+impl reply::IntoResponse for AppError {
+    fn into_response(self) -> reply::Response {
         let (status, error) = match self {
             Self::BadRequest(message) => (http::StatusCode::BAD_REQUEST, message),
             Self::NotFound => (http::StatusCode::NOT_FOUND, "document not found"),

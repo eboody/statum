@@ -158,9 +158,6 @@
 //! - The repository README and `docs/` directory contain longer guides and
 //!   showcase applications.
 
-#[doc(hidden)]
-pub use bon;
-
 #[doc(inline)]
 pub use statum_core::projection;
 #[doc(inline)]

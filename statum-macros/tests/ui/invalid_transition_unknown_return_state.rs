@@ -2,8 +2,8 @@
 extern crate self as statum;
 pub use statum_core::{CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState};
 pub use bon;
-use bon::builder as _;
 use statum_macros::{machine, state, transition};
+use bon::builder as _;
 
 #[state]
 enum State {

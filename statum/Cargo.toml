@@ -1,18 +1,10 @@
-[dependencies.bon]
-features = [
-    "experimental-getter",
-    "experimental-overwritable",
-    "implied-bounds",
-]
-version = "3.3.2"
-
 [dependencies.statum-core]
 path = "../statum-core"
-version = "0.5.5"
+version = "0.6.0"
 
 [dependencies.statum-macros]
 path = "../statum-macros"
-version = "0.5.5"
+version = "0.6.0"
 
 [dev-dependencies]
 futures = "0.3"
@@ -39,7 +31,14 @@ name = "statum"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.5.5"
+version = "0.6.0"
 
 [package.metadata.modum]
-generic_nouns = ["Id", "Repository", "Service", "Command", "Request", "Response"]
+generic_nouns = [
+    "Id",
+    "Repository",
+    "Service",
+    "Command",
+    "Request",
+    "Response",
+]

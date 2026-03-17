@@ -1,6 +1,6 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{GenericParam, Generics, Ident, ItemStruct};
+use syn::{GenericParam, Generics, Ident, ItemStruct, Visibility};
 
 use crate::state::{ParsedEnumInfo, ParsedVariantInfo};
 use crate::{EnumInfo, to_snake_case};
@@ -94,10 +94,6 @@ impl MachineInfo {
         parsed_state: &ParsedEnumInfo,
     ) -> TokenStream {
         let parsed_fields = parsed_machine.field_idents_and_types();
-        let fields_map = parsed_fields
-            .iter()
-            .map(|(field_ident, field_ty)| quote! { #field_ident: #field_ty })
-            .collect::<Vec<_>>();
         let field_names = parsed_fields
             .iter()
             .map(|(field_ident, _)| field_ident.clone())
@@ -110,10 +106,9 @@ impl MachineInfo {
         let machine_ident = format_ident!("{}", self.name);
         let builder_context = BuilderContext {
             machine_ident: &machine_ident,
-            fields_map: &fields_map,
+            builder_vis: &parsed_machine.vis,
             field_names: &field_names,
             field_types: &field_types,
-            has_fields: !self.fields.is_empty(),
             use_ra_shim: is_rust_analyzer(),
         };
         let builder_methods = parsed_state
@@ -129,10 +124,9 @@ impl MachineInfo {
 
 struct BuilderContext<'a> {
     machine_ident: &'a Ident,
-    fields_map: &'a [TokenStream],
+    builder_vis: &'a Visibility,
     field_names: &'a [Ident],
     field_types: &'a [syn::Type],
-    has_fields: bool,
     use_ra_shim: bool,
 }
 
@@ -372,133 +366,165 @@ fn generate_variant_builder_tokens(
 ) -> TokenStream {
     let variant_ident = format_ident!("{}", variant.name);
     let variant_builder_ident = format_ident!("{}{}Builder", context.machine_ident, variant.name);
-    let lowercase_variant_name = format_ident!(
-        "{}_{}_builder",
-        to_snake_case(&context.machine_ident.to_string()),
-        to_snake_case(&variant.name)
-    );
-
-    match &variant.data_type {
-        Some(data_type) => generate_data_builder_tokens(
-            context,
-            &variant_ident,
-            &variant_builder_ident,
-            &lowercase_variant_name,
-            data_type,
-        ),
-        None => generate_unit_builder_tokens(
-            context,
-            &variant_ident,
-            &variant_builder_ident,
-            &lowercase_variant_name,
-        ),
-    }
+    generate_custom_builder_tokens(context, &variant_ident, &variant_builder_ident, variant.data_type.as_ref())
 }
 
-fn generate_data_builder_tokens(
+fn generate_custom_builder_tokens(
     context: &BuilderContext<'_>,
     variant_ident: &Ident,
     variant_builder_ident: &Ident,
-    lowercase_variant_name: &Ident,
-    data_type: &syn::Type,
+    data_type: Option<&syn::Type>,
 ) -> TokenStream {
     let machine_ident = context.machine_ident;
-    let fields_map = context.fields_map;
+    let builder_vis = context.builder_vis;
     let field_names = context.field_names;
     let field_types = context.field_types;
-    let parsed_data_type = data_type.clone();
-    let struct_initialization = machine_struct_initialization(context, true);
-    let constructor_signature = if context.has_fields {
-        quote! {
-            pub fn new(#(#fields_map,)* state_data: #parsed_data_type) -> #machine_ident<#variant_ident>
-        }
-    } else {
-        quote! {
-            pub fn new(state_data: #parsed_data_type) -> #machine_ident<#variant_ident>
-        }
-    };
+    let struct_initialization = machine_struct_initialization(context, data_type.is_some());
 
     if context.use_ra_shim {
-        return quote! {
-            pub struct #variant_builder_ident;
-
-            impl #variant_builder_ident {
-                pub fn state_data(self, _data: #parsed_data_type) -> Self {
+        let state_data_method = data_type.map(|parsed_data_type| {
+            quote! {
+                #builder_vis fn state_data(self, _data: #parsed_data_type) -> Self {
                     self
                 }
-
-                #(pub fn #field_names(self, _value: #field_types) -> Self { self })*
-
-                pub fn build(self) -> #machine_ident<#variant_ident> {
-                    panic!("statum rust-analyzer shim: builder values are not constructed at runtime")
-                }
             }
+        });
 
-            impl #machine_ident<#variant_ident> {
-                pub fn builder() -> #variant_builder_ident {
-                    #variant_builder_ident
-                }
-            }
-        };
-    }
-
-    quote! {
-        #[statum::bon::bon(crate = ::statum::bon)]
-        impl #machine_ident<#variant_ident> {
-            #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
-            #constructor_signature {
-                #struct_initialization
-            }
-        }
-    }
-}
-
-fn generate_unit_builder_tokens(
-    context: &BuilderContext<'_>,
-    variant_ident: &Ident,
-    variant_builder_ident: &Ident,
-    lowercase_variant_name: &Ident,
-) -> TokenStream {
-    let machine_ident = context.machine_ident;
-    let fields_map = context.fields_map;
-    let field_names = context.field_names;
-    let field_types = context.field_types;
-    let struct_initialization = machine_struct_initialization(context, false);
-    let constructor_signature = if context.has_fields {
-        quote! {
-            pub fn new(#(#fields_map),*) -> #machine_ident<#variant_ident>
-        }
-    } else {
-        quote! {
-            pub fn new() -> #machine_ident<#variant_ident>
-        }
-    };
-
-    if context.use_ra_shim {
         return quote! {
-            pub struct #variant_builder_ident;
+            #builder_vis struct #variant_builder_ident;
 
             impl #variant_builder_ident {
-                #(pub fn #field_names(self, _value: #field_types) -> Self { self })*
+                #state_data_method
+                #(#builder_vis fn #field_names(self, _value: #field_types) -> Self { self })*
 
-                pub fn build(self) -> #machine_ident<#variant_ident> {
+                #builder_vis fn build(self) -> #machine_ident<#variant_ident> {
                     panic!("statum rust-analyzer shim: builder values are not constructed at runtime")
                 }
             }
 
             impl #machine_ident<#variant_ident> {
-                pub fn builder() -> #variant_builder_ident {
+                #builder_vis fn builder() -> #variant_builder_ident {
                     #variant_builder_ident
                 }
             }
         };
     }
 
+    let has_state_data = data_type.is_some();
+    let slot_types = data_type
+        .into_iter()
+        .cloned()
+        .chain(field_types.iter().cloned())
+        .collect::<Vec<_>>();
+    let slot_storage_idents = (0..slot_types.len())
+        .map(|idx| format_ident!("__statum_slot_{}", idx))
+        .collect::<Vec<_>>();
+    let slot_state_idents = (0..slot_types.len())
+        .map(|idx| format_ident!("__STATUM_SLOT_{}_SET", idx))
+        .collect::<Vec<_>>();
+    let struct_fields = slot_storage_idents
+        .iter()
+        .zip(slot_types.iter())
+        .map(|(storage_ident, slot_type)| {
+            quote! { #storage_ident: core::option::Option<#slot_type> }
+        })
+        .collect::<Vec<_>>();
+    let builder_defaults = if slot_state_idents.is_empty() {
+        quote! {}
+    } else {
+        quote! { <#(const #slot_state_idents: bool = false),*> }
+    };
+    let builder_impl_generics = if slot_state_idents.is_empty() {
+        quote! {}
+    } else {
+        quote! { <#(const #slot_state_idents: bool),*> }
+    };
+    let builder_ty_generics = if slot_state_idents.is_empty() {
+        quote! {}
+    } else {
+        quote! { <#(#slot_state_idents),*> }
+    };
+    let builder_init = slot_storage_idents.iter().map(|storage_ident| {
+        quote! { #storage_ident: core::option::Option::None }
+    });
+    let complete_builder_ty_generics = if slot_state_idents.is_empty() {
+        quote! {}
+    } else {
+        let complete = slot_state_idents.iter().map(|_| quote! { true });
+        quote! { <#(#complete),*> }
+    };
+    let state_data_binding = if has_state_data {
+        let storage_ident = &slot_storage_idents[0];
+        Some(quote! {
+            let state_data = self.#storage_ident.expect(
+                "statum internal error: `state_data` was not set before build",
+            );
+        })
+    } else {
+        None
+    };
+    let field_bindings = field_names.iter().enumerate().map(|(field_idx, field_name)| {
+        let storage_ident = &slot_storage_idents[field_idx + usize::from(has_state_data)];
+        let message = format!("statum internal error: `{field_name}` was not set before build");
+        quote! {
+            let #field_name = self.#storage_ident.expect(#message);
+        }
+    });
+    let setters = slot_types.iter().enumerate().map(|(slot_idx, slot_type)| {
+        let setter_ident = if has_state_data && slot_idx == 0 {
+            format_ident!("state_data")
+        } else {
+            field_names[slot_idx - usize::from(has_state_data)].clone()
+        };
+        let target_generics = if slot_state_idents.is_empty() {
+            quote! {}
+        } else {
+            let generics = slot_state_idents.iter().enumerate().map(|(idx, ident)| {
+                if idx == slot_idx {
+                    quote! { true }
+                } else {
+                    quote! { #ident }
+                }
+            });
+            quote! { <#(#generics),*> }
+        };
+        let assignments = slot_storage_idents.iter().enumerate().map(|(idx, storage_ident)| {
+            if idx == slot_idx {
+                quote! { #storage_ident: core::option::Option::Some(value) }
+            } else {
+                quote! { #storage_ident: self.#storage_ident }
+            }
+        });
+        quote! {
+            #builder_vis fn #setter_ident(self, value: #slot_type) -> #variant_builder_ident #target_generics {
+                #variant_builder_ident {
+                    #(#assignments),*
+                }
+            }
+        }
+    });
+
     quote! {
-        #[statum::bon::bon(crate = ::statum::bon)]
+        #builder_vis struct #variant_builder_ident #builder_defaults {
+            #(#struct_fields),*
+        }
+
         impl #machine_ident<#variant_ident> {
-            #[builder(state_mod = #lowercase_variant_name, builder_type = #variant_builder_ident)]
-            #constructor_signature {
+            #builder_vis fn builder() -> #variant_builder_ident {
+                #variant_builder_ident {
+                    #(#builder_init),*
+                }
+            }
+        }
+
+        impl #builder_impl_generics #variant_builder_ident #builder_ty_generics {
+            #(#setters)*
+        }
+
+        impl #variant_builder_ident #complete_builder_ty_generics {
+            #builder_vis fn build(self) -> #machine_ident<#variant_ident> {
+                #state_data_binding
+                #(#field_bindings)*
                 #struct_initialization
             }
         }
@@ -517,7 +543,7 @@ fn machine_struct_initialization(
         quote! { state_data: () }
     };
 
-    if context.has_fields {
+    if !field_names.is_empty() {
         quote! {
             #machine_ident {
                 marker: core::marker::PhantomData,

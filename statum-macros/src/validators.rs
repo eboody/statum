@@ -37,6 +37,17 @@ struct CollectValidatorContext<'a> {
     state_enum_name: &'a str,
 }
 
+struct IntoMachineBuilderContext<'a> {
+    builder_ident: &'a Ident,
+    struct_ident: &'a Type,
+    machine_state_ty: &'a proc_macro2::TokenStream,
+    field_names: &'a [Ident],
+    field_types: &'a [Type],
+    validator_checks: &'a [proc_macro2::TokenStream],
+    async_token: &'a proc_macro2::TokenStream,
+    machine_vis: &'a syn::Visibility,
+}
+
 pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str) -> TokenStream {
     let machine_ident = parse_macro_input!(attr as Ident);
     let item_impl = parse_macro_input!(item as ItemImpl);
@@ -78,6 +89,10 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         .iter()
         .map(|(ident, _)| ident.clone())
         .collect::<Vec<_>>();
+    let field_types = parsed_fields
+        .iter()
+        .map(|(_, ty)| ty.clone())
+        .collect::<Vec<_>>();
     let machine_module_ident = format_ident!("{}", crate::to_snake_case(&machine_ident.to_string()));
     let machine_state_ty = quote! { #machine_module_ident::State };
     let machine_name = machine_ident.to_string();
@@ -99,11 +114,6 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         Ok(result) => result,
         Err(err) => return err.into(),
     };
-
-    let fields_with_types = parsed_fields
-        .iter()
-        .map(|(ident, ty)| quote! { #ident: #ty })
-        .collect::<Vec<_>>();
 
     if item_impl.items.is_empty() {
         let expected_methods = state_enum_info
@@ -143,27 +153,42 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         machine_module_ident: &machine_module_ident,
         struct_ident,
         machine_state_ty: &machine_state_ty,
-        fields_with_types: &fields_with_types,
         field_names: &field_names,
+        field_types: &field_types,
         async_token: async_token.clone(),
         machine_vis: machine_vis.clone(),
+    });
+
+    let into_machine_builder_ident = format_ident!("__Statum{}IntoMachine", machine_ident);
+    let into_machine_builder_impl = generate_into_machine_builder(IntoMachineBuilderContext {
+        builder_ident: &into_machine_builder_ident,
+        struct_ident,
+        machine_state_ty: &machine_state_ty,
+        field_names: &field_names,
+        field_types: &field_types,
+        validator_checks: &validator_checks,
+        async_token: &async_token,
+        machine_vis: &machine_vis,
     });
 
     let machine_builder_impl = quote! {
         #[allow(unused_imports)]
         use #machine_module_ident::IntoMachinesExt as _;
 
-        #[statum::bon::bon(crate = ::statum::bon)]
         impl #struct_ident {
-            #[builder(start_fn = into_machine, finish_fn = build)]
-            #machine_vis #async_token fn __statum_into_machine(&self #(, #fields_with_types)*) -> core::result::Result<#machine_state_ty, statum::Error> {
-                #(#validator_checks)*
-
-                Err(statum::Error::InvalidState)
+            #machine_vis fn into_machine(&self) -> #into_machine_builder_ident<'_> {
+                #into_machine_builder_ident {
+                    __statum_item: self,
+                    #(
+                        #field_names: core::option::Option::None
+                    ),*
+                }
             }
+
             #(#modified_methods)*
         }
 
+        #into_machine_builder_impl
         #batch_builder_impl
     };
 
@@ -182,6 +207,7 @@ fn collect_validator_checks(
 ) -> Result<(Vec<proc_macro2::TokenStream>, bool), proc_macro2::TokenStream> {
     let mut checks = Vec::new();
     let mut has_async = false;
+    let receiver = quote! { persisted };
     let (variant_specs, variant_by_name) = build_variant_lookup(variants)?;
 
     for item in &item_impl.items {
@@ -214,6 +240,7 @@ fn collect_validator_checks(
             context.machine_ident,
             context.machine_state_ty,
             context.field_names,
+            &receiver,
             &spec.variant_name,
             spec.has_state_data,
             func.sig.asyncness.is_some(),
@@ -242,4 +269,111 @@ fn build_variant_lookup(
     }
 
     Ok((specs, variant_by_name))
+}
+
+fn generate_into_machine_builder(context: IntoMachineBuilderContext<'_>) -> proc_macro2::TokenStream {
+    let builder_ident = context.builder_ident;
+    let struct_ident = context.struct_ident;
+    let machine_state_ty = context.machine_state_ty;
+    let field_names = context.field_names;
+    let field_types = context.field_types;
+    let validator_checks = context.validator_checks;
+    let async_token = context.async_token;
+    let machine_vis = context.machine_vis;
+    let slot_state_idents = (0..field_names.len())
+        .map(|idx| format_ident!("__STATUM_SLOT_{}_SET", idx))
+        .collect::<Vec<_>>();
+    let builder_defaults = if slot_state_idents.is_empty() {
+        quote! { <'__statum_row> }
+    } else {
+        quote! { <'__statum_row, #(const #slot_state_idents: bool = false),*> }
+    };
+    let builder_impl_generics = if slot_state_idents.is_empty() {
+        quote! { <'__statum_row> }
+    } else {
+        quote! { <'__statum_row, #(const #slot_state_idents: bool),*> }
+    };
+    let builder_ty_generics = if slot_state_idents.is_empty() {
+        quote! { <'__statum_row> }
+    } else {
+        quote! { <'__statum_row, #(#slot_state_idents),*> }
+    };
+    let complete_builder_ty_generics = if slot_state_idents.is_empty() {
+        quote! { <'__statum_row> }
+    } else {
+        let complete = slot_state_idents.iter().map(|_| quote! { true });
+        quote! { <'__statum_row, #(#complete),*> }
+    };
+    let complete_builder_impl_generics = quote! { <'__statum_row> };
+
+    let struct_fields = field_names
+        .iter()
+        .zip(field_types.iter())
+        .map(|(field_name, field_type)| {
+            quote! { #field_name: core::option::Option<#field_type> }
+        })
+        .collect::<Vec<_>>();
+    let field_bindings = field_names.iter().map(|field_name| {
+        let message = format!("statum internal error: `{field_name}` was not set before build");
+        quote! {
+            let #field_name = self.#field_name.expect(#message);
+        }
+    });
+    let setters = field_names
+        .iter()
+        .zip(field_types.iter())
+        .enumerate()
+        .map(|(slot_idx, (field_name, field_type))| {
+            let target_generics = if slot_state_idents.is_empty() {
+                quote! { <'__statum_row> }
+            } else {
+                let generics = slot_state_idents.iter().enumerate().map(|(idx, ident)| {
+                    if idx == slot_idx {
+                        quote! { true }
+                    } else {
+                        quote! { #ident }
+                    }
+                });
+                quote! { <'__statum_row, #(#generics),*> }
+            };
+            let assignments = field_names.iter().enumerate().map(|(idx, existing_field_name)| {
+                if idx == slot_idx {
+                    quote! { #existing_field_name: core::option::Option::Some(value) }
+                } else {
+                    quote! { #existing_field_name: self.#existing_field_name }
+                }
+            });
+
+            quote! {
+                #machine_vis fn #field_name(self, value: #field_type) -> #builder_ident #target_generics {
+                    #builder_ident {
+                        __statum_item: self.__statum_item,
+                        #(#assignments),*
+                    }
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    quote! {
+        #[doc(hidden)]
+        #machine_vis struct #builder_ident #builder_defaults {
+            __statum_item: &'__statum_row #struct_ident,
+            #(#struct_fields),*
+        }
+
+        impl #builder_impl_generics #builder_ident #builder_ty_generics {
+            #(#setters)*
+        }
+
+        impl #complete_builder_impl_generics #builder_ident #complete_builder_ty_generics {
+            #machine_vis #async_token fn build(self) -> core::result::Result<#machine_state_ty, statum::Error> {
+                let persisted = self.__statum_item;
+                #(#field_bindings)*
+                #(#validator_checks)*
+
+                Err(statum::Error::InvalidState)
+            }
+        }
+    }
 }

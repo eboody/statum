@@ -4,7 +4,7 @@ If there are particular stages that an abstract entity goes through, and there i
 
 That sentence is the center of this guide.
 
-Typestate is not only a way to model states. It is a way to encode protocol rules directly into your API so invalid flows are not representable. In Rust, that can remove entire bug classes before tests run.
+Typestate models states, but its main job here is to encode protocol rules in the API so illegal flows do not type-check. In Rust, that can remove entire bug classes before tests run.
 
 This playbook is opinionated:
 
@@ -220,7 +220,7 @@ impl PostMessageMachine<Incoming> {
 
 ### Common mistake
 
-Treating `#[transition]` blocks as general-purpose impl blocks. They are protocol-edge definitions, not generic utility containers.
+Treating `#[transition]` blocks as general-purpose impl blocks. Use them for protocol edges and keep unrelated utilities elsewhere.
 
 ## Step 4: Encode Legal Transitions (`#[transition]`)
 
@@ -562,15 +562,15 @@ Quality acceptance check:
 - Idiomaticity: ownership/borrowing patterns are straightforward and do not depend on hacks.
 - Correctness: invalid protocol paths fail at compile time where feasible, else at explicit runtime boundaries.
 
-## Step 11: Bon + Statum Composition
+## Step 11: Builder + Statum Composition
 
 ### What to do
 
-Use `bon` for assembling input/context, and `statum` for enforcing protocol legality.
+Use builder-style construction for assembling input/context, and `statum` for enforcing protocol legality.
 
 Guideline:
 
-- Builder (bon): data assembly and defaults.
+- Builder: data assembly and defaults.
 - Typestate (statum): ordered lifecycle and legal transitions.
 
 ```rust

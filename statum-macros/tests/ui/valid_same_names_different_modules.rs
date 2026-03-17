@@ -1,11 +1,11 @@
 #![allow(unused_imports)]
 extern crate self as statum;
 pub use statum_core::{CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState};
-pub use bon;
 pub use statum_core::Result;
 
-use bon::builder as _;
+pub use bon;
 use statum_macros::{machine, state, transition};
+use bon::builder as _;
 
 mod alpha {
     use super::*;

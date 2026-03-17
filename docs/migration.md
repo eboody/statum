@@ -1,10 +1,50 @@
-# Migrating to Statum 0.5
+# Migrating to Statum 0.6
 
-This guide is for code written against earlier Statum surfaces. If you are
-starting fresh on `0.5`, you can skip this page and start with the README plus
-`new-api.md`.
+This guide starts with the `0.6` breaking change for `0.5.x` users, then keeps
+the earlier `0.5` migration notes for older code. If you are starting fresh on
+`0.6`, you can skip this page and start with the README plus `new-api.md`.
 
-## Migration Checklist
+## 0.6 Checklist
+
+1. Remove any imports of `statum::bon` or `statum::bon::builder`.
+2. If you still want bon in your application, depend on `bon` directly.
+3. Keep using `Machine::<State>::builder()`, `into_machine()`,
+   `.into_machines()`, and `.into_machines_by(...)`; those call shapes are
+   unchanged.
+4. Treat generated builder internals as implementation details rather than
+   stable public API.
+
+## `statum::bon` Is Gone
+
+Before:
+
+```rust
+use statum::bon;
+use statum::bon::builder as _;
+```
+
+After:
+
+```toml
+[dependencies]
+bon = "3"
+```
+
+Or just remove the import if you were only using Statum's generated builders.
+
+`0.6` keeps the builder-first workflow surface, but Statum now owns the builder
+implementation instead of re-exporting bon. The supported entry points stay the
+same:
+
+- `Machine::<State>::builder()`
+- `row.into_machine()`
+- `rows.into_machines()`
+- `rows.into_machines_by(...)`
+
+The intentional break is the bon re-export and any bon-specific generated
+builder internals, not the normal Statum call patterns.
+
+## Earlier 0.5 Migration Checklist
 
 1. Add `#[transition]` to transition impl blocks.
 2. Switch validators to `#[validators(Machine)]`.
@@ -69,7 +109,7 @@ Statum resolves the state family from the machine definition.
 
 ## Canonical Rebuild Names Changed
 
-Use these names in `0.5`:
+Use these names in `0.5` and later:
 
 - `into_machine()` for one item
 - `.into_machines()` when machine fields are shared across the collection
@@ -140,7 +180,7 @@ builder is the intended path.
 
 ## New Additive Helpers
 
-`0.5` also adds surface area you may want during migration:
+`0.5` and later also add surface area you may want during migration:
 
 - `.into_machines_by(...)` for heterogeneous batch machine context
 - `statum::projection::{ProjectionReducer, reduce_one, reduce_grouped}` for

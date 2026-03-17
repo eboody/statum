@@ -78,6 +78,7 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_machine_field_aliases_local_validators.rs");
     t.pass("tests/ui/valid_machine_field_module_paths.rs");
     t.pass("tests/ui/valid_machine_field_aliases_renamed_import.rs");
+    t.pass("tests/ui/valid_builder_overwrite.rs");
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
 }

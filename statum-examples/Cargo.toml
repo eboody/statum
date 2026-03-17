@@ -1,6 +1,5 @@
 [dependencies]
 axum = "0.8"
-bon = "3.9.0"
 futures = "0.3"
 serde_json = "1"
 
@@ -23,7 +22,7 @@ version = "0.8"
 
 [dependencies.statum]
 path = "../statum"
-version = "0.5.4"
+version = "0.6.0"
 
 [dependencies.tokio]
 features = ["full"]
@@ -39,4 +38,4 @@ license = "MIT"
 name = "statum-examples"
 publish = false
 rust-version = "1.93"
-version = "0.5.4"
+version = "0.6.0"

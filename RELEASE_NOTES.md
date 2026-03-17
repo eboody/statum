@@ -1,5 +1,14 @@
 # Release Notes
 
+## v0.6.0 (2026-03-17)
+
+### Breaking Changes
+- Removed the `statum::bon` re-export and the bon-backed builder internals from Statum's public surface. If your code imported bon through Statum, depend on `bon` directly.
+
+### Changes
+- Replaced bon-backed generated builders with Statum-owned builders while preserving `Machine::<State>::builder()`, `into_machine()`, `.into_machines()`, and `.into_machines_by(...)`.
+- Reduced generated builder expansion size and downstream cold compile cost for builder-heavy consumers.
+
 ## v0.5.5 (2026-03-16)
 
 ### Changes

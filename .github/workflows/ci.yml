@@ -22,6 +22,10 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Install modum
+        run: cargo install modum --locked
+      - name: Modum
+        run: cargo modum check --root . --mode warn
       - name: Format check
         run: cargo fmt --all --check
       - name: Docs link check
