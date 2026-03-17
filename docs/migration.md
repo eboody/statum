@@ -2,7 +2,8 @@
 
 This guide starts with the `0.6` breaking change for `0.5.x` users, then keeps
 the earlier `0.5` migration notes for older code. If you are starting fresh on
-`0.6`, you can skip this page and start with the README plus `new-api.md`.
+`0.6`, you can skip this page and start with the README plus
+`tutorial-review-workflow.md`.
 
 ## 0.6 Checklist
 

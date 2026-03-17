@@ -68,6 +68,21 @@ fn main() {
 
 Example: [statum-examples/src/toy_demos/example_01_setup.rs](statum-examples/src/toy_demos/example_01_setup.rs)
 
+## What The Compiler Enforces
+
+The syntax example above is small. The correctness payoff is that the workflow
+shape becomes part of the API:
+
+- `LightSwitch<Off>` and `LightSwitch<On>` are different types.
+- `switch_on()` only exists on `LightSwitch<Off>`.
+- `switch_off()` only exists on `LightSwitch<On>`.
+- If a state carries data, that data only exists when the machine is actually
+  in that state.
+
+This is the point of Statum: legal next operations are enforced at compile
+time, and rebuilt machines come back as typed states instead of “a row plus a
+status field”.
+
 If you add derives, place them below `#[state]` and `#[machine]`:
 
 ```rust
