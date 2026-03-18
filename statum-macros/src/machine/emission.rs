@@ -264,9 +264,11 @@ fn generate_machine_state_surface(
                 #(#fields_struct_fields),*
             }
 
-            pub enum State {
+            pub enum SomeState {
                 #(#state_variants),*
             }
+
+            pub type State = SomeState;
 
             pub trait IntoMachinesExt<Item>: Sized {
                 type Builder;
@@ -279,7 +281,7 @@ fn generate_machine_state_surface(
                     F: Fn(&Item) -> Fields;
             }
 
-            impl State {
+            impl SomeState {
                 #(#is_methods)*
             }
         }

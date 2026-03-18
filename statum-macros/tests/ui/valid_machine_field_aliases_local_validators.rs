@@ -56,7 +56,7 @@ fn main() {
         .build()
         .unwrap();
     match rebuilt {
-        workflow::workflow_machine::State::Draft(machine) => {
+        workflow::workflow_machine::SomeState::Draft(machine) => {
             let _ = machine.title;
         }
     }

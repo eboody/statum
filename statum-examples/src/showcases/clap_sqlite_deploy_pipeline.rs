@@ -456,7 +456,7 @@ impl DeploymentStore {
             Command::Plan { id } => {
                 let state = self.load_state(id).await?;
                 let machine = match state {
-                    deployment_machine::State::Draft(machine) => machine.plan(),
+                    deployment_machine::SomeState::Draft(machine) => machine.plan(),
                     _ => {
                         return Err(CliError::InvalidTransition(
                             "plan requires a draft deployment",
@@ -469,7 +469,7 @@ impl DeploymentStore {
             Command::RequestApproval { id } => {
                 let state = self.load_state(id).await?;
                 let machine = match state {
-                    deployment_machine::State::Planned(machine) => machine.request_approval(),
+                    deployment_machine::SomeState::Planned(machine) => machine.request_approval(),
                     _ => {
                         return Err(CliError::InvalidTransition(
                             "request-approval requires a planned deployment",
@@ -483,7 +483,7 @@ impl DeploymentStore {
                 ensure_non_empty(&approved_by, "approved_by is required")?;
                 let state = self.load_state(id).await?;
                 let machine = match state {
-                    deployment_machine::State::AwaitingApproval(machine) => {
+                    deployment_machine::SomeState::AwaitingApproval(machine) => {
                         machine.approve(approved_by)
                     }
                     _ => {
@@ -498,7 +498,7 @@ impl DeploymentStore {
             Command::FinishApply { id, result, reason } => {
                 let state = self.load_state(id).await?;
                 let machine = match state {
-                    deployment_machine::State::Applying(machine) => machine,
+                    deployment_machine::SomeState::Applying(machine) => machine,
                     _ => {
                         return Err(CliError::InvalidTransition(
                             "finish-apply requires an applying deployment",
@@ -532,7 +532,7 @@ impl DeploymentStore {
                 ensure_non_empty(&reason, "reason is required")?;
                 let state = self.load_state(id).await?;
                 let machine = match state {
-                    deployment_machine::State::Applied(machine) => machine.rollback(reason),
+                    deployment_machine::SomeState::Applied(machine) => machine.rollback(reason),
                     _ => {
                         return Err(CliError::InvalidTransition(
                             "rollback requires an applied deployment",
@@ -604,7 +604,7 @@ impl DeploymentStore {
         Ok(result.last_insert_rowid())
     }
 
-    async fn load_state(&self, id: i64) -> Result<deployment_machine::State, CliError> {
+    async fn load_state(&self, id: i64) -> Result<deployment_machine::SomeState, CliError> {
         let row = self.fetch_row(id).await?;
         row.clone()
             .into_machine()
@@ -808,45 +808,45 @@ fn common_summary<T: DeploymentStateTrait>(machine: &DeploymentMachine<T>) -> Ve
     ]
 }
 
-fn format_summary(state: deployment_machine::State) -> String {
+fn format_summary(state: deployment_machine::SomeState) -> String {
     let mut lines = match state {
-        deployment_machine::State::Draft(machine) => {
+        deployment_machine::SomeState::Draft(machine) => {
             let mut lines = common_summary(&machine);
             lines.push("state=draft".to_string());
             lines
         }
-        deployment_machine::State::Planned(machine) => {
+        deployment_machine::SomeState::Planned(machine) => {
             let mut lines = common_summary(&machine);
             lines.push("state=planned".to_string());
             lines.push(format!("plan_digest={}", machine.state_data.digest));
             lines
         }
-        deployment_machine::State::AwaitingApproval(machine) => {
+        deployment_machine::SomeState::AwaitingApproval(machine) => {
             let mut lines = common_summary(&machine);
             lines.push("state=awaiting_approval".to_string());
             lines.push(format!("approval_ticket={}", machine.state_data.ticket));
             lines
         }
-        deployment_machine::State::Applying(machine) => {
+        deployment_machine::SomeState::Applying(machine) => {
             let mut lines = common_summary(&machine);
             lines.push("state=applying".to_string());
             lines.push(format!("operation_id={}", machine.state_data.operation_id));
             lines.push(format!("approved_by={}", machine.state_data.approved_by));
             lines
         }
-        deployment_machine::State::Applied(machine) => {
+        deployment_machine::SomeState::Applied(machine) => {
             let mut lines = common_summary(&machine);
             lines.push("state=applied".to_string());
             lines.push(format!("receipt_id={}", machine.state_data.receipt_id));
             lines
         }
-        deployment_machine::State::RolledBack(machine) => {
+        deployment_machine::SomeState::RolledBack(machine) => {
             let mut lines = common_summary(&machine);
             lines.push("state=rolled_back".to_string());
             lines.push(format!("rollback_reason={}", machine.state_data.reason));
             lines
         }
-        deployment_machine::State::Failed(machine) => {
+        deployment_machine::SomeState::Failed(machine) => {
             let mut lines = common_summary(&machine);
             lines.push("state=failed".to_string());
             lines.push(format!("error={}", machine.state_data.error));
@@ -899,7 +899,7 @@ mod tests {
 
         let state = store.load_state(id).await.unwrap();
         match state {
-            deployment_machine::State::Applying(machine) => {
+            deployment_machine::SomeState::Applying(machine) => {
                 assert_eq!(machine.state_data.operation_id.as_str(), "op:1:1.2.3");
                 assert_eq!(machine.state_data.approved_by.as_str(), "alice");
             }

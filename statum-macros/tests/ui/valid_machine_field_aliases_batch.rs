@@ -61,7 +61,7 @@ fn main() {
     .room_id(support::RoomId(22))
     .build();
     match shared.into_iter().next().unwrap().unwrap() {
-        workflow::workflow_machine::State::Draft(machine) => {
+        workflow::workflow_machine::SomeState::Draft(machine) => {
             let _ = machine.room_id.0;
         }
     }
@@ -75,7 +75,7 @@ fn main() {
     })
     .build();
     match by_row.into_iter().next().unwrap().unwrap() {
-        workflow::workflow_machine::State::Draft(machine) => {
+        workflow::workflow_machine::SomeState::Draft(machine) => {
             let _ = machine.room_id.0;
         }
     }

@@ -371,7 +371,7 @@ impl OrderEventStore {
         ensure_non_empty(payment_receipt, "payment_receipt is required")?;
 
         match self.load_state(order_id).await? {
-            order_machine::State::Created(machine) => {
+            order_machine::SomeState::Created(machine) => {
                 let machine = machine.pay(payment_receipt.to_string());
                 self.append_event(
                     machine.state_data.order.order_id,
@@ -392,7 +392,7 @@ impl OrderEventStore {
         ensure_non_empty(pick_ticket, "pick_ticket is required")?;
 
         match self.load_state(order_id).await? {
-            order_machine::State::Paid(machine) => {
+            order_machine::SomeState::Paid(machine) => {
                 let machine = machine.pack(pick_ticket.to_string());
                 self.append_event(
                     machine.state_data.order.order_id,
@@ -413,7 +413,7 @@ impl OrderEventStore {
         ensure_non_empty(tracking_number, "tracking_number is required")?;
 
         match self.load_state(order_id).await? {
-            order_machine::State::Packed(machine) => {
+            order_machine::SomeState::Packed(machine) => {
                 let machine = machine.ship(tracking_number.to_string());
                 self.append_event(
                     machine.state_data.order.order_id,
@@ -432,7 +432,7 @@ impl OrderEventStore {
 
     pub async fn deliver(&self, order_id: i64) -> Result<(), RebuildError> {
         match self.load_state(order_id).await? {
-            order_machine::State::Shipped(machine) => {
+            order_machine::SomeState::Shipped(machine) => {
                 let machine = machine.deliver();
                 self.append_event(
                     machine.state_data.order.order_id,
@@ -449,7 +449,7 @@ impl OrderEventStore {
         }
     }
 
-    pub async fn load_state(&self, order_id: i64) -> Result<order_machine::State, RebuildError> {
+    pub async fn load_state(&self, order_id: i64) -> Result<order_machine::SomeState, RebuildError> {
         let events = self.events_for(order_id).await?;
         let row = projection::reduce_one(events, &OrderProjector)
             .map_err(|error| map_projection_error(error, Some(order_id)))?;
@@ -458,7 +458,7 @@ impl OrderEventStore {
         })
     }
 
-    pub async fn load_all_states(&self) -> Result<Vec<order_machine::State>, RebuildError> {
+    pub async fn load_all_states(&self) -> Result<Vec<order_machine::SomeState>, RebuildError> {
         let rows = self.project_all_orders().await?;
         rows.into_machines()
             .build()
@@ -629,22 +629,22 @@ impl projection::ProjectionReducer<EventRow> for OrderProjector {
     }
 }
 
-fn format_state(state: &order_machine::State) -> String {
+fn format_state(state: &order_machine::SomeState) -> String {
     match state {
-        order_machine::State::Created(machine) => format!(
+        order_machine::SomeState::Created(machine) => format!(
             "order={} customer={} sku={} state=created",
             machine.state_data.order.order_id,
             machine.state_data.order.customer,
             machine.state_data.order.sku
         ),
-        order_machine::State::Paid(machine) => format!(
+        order_machine::SomeState::Paid(machine) => format!(
             "order={} customer={} sku={} state=paid payment_receipt={}",
             machine.state_data.order.order_id,
             machine.state_data.order.customer,
             machine.state_data.order.sku,
             machine.state_data.payment_receipt
         ),
-        order_machine::State::Packed(machine) => format!(
+        order_machine::SomeState::Packed(machine) => format!(
             "order={} customer={} sku={} state=packed payment_receipt={} pick_ticket={}",
             machine.state_data.order.order_id,
             machine.state_data.order.customer,
@@ -652,7 +652,7 @@ fn format_state(state: &order_machine::State) -> String {
             machine.state_data.payment_receipt,
             machine.state_data.pick_ticket
         ),
-        order_machine::State::Shipped(machine) => format!(
+        order_machine::SomeState::Shipped(machine) => format!(
             "order={} customer={} sku={} state=shipped payment_receipt={} pick_ticket={} tracking_number={}",
             machine.state_data.order.order_id,
             machine.state_data.order.customer,
@@ -661,7 +661,7 @@ fn format_state(state: &order_machine::State) -> String {
             machine.state_data.pick_ticket,
             machine.state_data.tracking_number
         ),
-        order_machine::State::Delivered(machine) => format!(
+        order_machine::SomeState::Delivered(machine) => format!(
             "order={} customer={} sku={} state=delivered payment_receipt={} pick_ticket={} tracking_number={}",
             machine.state_data.order.order_id,
             machine.state_data.order.customer,
@@ -691,7 +691,7 @@ mod tests {
 
         let state = row.into_machine().build().unwrap();
         match state {
-            order_machine::State::Packed(machine) => {
+            order_machine::SomeState::Packed(machine) => {
                 assert_eq!(machine.state_data.order.order_id, 7);
                 assert_eq!(machine.state_data.pick_ticket.as_str(), "pick-7");
             }

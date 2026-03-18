@@ -18,7 +18,8 @@ You define:
 Statum generates:
 
 - `into_machine()` for rebuilding one machine.
-- A machine-scoped enum like `task_machine::State`.
+- A machine-scoped enum like `task_machine::SomeState`.
+  `task_machine::State` remains an alias for compatibility.
 - A machine-scoped `task_machine::Fields` struct for heterogeneous batch reconstruction.
 - A machine-scoped batch trait like `task_machine::IntoMachinesExt`.
 
@@ -96,7 +97,7 @@ impl DbRow {
     }
 }
 
-fn rebuild(row: &DbRow) -> statum::Result<task_machine::State> {
+fn rebuild(row: &DbRow) -> statum::Result<task_machine::SomeState> {
     row.into_machine()
         .client("acme".to_owned())
         .name("spec".to_owned())
@@ -112,11 +113,11 @@ let row = DbRow {
 };
 
 match rebuild(&row)? {
-    task_machine::State::Draft(machine) => {}
-    task_machine::State::InReview(machine) => {
+    task_machine::SomeState::Draft(machine) => {}
+    task_machine::SomeState::InReview(machine) => {
         assert_eq!(machine.state_data.reviewer.as_str(), "reviewer-for-acme");
     }
-    task_machine::State::Published(machine) => {}
+    task_machine::SomeState::Published(machine) => {}
 }
 ```
 

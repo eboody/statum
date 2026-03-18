@@ -239,7 +239,7 @@ async fn run_session(
     )
     .await?;
 
-    let mut state = session_machine::State::Connected(
+    let mut state = session_machine::SomeState::Connected(
         SessionMachine::<Connected>::builder()
             .connection_id(connection_id)
             .peer_label(peer_label)
@@ -248,28 +248,28 @@ async fn run_session(
 
     loop {
         state = match state {
-            session_machine::State::Connected(machine) => {
+            session_machine::SomeState::Connected(machine) => {
                 match recv_client(&mut client_rx).await? {
                     ClientFrame::Authenticate { token } => match parse_user_id(&token) {
                         Ok(user_id) => {
                             let next = machine.authenticate(user_id.clone());
                             send_server(&server_tx, ServerFrame::Authenticated { user_id }).await?;
-                            session_machine::State::Authenticated(next)
+                            session_machine::SomeState::Authenticated(next)
                         }
                         Err(message) => {
                             send_server(&server_tx, error_frame(message)).await?;
-                            session_machine::State::Connected(machine)
+                            session_machine::SomeState::Connected(machine)
                         }
                     },
                     ClientFrame::Subscribe { .. } => {
                         send_server(&server_tx, error_frame("authenticate before subscribing"))
                             .await?;
-                        session_machine::State::Connected(machine)
+                        session_machine::SomeState::Connected(machine)
                     }
                     ClientFrame::Publish { .. } => {
                         send_server(&server_tx, error_frame("authenticate before publishing"))
                             .await?;
-                        session_machine::State::Connected(machine)
+                        session_machine::SomeState::Connected(machine)
                     }
                     ClientFrame::Close { reason } => {
                         let _closed = machine.close(reason.clone());
@@ -278,27 +278,27 @@ async fn run_session(
                     }
                 }
             }
-            session_machine::State::Authenticated(machine) => {
+            session_machine::SomeState::Authenticated(machine) => {
                 match recv_client(&mut client_rx).await? {
                     ClientFrame::Authenticate { .. } => {
                         send_server(&server_tx, error_frame("session already authenticated"))
                             .await?;
-                        session_machine::State::Authenticated(machine)
+                        session_machine::SomeState::Authenticated(machine)
                     }
                     ClientFrame::Subscribe { topic } => match validate_topic(&topic) {
                         Ok(()) => {
                             let next = machine.subscribe(topic.clone());
                             send_server(&server_tx, ServerFrame::Subscribed { topic }).await?;
-                            session_machine::State::Subscribed(next)
+                            session_machine::SomeState::Subscribed(next)
                         }
                         Err(message) => {
                             send_server(&server_tx, error_frame(message)).await?;
-                            session_machine::State::Authenticated(machine)
+                            session_machine::SomeState::Authenticated(machine)
                         }
                     },
                     ClientFrame::Publish { .. } => {
                         send_server(&server_tx, error_frame("subscribe before publishing")).await?;
-                        session_machine::State::Authenticated(machine)
+                        session_machine::SomeState::Authenticated(machine)
                     }
                     ClientFrame::Close { reason } => {
                         let _closed = machine.close(reason.clone());
@@ -307,25 +307,25 @@ async fn run_session(
                     }
                 }
             }
-            session_machine::State::Subscribed(machine) => {
+            session_machine::SomeState::Subscribed(machine) => {
                 match recv_client(&mut client_rx).await? {
                     ClientFrame::Authenticate { .. } => {
                         send_server(&server_tx, error_frame("session already authenticated"))
                             .await?;
-                        session_machine::State::Subscribed(machine)
+                        session_machine::SomeState::Subscribed(machine)
                     }
                     ClientFrame::Subscribe { .. } => {
                         send_server(&server_tx, error_frame("session already subscribed")).await?;
-                        session_machine::State::Subscribed(machine)
+                        session_machine::SomeState::Subscribed(machine)
                     }
                     ClientFrame::Publish { topic, body } => match machine.publish(&topic, &body) {
                         Ok(frame) => {
                             send_server(&server_tx, frame).await?;
-                            session_machine::State::Subscribed(machine)
+                            session_machine::SomeState::Subscribed(machine)
                         }
                         Err(message) => {
                             send_server(&server_tx, error_frame(message)).await?;
-                            session_machine::State::Subscribed(machine)
+                            session_machine::SomeState::Subscribed(machine)
                         }
                     },
                     ClientFrame::Close { reason } => {
@@ -335,7 +335,7 @@ async fn run_session(
                     }
                 }
             }
-            session_machine::State::Closed(_) => return Ok(()),
+            session_machine::SomeState::Closed(_) => return Ok(()),
         };
     }
 }

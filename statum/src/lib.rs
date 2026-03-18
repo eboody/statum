@@ -126,7 +126,7 @@
 //!     let row_id = row.id;
 //!     let machine = row.into_machine().id(row_id).build()?;
 //!     match machine {
-//!         task::State::InReview(task) => assert_eq!(task.state_data, "alice"),
+//!         task::SomeState::InReview(task) => assert_eq!(task.state_data, "alice"),
 //!         _ => panic!("expected in-review task"),
 //!     }
 //!     Ok(())
@@ -211,7 +211,8 @@ pub use statum_macros::state;
 ///
 /// - the typed `Machine<State>` surface
 /// - a builder for new machines
-/// - a machine-scoped `machine::State` enum for matching rebuilt machines
+/// - a machine-scoped `machine::SomeState` enum for matching rebuilt machines
+/// - a compatibility alias `machine::State = machine::SomeState`
 /// - a machine-scoped `machine::Fields` struct for heterogeneous batch rebuilds
 ///
 /// If you need derives, place them below `#[machine]`.

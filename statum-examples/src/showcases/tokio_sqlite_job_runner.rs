@@ -382,8 +382,8 @@ impl JobRunner {
 
         let machine = self.rehydrate_row(row.clone())?;
         let running = match machine {
-            job_machine::State::Queued(machine) => machine.start(self.next_lease_token()),
-            job_machine::State::Retrying(machine) => machine.restart(self.next_lease_token()),
+            job_machine::SomeState::Queued(machine) => machine.start(self.next_lease_token()),
+            job_machine::SomeState::Retrying(machine) => machine.restart(self.next_lease_token()),
             _ => return Err(RunnerError::UnexpectedRunnableState),
         };
 
@@ -518,7 +518,7 @@ impl JobRunner {
         Ok(row)
     }
 
-    fn rehydrate_row(&self, row: JobRow) -> Result<job_machine::State, RunnerError> {
+    fn rehydrate_row(&self, row: JobRow) -> Result<job_machine::SomeState, RunnerError> {
         row.clone()
             .into_machine()
             .id(row.id)
@@ -656,7 +656,7 @@ mod tests {
         let state = runner.rehydrate_row(row).unwrap();
 
         match state {
-            job_machine::State::Retrying(machine) => {
+            job_machine::SomeState::Retrying(machine) => {
                 assert_eq!(machine.attempts, 1);
                 assert_eq!(machine.state_data.available_at_ms, RETRY_DELAY_MS);
                 assert_eq!(

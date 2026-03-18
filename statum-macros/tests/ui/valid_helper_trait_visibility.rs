@@ -149,11 +149,11 @@ fn main() {
         .tenant("acme".to_string())
         .build();
     match public_items.into_iter().next().unwrap().unwrap() {
-        public_flow::public_machine::State::Draft(_machine) => panic!("unexpected draft state"),
-        public_flow::public_machine::State::Review(machine) => {
+        public_flow::public_machine::SomeState::Draft(_machine) => panic!("unexpected draft state"),
+        public_flow::public_machine::SomeState::Review(machine) => {
             let _ = machine.state_data.reviewer.as_str();
         }
-        public_flow::public_machine::State::Done(_machine) => panic!("unexpected done state"),
+        public_flow::public_machine::SomeState::Done(_machine) => panic!("unexpected done state"),
     }
 
     let crate_machine = crate_flow::WorkflowMachine::<crate_flow::Review>::builder()
@@ -169,9 +169,9 @@ fn main() {
         .owner("acme".to_string())
         .build();
     match crate_items.into_iter().next().unwrap().unwrap() {
-        crate_flow::workflow_machine::State::Review(machine) => {
+        crate_flow::workflow_machine::SomeState::Review(machine) => {
             let _ = machine.state_data.reviewer.as_str();
         }
-        crate_flow::workflow_machine::State::Done(_machine) => panic!("unexpected done state"),
+        crate_flow::workflow_machine::SomeState::Done(_machine) => panic!("unexpected done state"),
     }
 }

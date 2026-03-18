@@ -66,10 +66,10 @@ fn main() {
         .unwrap();
 
     match rebuilt {
-        workflow_machine::State::Draft(machine) => {
+        workflow_machine::SomeState::Draft(machine) => {
             assert_eq!(machine.name, "second");
             assert_eq!(machine.state_data.title, "from row");
         }
-        workflow_machine::State::Done(_) => panic!("expected draft"),
+        workflow_machine::SomeState::Done(_) => panic!("expected draft"),
     }
 }

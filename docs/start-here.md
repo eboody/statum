@@ -24,8 +24,9 @@ That is enough to decide whether Statum fits your correctness problem.
 
 Then read [tutorial-review-workflow.md](tutorial-review-workflow.md).
 
-This is the step-by-step path for understanding how the pieces fit together in
-an app-shaped workflow:
+This is the progressive path for understanding how the pieces fit together in
+an app-shaped workflow. It starts with the smallest working machine, then adds
+the next feature only when the workflow needs it:
 
 - `#[state]`
 - `#[machine]`

@@ -22,13 +22,13 @@ mod private_machine {
 
     pub fn assert_private_surface() {
         let machine = WorkflowMachine::<Draft>::builder().id(1).build();
-        let state = workflow_machine::State::Draft(machine);
+        let state = workflow_machine::SomeState::Draft(machine);
 
         match state {
-            workflow_machine::State::Draft(machine) => {
+            workflow_machine::SomeState::Draft(machine) => {
                 let _ = machine.id;
             }
-            workflow_machine::State::Done(_machine) => {}
+            workflow_machine::SomeState::Done(_machine) => {}
         }
     }
 }
@@ -73,13 +73,23 @@ fn main() {
     private_machine::assert_private_surface();
 
     let row = Row { status: "draft" };
-    let state: task_machine::State = row
+    let state: task_machine::SomeState = row
         .into_machine()
         .name("todo".to_string())
         .build()
         .unwrap();
 
     match state {
+        task_machine::SomeState::Draft(machine) => {
+            let _ = machine.name;
+        }
+        task_machine::SomeState::Done(_machine) => {}
+    }
+
+    let alias_state: task_machine::State =
+        task_machine::SomeState::Draft(TaskMachine::<Draft>::builder().name("alias".to_string()).build());
+
+    match alias_state {
         task_machine::State::Draft(machine) => {
             let _ = machine.name;
         }

@@ -94,7 +94,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         .map(|(_, ty)| ty.clone())
         .collect::<Vec<_>>();
     let machine_module_ident = format_ident!("{}", crate::to_snake_case(&machine_ident.to_string()));
-    let machine_state_ty = quote! { #machine_module_ident::State };
+    let machine_state_ty = quote! { #machine_module_ident::SomeState };
     let machine_name = machine_ident.to_string();
 
     let collect_context = CollectValidatorContext {

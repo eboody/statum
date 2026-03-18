@@ -53,11 +53,11 @@ The example splits the problem into three explicit layers:
 
 Once rebuilt, the result is not "an order plus a status field." It is one of:
 
-- `order_machine::State::Created`
-- `order_machine::State::Paid`
-- `order_machine::State::Packed`
-- `order_machine::State::Shipped`
-- `order_machine::State::Delivered`
+- `order_machine::SomeState::Created`
+- `order_machine::SomeState::Paid`
+- `order_machine::SomeState::Packed`
+- `order_machine::SomeState::Shipped`
+- `order_machine::SomeState::Delivered`
 
 That matters because the workflow boundary is no longer implicit.
 The type system now distinguishes legal states from rows that merely resemble

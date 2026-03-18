@@ -64,18 +64,18 @@ pub async fn run() {
         .await;
 
     // Real applications should handle invalid rows instead of discarding them.
-    let machine_states: Vec<machine::State> =
+    let machine_states: Vec<machine::SomeState> =
         machine_states.into_iter().filter_map(Result::ok).collect();
 
     for machine in machine_states {
         match machine {
-            machine::State::Draft(_machine) => {
+            machine::SomeState::Draft(_machine) => {
                 println!("_machine is Machine<Draft>");
             }
-            machine::State::InReview(_machine) => {
+            machine::SomeState::InReview(_machine) => {
                 println!("_machine is Machine<InReview>");
             }
-            machine::State::Published(_machine) => {
+            machine::SomeState::Published(_machine) => {
                 println!("_machine is Machine<Published>");
             }
         }

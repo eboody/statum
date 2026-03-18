@@ -58,10 +58,10 @@ pub fn run() {
         })
         .build();
 
-    let machines: Vec<machine::State> = machines.into_iter().map(Result::unwrap).collect();
+    let machines: Vec<machine::SomeState> = machines.into_iter().map(Result::unwrap).collect();
 
     match &machines[0] {
-        machine::State::Draft(machine) => {
+        machine::SomeState::Draft(machine) => {
             assert_eq!(machine.tenant.as_str(), "acme");
             assert_eq!(machine.priority, 1);
         }
@@ -69,7 +69,7 @@ pub fn run() {
     }
 
     match &machines[1] {
-        machine::State::Published(machine) => {
+        machine::SomeState::Published(machine) => {
             assert_eq!(machine.tenant.as_str(), "globex");
             assert_eq!(machine.priority, 3);
         }
