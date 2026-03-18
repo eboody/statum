@@ -1,8 +1,12 @@
 //! Compile-time verified typestate workflows for Rust.
 //!
-//! Statum is for workflows where phase order matters and invalid transitions are
-//! expensive. It generates typed state markers, typed machines, transition
-//! helpers, and typed rehydration from stored data.
+//! Statum is for workflow and protocol models where representational
+//! correctness matters. It helps keep invalid, undesirable, or not-yet-
+//! validated states out of ordinary code.
+//! In the same spirit as [`Option`] and [`Result`], it uses the type system to
+//! make absence, failure, and workflow legality explicit instead of leaving
+//! them in status fields and guard code. It generates typed state markers,
+//! typed machines, transition helpers, and typed rehydration from stored data.
 //!
 //! # Mental Model
 //!

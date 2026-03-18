@@ -3,7 +3,7 @@
     <source media="(prefers-color-scheme: dark)" srcset="./docs/static/image/logo-dark.png">
     <img alt="statum logo" src="./docs/static/image/logo.png" width="420">
   </picture>
-  <p>Statum is a framework for building protocol-safe, compile-time verified typestate workflows in Rust.</p>
+  <p>Statum is a Rust typestate framework for making invalid, undesirable, or not-yet-validated states unrepresentable in ordinary code.</p>
   <p>
     <a href="https://github.com/eboody/statum/actions/workflows/ci.yml"><img src="https://github.com/eboody/statum/actions/workflows/ci.yml/badge.svg?branch=main&event=push" alt="build status" /></a>
     <a href="https://crates.io/crates/statum"><img src="https://img.shields.io/crates/v/statum.svg?logo=rust" alt="crates.io" /></a>
@@ -13,7 +13,18 @@
 
 # Statum
 
-Statum helps you model workflows where phase order matters and invalid transitions are expensive. You describe lifecycle phases with `#[state]`, durable context with `#[machine]`, legal moves with `#[transition]`, and typed rehydration from existing data with `#[validators]`.
+Statum is about correctness. More specifically, it is about representational
+correctness: how accurately your code models the thing you are trying to model.
+
+The goal is to make invalid, undesirable, or not-yet-validated states
+impossible to represent in ordinary code. In that sense it is similar to
+`Option` or `Result`: they make absence or failure explicit in the type system
+instead of leaving it implicit.
+
+Statum applies that same idea to workflow and protocol state. You describe
+lifecycle phases with `#[state]`, durable context with `#[machine]`, legal
+moves with `#[transition]`, and typed rehydration from existing data with
+`#[validators]`.
 
 It is opinionated on purpose: explicit transitions, state-specific data, and compile-time method gating. If that is the shape of your problem, the API stays small and the safety payoff is high.
 
@@ -23,7 +34,7 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 
 ```toml
 [dependencies]
-statum = "0.6.0"
+statum = "0.6.1"
 ```
 
 ## 60-Second Example
@@ -70,8 +81,11 @@ Example: [statum-examples/src/toy_demos/example_01_setup.rs](statum-examples/src
 
 ## What The Compiler Enforces
 
-The syntax example above is small. The correctness payoff is that the workflow
-shape becomes part of the API:
+The syntax example above is small. The point is not the syntax. The point is
+that legal and illegal states stop looking the same in your API.
+
+The workflow shape becomes part of the type system instead of hiding in status
+enums, optional fields, and comments:
 
 - `LightSwitch<Off>` and `LightSwitch<On>` are different types.
 - `switch_on()` only exists on `LightSwitch<Off>`.
@@ -79,9 +93,9 @@ shape becomes part of the API:
 - If a state carries data, that data only exists when the machine is actually
   in that state.
 
-This is the point of Statum: legal next operations are enforced at compile
-time, and rebuilt machines come back as typed states instead of “a row plus a
-status field”.
+This is the point of Statum: only legal, understood states become first-class
+values. Raw rows and event projections stay raw until `#[validators]` proves
+they can become typed machines.
 
 If you add derives, place them below `#[state]` and `#[machine]`:
 
@@ -261,6 +275,8 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
 
 Use Statum when:
 
+- You care about representational correctness and want invalid, undesirable, or
+  not-yet-validated states out of the core API.
 - Workflow order is stable and meaningful.
 - Invalid transitions are expensive.
 - Available methods should change by phase.

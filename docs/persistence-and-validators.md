@@ -2,6 +2,10 @@
 
 `#[validators]` is Statum's typed rehydration feature. Use it when you need to turn a row, document, event payload, or other persisted representation back into a typed machine.
 
+This is the boundary where raw persisted facts either become one legal typed
+state or stay invalid runtime data. That is how Statum keeps not-yet-validated
+states out of ordinary code.
+
 ## Mental Model
 
 You define:
@@ -17,6 +21,10 @@ Statum generates:
 - A machine-scoped enum like `task_machine::State`.
 - A machine-scoped `task_machine::Fields` struct for heterogeneous batch reconstruction.
 - A machine-scoped batch trait like `task_machine::IntoMachinesExt`.
+
+The important part is what Statum does not generate: it does not treat stored
+data as already trustworthy. Validators decide whether the persisted value
+actually represents `Draft`, `InReview`, `Published`, or nothing legal at all.
 
 ## Pick The Right Entry Point
 
@@ -111,6 +119,9 @@ match rebuild(&row)? {
     task_machine::State::Published(machine) => {}
 }
 ```
+
+After that match, you are no longer carrying "a row plus a status field." You
+are carrying one explicit legal state.
 
 ## What Is Available Inside Validator Methods
 

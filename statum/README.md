@@ -1,6 +1,11 @@
 # statum
 
-`statum` provides compile-time verified typestate workflows for Rust.
+`statum` is about representational correctness for workflow and protocol state.
+It helps make invalid, undesirable, or not-yet-validated states impossible to
+represent as ordinary values.
+
+It applies the same idea as `Option` and `Result`: absence or failure becomes
+explicit in the type instead of staying implicit in the program.
 
 This crate re-exports:
 
@@ -13,7 +18,7 @@ This crate re-exports:
 
 ```toml
 [dependencies]
-statum = "0.6.0"
+statum = "0.6.1"
 ```
 
 Statum targets stable Rust and currently supports Rust `1.93+`.

@@ -2,9 +2,14 @@
 
 This page collects the common Statum patterns that are useful after the quick start. The examples below are intentionally short. For executable coverage, see [../statum-examples/tests/patterns.rs](../statum-examples/tests/patterns.rs).
 
+Each pattern is in service of the same goal: legal states should be explicit,
+and undesirable states should not be smuggled through ordinary APIs.
+
 ## Branching Decisions
 
-A transition method should still return one concrete next state. Put branching in a normal helper and dispatch into explicit transition methods:
+A transition method should still return one concrete next state. Put branching
+in a normal helper and dispatch into explicit transition methods so the branch
+result is still explicit in the type:
 
 ```rust
 enum Decision {
@@ -40,7 +45,8 @@ impl Machine<Pending> {
 
 ## State-Specific Data
 
-Attach data only to states where it is actually valid. Transition into those states with `transition_with(data)`:
+Attach data only to states where it is actually valid. Transition into those
+states with `transition_with(data)`:
 
 ```rust
 #[state]
