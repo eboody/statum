@@ -15,6 +15,8 @@ operations that should change by phase.
   `publish`, `activate`, `retry`, `rollback`, or `close`
 - data that is only valid in one phase, such as review metadata, lease info,
   failure details, or publish timestamps
+- one workflow owns another workflow with its own stable phases
+- governance or approval status changes what operations are legal elsewhere
 - state rebuild from rows, snapshots, or event logs
 - service-shaped workflows such as reviews, deployments, payments, orders,
   jobs, protocol sessions, and approval pipelines
@@ -37,6 +39,7 @@ operations that should change by phase.
 - most branching is runtime business policy inside one phase
 - the code needs a small invariant check, not a protocol model
 - the domain is mostly ad hoc UI state or ephemeral request composition
+- the interesting part is uncontrolled policy search, not stable protocol order
 
 ## Quick Triage
 
@@ -48,6 +51,7 @@ Ask these questions before recommending Statum:
 4. Does some data only exist in specific phases?
 5. Is the lifecycle stable enough to codify now?
 6. Is there a rebuild path from rows or event streams?
+7. Does a parent workflow own a child lifecycle worth modeling separately?
 
 Three or more strong "yes" answers usually justify a deeper pass. One or two
 answers usually mean "keep runtime validation for now."
@@ -59,6 +63,8 @@ answers usually mean "keep runtime validation for now."
 - durable shared context -> machine fields
 - phase-only payloads -> state data
 - legal edges -> `#[transition]` impl blocks
+- owned subflow -> nested machine as state data
+- governance or approval flow -> separate machine if it changes legal actions
 - row rebuilds -> `#[validators]`
 - append-only event logs -> `statum::projection` first, then `#[validators]`
 
@@ -70,12 +76,16 @@ When an agent recommends Statum, it should point to:
 - duplicated guard logic or invalid transition checks
 - the methods that should disappear outside a specific phase
 - the current state-specific data or optional fields
+- the owned child workflow or approval flow that should not be flattened
 - the persistence boundary, if rebuild or rehydration is part of the design
+- what should stay runtime policy instead of becoming typestate
 - the likely migration risk: low, medium, or high
 
 ## Good Anchors in This Repo
 
 - review flow: [../../statum-examples/src/toy_demos/13-review-flow.rs](../../statum-examples/src/toy_demos/13-review-flow.rs)
+- nested workflow:
+  [../../statum-examples/src/toy_demos/11-hierarchical-machines.rs](../../statum-examples/src/toy_demos/11-hierarchical-machines.rs)
 - rows to typed machines:
   [../persistence-and-validators.md](../persistence-and-validators.md)
 - event-log rebuild:

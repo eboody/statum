@@ -24,7 +24,7 @@ dynamic.
 2. Keep the heuristics page nearby:
    [opportunity-signals.md](opportunity-signals.md)
 3. Use one of the prompts under [prompts/](prompts/) when you want a deeper
-   audit or refactor plan.
+   audit, architecture-to-Statum design pass, or refactor plan.
 4. Ask the agent to cite the candidate entity, proposed state enum, legal
    transitions, and why Statum is stronger than plain runtime validation in
    that spot.
@@ -36,6 +36,7 @@ dynamic.
 | Agents should notice good Statum candidates during normal coding | One template under [templates/](templates/) |
 | You want a repo-wide Statum audit | [audit-playbook.md](audit-playbook.md) plus [prompts/existing-codebase-audit.md](prompts/existing-codebase-audit.md) |
 | You want help designing a new workflow | [prompts/greenfield-workflow-design.md](prompts/greenfield-workflow-design.md) |
+| You want to turn a memo, plan, or protocol guide into concrete Statum machines | [prompts/abstract-guide-to-statum.md](prompts/abstract-guide-to-statum.md) |
 | You want one module or service refactored | [prompts/targeted-module-refactor.md](prompts/targeted-module-refactor.md) |
 | You are rebuilding state from rows or event logs | [prompts/persistence-validator-migration.md](prompts/persistence-validator-migration.md) |
 | You want PR review guidance on whether a change should be typestate | [prompts/pr-review-typestate-check.md](prompts/pr-review-typestate-check.md) |
@@ -46,10 +47,22 @@ dynamic.
   transition checks, or rebuild code
 - a proposed `#[state]` enum with business-phase names
 - a clear split between `#[machine]` fields and state-specific data
+- parent, child, or nested-machine structure when one workflow owns another
 - likely `#[transition]` impl blocks and the legal edges they encode
 - whether `#[validators]` or `statum::projection` should be part of the design
+- the explicit hybrid boundary: what should stay runtime-validated and why
 - the smallest first migration slice that improves correctness without forcing a
   repo-wide rewrite
+
+## Optional Codex Layer
+
+If you use Codex locally and want a deeper explicit Statum workflow skill, add
+or invoke a local `$statum-skill` skill rather than making your base agent
+auto-suggest typestate everywhere.
+
+Keep the templates in this repo conservative. Use the explicit skill when you
+want a full machine inventory, nested-machine decomposition, or an
+architecture-guide-to-Statum pass.
 
 ## Reference Stack
 
