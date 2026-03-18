@@ -1,3 +1,6 @@
 # Cargo
 target/
 Cargo.lock
+
+# Local scratch space
+.tmp-tests/
