@@ -449,7 +449,10 @@ impl OrderEventStore {
         }
     }
 
-    pub async fn load_state(&self, order_id: i64) -> Result<order_machine::SomeState, RebuildError> {
+    pub async fn load_state(
+        &self,
+        order_id: i64,
+    ) -> Result<order_machine::SomeState, RebuildError> {
         let events = self.events_for(order_id).await?;
         let row = projection::reduce_one(events, &OrderProjector)
             .map_err(|error| map_projection_error(error, Some(order_id)))?;
