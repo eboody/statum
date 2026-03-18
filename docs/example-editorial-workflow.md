@@ -9,6 +9,8 @@ This is a better minimal example because it shows:
 - data that only exists in certain states
 - transitions that carry state-specific payloads
 
+Review and publish data only appear once the article reaches those states.
+
 ```rust
 use statum::{machine, state, transition};
 

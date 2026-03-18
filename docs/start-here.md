@@ -3,6 +3,12 @@
 If you are evaluating Statum from the outside, do not read the repo front to
 back. Use this short path instead.
 
+Keep one question in mind while reading: does this workflow have legal states
+that should be impossible to misrepresent in code?
+
+Statum is for cases where invalid, undesirable, or not-yet-validated states
+should not survive as ordinary values in your core API.
+
 ## 1. Read The README Quick Start
 
 Start with the root [README](../README.md):
@@ -12,7 +18,7 @@ Start with the root [README](../README.md):
 - the mental model for `#[state]`, `#[machine]`, `#[transition]`, and
   `#[validators]`
 
-That is enough to decide whether the API shape is interesting.
+That is enough to decide whether Statum fits your correctness problem.
 
 ## 2. Read The Guided Tutorial
 
@@ -37,6 +43,9 @@ That is the strongest Statum story in this repo:
 - projection into row-like snapshots
 - typed rehydration back into legal machine states
 - no ad hoc status branching after rebuild
+
+It is also the clearest example of the core claim: raw persisted facts stay raw
+until they can be proven to represent one legal state.
 
 If that problem shape matters to you, Statum is probably worth a deeper look.
 

@@ -4,6 +4,10 @@ This is the strongest Statum example in the repo because it shows the part that
 is hard to fake with normal status enums: rebuilding a workflow from
 append-only events without dropping back to ad hoc runtime branching.
 
+It is also the clearest representational-correctness story in the repo: raw
+projected facts do not become ordinary workflow values until they can be proven
+to match one legal state.
+
 Source:
 
 - runnable example:
@@ -35,6 +39,7 @@ The usual runtime shape is:
 - hope the data attached to that status is still consistent
 
 That works, but the legal workflow still lives in runtime code.
+Undesirable or inconsistent states can still travel as ordinary values.
 
 ## The Statum Shape
 
@@ -55,6 +60,8 @@ Once rebuilt, the result is not "an order plus a status field." It is one of:
 - `order_machine::State::Delivered`
 
 That matters because the workflow boundary is no longer implicit.
+The type system now distinguishes legal states from rows that merely resemble
+them.
 
 ## What Gets Better
 
@@ -84,6 +91,7 @@ Instead:
 - `Shipped` carries `tracking_number` too
 
 That makes the type system reflect the event history you actually observed.
+Fields stop existing in phases where they would only be guesses.
 
 ### 3. Rehydration becomes one explicit boundary
 
@@ -99,6 +107,7 @@ let state = row.into_machine().build()?;
 
 After that, downstream code works on typed states rather than repeating
 snapshot-to-workflow interpretation logic.
+That is the handoff from unvalidated facts to legal domain states.
 
 ### 4. Batch rebuilds stay typed too
 

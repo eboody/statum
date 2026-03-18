@@ -1,5 +1,12 @@
 # Release Notes
 
+## v0.6.1 (2026-03-18)
+
+### Changes
+- Recentered the public docs around representational correctness and the goal of making invalid, undesirable, or not-yet-validated states unrepresentable in ordinary code.
+- Refreshed published crate metadata and keywords so the crates.io surface reflects Statum's correctness-first positioning.
+- Added package-level `modum` configuration so the workspace's existing public naming surfaces lint cleanly without forced API renames.
+
 ## v0.6.0 (2026-03-17)
 
 ### Breaking Changes

@@ -3,14 +3,14 @@
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]
 categories = ["rust-patterns"]
-description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
+description = "Core types for representing legal workflow and protocol states explicitly in Rust"
 documentation = "https://docs.rs/statum-core"
 edition = "2021"
 keywords = [
-    "enum",
     "typestate",
-    "fsm",
-    "finite-state",
+    "correctness",
+    "workflow",
+    "protocol",
     "state-machine",
 ]
 license = "MIT"
@@ -18,7 +18,7 @@ name = "statum-core"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.6.0"
+version = "0.6.1"
 
 [package.metadata.modum]
 weak_modules = [
@@ -33,4 +33,5 @@ weak_modules = [
     "util",
     "utils",
     "projection",
+    "can",
 ]

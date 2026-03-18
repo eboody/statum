@@ -1,6 +1,6 @@
 [dependencies.module_path_extractor]
 path = "../module_path_extractor"
-version = "0.6.0"
+version = "0.6.1"
 
 [dependencies.syn]
 features = ["full"]
@@ -27,7 +27,7 @@ name = "macro_registry"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.6.0"
+version = "0.6.1"
 
 [package.metadata.modum]
 weak_modules = [
@@ -43,4 +43,6 @@ weak_modules = [
     "utils",
     "analysis",
     "registry",
+    "item",
+    "lookup",
 ]

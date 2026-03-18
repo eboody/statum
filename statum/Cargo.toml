@@ -1,10 +1,10 @@
 [dependencies.statum-core]
 path = "../statum-core"
-version = "0.6.0"
+version = "0.6.1"
 
 [dependencies.statum-macros]
 path = "../statum-macros"
-version = "0.6.0"
+version = "0.6.1"
 
 [dev-dependencies]
 futures = "0.3"
@@ -16,14 +16,14 @@ version = "1"
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]
 categories = ["rust-patterns"]
-description = "Compile-time state machine magic for Rust: Zero-boilerplate typestate patterns with automatic transition validation"
+description = "Represent workflow and protocol state correctly in Rust by making invalid states unrepresentable"
 documentation = "https://docs.rs/statum"
 edition = "2021"
 keywords = [
-    "enum",
     "typestate",
-    "fsm",
-    "finite-state",
+    "correctness",
+    "workflow",
+    "protocol",
     "state-machine",
 ]
 license = "MIT"
@@ -31,7 +31,7 @@ name = "statum"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.6.0"
+version = "0.6.1"
 
 [package.metadata.modum]
 generic_nouns = [
@@ -42,3 +42,4 @@ generic_nouns = [
     "Request",
     "Response",
 ]
+weak_modules = ["can"]

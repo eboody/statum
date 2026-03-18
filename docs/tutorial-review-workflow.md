@@ -5,6 +5,10 @@ apps. It walks through the core shape of
 [axum_sqlite_review.rs](../statum-examples/src/showcases/axum_sqlite_review.rs)
 step by step.
 
+Keep the main idea in view while reading: the goal is not to wrap a workflow in
+extra types. The goal is to make invalid or not-yet-validated document states
+impossible to treat as ordinary domain values.
+
 What you are building:
 
 - a `Document` that starts as a draft
@@ -54,6 +58,9 @@ These are the fields that exist across the workflow. State-specific data does
 not go here. `ReviewAssignment` only exists when the document is actually in
 review, so it lives on `InReview`.
 
+Review data is only present on `InReview` because that is the only state where
+it is valid.
+
 ## 3. Define The Legal Edges
 
 ```rust
@@ -97,10 +104,13 @@ struct DocumentRow {
 ```
 
 By itself, this is just runtime data. It is not yet a typed workflow.
+It may describe one legal state, or it may describe an invalid combination.
 
 ## 5. Rebuild Rows Into Typed Machines
 
 This is the part that makes the example more than “states and transitions.”
+It is the boundary where raw rows either become one legal typed state or remain
+invalid runtime data.
 
 ```rust
 #[validators(DocumentMachine)]
