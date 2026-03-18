@@ -225,7 +225,7 @@ async fn sqlite_event_log_rebuild_batches_append_only_orders() {
     assert_eq!(states.len(), 2);
 
     match &states[0] {
-        sqlite_event_log_rebuild::order_machine::State::Delivered(machine) => {
+        sqlite_event_log_rebuild::order_machine::SomeState::Delivered(machine) => {
             assert_eq!(machine.state_data.order.order_id, delivered_id);
             assert_eq!(machine.state_data.tracking_number.as_str(), "trk-001");
         }
@@ -233,7 +233,7 @@ async fn sqlite_event_log_rebuild_batches_append_only_orders() {
     }
 
     match &states[1] {
-        sqlite_event_log_rebuild::order_machine::State::Packed(machine) => {
+        sqlite_event_log_rebuild::order_machine::SomeState::Packed(machine) => {
             assert_eq!(machine.state_data.order.order_id, packed_id);
             assert_eq!(machine.state_data.pick_ticket.as_str(), "pick-002");
         }
@@ -251,7 +251,7 @@ async fn sqlite_event_log_rebuild_rejects_invalid_transition() {
 
     let state = store.load_state(order_id).await.unwrap();
     match state {
-        sqlite_event_log_rebuild::order_machine::State::Created(machine) => {
+        sqlite_event_log_rebuild::order_machine::SomeState::Created(machine) => {
             assert_eq!(machine.state_data.order.order_id, order_id);
         }
         _ => panic!("expected order to remain created"),

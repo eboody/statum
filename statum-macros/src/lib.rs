@@ -65,7 +65,8 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Apply `#[machine]` to a struct whose first generic parameter is the
 /// `#[state]` enum family. Statum generates the typed machine surface, builders,
-/// the machine-scoped `machine::State` enum, and helper items such as
+/// the machine-scoped `machine::SomeState` enum, a compatibility alias
+/// `machine::State = machine::SomeState`, and helper items such as
 /// `machine::Fields` for heterogeneous batch rebuilds.
 #[proc_macro_attribute]
 pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {

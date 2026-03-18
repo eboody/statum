@@ -64,7 +64,7 @@ mod same_module_path_case {
             .build()
             .unwrap();
         match rebuilt {
-            workflow_machine::State::Draft(machine) => {
+            workflow_machine::SomeState::Draft(machine) => {
                 let _ = machine.title;
             }
         }
@@ -115,7 +115,7 @@ mod self_path_case {
             .build()
             .unwrap();
         match rebuilt {
-            workflow_machine::State::Draft(machine) => {
+            workflow_machine::SomeState::Draft(machine) => {
                 let _ = machine.title;
             }
         }
@@ -161,7 +161,7 @@ mod crate_path_case {
             .build()
             .unwrap();
         match rebuilt {
-            workflow_machine::State::Draft(machine) => {
+            workflow_machine::SomeState::Draft(machine) => {
                 let _ = machine.title;
             }
         }
@@ -210,7 +210,7 @@ mod imported_module_case {
             .build()
             .unwrap();
         match rebuilt {
-            workflow_machine::State::Draft(machine) => {
+            workflow_machine::SomeState::Draft(machine) => {
                 let _ = machine.room_id.0;
             }
         }
@@ -259,7 +259,7 @@ mod renamed_module_case {
             .build()
             .unwrap();
         match rebuilt {
-            workflow_machine::State::Draft(machine) => {
+            workflow_machine::SomeState::Draft(machine) => {
                 let _ = machine.room_id.0;
             }
         }
@@ -313,7 +313,7 @@ mod super_path_case {
                 .build()
                 .unwrap();
             match rebuilt {
-                workflow_machine::State::Draft(machine) => {
+                workflow_machine::SomeState::Draft(machine) => {
                     let _ = machine.title;
                 }
             }

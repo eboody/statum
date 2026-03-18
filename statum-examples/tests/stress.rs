@@ -162,7 +162,7 @@ mod validators_sync_and_async {
             .unwrap();
 
         match state {
-            machine::State::InReview(machine) => {
+            machine::SomeState::InReview(machine) => {
                 let _reviewer = machine.state_data.reviewer.as_str();
             }
             _ => panic!("unexpected state"),

@@ -50,7 +50,7 @@ fn main() {
 
     let rebuilt = workflow::Row { status: "draft" }.into_machine().router(web::Router).build().unwrap();
     match rebuilt {
-        workflow::workflow_machine::State::Draft(machine) => {
+        workflow::workflow_machine::SomeState::Draft(machine) => {
             let _ = machine.router;
         }
     }

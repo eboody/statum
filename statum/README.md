@@ -18,7 +18,7 @@ This crate re-exports:
 
 ```toml
 [dependencies]
-statum = "0.6.1"
+statum = "0.6.2"
 ```
 
 Statum targets stable Rust and currently supports Rust `1.93+`.

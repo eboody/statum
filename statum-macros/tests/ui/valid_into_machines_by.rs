@@ -46,7 +46,7 @@ mod workflow {
         }
     }
 
-    pub fn local_rebuild(rows: Vec<Row>) -> Vec<Result<workflow_machine::State, statum_core::Error>> {
+    pub fn local_rebuild(rows: Vec<Row>) -> Vec<Result<workflow_machine::SomeState, statum_core::Error>> {
         rows.into_machines_by(|row| workflow_machine::Fields {
             tenant: row.tenant.clone(),
             priority: row.priority,
@@ -64,10 +64,10 @@ fn main() {
         status: "draft",
     }]);
     match local.into_iter().next().unwrap().unwrap() {
-        workflow::workflow_machine::State::Draft(machine) => {
+        workflow::workflow_machine::SomeState::Draft(machine) => {
             let _ = (machine.tenant, machine.priority);
         }
-        workflow::workflow_machine::State::Published(_) => panic!("unexpected state"),
+        workflow::workflow_machine::SomeState::Published(_) => panic!("unexpected state"),
     }
 
     let remote = vec![workflow::Row {
@@ -82,8 +82,8 @@ fn main() {
     .build();
 
     match remote.into_iter().next().unwrap().unwrap() {
-        workflow::workflow_machine::State::Draft(_) => panic!("unexpected state"),
-        workflow::workflow_machine::State::Published(machine) => {
+        workflow::workflow_machine::SomeState::Draft(_) => panic!("unexpected state"),
+        workflow::workflow_machine::SomeState::Published(machine) => {
             let _ = (machine.tenant, machine.priority);
         }
     }

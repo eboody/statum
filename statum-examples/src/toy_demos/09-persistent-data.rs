@@ -69,8 +69,8 @@ pub async fn run() {
 
     let my_client = "my_client".to_string();
 
-    // machine::State is the generated sum type for all possible typed machine states.
-    let machine_state: machine::State = article
+    // machine::SomeState is the generated sum type for all possible typed machine states.
+    let machine_state: machine::SomeState = article
         .into_machine()
         .client(my_client)
         .build()
@@ -79,9 +79,9 @@ pub async fn run() {
 
     // Match once to recover the concrete typed machine.
     match machine_state {
-        machine::State::Draft(_machine) => println!("do thing with Machine<Draft>"),
-        machine::State::InReview(_machine) => println!("do thing with Machine<InReview>"),
-        machine::State::Published(_machine) => println!("do thing with Machine<Published>"),
+        machine::SomeState::Draft(_machine) => println!("do thing with Machine<Draft>"),
+        machine::SomeState::InReview(_machine) => println!("do thing with Machine<InReview>"),
+        machine::SomeState::Published(_machine) => println!("do thing with Machine<Published>"),
     }
 
     // Output:

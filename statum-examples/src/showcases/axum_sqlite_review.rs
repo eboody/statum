@@ -269,7 +269,7 @@ async fn submit_document(
     let machine = load_document_state(&app.pool, id).await?;
 
     let machine = match machine {
-        document_machine::State::Draft(machine) => machine.submit(request.reviewer),
+        document_machine::SomeState::Draft(machine) => machine.submit(request.reviewer),
         _ => {
             return Err(AppError::invalid_transition(
                 "submit requires a draft document",
@@ -290,7 +290,7 @@ async fn approve_document(
     let machine = load_document_state(&app.pool, id).await?;
 
     let machine = match machine {
-        document_machine::State::InReview(machine) => machine.approve(),
+        document_machine::SomeState::InReview(machine) => machine.approve(),
         _ => {
             return Err(AppError::invalid_transition(
                 "approve requires an in-review document",
@@ -322,7 +322,7 @@ async fn fetch_document_row(pool: &SqlitePool, id: i64) -> Result<DocumentRow, A
 async fn load_document_state(
     pool: &SqlitePool,
     id: i64,
-) -> Result<document_machine::State, AppError> {
+) -> Result<document_machine::SomeState, AppError> {
     let row = fetch_document_row(pool, id).await?;
 
     row.clone()
@@ -404,7 +404,7 @@ mod tests {
             .unwrap();
 
         match state {
-            document_machine::State::Draft(machine) => {
+            document_machine::SomeState::Draft(machine) => {
                 assert_eq!(machine.id, 1);
                 assert_eq!(machine.title.as_str(), "RFC");
                 assert_eq!(machine.body.as_str(), "draft body");

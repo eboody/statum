@@ -70,31 +70,31 @@ mod crate_visible_machine {
         });
         let _review_copy = review.clone();
 
-        let draft_state: workflow_machine::State = Row { status: "draft" }
+        let draft_state: workflow_machine::SomeState = Row { status: "draft" }
             .into_machine()
             .owner("acme".to_string())
             .build()
             .unwrap();
-        let review_state: workflow_machine::State = Row { status: "review" }
+        let review_state: workflow_machine::SomeState = Row { status: "review" }
             .into_machine()
             .owner("acme".to_string())
             .build()
             .unwrap();
 
         match draft_state {
-            workflow_machine::State::Draft(machine) => {
+            workflow_machine::SomeState::Draft(machine) => {
                 let _ = machine.owner;
             }
-            workflow_machine::State::Review(_machine) => panic!("unexpected review state"),
-            workflow_machine::State::Done(_machine) => panic!("unexpected done state"),
+            workflow_machine::SomeState::Review(_machine) => panic!("unexpected review state"),
+            workflow_machine::SomeState::Done(_machine) => panic!("unexpected done state"),
         }
 
         match review_state {
-            workflow_machine::State::Draft(_machine) => panic!("unexpected draft state"),
-            workflow_machine::State::Review(machine) => {
+            workflow_machine::SomeState::Draft(_machine) => panic!("unexpected draft state"),
+            workflow_machine::SomeState::Review(machine) => {
                 let _ = machine.state_data.reviewer.as_str();
             }
-            workflow_machine::State::Done(_machine) => panic!("unexpected done state"),
+            workflow_machine::SomeState::Done(_machine) => panic!("unexpected done state"),
         }
     }
 }

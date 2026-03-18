@@ -34,7 +34,7 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 
 ```toml
 [dependencies]
-statum = "0.6.1"
+statum = "0.6.2"
 ```
 
 ## 60-Second Example
@@ -123,7 +123,8 @@ Roughly, Statum generates:
 - Marker types for each state variant, such as `Off` and `On`.
 - A machine type parameterized by the current state, with hidden `marker` and `state_data` fields.
 - Builders for new machines, such as `LightSwitch::<Off>::builder()`.
-- A machine-scoped enum like `task_machine::State` for matching reconstructed machines.
+- A machine-scoped enum like `task_machine::SomeState` for matching reconstructed machines.
+  `task_machine::State` remains an alias for compatibility.
 - A machine-scoped `task_machine::Fields` struct for batch rebuilds where each row needs different machine context.
 - A machine-scoped batch rehydration trait like `task_machine::IntoMachinesExt`.
 
@@ -132,9 +133,10 @@ This is the whole model. The rest of the crate is about making those four pieces
 > Typed rehydration is the unusual part: if you already have rows, events, or persisted workflow data, `#[validators]` can rebuild them into typed machines. Full example below.
 
 If you are evaluating Statum from the outside, start with
-[docs/start-here.md](docs/start-here.md). For a guided app-shaped walkthrough,
-see [docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md). For
-the flagship persistence story, see
+[docs/start-here.md](docs/start-here.md). For a guided app-shaped walkthrough
+that starts minimal and adds features one by one, see
+[docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md). For the
+flagship persistence story, see
 [docs/case-study-event-log-rebuild.md](docs/case-study-event-log-rebuild.md).
 
 ## Typed Rehydration
@@ -214,11 +216,11 @@ fn main() -> statum::Result<()> {
         .build()?;
 
     match machine {
-        task_machine::State::Draft(_) => {}
-        task_machine::State::InReview(task) => {
+        task_machine::SomeState::Draft(_) => {}
+        task_machine::SomeState::InReview(task) => {
             assert_eq!(task.state_data.reviewer.as_str(), "reviewer-for-acme");
         }
-        task_machine::State::Published(_) => {}
+        task_machine::SomeState::Published(_) => {}
     }
 
     Ok(())
@@ -230,7 +232,8 @@ Key details:
 - Validator methods run against your persisted type and return either `Ok(...)` for the matching state or `Err(statum::Error::InvalidState)`.
 - Machine fields are available by name inside validator methods through generated bindings, so `client` and `name` are usable without boilerplate parameter plumbing. Persisted-row fields still live on `self`.
 - Unit states return `statum::Result<()>`; data-bearing states return `statum::Result<StateData>`.
-- `.build()` returns the generated wrapper enum, which you can match as `task_machine::State`.
+- `.build()` returns the generated wrapper enum, which you can match as `task_machine::SomeState`.
+  `task_machine::State` is kept as an alias so older code still compiles.
 - If any validator is `async`, the generated builder becomes `async`.
 - Use `.into_machines_by(|row| task_machine::Fields { ... })` when batch reconstruction needs different machine fields per row.
 - For append-only event logs, project events into validator rows first. `statum::projection::reduce_one` and `reduce_grouped` are the small helper layer for that.
@@ -335,6 +338,11 @@ example:
 If you use coding agents, Statum ships an adoption kit with copyable instruction
 templates, audit heuristics, and prompts for targeted refactors and reviews.
 Start with [docs/agents/README.md](docs/agents/README.md).
+
+If you are starting from an architecture memo or protocol guide rather than
+from code, use the prompts under `docs/agents/prompts/`. If you use Codex
+locally, an explicit `statum-skill` works well as a deeper layer on top
+of the conservative templates in this repo.
 
 ## Learn More
 

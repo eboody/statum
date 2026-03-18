@@ -64,9 +64,9 @@ fn main() {
         .build();
 
     match machine {
-        task_machine::State::Draft(_machine) => {}
-        task_machine::State::InProgress(_machine) => {}
-        task_machine::State::Done(_machine) => {}
+        task_machine::SomeState::Draft(_machine) => {}
+        task_machine::SomeState::InProgress(_machine) => {}
+        task_machine::SomeState::Done(_machine) => {}
     }
 
     let _ = batch;

@@ -51,7 +51,7 @@ builder internals, not the normal Statum call patterns.
 2. Switch validators to `#[validators(Machine)]`.
 3. Rename rebuild entrypoints to `into_machine()`, `.into_machines()`, and
    `.into_machines_by(...)`.
-4. Match rebuilt output on `machine::State`.
+4. Match rebuilt output on `machine::SomeState`.
 5. Move code that relied on legacy generated helper traits to the crate-level
    advanced traits or to direct machine methods.
 
@@ -116,7 +116,8 @@ Use these names in `0.5` and later:
 - `.into_machines()` when machine fields are shared across the collection
 - `.into_machines_by(|row| machine::Fields { ... })` when machine fields vary
   per item
-- `machine::State` when matching rebuilt output
+- `machine::SomeState` when matching rebuilt output
+- `machine::State` is still available as a compatibility alias during migration
 
 Removed names:
 
@@ -202,6 +203,6 @@ builder is the intended path.
 2. Update the machine generic and derive placement.
 3. Add `#[transition]` to protocol-edge impl blocks.
 4. Rename validators and rehydration entrypoints.
-5. Update match sites to use `machine::State`.
+5. Update match sites to use `machine::SomeState`.
 6. Move any generic helper code off removed legacy traits.
 7. Re-run `cargo test -p statum-macros` and your workspace tests.

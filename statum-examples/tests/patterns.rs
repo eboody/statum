@@ -59,7 +59,7 @@ mod rehydration_with_fetch {
             .unwrap();
 
         match machine {
-            machine::State::InReview(m) => {
+            machine::SomeState::InReview(m) => {
                 assert_eq!(m.state_data.reviewer.as_str(), "reviewer:acme");
             }
             _ => panic!("unexpected state"),
@@ -335,14 +335,14 @@ mod type_erased_storage {
     pub fn run() {
         let row = Row { status: "a" };
         let machine = row.into_machine().build().unwrap();
-        let items: Vec<machine::State> = vec![machine];
+        let items: Vec<machine::SomeState> = vec![machine];
 
         for item in items {
             match item {
-                machine::State::A(machine) => {
+                machine::SomeState::A(machine) => {
                     let _ = machine.to_b();
                 }
-                machine::State::B(_machine) => {}
+                machine::SomeState::B(_machine) => {}
             }
         }
     }
@@ -369,13 +369,13 @@ mod superstate_without_validators {
 
     pub fn run() {
         let machine = WorkflowMachine::<Draft>::builder().build();
-        let wrapper = workflow_machine::State::Draft(machine);
+        let wrapper = workflow_machine::SomeState::Draft(machine);
 
         match wrapper {
-            workflow_machine::State::Draft(m) => {
+            workflow_machine::SomeState::Draft(m) => {
                 let _done = m.finish();
             }
-            workflow_machine::State::Done(_m) => {}
+            workflow_machine::SomeState::Done(_m) => {}
         }
     }
 }
