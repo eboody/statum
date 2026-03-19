@@ -22,7 +22,7 @@ version = "0.8"
 
 [dependencies.statum]
 path = "../statum"
-version = "0.6.4"
+version = "0.6.5"
 
 [dependencies.tokio]
 features = ["full"]
@@ -38,7 +38,7 @@ license = "MIT"
 name = "statum-examples"
 publish = false
 rust-version = "1.93"
-version = "0.6.4"
+version = "0.6.5"
 
 [package.metadata.modum]
 weak_modules = [
