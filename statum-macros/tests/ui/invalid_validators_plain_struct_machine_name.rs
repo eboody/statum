@@ -3,9 +3,9 @@ extern crate self as statum;
 pub use statum_core::{
     CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState,
 };
-pub use bon;
+// Legacy compatibility import removed.
 use statum_macros::{state, validators};
-use bon::builder as _;
+// Builder methods are inherent.
 
 #[state]
 enum TaskState {

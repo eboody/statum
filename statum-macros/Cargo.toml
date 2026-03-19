@@ -21,7 +21,6 @@ features = [
 version = "2.0"
 
 [dev-dependencies]
-bon = "3.3.2"
 futures = "0.3"
 trybuild = "1.0"
 

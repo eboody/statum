@@ -1,9 +1,9 @@
 #![allow(unused_imports)]
 extern crate self as statum;
-pub use bon;
+// Legacy compatibility import removed.
 pub use statum_core::{CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState};
 
-use bon::builder as _;
+// Builder methods are inherent.
 use statum_macros::state;
 
 #[state]
