@@ -3,9 +3,9 @@ extern crate self as statum;
 pub use statum_core::{CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState};
 pub use statum_core::Result;
 
-// Legacy compatibility import removed.
+
 use statum_macros::{machine, state, transition};
-// Builder methods are inherent.
+
 
 mod alpha {
     use super::*;

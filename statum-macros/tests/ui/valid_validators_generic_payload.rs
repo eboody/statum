@@ -3,9 +3,9 @@ extern crate self as statum;
 pub use statum_core::{CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState};
 pub type Result<T> = core::result::Result<T, Error>;
 
-// Legacy compatibility import removed.
+
 use statum_macros::{machine, state, validators};
-// Builder methods are inherent.
+
 
 #[state]
 pub enum TaskState {

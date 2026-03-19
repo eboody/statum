@@ -4,9 +4,9 @@ pub use statum_core::{
     CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, StateMarker, UnitState,
 };
 
-// Legacy compatibility import removed.
+
 use statum_macros::{machine, state};
-// Builder methods are inherent.
+
 
 mod support {
     #[derive(Clone, Debug, PartialEq, Eq)]
