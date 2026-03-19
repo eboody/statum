@@ -20,6 +20,16 @@ done < <(find docs -type f -name '*.md' | sort)
 
 status=0
 
+extract_markdown_links() {
+  local doc=$1
+
+  if command -v rg >/dev/null 2>&1; then
+    rg -o '\[[^\]]+\]\(([^)]+)\)' "$doc" || true
+  else
+    grep -oE '\[[^]]+\]\([^)]+\)' "$doc" || true
+  fi
+}
+
 for doc in "${docs_files[@]}"; do
   if [[ ! -f "$doc" ]]; then
     echo "missing doc: $doc"
@@ -53,7 +63,7 @@ for doc in "${docs_files[@]}"; do
       status=1
     fi
   done < <(
-    rg -o '\[[^\]]+\]\(([^)]+)\)' "$doc" \
+    extract_markdown_links "$doc" \
       | sed -E 's/^.*\(([^)]+)\)$/\1/'
   )
 done
