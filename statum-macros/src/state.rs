@@ -3,8 +3,9 @@ use macro_registry::callsite::{current_source_info, module_path_for_line};
 use macro_registry::registry;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
-use syn::spanned::Spanned;
-use syn::{Attribute, Fields, Ident, Item, ItemEnum, Path, Type, Visibility};
+use syn::{Fields, Ident, Item, ItemEnum, Path, Type, Visibility};
+
+use crate::{ItemTarget, ModulePath, extract_derives};
 
 // Structure to hold extracted enum data
 #[derive(Clone)]
@@ -56,21 +57,7 @@ pub fn to_snake_case(s: &str) -> String {
     result
 }
 
-// Type-safe wrapper around an enum name
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
-pub struct StateModulePath(pub String);
-
-impl AsRef<str> for StateModulePath {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl registry::RegistryKey for StateModulePath {
-    fn from_module_path(module_path: String) -> Self {
-        Self(module_path)
-    }
-}
+pub type StateModulePath = ModulePath;
 
 impl EnumInfo {
     pub fn get_trait_name(&self) -> Ident {
@@ -118,67 +105,6 @@ pub(crate) struct ParsedEnumInfo {
 pub(crate) struct ParsedVariantInfo {
     pub(crate) name: String,
     pub(crate) data_type: Option<Type>,
-}
-
-/// Convert `StateEnumName` into a `TokenStream` (for procedural macros)
-impl ToTokens for StateModulePath {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match syn::parse_str::<syn::Path>(&self.0) {
-            Ok(path) => path.to_tokens(tokens),
-            Err(_) => {
-                let message = syn::LitStr::new(
-                    &format!("Invalid state module path tokenization for `{}`.", self.0),
-                    proc_macro2::Span::call_site(),
-                );
-                tokens.extend(quote! { compile_error!(#message); });
-            }
-        }
-    }
-}
-
-/// Convert from `&str` to `StateEnumName`
-impl From<&str> for StateModulePath {
-    fn from(s: &str) -> Self {
-        Self(s.to_string())
-    }
-}
-
-/// Convert from `String` to `StateEnumName`
-impl From<String> for StateModulePath {
-    fn from(s: String) -> Self {
-        Self(s)
-    }
-}
-
-/// Convert from `Ident` (Rust identifiers) to `StateEnumName`
-impl From<Ident> for StateModulePath {
-    fn from(ident: Ident) -> Self {
-        Self(ident.to_string())
-    }
-}
-
-/// Convert from `&Ident` to `StateEnumName`
-impl From<&Ident> for StateModulePath {
-    fn from(ident: &Ident) -> Self {
-        Self(ident.to_string())
-    }
-}
-
-/// Convert from `TokenStream` to `StateEnumName`
-impl From<TokenStream> for StateModulePath {
-    fn from(token_stream: TokenStream) -> Self {
-        Self(token_stream.to_string())
-    }
-}
-
-/// Convert `StateEnumName` into a `TokenStream`
-impl From<StateModulePath> for TokenStream {
-    fn from(state: StateModulePath) -> Self {
-        match syn::parse_str::<syn::Path>(&state.0) {
-            Ok(path) => quote! { #path },
-            Err(err) => err.to_compile_error(),
-        }
-    }
 }
 
 /// Convert `EnumInfo` into a `TokenStream`
@@ -262,17 +188,20 @@ pub fn get_state_enum(enum_path: &StateModulePath) -> Option<EnumInfo> {
 }
 
 pub fn invalid_state_target_error(item: &Item) -> TokenStream {
-    let (kind, name, span) = item_kind_name_and_span(item);
-    let article = indefinite_article(kind);
-    let message = match name {
+    let target = ItemTarget::from(item);
+    let message = match target.name() {
         Some(name) => format!(
-            "Error: #[state] must be applied to an enum, but `{name}` is {article} {kind}.\nFix: declare `enum {name} {{ ... }}` with unit variants like `Draft` or single-payload variants like `InReview(ReviewData)`, or remove `#[state]`."
+            "Error: #[state] must be applied to an enum, but `{name}` is {} {}.\nFix: declare `enum {name} {{ ... }}` with unit variants like `Draft` or single-payload variants like `InReview(ReviewData)`, or remove `#[state]`.",
+            target.article(),
+            target.kind(),
         ),
         None => format!(
-            "Error: #[state] must be applied to an enum, but this item is {article} {kind}.\nFix: apply `#[state]` to an enum with unit variants like `Draft` or single-payload variants like `InReview(ReviewData)`."
+            "Error: #[state] must be applied to an enum, but this item is {} {}.\nFix: apply `#[state]` to an enum with unit variants like `Draft` or single-payload variants like `InReview(ReviewData)`.",
+            target.article(),
+            target.kind(),
         ),
     };
-    syn::Error::new(span, message).to_compile_error()
+    syn::Error::new(target.span(), message).to_compile_error()
 }
 
 pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo> {
@@ -285,22 +214,6 @@ pub fn ensure_state_enum_loaded_by_name(
 ) -> Option<EnumInfo> {
     registry::ensure_loaded_by_name::<StateRegistryDomain>(&STATE_ENUMS, enum_path, enum_name)
 }
-/// Extracts `#[derive(...)]` attributes from an enum
-pub fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
-    if attr.path().is_ident("derive") && let Ok(meta) = attr.meta.require_list() {
-        return Some(
-            meta.parse_args_with(
-                syn::punctuated::Punctuated::<Path, syn::Token![,]>::parse_terminated,
-            )
-            .ok()?
-            .iter()
-            .map(|p| p.to_token_stream().to_string())
-            .collect(),
-        );
-    }
-    None
-}
-
 impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
         let Some((file_path, line_number)) = current_source_info() else {
@@ -348,7 +261,7 @@ impl EnumInfo {
         let derives = item
             .attrs
             .iter()
-            .filter_map(extract_derive)
+            .filter_map(extract_derives)
             .flatten()
             .collect();
 
@@ -434,7 +347,7 @@ pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenSt
     let Some(enum_info) = get_state_enum(enum_path) else {
         let message = format!(
             "Internal error: state metadata for module `{}` was not cached during code generation.\nEnsure `#[state]` is applied in that module and try re-running `cargo check`.",
-            enum_path.0
+            enum_path
         );
         return quote! {
             compile_error!(#message);
@@ -539,34 +452,6 @@ pub fn validate_state_enum(item: &ItemEnum) -> Option<TokenStream> {
     validate_state_enum_shape(item).err().map(|err| err.to_compile_error())
 }
 
-fn item_kind_name_and_span(item: &Item) -> (&'static str, Option<String>, proc_macro2::Span) {
-    match item {
-        Item::Const(item) => ("const item", Some(item.ident.to_string()), item.ident.span()),
-        Item::Enum(item) => ("enum", Some(item.ident.to_string()), item.ident.span()),
-        Item::ExternCrate(item) => ("extern crate item", Some(item.ident.to_string()), item.ident.span()),
-        Item::Fn(item) => ("function", Some(item.sig.ident.to_string()), item.sig.ident.span()),
-        Item::ForeignMod(item) => ("foreign module", None, item.span()),
-        Item::Impl(item) => ("impl block", None, item.impl_token.span()),
-        Item::Macro(item) => ("macro invocation", None, item.span()),
-        Item::Mod(item) => ("module", Some(item.ident.to_string()), item.ident.span()),
-        Item::Static(item) => ("static item", Some(item.ident.to_string()), item.ident.span()),
-        Item::Struct(item) => ("struct", Some(item.ident.to_string()), item.ident.span()),
-        Item::Trait(item) => ("trait", Some(item.ident.to_string()), item.ident.span()),
-        Item::TraitAlias(item) => ("trait alias", Some(item.ident.to_string()), item.ident.span()),
-        Item::Type(item) => ("type alias", Some(item.ident.to_string()), item.ident.span()),
-        Item::Union(item) => ("union", Some(item.ident.to_string()), item.ident.span()),
-        Item::Use(item) => ("use item", None, item.span()),
-        _ => ("item", None, item.span()),
-    }
-}
-
-fn indefinite_article(kind: &str) -> &'static str {
-    match kind.chars().next() {
-        Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
-        _ => "a",
-    }
-}
-
 pub fn store_state_enum(enum_info: &EnumInfo) {
     STATE_ENUMS.insert(enum_info.module_path.clone(), enum_info.clone());
 }
@@ -588,8 +473,9 @@ mod tests {
             }
         };
 
-        let info = EnumInfo::from_item_enum_with_module(&item, StateModulePath("crate::workflow".into()))
-            .expect("state metadata");
+        let module_path: StateModulePath = crate::ModulePath("crate::workflow".into());
+        let info =
+            EnumInfo::from_item_enum_with_module(&item, module_path).expect("state metadata");
         let parsed = info.parse().expect("parsed state metadata");
 
         assert_eq!(parsed.vis.to_token_stream().to_string(), "pub");

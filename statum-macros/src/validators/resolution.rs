@@ -157,14 +157,14 @@ pub(super) fn resolve_state_enum_info(
 ) -> Result<EnumInfo, TokenStream> {
     let state_path_key: StateModulePath = module_path.into();
     let machine_name = machine_metadata.name.clone();
-    let expected_state_name = machine_metadata.expected_state_name();
-    let _ = if let Some(expected_name) = expected_state_name.as_ref() {
+    let expected_state_name = machine_metadata.state_generic_name.as_deref();
+    let _ = if let Some(expected_name) = expected_state_name {
         ensure_state_enum_loaded_by_name(&state_path_key, expected_name)
     } else {
         None
     };
 
-    let state_enum_info = match expected_state_name.as_ref() {
+    let state_enum_info = match expected_state_name {
         Some(expected_name) => ensure_state_enum_loaded_by_name(&state_path_key, expected_name),
         None => get_state_enum(&state_path_key),
     };
@@ -179,7 +179,6 @@ pub(super) fn resolve_state_enum_info(
             )
         };
         let elsewhere_line = expected_state_name
-            .as_ref()
             .and_then(|name| same_named_state_candidates_elsewhere(name, module_path))
             .map(|candidates| {
                 format!(
@@ -189,7 +188,6 @@ pub(super) fn resolve_state_enum_info(
             })
             .unwrap_or_else(|| "No same-named `#[state]` enums were found in other modules of this file.".to_string());
         let expected_line = expected_state_name
-            .as_ref()
             .map(|name| {
                 format!(
                     "Machine `{machine_name}` expects its first generic parameter to name `#[state]` enum `{name}`."

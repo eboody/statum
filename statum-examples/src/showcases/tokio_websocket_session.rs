@@ -14,10 +14,34 @@ pub struct SessionInfo {
     pub user_id: String,
 }
 
+impl TryFrom<&str> for SessionInfo {
+    type Error = &'static str;
+
+    fn try_from(token: &str) -> Result<Self, Self::Error> {
+        token
+            .strip_prefix("token:")
+            .filter(|user_id| !user_id.trim().is_empty())
+            .map(|user_id| Self {
+                user_id: user_id.to_owned(),
+            })
+            .ok_or("token must use token:<user>")
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Subscription {
     pub user_id: String,
     pub topic: String,
+}
+
+impl Subscription {
+    fn new(user_id: String, topic: String) -> Result<Self, &'static str> {
+        if topic.trim().is_empty() {
+            return Err("topic is required");
+        }
+
+        Ok(Self { user_id, topic })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,8 +57,8 @@ pub struct SessionMachine<SessionState> {
 
 #[transition]
 impl SessionMachine<Connected> {
-    fn authenticate(self, user_id: String) -> SessionMachine<Authenticated> {
-        self.transition_with(SessionInfo { user_id })
+    fn authenticate(self, session: SessionInfo) -> SessionMachine<Authenticated> {
+        self.transition_with(session)
     }
 
     fn close(self, reason: String) -> SessionMachine<Closed> {
@@ -44,9 +68,8 @@ impl SessionMachine<Connected> {
 
 #[transition]
 impl SessionMachine<Authenticated> {
-    fn subscribe(self, topic: String) -> SessionMachine<Subscribed> {
-        let user_id = self.state_data.user_id.clone();
-        self.transition_with(Subscription { user_id, topic })
+    fn subscribe(self, subscription: Subscription) -> SessionMachine<Subscribed> {
+        self.transition_with(subscription)
     }
 
     fn close(self, reason: String) -> SessionMachine<Closed> {
@@ -63,8 +86,12 @@ impl SessionMachine<Subscribed> {
 
 impl SessionMachine<Subscribed> {
     fn publish(&self, topic: &str, body: &str) -> Result<ServerFrame, &'static str> {
-        validate_topic(topic)?;
-        validate_body(body)?;
+        if topic.trim().is_empty() {
+            return Err("topic is required");
+        }
+        if body.trim().is_empty() {
+            return Err("body is required");
+        }
 
         if topic != self.state_data.topic {
             return Err("publish topic does not match subscription");
@@ -111,6 +138,14 @@ pub enum ServerFrame {
     },
 }
 
+impl ServerFrame {
+    fn error(message: &'static str) -> Self {
+        Self::Error {
+            message: message.to_string(),
+        }
+    }
+}
+
 pub struct SessionHandle {
     client: mpsc::Sender<ClientFrame>,
     server: mpsc::Receiver<ServerFrame>,
@@ -136,12 +171,22 @@ impl core::fmt::Display for SessionError {
 
 impl std::error::Error for SessionError {}
 
+impl<T> From<mpsc::error::SendError<T>> for SessionError {
+    fn from(_: mpsc::error::SendError<T>) -> Self {
+        Self::ChannelClosed
+    }
+}
+
+impl From<tokio::task::JoinError> for SessionError {
+    fn from(error: tokio::task::JoinError) -> Self {
+        Self::TaskJoin(error.to_string())
+    }
+}
+
 impl SessionHandle {
     pub async fn send(&self, frame: ClientFrame) -> Result<(), SessionError> {
-        self.client
-            .send(frame)
-            .await
-            .map_err(|_| SessionError::ChannelClosed)
+        self.client.send(frame).await?;
+        Ok(())
     }
 
     pub async fn recv(&mut self) -> Option<ServerFrame> {
@@ -150,10 +195,7 @@ impl SessionHandle {
 
     pub async fn finish(self) -> Result<(), SessionError> {
         drop(self.client);
-        match self.task.await {
-            Ok(result) => result,
-            Err(error) => Err(SessionError::TaskJoin(error.to_string())),
-        }
+        self.task.await.map_err(SessionError::from)?
     }
 }
 
@@ -250,25 +292,35 @@ async fn run_session(
         state = match state {
             session_machine::SomeState::Connected(machine) => {
                 match recv_client(&mut client_rx).await? {
-                    ClientFrame::Authenticate { token } => match parse_user_id(&token) {
-                        Ok(user_id) => {
-                            let next = machine.authenticate(user_id.clone());
-                            send_server(&server_tx, ServerFrame::Authenticated { user_id }).await?;
-                            session_machine::SomeState::Authenticated(next)
+                    ClientFrame::Authenticate { token } => {
+                        match SessionInfo::try_from(token.as_str()) {
+                            Ok(session) => {
+                                let user_id = session.user_id.clone();
+                                let next = machine.authenticate(session);
+                                send_server(&server_tx, ServerFrame::Authenticated { user_id })
+                                    .await?;
+                                session_machine::SomeState::Authenticated(next)
+                            }
+                            Err(message) => {
+                                send_server(&server_tx, ServerFrame::error(message)).await?;
+                                session_machine::SomeState::Connected(machine)
+                            }
                         }
-                        Err(message) => {
-                            send_server(&server_tx, error_frame(message)).await?;
-                            session_machine::SomeState::Connected(machine)
-                        }
-                    },
+                    }
                     ClientFrame::Subscribe { .. } => {
-                        send_server(&server_tx, error_frame("authenticate before subscribing"))
-                            .await?;
+                        send_server(
+                            &server_tx,
+                            ServerFrame::error("authenticate before subscribing"),
+                        )
+                        .await?;
                         session_machine::SomeState::Connected(machine)
                     }
                     ClientFrame::Publish { .. } => {
-                        send_server(&server_tx, error_frame("authenticate before publishing"))
-                            .await?;
+                        send_server(
+                            &server_tx,
+                            ServerFrame::error("authenticate before publishing"),
+                        )
+                        .await?;
                         session_machine::SomeState::Connected(machine)
                     }
                     ClientFrame::Close { reason } => {
@@ -281,23 +333,33 @@ async fn run_session(
             session_machine::SomeState::Authenticated(machine) => {
                 match recv_client(&mut client_rx).await? {
                     ClientFrame::Authenticate { .. } => {
-                        send_server(&server_tx, error_frame("session already authenticated"))
-                            .await?;
+                        send_server(
+                            &server_tx,
+                            ServerFrame::error("session already authenticated"),
+                        )
+                        .await?;
                         session_machine::SomeState::Authenticated(machine)
                     }
-                    ClientFrame::Subscribe { topic } => match validate_topic(&topic) {
-                        Ok(()) => {
-                            let next = machine.subscribe(topic.clone());
-                            send_server(&server_tx, ServerFrame::Subscribed { topic }).await?;
-                            session_machine::SomeState::Subscribed(next)
+                    ClientFrame::Subscribe { topic } => {
+                        match Subscription::new(machine.state_data.user_id.clone(), topic) {
+                            Ok(subscription) => {
+                                let topic = subscription.topic.clone();
+                                let next = machine.subscribe(subscription);
+                                send_server(&server_tx, ServerFrame::Subscribed { topic }).await?;
+                                session_machine::SomeState::Subscribed(next)
+                            }
+                            Err(message) => {
+                                send_server(&server_tx, ServerFrame::error(message)).await?;
+                                session_machine::SomeState::Authenticated(machine)
+                            }
                         }
-                        Err(message) => {
-                            send_server(&server_tx, error_frame(message)).await?;
-                            session_machine::SomeState::Authenticated(machine)
-                        }
-                    },
+                    }
                     ClientFrame::Publish { .. } => {
-                        send_server(&server_tx, error_frame("subscribe before publishing")).await?;
+                        send_server(
+                            &server_tx,
+                            ServerFrame::error("subscribe before publishing"),
+                        )
+                        .await?;
                         session_machine::SomeState::Authenticated(machine)
                     }
                     ClientFrame::Close { reason } => {
@@ -310,12 +372,16 @@ async fn run_session(
             session_machine::SomeState::Subscribed(machine) => {
                 match recv_client(&mut client_rx).await? {
                     ClientFrame::Authenticate { .. } => {
-                        send_server(&server_tx, error_frame("session already authenticated"))
-                            .await?;
+                        send_server(
+                            &server_tx,
+                            ServerFrame::error("session already authenticated"),
+                        )
+                        .await?;
                         session_machine::SomeState::Subscribed(machine)
                     }
                     ClientFrame::Subscribe { .. } => {
-                        send_server(&server_tx, error_frame("session already subscribed")).await?;
+                        send_server(&server_tx, ServerFrame::error("session already subscribed"))
+                            .await?;
                         session_machine::SomeState::Subscribed(machine)
                     }
                     ClientFrame::Publish { topic, body } => match machine.publish(&topic, &body) {
@@ -324,7 +390,7 @@ async fn run_session(
                             session_machine::SomeState::Subscribed(machine)
                         }
                         Err(message) => {
-                            send_server(&server_tx, error_frame(message)).await?;
+                            send_server(&server_tx, ServerFrame::error(message)).await?;
                             session_machine::SomeState::Subscribed(machine)
                         }
                     },
@@ -353,38 +419,6 @@ async fn send_server(
     server_tx: &mpsc::Sender<ServerFrame>,
     frame: ServerFrame,
 ) -> Result<(), SessionError> {
-    server_tx
-        .send(frame)
-        .await
-        .map_err(|_| SessionError::ChannelClosed)
-}
-
-fn error_frame(message: &'static str) -> ServerFrame {
-    ServerFrame::Error {
-        message: message.to_string(),
-    }
-}
-
-fn parse_user_id(token: &str) -> Result<String, &'static str> {
-    token
-        .strip_prefix("token:")
-        .filter(|user_id| !user_id.trim().is_empty())
-        .map(ToOwned::to_owned)
-        .ok_or("token must use token:<user>")
-}
-
-fn validate_topic(topic: &str) -> Result<(), &'static str> {
-    if topic.trim().is_empty() {
-        Err("topic is required")
-    } else {
-        Ok(())
-    }
-}
-
-fn validate_body(body: &str) -> Result<(), &'static str> {
-    if body.trim().is_empty() {
-        Err("body is required")
-    } else {
-        Ok(())
-    }
+    server_tx.send(frame).await?;
+    Ok(())
 }

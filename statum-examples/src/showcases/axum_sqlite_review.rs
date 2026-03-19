@@ -54,14 +54,14 @@ struct DocumentRow {
     reviewer: Option<String>,
 }
 
-impl DocumentRow {
-    fn into_response(self) -> DocumentResponse {
-        DocumentResponse {
-            id: self.id,
-            title: self.title,
-            body: self.body,
-            status: self.status,
-            reviewer: self.reviewer,
+impl From<DocumentRow> for DocumentResponse {
+    fn from(row: DocumentRow) -> Self {
+        Self {
+            id: row.id,
+            title: row.title,
+            body: row.body,
+            status: row.status,
+            reviewer: row.reviewer,
         }
     }
 }
@@ -144,12 +144,6 @@ enum AppError {
     InvalidTransition(&'static str),
     CorruptState,
     Database(sqlx::Error),
-}
-
-impl AppError {
-    fn invalid_transition(message: &'static str) -> Self {
-        Self::InvalidTransition(message)
-    }
 }
 
 impl From<sqlx::Error> for AppError {
@@ -246,7 +240,7 @@ async fn create_document(
     .await?;
 
     let row = fetch_document_row(&app.pool, result.last_insert_rowid()).await?;
-    Ok((http::StatusCode::CREATED, Json(row.into_response())))
+    Ok((http::StatusCode::CREATED, Json(row.into())))
 }
 
 async fn get_document(
@@ -254,7 +248,7 @@ async fn get_document(
     Path(id): Path<i64>,
 ) -> Result<Json<DocumentResponse>, AppError> {
     let row = fetch_document_row(&app.pool, id).await?;
-    Ok(Json(row.into_response()))
+    Ok(Json(row.into()))
 }
 
 async fn submit_document(
@@ -271,7 +265,7 @@ async fn submit_document(
     let machine = match machine {
         document_machine::SomeState::Draft(machine) => machine.submit(request.reviewer),
         _ => {
-            return Err(AppError::invalid_transition(
+            return Err(AppError::InvalidTransition(
                 "submit requires a draft document",
             ));
         }
@@ -280,7 +274,7 @@ async fn submit_document(
     persist_in_review(&app.pool, &machine).await?;
 
     let row = fetch_document_row(&app.pool, id).await?;
-    Ok(Json(row.into_response()))
+    Ok(Json(row.into()))
 }
 
 async fn approve_document(
@@ -292,7 +286,7 @@ async fn approve_document(
     let machine = match machine {
         document_machine::SomeState::InReview(machine) => machine.approve(),
         _ => {
-            return Err(AppError::invalid_transition(
+            return Err(AppError::InvalidTransition(
                 "approve requires an in-review document",
             ));
         }
@@ -301,7 +295,7 @@ async fn approve_document(
     persist_published(&app.pool, &machine).await?;
 
     let row = fetch_document_row(&app.pool, id).await?;
-    Ok(Json(row.into_response()))
+    Ok(Json(row.into()))
 }
 
 async fn fetch_document_row(pool: &SqlitePool, id: i64) -> Result<DocumentRow, AppError> {

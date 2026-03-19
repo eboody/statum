@@ -12,6 +12,8 @@
 //! - [`transition`] for validating legal transition impls
 //! - [`validators`] for rebuilding typed machines from persisted data
 
+mod syntax;
+
 moddef::moddef!(
     flat (pub) mod {
     },
@@ -22,6 +24,8 @@ moddef::moddef!(
         validators
     }
 );
+
+pub(crate) use syntax::{ItemTarget, ModulePath, extract_derives};
 
 use crate::{MachinePath, ensure_machine_loaded_by_name};
 use macro_registry::callsite::current_module_path_opt;

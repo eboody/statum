@@ -3,21 +3,14 @@ use macro_registry::query;
 use macro_registry::registry;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use syn::{Attribute, Generics, Ident, ItemStruct, LitStr, Type, Visibility};
+use syn::{Generics, Ident, ItemStruct, LitStr, Type, Visibility};
 
-use crate::{ensure_state_enum_loaded, ensure_state_enum_loaded_by_name, EnumInfo, StateModulePath};
+use crate::{
+    EnumInfo, ModulePath, StateModulePath, ensure_state_enum_loaded,
+    ensure_state_enum_loaded_by_name, extract_derives,
+};
 
-impl<T: ToString> From<T> for MachinePath {
-    fn from(value: T) -> Self {
-        Self(value.to_string())
-    }
-}
-
-impl From<MachinePath> for StateModulePath {
-    fn from(machine: MachinePath) -> Self {
-        StateModulePath(machine.0)
-    }
-}
+pub type MachinePath = ModulePath;
 
 #[derive(Clone)]
 pub struct MachineInfo {
@@ -70,13 +63,9 @@ impl MachineInfo {
         })
     }
 
-    pub(crate) fn expected_state_name(&self) -> Option<String> {
-        self.state_generic_name.clone()
-    }
-
     pub fn get_matching_state_enum(&self) -> Result<EnumInfo, TokenStream> {
         let state_path: StateModulePath = self.module_path.clone().into();
-        let state_enum = if let Some(expected_name) = self.expected_state_name().as_deref() {
+        let state_enum = if let Some(expected_name) = self.state_generic_name.as_deref() {
             ensure_state_enum_loaded_by_name(&state_path, expected_name)
         } else {
             ensure_state_enum_loaded(&state_path)
@@ -116,7 +105,7 @@ impl MachineInfo {
             derives: item
                 .attrs
                 .iter()
-                .filter_map(extract_derive)
+                .filter_map(extract_derives)
                 .flatten()
                 .collect(),
             module_path,
@@ -138,7 +127,7 @@ impl MachineInfo {
             derives: item
                 .attrs
                 .iter()
-                .filter_map(extract_derive)
+                .filter_map(extract_derives)
                 .flatten()
                 .collect(),
             fields: collect_fields(item),
@@ -189,53 +178,6 @@ pub(crate) struct ParsedMachineField {
     pub(crate) field_type: Type,
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct MachinePath(pub String);
-
-impl AsRef<str> for MachinePath {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl registry::RegistryKey for MachinePath {
-    fn from_module_path(module_path: String) -> Self {
-        Self(module_path)
-    }
-}
-
-impl ToTokens for MachinePath {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match syn::parse_str::<syn::Path>(&self.0) {
-            Ok(path) => path.to_tokens(tokens),
-            Err(_) => {
-                let message = LitStr::new(
-                    &format!("Invalid machine module path tokenization for `{}`.", self.0),
-                    Span::call_site(),
-                );
-                tokens.extend(quote! { compile_error!(#message); });
-            }
-        }
-    }
-}
-
-pub(super) fn extract_derive(attr: &Attribute) -> Option<Vec<String>> {
-    if !attr.path().is_ident("derive") {
-        return None;
-    }
-    attr.meta
-        .require_list()
-        .ok()?
-        .parse_args_with(syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated)
-        .ok()
-        .map(|punctuated| {
-            punctuated
-                .iter()
-                .map(|path| path.to_token_stream().to_string())
-                .collect()
-        })
-}
-
 pub(super) fn is_rust_analyzer() -> bool {
     std::env::var("RUST_ANALYZER_INTERNALS").is_ok()
 }
@@ -277,17 +219,16 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
         return TokenStream::new();
     }
 
-    let expected = machine_info.expected_state_name();
+    let expected = machine_info.state_generic_name.as_deref();
     let expected_line = expected
-        .as_ref()
-        .map(|name| format!("Expected a `#[state]` enum named `{name}` in module `{}`.", machine_info.module_path.0))
+        .map(|name| format!("Expected a `#[state]` enum named `{name}` in module `{}`.", machine_info.module_path))
         .unwrap_or_else(|| {
             format!(
                 "Could not infer the expected `#[state]` enum name from machine `{}`.",
                 machine_info.name
             )
         });
-    let available = available_state_candidates_in_module(&machine_info.module_path.0);
+    let available = available_state_candidates_in_module(machine_info.module_path.as_ref());
     let available_line = if available.is_empty() {
         "No `#[state]` enums were found in that module.".to_string()
     } else {
@@ -297,8 +238,7 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
         )
     };
     let elsewhere_line = expected
-        .as_ref()
-        .and_then(|name| same_named_state_candidates_elsewhere(name, &machine_info.module_path.0))
+        .and_then(|name| same_named_state_candidates_elsewhere(name, machine_info.module_path.as_ref()))
         .map(|candidates| {
             format!(
                 "Same-named `#[state]` enums elsewhere in this file: {}.",
@@ -306,8 +246,8 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
             )
         })
         .unwrap_or_else(|| "No same-named `#[state]` enums were found in other modules of this file.".to_string());
-    let missing_attr_line = expected.as_ref().and_then(|name| {
-        plain_enum_line_in_module(&machine_info.module_path.0, name).map(|line| {
+    let missing_attr_line = expected.and_then(|name| {
+        plain_enum_line_in_module(machine_info.module_path.as_ref(), name).map(|line| {
             format!("An enum named `{name}` exists on line {line}, but it is not annotated with `#[state]`.")
         })
     });
@@ -319,7 +259,7 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
         elsewhere_line,
         available_line,
         machine_info.name,
-        machine_info.module_path.0,
+        machine_info.module_path,
     );
     let message = LitStr::new(&message, Span::call_site());
     quote! { compile_error!(#message); }
@@ -375,7 +315,7 @@ mod tests {
             }
         };
 
-        let module_path = MachinePath("crate::workflow".into());
+        let module_path: MachinePath = crate::ModulePath("crate::workflow".into());
         let info =
             MachineInfo::from_item_struct_with_module(&item, &module_path).expect("machine metadata");
         let parsed = info.parse().expect("parsed machine metadata");

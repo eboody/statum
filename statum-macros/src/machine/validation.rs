@@ -1,25 +1,27 @@
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::ToTokens;
-use syn::spanned::Spanned;
 use syn::{Item, ItemStruct};
 
-use crate::{StateModulePath, ensure_state_enum_loaded};
+use crate::{ItemTarget, StateModulePath, ensure_state_enum_loaded};
 
 use super::metadata::is_rust_analyzer;
 use super::MachineInfo;
 
 pub fn invalid_machine_target_error(item: &Item) -> TokenStream {
-    let (kind, name, span) = item_kind_name_and_span(item);
-    let article = indefinite_article(kind);
-    let message = match name {
+    let target = ItemTarget::from(item);
+    let message = match target.name() {
         Some(name) => format!(
-            "Error: #[machine] must be applied to a struct, but `{name}` is {article} {kind}.\nFix: declare `struct {name}<State> {{ ... }}` and apply `#[machine]` to that struct."
+            "Error: #[machine] must be applied to a struct, but `{name}` is {} {}.\nFix: declare `struct {name}<State> {{ ... }}` and apply `#[machine]` to that struct.",
+            target.article(),
+            target.kind(),
         ),
         None => format!(
-            "Error: #[machine] must be applied to a struct, but this item is {article} {kind}.\nFix: apply `#[machine]` to a struct like `struct Machine<State> {{ ... }}`."
+            "Error: #[machine] must be applied to a struct, but this item is {} {}.\nFix: apply `#[machine]` to a struct like `struct Machine<State> {{ ... }}`.",
+            target.article(),
+            target.kind(),
         ),
     };
-    syn::Error::new(span, message).to_compile_error()
+    syn::Error::new(target.span(), message).to_compile_error()
 }
 
 pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) -> Option<TokenStream> {
@@ -107,32 +109,4 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
     }
 
     None
-}
-
-fn item_kind_name_and_span(item: &Item) -> (&'static str, Option<String>, Span) {
-    match item {
-        Item::Const(item) => ("const item", Some(item.ident.to_string()), item.ident.span()),
-        Item::Enum(item) => ("enum", Some(item.ident.to_string()), item.ident.span()),
-        Item::ExternCrate(item) => ("extern crate item", Some(item.ident.to_string()), item.ident.span()),
-        Item::Fn(item) => ("function", Some(item.sig.ident.to_string()), item.sig.ident.span()),
-        Item::ForeignMod(item) => ("foreign module", None, item.span()),
-        Item::Impl(item) => ("impl block", None, item.impl_token.span()),
-        Item::Macro(item) => ("macro invocation", None, item.span()),
-        Item::Mod(item) => ("module", Some(item.ident.to_string()), item.ident.span()),
-        Item::Static(item) => ("static item", Some(item.ident.to_string()), item.ident.span()),
-        Item::Struct(item) => ("struct", Some(item.ident.to_string()), item.ident.span()),
-        Item::Trait(item) => ("trait", Some(item.ident.to_string()), item.ident.span()),
-        Item::TraitAlias(item) => ("trait alias", Some(item.ident.to_string()), item.ident.span()),
-        Item::Type(item) => ("type alias", Some(item.ident.to_string()), item.ident.span()),
-        Item::Union(item) => ("union", Some(item.ident.to_string()), item.ident.span()),
-        Item::Use(item) => ("use item", None, item.span()),
-        _ => ("item", None, item.span()),
-    }
-}
-
-fn indefinite_article(kind: &str) -> &'static str {
-    match kind.chars().next() {
-        Some('a' | 'e' | 'i' | 'o' | 'u') => "an",
-        _ => "a",
-    }
 }

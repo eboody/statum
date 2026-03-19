@@ -15,7 +15,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
         Err(_) => {
             let message = format!(
                 "Internal error: machine metadata lock poisoned while generating `{}` in module `{}`.",
-                machine_info.name, machine_info.module_path.0
+                machine_info.name, machine_info.module_path
             );
             return quote! {
                 compile_error!(#message);
@@ -25,7 +25,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
     let Some(machine_info) = map_guard.get(&machine_info.module_path) else {
         let message = format!(
             "Internal error: machine metadata for `{}` in module `{}` was not cached during code generation.\nTry re-running `cargo check` and make sure `#[machine]` is applied in that module.",
-            machine_info.name, machine_info.module_path.0
+            machine_info.name, machine_info.module_path
         );
         return quote! {
             compile_error!(#message);

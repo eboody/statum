@@ -126,15 +126,28 @@ struct OrderProjectionRow {
     tracking_number: Option<String>,
 }
 
+impl TryFrom<&OrderProjectionRow> for OrderContext {
+    type Error = statum::Error;
+
+    fn try_from(row: &OrderProjectionRow) -> Result<Self, Self::Error> {
+        if row.order_id <= 0 || row.customer.is_empty() || row.sku.is_empty() {
+            return Err(statum::Error::InvalidState);
+        }
+
+        Ok(Self {
+            order_id: row.order_id,
+            customer: row.customer.clone(),
+            sku: row.sku.clone(),
+        })
+    }
+}
+
 struct OrderProjector;
 
 #[validators(OrderMachine)]
 impl OrderProjectionRow {
     fn is_created(&self) -> statum::Result<CreatedOrder> {
-        if self.order_id <= 0
-            || self.customer.is_empty()
-            || self.sku.is_empty()
-            || self.status != EVENT_CREATED
+        if self.status != EVENT_CREATED
             || self.payment_receipt.is_some()
             || self.pick_ticket.is_some()
             || self.tracking_number.is_some()
@@ -143,59 +156,39 @@ impl OrderProjectionRow {
         }
 
         Ok(CreatedOrder {
-            order: OrderContext {
-                order_id: self.order_id,
-                customer: self.customer.clone(),
-                sku: self.sku.clone(),
-            },
+            order: OrderContext::try_from(self)?,
         })
     }
 
     fn is_paid(&self) -> statum::Result<PaidOrder> {
-        if self.order_id <= 0
-            || self.customer.is_empty()
-            || self.sku.is_empty()
-            || self.status != EVENT_PAID
-            || self.pick_ticket.is_some()
-            || self.tracking_number.is_some()
+        if self.status != EVENT_PAID || self.pick_ticket.is_some() || self.tracking_number.is_some()
         {
             return Err(statum::Error::InvalidState);
         }
 
+        let order = OrderContext::try_from(self)?;
         self.payment_receipt
             .clone()
             .filter(|receipt| !receipt.trim().is_empty())
             .map(|payment_receipt| PaidOrder {
-                order: OrderContext {
-                    order_id: self.order_id,
-                    customer: self.customer.clone(),
-                    sku: self.sku.clone(),
-                },
+                order,
                 payment_receipt,
             })
             .ok_or(statum::Error::InvalidState)
     }
 
     fn is_packed(&self) -> statum::Result<PackedOrder> {
-        if self.order_id <= 0
-            || self.customer.is_empty()
-            || self.sku.is_empty()
-            || self.status != EVENT_PACKED
-            || self.tracking_number.is_some()
-        {
+        if self.status != EVENT_PACKED || self.tracking_number.is_some() {
             return Err(statum::Error::InvalidState);
         }
 
+        let order = OrderContext::try_from(self)?;
         match (&self.payment_receipt, &self.pick_ticket) {
             (Some(payment_receipt), Some(pick_ticket))
                 if !payment_receipt.trim().is_empty() && !pick_ticket.trim().is_empty() =>
             {
                 Ok(PackedOrder {
-                    order: OrderContext {
-                        order_id: self.order_id,
-                        customer: self.customer.clone(),
-                        sku: self.sku.clone(),
-                    },
+                    order,
                     payment_receipt: payment_receipt.clone(),
                     pick_ticket: pick_ticket.clone(),
                 })
@@ -205,14 +198,11 @@ impl OrderProjectionRow {
     }
 
     fn is_shipped(&self) -> statum::Result<ShippedOrder> {
-        if self.order_id <= 0
-            || self.customer.is_empty()
-            || self.sku.is_empty()
-            || self.status != EVENT_SHIPPED
-        {
+        if self.status != EVENT_SHIPPED {
             return Err(statum::Error::InvalidState);
         }
 
+        let order = OrderContext::try_from(self)?;
         match (
             &self.payment_receipt,
             &self.pick_ticket,
@@ -224,11 +214,7 @@ impl OrderProjectionRow {
                     && !tracking_number.trim().is_empty() =>
             {
                 Ok(ShippedOrder {
-                    order: OrderContext {
-                        order_id: self.order_id,
-                        customer: self.customer.clone(),
-                        sku: self.sku.clone(),
-                    },
+                    order,
                     payment_receipt: payment_receipt.clone(),
                     pick_ticket: pick_ticket.clone(),
                     tracking_number: tracking_number.clone(),
@@ -239,14 +225,11 @@ impl OrderProjectionRow {
     }
 
     fn is_delivered(&self) -> statum::Result<DeliveredOrder> {
-        if self.order_id <= 0
-            || self.customer.is_empty()
-            || self.sku.is_empty()
-            || self.status != EVENT_DELIVERED
-        {
+        if self.status != EVENT_DELIVERED {
             return Err(statum::Error::InvalidState);
         }
 
+        let order = OrderContext::try_from(self)?;
         match (
             &self.payment_receipt,
             &self.pick_ticket,
@@ -258,11 +241,7 @@ impl OrderProjectionRow {
                     && !tracking_number.trim().is_empty() =>
             {
                 Ok(DeliveredOrder {
-                    order: OrderContext {
-                        order_id: self.order_id,
-                        customer: self.customer.clone(),
-                        sku: self.sku.clone(),
-                    },
+                    order,
                     payment_receipt: payment_receipt.clone(),
                     pick_ticket: pick_ticket.clone(),
                     tracking_number: tracking_number.clone(),

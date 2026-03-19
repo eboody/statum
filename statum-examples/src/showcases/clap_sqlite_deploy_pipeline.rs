@@ -67,6 +67,69 @@ pub struct DeploymentMachine<DeploymentState> {
     pub version: String,
 }
 
+impl<T: DeploymentStateTrait> DeploymentMachine<T> {
+    fn summary_lines(&self) -> Vec<String> {
+        vec![
+            format!("id={}", self.id),
+            format!("service={}", self.service),
+            format!("environment={}", self.environment),
+            format!("version={}", self.version),
+        ]
+    }
+}
+
+impl deployment_machine::SomeState {
+    fn summary(&self) -> String {
+        let mut lines = match self {
+            Self::Draft(machine) => {
+                let mut lines = machine.summary_lines();
+                lines.push("state=draft".to_string());
+                lines
+            }
+            Self::Planned(machine) => {
+                let mut lines = machine.summary_lines();
+                lines.push("state=planned".to_string());
+                lines.push(format!("plan_digest={}", machine.state_data.digest));
+                lines
+            }
+            Self::AwaitingApproval(machine) => {
+                let mut lines = machine.summary_lines();
+                lines.push("state=awaiting_approval".to_string());
+                lines.push(format!("approval_ticket={}", machine.state_data.ticket));
+                lines
+            }
+            Self::Applying(machine) => {
+                let mut lines = machine.summary_lines();
+                lines.push("state=applying".to_string());
+                lines.push(format!("operation_id={}", machine.state_data.operation_id));
+                lines.push(format!("approved_by={}", machine.state_data.approved_by));
+                lines
+            }
+            Self::Applied(machine) => {
+                let mut lines = machine.summary_lines();
+                lines.push("state=applied".to_string());
+                lines.push(format!("receipt_id={}", machine.state_data.receipt_id));
+                lines
+            }
+            Self::RolledBack(machine) => {
+                let mut lines = machine.summary_lines();
+                lines.push("state=rolled_back".to_string());
+                lines.push(format!("rollback_reason={}", machine.state_data.reason));
+                lines
+            }
+            Self::Failed(machine) => {
+                let mut lines = machine.summary_lines();
+                lines.push("state=failed".to_string());
+                lines.push(format!("error={}", machine.state_data.error));
+                lines
+            }
+        };
+
+        lines.push(String::new());
+        lines.join("\n")
+    }
+}
+
 #[transition]
 impl DeploymentMachine<Draft> {
     fn plan(self) -> DeploymentMachine<Planned> {
@@ -618,7 +681,7 @@ impl DeploymentStore {
 
     async fn show(&self, id: i64) -> Result<String, CliError> {
         let state = self.load_state(id).await?;
-        Ok(format_summary(state))
+        Ok(state.summary())
     }
 
     async fn fetch_row(&self, id: i64) -> Result<DeploymentRow, CliError> {
@@ -797,65 +860,6 @@ fn ensure_non_empty(value: &str, message: &'static str) -> Result<(), CliError> 
     } else {
         Ok(())
     }
-}
-
-fn common_summary<T: DeploymentStateTrait>(machine: &DeploymentMachine<T>) -> Vec<String> {
-    vec![
-        format!("id={}", machine.id),
-        format!("service={}", machine.service),
-        format!("environment={}", machine.environment),
-        format!("version={}", machine.version),
-    ]
-}
-
-fn format_summary(state: deployment_machine::SomeState) -> String {
-    let mut lines = match state {
-        deployment_machine::SomeState::Draft(machine) => {
-            let mut lines = common_summary(&machine);
-            lines.push("state=draft".to_string());
-            lines
-        }
-        deployment_machine::SomeState::Planned(machine) => {
-            let mut lines = common_summary(&machine);
-            lines.push("state=planned".to_string());
-            lines.push(format!("plan_digest={}", machine.state_data.digest));
-            lines
-        }
-        deployment_machine::SomeState::AwaitingApproval(machine) => {
-            let mut lines = common_summary(&machine);
-            lines.push("state=awaiting_approval".to_string());
-            lines.push(format!("approval_ticket={}", machine.state_data.ticket));
-            lines
-        }
-        deployment_machine::SomeState::Applying(machine) => {
-            let mut lines = common_summary(&machine);
-            lines.push("state=applying".to_string());
-            lines.push(format!("operation_id={}", machine.state_data.operation_id));
-            lines.push(format!("approved_by={}", machine.state_data.approved_by));
-            lines
-        }
-        deployment_machine::SomeState::Applied(machine) => {
-            let mut lines = common_summary(&machine);
-            lines.push("state=applied".to_string());
-            lines.push(format!("receipt_id={}", machine.state_data.receipt_id));
-            lines
-        }
-        deployment_machine::SomeState::RolledBack(machine) => {
-            let mut lines = common_summary(&machine);
-            lines.push("state=rolled_back".to_string());
-            lines.push(format!("rollback_reason={}", machine.state_data.reason));
-            lines
-        }
-        deployment_machine::SomeState::Failed(machine) => {
-            let mut lines = common_summary(&machine);
-            lines.push("state=failed".to_string());
-            lines.push(format!("error={}", machine.state_data.error));
-            lines
-        }
-    };
-
-    lines.push(String::new());
-    lines.join("\n")
 }
 
 #[cfg(test)]
