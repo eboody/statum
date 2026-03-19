@@ -6,6 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  MODUM_VERSION: 0.3.7
+
 jobs:
   stable:
     runs-on: ubuntu-latest
@@ -24,8 +31,17 @@ jobs:
           key: ${{ runner.os }}-cargo-stable-${{ hashFiles('**/Cargo.toml', 'rust-toolchain.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-stable-
+      - name: Cache modum
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-modum
+            ~/.cargo/bin/modum
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: ${{ runner.os }}-modum-${{ env.MODUM_VERSION }}
       - name: Install modum
-        run: cargo install modum --locked
+        run: command -v modum >/dev/null 2>&1 || cargo install modum --locked --version "$MODUM_VERSION"
       - name: Modum
         run: cargo modum check --root . --mode warn
       - name: Format check
@@ -36,8 +52,6 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test --workspace
-      - name: Doc tests
-        run: cargo test --doc --workspace
       - name: Build docs
         run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
@@ -46,8 +60,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.93.1
-        with:
-          components: rustfmt, clippy
       - name: Cache cargo
         uses: actions/cache@v4
         with:
@@ -58,8 +70,6 @@ jobs:
           key: ${{ runner.os }}-cargo-1-93-${{ hashFiles('**/Cargo.toml', 'rust-toolchain.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-1-93-
-      - name: Check
-        run: cargo check --workspace
       - name: Test
         run: cargo test --workspace
 
