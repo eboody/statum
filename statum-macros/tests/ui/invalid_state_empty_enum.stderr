@@ -1,12 +1,12 @@
 error: Error: #[state] enum `EmptyState` must declare at least one variant.
        Fix: add unit variants like `Draft` or single-payload variants like `InReview(ReviewData)`.
- --> tests/ui/invalid_state_empty_enum.rs:7:6
-  |
-7 | enum EmptyState {}
-  |      ^^^^^^^^^^
+  --> tests/ui/invalid_state_empty_enum.rs:11:6
+   |
+11 | enum EmptyState {}
+   |      ^^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
- --> tests/ui/invalid_state_empty_enum.rs:7:19
-  |
-7 | enum EmptyState {}
-  |                   ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_empty_enum.rs`
+  --> tests/ui/invalid_state_empty_enum.rs:11:19
+   |
+11 | enum EmptyState {}
+   |                   ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_empty_enum.rs`

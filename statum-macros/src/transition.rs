@@ -43,6 +43,25 @@ impl TransitionFn {
 
         Ok(return_state)
     }
+
+    pub fn return_states(&self) -> Result<Vec<String>, TokenStream> {
+        let Some(return_type) = self.return_type.as_ref() else {
+            return Err(invalid_return_type_error(self, "missing return type"));
+        };
+        let machine_ident = format_ident!("{}", self.machine_name);
+        let return_states = collect_machine_and_states(return_type, machine_ident)
+            .into_iter()
+            .map(|(_, state)| state)
+            .collect::<Vec<_>>();
+        if return_states.is_empty() {
+            return Err(invalid_return_type_error(
+                self,
+                "expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`)",
+            ));
+        }
+
+        Ok(return_states)
+    }
 }
 
 /// Represents the entire `impl` block of our `transition` macro
@@ -174,7 +193,7 @@ pub fn validate_transition_functions(
         .get_variant_from_name(&tr_impl.source_state)
         .is_none()
     {
-            return Some(invalid_transition_state_error(
+        return Some(invalid_transition_state_error(
             tr_impl.source_state_span,
             &tr_impl.machine_name,
             &tr_impl.source_state,
@@ -205,6 +224,21 @@ pub fn validate_transition_functions(
                 &return_state,
                 &state_enum_info,
             ));
+        }
+
+        let return_states = match func.return_states() {
+            Ok(states) => states,
+            Err(err) => return Some(err),
+        };
+        for return_state in return_states {
+            if state_enum_info.get_variant_from_name(&return_state).is_none() {
+                return Some(invalid_transition_method_state_error(
+                    func,
+                    &tr_impl.machine_name,
+                    &return_state,
+                    &state_enum_info,
+                ));
+            }
         }
     }
 
@@ -474,48 +508,118 @@ fn compile_error_at(span: Span, message: &str) -> TokenStream {
 ///
 /// Walks through wrapper types (`Option`/`Result`) via their first generic argument.
 pub fn parse_machine_and_state(ty: &Type, target_machine_ident: Ident) -> Option<(String, String)> {
+    parse_primary_machine_and_state(ty, target_machine_ident)
+}
+
+/// Attempts to parse the primary visible next state from `ty`.
+///
+/// This preserves the existing transition helper behavior by following the first
+/// generic argument through supported wrappers until it reaches `Machine<State>`.
+pub fn parse_primary_machine_and_state(
+    ty: &Type,
+    target_machine_ident: Ident,
+) -> Option<(String, String)> {
     let mut current = ty;
     loop {
-        match classify_return_wrapper(current, &target_machine_ident)? {
-            ReturnWrapper::Machine(segment) => {
+        match classify_primary_return_wrapper(current, &target_machine_ident)? {
+            PrimaryReturnWrapper::Machine(segment) => {
                 return extract_machine_generic(&segment.arguments, target_machine_ident)
                     .map(|(machine, state, _)| (machine, state));
             }
-            ReturnWrapper::Option(inner) | ReturnWrapper::Result(inner) => {
+            PrimaryReturnWrapper::Option(inner) | PrimaryReturnWrapper::Result(inner) => {
                 current = inner;
             }
         }
     }
 }
 
-enum ReturnWrapper<'a> {
+/// Collects every `Machine<State>` target mentioned in supported wrapper trees.
+///
+/// This is used for exact branch introspection and intentionally inspects both
+/// sides of `Result<T, E>` while still ignoring arbitrary custom decision enums.
+pub fn collect_machine_and_states(
+    ty: &Type,
+    target_machine_ident: Ident,
+) -> Vec<(String, String)> {
+    let mut targets = Vec::new();
+    collect_machine_targets(ty, &target_machine_ident, &mut targets);
+    targets
+}
+
+enum PrimaryReturnWrapper<'a> {
     Machine(&'a syn::PathSegment),
     Option(&'a Type),
     Result(&'a Type),
 }
 
-fn classify_return_wrapper<'a>(
+fn classify_primary_return_wrapper<'a>(
     ty: &'a Type,
     target_machine_ident: &Ident,
-) -> Option<ReturnWrapper<'a>> {
+) -> Option<PrimaryReturnWrapper<'a>> {
     let Type::Path(TypePath { path, .. }) = ty else {
         return None;
     };
     let segment = path.segments.last()?;
 
     if &segment.ident == target_machine_ident {
-        return Some(ReturnWrapper::Machine(segment));
+        return Some(PrimaryReturnWrapper::Machine(segment));
     }
 
     if segment.ident == "Option" {
-        return extract_first_generic_type_ref(&segment.arguments).map(ReturnWrapper::Option);
+        return extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Option);
     }
 
     if segment.ident == "Result" {
-        return extract_first_generic_type_ref(&segment.arguments).map(ReturnWrapper::Result);
+        return extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Result);
     }
 
     None
+}
+
+fn collect_machine_targets(
+    ty: &Type,
+    target_machine_ident: &Ident,
+    targets: &mut Vec<(String, String)>,
+) {
+    let Type::Path(TypePath { path, .. }) = ty else {
+        return;
+    };
+    let Some(segment) = path.segments.last() else {
+        return;
+    };
+
+    if &segment.ident == target_machine_ident {
+        if let Some((machine, state, _)) =
+            extract_machine_generic(&segment.arguments, target_machine_ident.clone())
+        {
+            push_unique_target(targets, machine, state);
+        }
+        return;
+    }
+
+    if segment.ident == "Option" {
+        if let Some(inner) = extract_first_generic_type_ref(&segment.arguments) {
+            collect_machine_targets(inner, target_machine_ident, targets);
+        }
+        return;
+    }
+
+    if segment.ident == "Result" {
+        if let Some(types) = extract_generic_type_refs(&segment.arguments) {
+            for inner in types {
+                collect_machine_targets(inner, target_machine_ident, targets);
+            }
+        }
+    }
+}
+
+fn push_unique_target(targets: &mut Vec<(String, String)>, machine: String, state: String) {
+    if !targets
+        .iter()
+        .any(|(existing_machine, existing_state)| existing_machine == &machine && existing_state == &state)
+    {
+        targets.push((machine, state));
+    }
 }
 
 fn extract_machine_generic(
@@ -558,17 +662,88 @@ fn same_named_machine_candidates_elsewhere(
 }
 
 fn extract_first_generic_type_ref(args: &PathArguments) -> Option<&Type> {
+    extract_generic_type_refs(args)?.into_iter().next()
+}
+
+fn extract_generic_type_refs(args: &PathArguments) -> Option<Vec<&Type>> {
     let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
         args: generic_args, ..
     }) = args
     else {
         return None;
     };
-    if generic_args.is_empty() {
+
+    let types = generic_args
+        .iter()
+        .filter_map(|arg| match arg {
+            GenericArgument::Type(ty) => Some(ty),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if types.is_empty() {
         return None;
     }
-    let GenericArgument::Type(ty) = &generic_args[0] else {
-        return None;
-    };
-    Some(ty)
+
+    Some(types)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_machine_and_states, parse_machine_and_state, parse_primary_machine_and_state};
+    use quote::format_ident;
+    use syn::Type;
+
+    fn parse_type(source: &str) -> Type {
+        syn::parse_str(source).expect("valid type")
+    }
+
+    #[test]
+    fn primary_parser_preserves_existing_result_behavior() {
+        let ty = parse_type("Result<Machine<Accepted>, Machine<Rejected>>");
+
+        assert_eq!(
+            parse_primary_machine_and_state(&ty, format_ident!("Machine")),
+            Some(("Machine".to_owned(), "Accepted".to_owned()))
+        );
+        assert_eq!(
+            parse_machine_and_state(&ty, format_ident!("Machine")),
+            Some(("Machine".to_owned(), "Accepted".to_owned()))
+        );
+    }
+
+    #[test]
+    fn target_collector_reads_both_result_branches() {
+        let ty = parse_type("Result<Machine<Accepted>, Machine<Rejected>>");
+
+        assert_eq!(
+            collect_machine_and_states(&ty, format_ident!("Machine")),
+            vec![
+                ("Machine".to_owned(), "Accepted".to_owned()),
+                ("Machine".to_owned(), "Rejected".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn target_collector_reads_nested_wrappers() {
+        let ty = parse_type("Option<core::result::Result<Machine<Accepted>, Machine<Rejected>>>");
+
+        assert_eq!(
+            collect_machine_and_states(&ty, format_ident!("Machine")),
+            vec![
+                ("Machine".to_owned(), "Accepted".to_owned()),
+                ("Machine".to_owned(), "Rejected".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn target_collector_ignores_non_machine_payloads_and_dedups() {
+        let ty = parse_type("Result<Option<Machine<Accepted>>, Result<Machine<Accepted>, Error>>");
+
+        assert_eq!(
+            collect_machine_and_states(&ty, format_ident!("Machine")),
+            vec![("Machine".to_owned(), "Accepted".to_owned())]
+        );
+    }
 }
