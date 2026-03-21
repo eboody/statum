@@ -324,6 +324,30 @@ pub fn generate_transition_impl(
                             <Self as #transition_support_module_ident::TransitionTo<#return_state_ident>>::transition(self)
                         }
                     }
+
+                    impl statum::CanTransitionMap<#return_state_ident> for #target_type {
+                        type CurrentData = #source_data_ty;
+                        type Output = #machine_target_ident<#return_state_ident>;
+
+                        fn transition_map<F>(self, f: F) -> Self::Output
+                        where
+                            F: FnOnce(Self::CurrentData) -> <#return_state_ident as statum::StateMarker>::Data,
+                        {
+                            let #machine_target_ident {
+                                marker: _,
+                                state_data,
+                                #(#field_names),*
+                            } = self;
+
+                            let next_data = f(state_data);
+
+                            #machine_target_ident {
+                                marker: core::marker::PhantomData,
+                                state_data: next_data,
+                                #(#field_names),*
+                            }
+                        }
+                    }
                 }
             }
             Err(err) => err,

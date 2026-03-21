@@ -1,0 +1,8 @@
+error: Error: wrapper payload `InProgressData` for state `InProgress` of `#[state]` enum `State` contains multiple nested child machine fields: primary, secondary.
+       Fix: keep exactly one child machine field in `InProgressData`, or carry the child machine directly in `InProgress`.
+  --> tests/ui/invalid_child_wrapper_multiple_fields.rs:32:5
+   |
+32 |     #[machine]
+   |     ^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

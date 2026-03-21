@@ -110,7 +110,9 @@ Example: [../statum-examples/src/toy_demos/06-async-transitions.rs](../statum-ex
 
 ## Nested Machines
 
-Use a machine as state data when a parent workflow owns a child workflow:
+Use a machine as state data when a parent workflow owns a child workflow.
+
+For the simplest shape, carry the child machine directly:
 
 ```rust
 #[state]
@@ -120,6 +122,30 @@ enum ParentState {
     Done,
 }
 ```
+
+If the parent also needs local data, use a wrapper payload in the same module and import the generated `machine::ChildExt` trait:
+
+```rust
+use parent_machine::ChildExt as _;
+
+#[state]
+enum ParentState {
+    NotStarted,
+    InProgress(InProgressData),
+    Done,
+}
+
+struct InProgressData {
+    owner: String,
+    child: SubMachine<Running>,
+}
+```
+
+That gives the parent state:
+
+- `child()` for borrowed child access
+- `map_child(...)` for same-state child updates
+- `transition_map_child(...)` for explicit child-to-parent promotion
 
 Example: [../statum-examples/src/toy_demos/11-hierarchical-machines.rs](../statum-examples/src/toy_demos/11-hierarchical-machines.rs)
 

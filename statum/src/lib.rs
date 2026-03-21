@@ -214,6 +214,8 @@ pub use statum_macros::state;
 /// - a machine-scoped `machine::SomeState` enum for matching rebuilt machines
 /// - a compatibility alias `machine::State = machine::SomeState`
 /// - a machine-scoped `machine::Fields` struct for heterogeneous batch rebuilds
+/// - when a state owns a nested child machine, a machine-scoped `machine::ChildExt`
+///   trait for child access and explicit child-to-parent mapping
 ///
 /// If you need derives, place them below `#[machine]`.
 ///
@@ -249,7 +251,7 @@ pub use statum_macros::machine;
 /// - `self.transition()` for unit target states
 /// - `self.transition_with(data)` for data-bearing target states
 /// - `self.transition_map(|current| next_data)` when the next payload is built
-///   from the current payload
+///   from the current payload, including unit target states
 ///
 /// ```rust
 /// use statum::{machine, state, transition};

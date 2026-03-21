@@ -5,6 +5,7 @@ use syn::{GenericParam, Generics, Ident, ItemStruct, Visibility};
 use crate::state::{ParsedEnumInfo, ParsedVariantInfo};
 use crate::{EnumInfo, to_snake_case};
 
+use super::child::generate_child_state_surface;
 use super::metadata::{ParsedMachineInfo, field_type_alias_name, is_rust_analyzer};
 use super::registry::get_machine_map;
 use super::MachineInfo;
@@ -68,8 +69,10 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
     let builder_methods = machine_info.generate_builder_methods(&parsed_machine, &parsed_state);
     let transition_support = transition_support(machine_info, &state_enum);
     let field_type_aliases = generate_field_type_aliases(machine_info, item);
-    let machine_state_surface = match generate_machine_state_surface(
+    let machine_state_module_ident = machine_state_module_ident(machine_info);
+    let (machine_state_surface, has_child_surface) = match generate_machine_state_surface(
         machine_info,
+        &state_enum,
         &parsed_machine,
         &parsed_state,
         &machine_ident,
@@ -78,12 +81,20 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
         Err(err) => return err,
     };
 
+    let child_import = has_child_surface.then(|| {
+        quote! {
+            #[allow(unused_imports)]
+            use #machine_state_module_ident::ChildExt as _;
+        }
+    });
+
     quote! {
         #transition_support
         #field_type_aliases
         #struct_def
         #builder_methods
         #machine_state_surface
+        #child_import
     }
 }
 
@@ -225,10 +236,11 @@ fn transition_support(machine_info: &MachineInfo, state_enum: &EnumInfo) -> Toke
 
 fn generate_machine_state_surface(
     machine_info: &MachineInfo,
+    state_enum: &EnumInfo,
     parsed_machine: &ParsedMachineInfo,
     parsed_state: &ParsedEnumInfo,
     machine_ident: &Ident,
-) -> Result<TokenStream, TokenStream> {
+) -> Result<(TokenStream, bool), TokenStream> {
     let fields_struct_fields = parsed_machine.fields.iter().map(|field| {
         let field_ident = &field.ident;
         let alias_ident = format_ident!(
@@ -247,6 +259,11 @@ fn generate_machine_state_surface(
     });
 
     let vis = parsed_machine.vis.clone();
+    let machine_field_names = parsed_machine
+        .fields
+        .iter()
+        .map(|field| field.ident.clone())
+        .collect::<Vec<_>>();
     let is_methods = parsed_state.variants.iter().map(|variant| {
         let variant_ident = format_ident!("{}", variant.name);
         let fn_name = format_ident!("is_{}", to_snake_case(&variant.name));
@@ -257,9 +274,24 @@ fn generate_machine_state_surface(
         }
     });
     let module_ident = format_ident!("{}", to_snake_case(&machine_info.name));
+    let state_trait_ident = state_enum.get_trait_name();
+    let child_surface = generate_child_state_surface(
+        machine_info,
+        &state_enum.name,
+        parsed_state,
+        machine_ident,
+        &state_trait_ident,
+        &machine_field_names,
+    )?;
+    let has_child_surface = child_surface.is_some();
+    let child_surface = child_surface.unwrap_or_default();
 
-    Ok(quote! {
+    Ok((
+        quote! {
         #vis mod #module_ident {
+            #[allow(unused_imports)]
+            use super::*;
+
             pub struct Fields {
                 #(#fields_struct_fields),*
             }
@@ -284,8 +316,16 @@ fn generate_machine_state_surface(
             impl SomeState {
                 #(#is_methods)*
             }
+
+            #child_surface
         }
-    })
+    },
+        has_child_surface,
+    ))
+}
+
+fn machine_state_module_ident(machine_info: &MachineInfo) -> Ident {
+    format_ident!("{}", to_snake_case(&machine_info.name))
 }
 
 fn generate_field_type_aliases(machine_info: &MachineInfo, item: &ItemStruct) -> TokenStream {

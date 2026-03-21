@@ -1,0 +1,8 @@
+error: Error: wrapper payload `InProgressData` for state `InProgress` of `#[state]` enum `State` must use named fields when carrying a nested child machine.
+       Fix: change `InProgressData` to a named-field struct and keep exactly one child machine field.
+  --> tests/ui/invalid_child_wrapper_tuple_struct.rs:29:5
+   |
+29 |     #[machine]
+   |     ^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

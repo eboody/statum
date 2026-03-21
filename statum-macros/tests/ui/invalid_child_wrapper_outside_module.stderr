@@ -1,0 +1,8 @@
+error: Error: state `InProgress` of `#[state]` enum `State` uses wrapper payload `InProgressData` with a nested child machine, but `InProgressData` is declared in `invalid_child_wrapper_outside_module::shared` instead of `invalid_child_wrapper_outside_module::workflow`.
+       Fix: move `InProgressData` into `invalid_child_wrapper_outside_module::workflow`, or carry the child machine directly in `InProgress`.
+  --> tests/ui/invalid_child_wrapper_outside_module.rs:36:5
+   |
+36 |     #[machine]
+   |     ^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

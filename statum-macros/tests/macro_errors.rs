@@ -34,6 +34,9 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_transition_unknown_return_state.rs");
     t.compile_fail("tests/ui/invalid_transition_map_undeclared_edge.rs");
     t.compile_fail("tests/ui/invalid_legacy_transition_helper_trait.rs");
+    t.compile_fail("tests/ui/invalid_child_wrapper_multiple_fields.rs");
+    t.compile_fail("tests/ui/invalid_child_wrapper_outside_module.rs");
+    t.compile_fail("tests/ui/invalid_child_wrapper_tuple_struct.rs");
 }
 
 #[test]
@@ -81,4 +84,5 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_builder_overwrite.rs");
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
+    t.pass("tests/ui/valid_child_interplay.rs");
 }

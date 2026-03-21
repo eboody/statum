@@ -127,6 +127,7 @@ Roughly, Statum generates:
   `task_machine::State` remains an alias for compatibility.
 - A machine-scoped `task_machine::Fields` struct for batch rebuilds where each row needs different machine context.
 - A machine-scoped batch rehydration trait like `task_machine::IntoMachinesExt`.
+- When a state owns a nested child machine, a machine-scoped trait like `task_machine::ChildExt` for child access and explicit child-to-parent mapping.
 
 This is the whole model. The rest of the crate is about making those four pieces ergonomic.
 
@@ -263,6 +264,7 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
 - Transition methods must take `self` or `mut self`.
 - Return `Machine<NextState>` directly, or wrap it in `Result` / `Option` when the transition is conditional.
 - Use `transition_with(data)` when the target state carries data.
+- Use `transition_map(...)` when the next state data should be built from the current payload, including unit target states.
 
 `#[validators]`
 

@@ -1,3 +1,4 @@
+mod child;
 mod emission;
 mod metadata;
 mod registry;

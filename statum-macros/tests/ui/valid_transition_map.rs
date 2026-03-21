@@ -54,6 +54,16 @@ where
     })
 }
 
+fn publish<M>(machine: M) -> M::Output
+where
+    M: statum::CanTransitionMap<Published, CurrentData = ReviewData>,
+{
+    machine.transition_map(|review| {
+        let _ = review.title;
+        let _ = review.reviewer;
+    })
+}
+
 fn main() {
     let draft = WorkflowMachine::<Draft>::builder()
         .id(1)
@@ -72,4 +82,13 @@ fn main() {
         .build();
     let review: WorkflowMachine<Review> = start_review(draft);
     let _ = review.publish();
+
+    let review = WorkflowMachine::<Review>::builder()
+        .id(3)
+        .state_data(ReviewData {
+            title: "Ship".to_string(),
+            reviewer: "sam".to_string(),
+        })
+        .build();
+    let _published: WorkflowMachine<Published> = publish(review);
 }
