@@ -3,7 +3,6 @@ use std::hash::Hash;
 use std::sync::{OnceLock, RwLock};
 
 use crate::analysis::{get_file_analysis, FileAnalysis};
-use crate::cache::tracked_file_matches;
 use crate::callsite::{current_source_info, module_path_for_line};
 
 /// Key type for registry lookups.
@@ -90,6 +89,10 @@ where
 pub struct SourceContext {
     pub file_path: String,
     pub line_number: usize,
+}
+
+fn tracked_file_matches(tracked_file_path: Option<&str>, file_path: &str) -> bool {
+    tracked_file_path == Some(file_path)
 }
 
 impl SourceContext {

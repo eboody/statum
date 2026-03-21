@@ -166,8 +166,10 @@
 pub use statum_core::projection;
 #[doc(inline)]
 pub use statum_core::{
-    CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, Result, StateMarker,
-    UnitState,
+    CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, MachineDescriptor,
+    MachineGraph, MachineIntrospection, MachinePresentation, MachinePresentationDescriptor,
+    MachineStateIdentity, MachineTransitionRecorder, RecordedTransition, Result, StateDescriptor,
+    StateMarker, StatePresentation, TransitionDescriptor, TransitionPresentation, UnitState,
 };
 
 /// Define the legal lifecycle phases for a machine.

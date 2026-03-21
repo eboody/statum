@@ -1,13 +1,13 @@
 error: Error: machine `Machine` uses `S : Clone` as its state generic, but the `#[state]` enum in this module is `MachineState`.
        Fix: declare `Machine<MachineState>`.
        Found: `struct Machine< S : Clone > { ... }`.
-  --> tests/ui/invalid_machine_wrong_generic.rs:14:16
+  --> tests/ui/invalid_machine_wrong_generic.rs:18:16
    |
-14 | struct Machine<S: Clone> {
+18 | struct Machine<S: Clone> {
    |                ^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_machine_wrong_generic.rs:16:2
+  --> tests/ui/invalid_machine_wrong_generic.rs:20:2
    |
-16 | }
+20 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_wrong_generic.rs`

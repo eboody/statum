@@ -1,5 +1,12 @@
 # Release Notes
 
+## v0.6.6 (2026-03-21)
+
+### Changes
+- Added first-class machine introspection emitted directly from `#[machine]`, including typed `StateId`, `TransitionId`, and a static `GRAPH` descriptor for exact transition-site queries.
+- Added typed runtime transition recording so consumer crates can record the chosen branch and join it back to static machine metadata.
+- Added an optional typed presentation overlay for attaching labels, descriptions, phases, and other consumer-owned metadata without rebuilding the machine graph.
+
 ## v0.6.1 (2026-03-18)
 
 ### Changes
