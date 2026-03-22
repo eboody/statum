@@ -1,12 +1,12 @@
 error: Error: no `#[machine]` named `TaskMachine` was found in module `invalid_validators_plain_struct_machine_name`.
-       A struct named `TaskMachine` exists on line 24, but it is not annotated with `#[machine]`.
+       A struct named `TaskMachine` exists on line 17, but it is not annotated with `#[machine]`.
        No same-named `#[machine]` items were found in other modules of this file.
        No `#[machine]` items were found in this module.
        Help: point `#[validators(...)]` at the Statum machine type in this module.
        Correct shape: `#[validators(TaskMachine)] impl PersistedRow { ... }` where `TaskMachine` is declared with `#[machine]` in `invalid_validators_plain_struct_machine_name`.
-  --> tests/ui/invalid_validators_plain_struct_machine_name.rs:24:1
+  --> tests/ui/invalid_validators_plain_struct_machine_name.rs:26:1
    |
-24 | #[validators(TaskMachine)]
+26 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,13 +1,15 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{GenericParam, Generics, Ident, ItemStruct, Visibility};
+use std::collections::HashSet;
+use syn::{GenericParam, Generics, Ident, ItemStruct, LitStr, Visibility};
 
 use crate::state::{ParsedEnumInfo, ParsedVariantInfo};
 use crate::{EnumInfo, to_snake_case};
 
+use super::introspection::TransitionSite;
 use super::metadata::{ParsedMachineInfo, field_type_alias_name, is_rust_analyzer};
 use super::registry::get_machine_map;
-use super::MachineInfo;
+use super::{MachineInfo, collect_transition_sites, to_pascal_case_identifier};
 
 pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> proc_macro2::TokenStream {
     let map_guard = match get_machine_map().read() {
@@ -44,6 +46,25 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
         Ok(parsed) => parsed,
         Err(err) => return err,
     };
+    let transition_sites = match collect_transition_sites(machine_info) {
+        Ok(sites) => sites,
+        Err(err) => return err,
+    };
+    let valid_state_names = parsed_state
+        .variants
+        .iter()
+        .map(|variant| variant.name.as_str())
+        .collect::<HashSet<_>>();
+    let transition_sites = transition_sites
+        .into_iter()
+        .filter(|site| {
+            valid_state_names.contains(site.source_state.as_str())
+                && site
+                    .target_states
+                    .iter()
+                    .all(|state| valid_state_names.contains(state.as_str()))
+        })
+        .collect::<Vec<_>>();
     let machine_ident = format_ident!("{}", machine_info.name);
     let generics = match parse_generics(&parsed_machine, &state_enum) {
         Ok(generics) => generics,
@@ -73,10 +94,17 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
         &parsed_machine,
         &parsed_state,
         &machine_ident,
+        &transition_sites,
     ) {
         Ok(surface) => surface,
         Err(err) => return err,
     };
+    let introspection_impls = generate_machine_introspection_impls(
+        machine_info,
+        &state_enum,
+        &parsed_state,
+        &machine_ident,
+    );
 
     quote! {
         #transition_support
@@ -84,6 +112,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
         #struct_def
         #builder_methods
         #machine_state_surface
+        #introspection_impls
     }
 }
 
@@ -228,6 +257,7 @@ fn generate_machine_state_surface(
     parsed_machine: &ParsedMachineInfo,
     parsed_state: &ParsedEnumInfo,
     machine_ident: &Ident,
+    transition_sites: &[TransitionSite],
 ) -> Result<TokenStream, TokenStream> {
     let fields_struct_fields = parsed_machine.fields.iter().map(|field| {
         let field_ident = &field.ident;
@@ -256,7 +286,9 @@ fn generate_machine_state_surface(
             }
         }
     });
-    let module_ident = format_ident!("{}", to_snake_case(&machine_info.name));
+    let module_ident = machine_state_module_ident(machine_info);
+    let introspection_surface =
+        generate_machine_module_introspection(machine_info, parsed_state, transition_sites);
 
     Ok(quote! {
         #vis mod #module_ident {
@@ -284,6 +316,8 @@ fn generate_machine_state_surface(
             impl SomeState {
                 #(#is_methods)*
             }
+
+            #introspection_surface
         }
     })
 }
@@ -311,6 +345,139 @@ pub(crate) fn transition_support_module_ident(machine_info: &MachineInfo) -> Ide
     format_ident!(
         "__statum_{}_transition",
         to_snake_case(&machine_info.name)
+    )
+}
+
+fn machine_state_module_ident(machine_info: &MachineInfo) -> Ident {
+    format_ident!("{}", to_snake_case(&machine_info.name))
+}
+
+fn generate_machine_module_introspection(
+    machine_info: &MachineInfo,
+    parsed_state: &ParsedEnumInfo,
+    transition_sites: &[TransitionSite],
+) -> TokenStream {
+    let state_id_variants = parsed_state.variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        quote! { #variant_ident }
+    });
+    let transition_id_variants = transition_sites.iter().map(transition_site_id_ident);
+    let state_descriptors = parsed_state.variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        let rust_name = LitStr::new(&variant.name, Span::call_site());
+        let has_data = variant.data_type.is_some();
+        quote! {
+            statum::StateDescriptor {
+                id: StateId::#variant_ident,
+                rust_name: #rust_name,
+                has_data: #has_data,
+            }
+        }
+    });
+    let transition_target_arrays = transition_sites.iter().enumerate().map(|(idx, site)| {
+        let targets_ident = transition_target_array_ident(idx);
+        let target_states = site.target_states.iter().map(|state| {
+            let state_ident = format_ident!("{}", state);
+            quote! { StateId::#state_ident }
+        });
+        let target_count = site.target_states.len();
+        quote! {
+            static #targets_ident: [StateId; #target_count] = [#(#target_states),*];
+        }
+    });
+    let transition_descriptors = transition_sites.iter().enumerate().map(|(idx, site)| {
+        let transition_id_ident = transition_site_id_ident(site);
+        let method_name = LitStr::new(&site.method_name, Span::call_site());
+        let source_state_ident = format_ident!("{}", site.source_state);
+        let targets_ident = transition_target_array_ident(idx);
+        quote! {
+            statum::TransitionDescriptor {
+                id: TransitionId::#transition_id_ident,
+                method_name: #method_name,
+                from: StateId::#source_state_ident,
+                to: &#targets_ident,
+            }
+        }
+    });
+    let module_path = LitStr::new(machine_info.module_path.as_ref(), Span::call_site());
+    let rust_type_path = LitStr::new(
+        &format!("{}::{}", machine_info.module_path, machine_info.name),
+        Span::call_site(),
+    );
+    let state_count = parsed_state.variants.len();
+    let transition_count = transition_sites.len();
+
+    quote! {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+        pub enum StateId {
+            #(#state_id_variants),*
+        }
+
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+        pub enum TransitionId {
+            #(#transition_id_variants),*
+        }
+
+        static __STATUM_STATES: [statum::StateDescriptor<StateId>; #state_count] = [
+            #(#state_descriptors),*
+        ];
+
+        #(#transition_target_arrays)*
+
+        static __STATUM_TRANSITIONS: [statum::TransitionDescriptor<StateId, TransitionId>; #transition_count] = [
+            #(#transition_descriptors),*
+        ];
+
+        pub static GRAPH: statum::MachineGraph<StateId, TransitionId> = statum::MachineGraph {
+            machine: statum::MachineDescriptor {
+                module_path: #module_path,
+                rust_type_path: #rust_type_path,
+            },
+            states: &__STATUM_STATES,
+            transitions: &__STATUM_TRANSITIONS,
+        };
+    }
+}
+
+fn generate_machine_introspection_impls(
+    machine_info: &MachineInfo,
+    state_enum: &EnumInfo,
+    parsed_state: &ParsedEnumInfo,
+    machine_ident: &Ident,
+) -> TokenStream {
+    let module_ident = machine_state_module_ident(machine_info);
+    let state_trait_ident = state_enum.get_trait_name();
+    let state_identity_impls = parsed_state.variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        quote! {
+            impl statum::MachineStateIdentity for #machine_ident<#variant_ident> {
+                const STATE_ID: Self::StateId = #module_ident::StateId::#variant_ident;
+            }
+        }
+    });
+
+    quote! {
+        impl<S: #state_trait_ident> statum::MachineIntrospection for #machine_ident<S> {
+            type StateId = #module_ident::StateId;
+            type TransitionId = #module_ident::TransitionId;
+
+            const GRAPH: &'static statum::MachineGraph<Self::StateId, Self::TransitionId> =
+                &#module_ident::GRAPH;
+        }
+
+        #(#state_identity_impls)*
+    }
+}
+
+fn transition_target_array_ident(idx: usize) -> Ident {
+    format_ident!("__STATUM_TRANSITION_TARGETS_{}", idx)
+}
+
+fn transition_site_id_ident(site: &TransitionSite) -> Ident {
+    format_ident!(
+        "{}From{}",
+        to_pascal_case_identifier(&site.method_name),
+        to_pascal_case_identifier(&site.source_state),
     )
 }
 

@@ -8,7 +8,16 @@
 //! - runtime error and result types
 //! - projection helpers for event-log style rebuilds
 
+mod introspection;
+
 pub mod projection;
+
+pub use introspection::{
+    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
+    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
+    RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
+    TransitionPresentation,
+};
 
 /// A generated state marker type.
 ///

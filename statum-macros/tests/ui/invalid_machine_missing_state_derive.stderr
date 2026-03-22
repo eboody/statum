@@ -1,12 +1,12 @@
 error: Error: machine `BuildMachine` derives `Clone`, but `#[state]` enum `BuildState` does not.
        Fix: add `#[derive(Clone)]` to `BuildState` so the generated state markers and `BuildMachine` stay compatible.
-  --> tests/ui/invalid_machine_missing_state_derive.rs:17:8
+  --> tests/ui/invalid_machine_missing_state_derive.rs:21:8
    |
-17 | struct BuildMachine<BuildState> {
+21 | struct BuildMachine<BuildState> {
    |        ^^^^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_machine_missing_state_derive.rs:19:2
+  --> tests/ui/invalid_machine_missing_state_derive.rs:23:2
    |
-19 | }
+23 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_missing_state_derive.rs`

@@ -8,7 +8,6 @@ pub use statum_core::{
 
 use statum_macros::{machine, state, transition};
 
-
 #[state]
 enum State {
     A,
@@ -20,7 +19,21 @@ struct Machine<State> {}
 
 #[transition]
 impl Machine<A> {
-    fn to_b(_value: u64) -> Machine<B> {
-        unimplemented!()
+    fn to_b_or_ghost(self) -> Result<Machine<B>, Machine<Ghost>> {
+        if true {
+            Ok(self.to_b())
+        } else {
+            Err(self.to_ghost())
+        }
+    }
+
+    fn to_b(self) -> Machine<B> {
+        self.transition()
+    }
+
+    fn to_ghost(self) -> Machine<Ghost> {
+        self.transition()
     }
 }
+
+fn main() {}
