@@ -21,6 +21,12 @@ pub mod __private {
         _private: u8,
     }
 
+    impl Default for TransitionToken {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl TransitionToken {
         pub const fn new() -> Self {
             Self { _private: 0 }

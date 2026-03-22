@@ -67,7 +67,7 @@ impl MachineInfo {
     }
 
     pub fn get_matching_state_enum(&self) -> Result<EnumInfo, TokenStream> {
-        let state_path: StateModulePath = self.module_path.clone().into();
+        let state_path: StateModulePath = self.module_path.clone();
         // Included transition fragments must resolve the state enum against the
         // machine's source file, not the include file's pseudo-module context.
         let source = self

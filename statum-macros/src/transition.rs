@@ -372,10 +372,10 @@ pub fn generate_transition_impl(
             Err(err) => err,
         })
     });
-    let transition_registrations = tr_impl.functions.iter().enumerate().filter_map(|(idx, function)| {
+    let transition_registrations = tr_impl.functions.iter().enumerate().map(|(idx, function)| {
         let return_states = match function.return_states() {
             Ok(states) => states,
-            Err(err) => return Some(err),
+            Err(err) => return err,
         };
         let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
         let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
@@ -394,7 +394,7 @@ pub fn generate_transition_impl(
         let target_state_count = return_states.len();
         let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
 
-        Some(quote! {
+        quote! {
             #(#cfg_attrs)*
             static #targets_ident: [#machine_module_ident::StateId; #target_state_count] = [
                 #(#target_state_idents),*
@@ -421,7 +421,7 @@ pub fn generate_transition_impl(
                 pub const #id_const_ident: #machine_module_ident::TransitionId =
                     #machine_module_ident::TransitionId::from_token(&#token_ident);
             }
-        })
+        }
     });
 
     quote! {
@@ -719,11 +719,11 @@ fn collect_machine_targets(
         return;
     }
 
-    if segment.ident == "Result" {
-        if let Some(types) = extract_generic_type_refs(&segment.arguments) {
-            for inner in types {
-                collect_machine_targets(inner, target_machine_ident, targets);
-            }
+    if segment.ident == "Result"
+        && let Some(types) = extract_generic_type_refs(&segment.arguments)
+    {
+        for inner in types {
+            collect_machine_targets(inner, target_machine_ident, targets);
         }
     }
 }
