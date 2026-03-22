@@ -3,13 +3,13 @@ error: Error: validator `is_draft` for `impl DbRow` rebuilding `TaskMachine` sta
        Validator methods do not accept explicit machine-field parameters.
        Machine `TaskMachine` injects these fields by bare name inside validator bodies: `name`. Remove explicit parameters and use those bindings directly.
        Correct shape: `fn is_draft(&self) -> Result<(), _>`.
-  --> tests/ui/invalid_validators_wrong_signature.rs:24:24
+  --> tests/ui/invalid_validators_wrong_signature.rs:30:24
    |
-24 |     fn is_draft(&self, extra: u8) -> Result<(), statum_core::Error> {
+30 |     fn is_draft(&self, extra: u8) -> Result<(), statum_core::Error> {
    |                        ^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_validators_wrong_signature.rs:33:2
+  --> tests/ui/invalid_validators_wrong_signature.rs:39:2
    |
-33 | }
+39 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_wrong_signature.rs`

@@ -28,6 +28,8 @@ staged workflows or protocol-heavy APIs.
   - `#[transition]` for legal edges
   - `#[validators]` and `statum::projection` if rebuilds exist
 - distinguish machine fields from state-specific data
+- if docs, CLI explainers, replay tooling, or graph exports need machine
+  structure, prefer Statum introspection over a handwritten graph table
 - explain why plain runtime validation is weaker in this spot
 - keep the first migration slice small and testable
 
@@ -37,6 +39,7 @@ staged workflows or protocol-heavy APIs.
   rebuild paths
 - read these references before proposing a non-trivial refactor:
   - <https://github.com/eboody/statum/blob/main/README.md>
+  - <https://github.com/eboody/statum/blob/main/docs/introspection.md>
   - <https://github.com/eboody/statum/blob/main/docs/typestate-builder-design-playbook.md>
   - <https://github.com/eboody/statum/blob/main/docs/patterns.md>
   - <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>

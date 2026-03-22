@@ -74,3 +74,8 @@ fn example_14_batch_machine_fields() {
 fn example_15_transition_map() {
     toy_demos::example_15_transition_map::run();
 }
+
+#[test]
+fn example_16_machine_introspection() {
+    toy_demos::example_16_machine_introspection::run();
+}

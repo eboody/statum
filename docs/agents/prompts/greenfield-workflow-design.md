@@ -21,6 +21,8 @@ Tasks:
    - the state-specific data that should not live on the machine root
    - the likely `#[transition]` impl blocks
    - whether `#[validators]` or `statum::projection` is needed
+   - whether downstream docs, CLI explainers, replay tooling, graph exports, or
+     transition assertions should use Statum introspection
 3. If it is a poor fit, say what should stay runtime-validated and why.
 4. Keep the first implementation slice small enough for one PR.
 
@@ -29,6 +31,7 @@ workflows.
 
 Use these references if needed:
 - https://github.com/eboody/statum/blob/main/README.md
+- https://github.com/eboody/statum/blob/main/docs/introspection.md
 - https://github.com/eboody/statum/blob/main/docs/typestate-builder-design-playbook.md
 - https://github.com/eboody/statum/blob/main/docs/patterns.md
 - https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md

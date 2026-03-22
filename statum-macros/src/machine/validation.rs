@@ -38,7 +38,7 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
         );
     };
 
-    let state_path: StateModulePath = machine_info.module_path.clone().into();
+    let state_path: StateModulePath = machine_info.module_path.clone();
     let matching_state_enum = ensure_state_enum_loaded(&state_path);
 
     if item.generics.params.len() > 1 {

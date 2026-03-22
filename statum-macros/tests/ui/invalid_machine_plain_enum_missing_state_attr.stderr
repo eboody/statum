@@ -5,9 +5,9 @@ error: Failed to resolve the #[state] enum for machine `WorkflowMachine`.
        No `#[state]` enums were found in that module.
        Help: make sure the machine's first generic names the right `#[state]` enum in this module.
        Correct shape: `struct WorkflowMachine<ExpectedState> { ... }` where `ExpectedState` is a `#[state]` enum in `invalid_machine_plain_enum_missing_state_attr`.
-  --> tests/ui/invalid_machine_plain_enum_missing_state_attr.rs:14:1
+  --> tests/ui/invalid_machine_plain_enum_missing_state_attr.rs:18:1
    |
-14 | #[machine]
+18 | #[machine]
    | ^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,7 +1,7 @@
 error: Error: transition method `to_ghost` returns state `Ghost`, but `Ghost` is not a variant of `#[state]` enum `State`.
        Valid next states for `Machine` are: A, B.
        Help: return `Machine<ValidState>` using one of those variants, or call `self.transition()` / `self.transition_with(...)`.
-  --> tests/ui/invalid_transition_unknown_return_state.rs:21:26
+  --> tests/ui/invalid_transition_unknown_return_state.rs:27:26
    |
-21 |     fn to_ghost(self) -> Machine<Ghost> {
+27 |     fn to_ghost(self) -> Machine<Ghost> {
    |                          ^^^^^^^

@@ -25,11 +25,14 @@ fit for lifecycle-heavy or protocol-heavy code.
 - map the design to `#[state]`, `#[machine]`, `#[transition]`, and, if needed,
   `#[validators]`
 - explain the split between machine context and state data
+- if docs, CLI explainers, replay tooling, or graph exports need machine
+  structure, prefer Statum introspection over a parallel graph table
 - keep the first change small enough to review and test
 
 ## References
 
 - <https://github.com/eboody/statum/blob/main/README.md>
+- <https://github.com/eboody/statum/blob/main/docs/introspection.md>
 - <https://github.com/eboody/statum/blob/main/docs/typestate-builder-design-playbook.md>
 - <https://github.com/eboody/statum/blob/main/docs/patterns.md>
 - <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>

@@ -26,12 +26,15 @@ real staged workflow or protocol whose legal edges should be encoded in types.
 - separate durable machine context from state-only payloads
 - list the likely `#[transition]` blocks
 - decide whether `#[validators]` or `statum::projection` is part of the design
+- if downstream tooling needs machine structure, prefer Statum introspection
+  over a parallel handwritten graph table
 - cite exact files or symbols that justify the recommendation
 - propose a narrow first migration slice
 
 ## Read Before Refactoring
 
 - <https://github.com/eboody/statum/blob/main/README.md>
+- <https://github.com/eboody/statum/blob/main/docs/introspection.md>
 - <https://github.com/eboody/statum/blob/main/docs/typestate-builder-design-playbook.md>
 - <https://github.com/eboody/statum/blob/main/docs/patterns.md>
 - <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>

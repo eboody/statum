@@ -1,12 +1,12 @@
 error: Error: #[state] enum `BadState` variant `Draft` uses named fields, but Statum state variants must be unit variants like `Draft` or single-payload tuple variants like `Draft(DraftData)`.
        Fix: move the named fields into a payload type and reference that type as the only tuple field.
- --> tests/ui/invalid_state_struct_variant.rs:8:5
-  |
-8 |     Draft { version: u32 },
-  |     ^^^^^^^^^^^^^^^^^^^^^^
+  --> tests/ui/invalid_state_struct_variant.rs:14:5
+   |
+14 |     Draft { version: u32 },
+   |     ^^^^^^^^^^^^^^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
- --> tests/ui/invalid_state_struct_variant.rs:9:2
-  |
-9 | }
-  |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_struct_variant.rs`
+  --> tests/ui/invalid_state_struct_variant.rs:15:2
+   |
+15 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_struct_variant.rs`

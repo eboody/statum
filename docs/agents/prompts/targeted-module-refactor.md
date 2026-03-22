@@ -19,6 +19,8 @@ If Statum is a good fit, return:
 - the state-specific data
 - the legal transitions and likely `#[transition]` blocks
 - whether persisted rebuilds require `#[validators]` or `statum::projection`
+- whether downstream tooling should use Statum introspection instead of a
+  handwritten graph table
 - the smallest safe migration slice
 - the tests that should move or be added
 
@@ -29,6 +31,7 @@ Do not propose a full rewrite when a narrow first slice would prove the design.
 
 Use these references if needed:
 - https://github.com/eboody/statum/blob/main/README.md
+- https://github.com/eboody/statum/blob/main/docs/introspection.md
 - https://github.com/eboody/statum/blob/main/docs/typestate-builder-design-playbook.md
 - https://github.com/eboody/statum/blob/main/docs/patterns.md
 - https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md

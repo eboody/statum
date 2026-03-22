@@ -34,7 +34,7 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 
 ```toml
 [dependencies]
-statum = "0.6.3"
+statum = "0.6.6"
 ```
 
 ## 60-Second Example
@@ -138,6 +138,18 @@ that starts minimal and adds features one by one, see
 [docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md). For the
 flagship persistence story, see
 [docs/case-study-event-log-rebuild.md](docs/case-study-event-log-rebuild.md).
+
+## Machine Introspection
+
+Statum can also emit typed machine introspection directly from the machine
+definition itself. Use it when downstream tooling needs the machine structure
+without rebuilding a parallel graph table by hand: CLI explainers, generated
+docs, graph exports, branch-strip views, test assertions about exact legal
+transitions, and replay or debug tooling.
+
+See [docs/introspection.md](docs/introspection.md) for the full guide and
+[statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)
+for a runnable example.
 
 ## Typed Rehydration
 

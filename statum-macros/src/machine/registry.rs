@@ -23,7 +23,9 @@ impl registry::RegistryDomain for MachineRegistryDomain {
     }
 
     fn build_value(entry: &Self::Entry, module_path: &Self::Key) -> Option<Self::Value> {
-        MachineInfo::from_item_struct_with_module(&entry.item, module_path)
+        let mut value = MachineInfo::from_item_struct_with_module(&entry.item, module_path)?;
+        value.line_number = entry.line_number;
+        Some(value)
     }
 
     fn matches_entry(entry: &Self::Entry) -> bool {
@@ -64,6 +66,40 @@ pub fn ensure_machine_loaded_by_name(
     }
 
     registry::ensure_loaded_by_name::<MachineRegistryDomain>(&MACHINE_MAP, machine_path, machine_name)
+}
+
+pub fn unique_loaded_machine_elsewhere(machine_name: &str) -> Option<MachineInfo> {
+    let source = registry::SourceContext::current()?;
+    let map = MACHINE_MAP.map().read().ok()?;
+
+    let mut matches = map
+        .values()
+        .filter(|machine| {
+            machine.name == machine_name
+                && machine.file_path.as_deref() != Some(source.file_path.as_str())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    matches.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then(left.module_path.as_ref().cmp(right.module_path.as_ref()))
+            .then(left.file_path.cmp(&right.file_path))
+            .then(left.line_number.cmp(&right.line_number))
+    });
+    matches.dedup_by(|left, right| {
+        left.name == right.name
+            && left.module_path.as_ref() == right.module_path.as_ref()
+            && left.file_path == right.file_path
+            && left.line_number == right.line_number
+    });
+
+    if matches.len() == 1 {
+        matches.pop()
+    } else {
+        None
+    }
 }
 
 pub fn store_machine_struct(machine_info: &MachineInfo) {

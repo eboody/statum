@@ -8,13 +8,13 @@ error: Invalid transition return type for `ProcessMachine<Init>::decide`: expect
 
        Help:
          return `ProcessMachine<NextState>` directly, or wrap it in `Option<...>` / `Result<..., E>` and build the next state with `self.transition()` or `self.transition_with(...)`.
-  --> tests/ui/invalid_transition_conditional.rs:28:35
+  --> tests/ui/invalid_transition_conditional.rs:34:35
    |
-28 |     fn decide(self, event: u8) -> Decision {
+34 |     fn decide(self, event: u8) -> Decision {
    |                                   ^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_transition_conditional.rs:35:2
+  --> tests/ui/invalid_transition_conditional.rs:41:2
    |
-35 | }
+41 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_conditional.rs`

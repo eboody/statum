@@ -1,5 +1,5 @@
 error[E0599]: no method named `machines_builder` found for struct `Vec<Row>` in the current scope
-  --> tests/ui/invalid_legacy_machines_builder.rs:49:18
+  --> tests/ui/invalid_legacy_machines_builder.rs:55:18
    |
-49 |     let _ = rows.machines_builder().name("todo".to_string()).build();
+55 |     let _ = rows.machines_builder().name("todo".to_string()).build();
    |                  ^^^^^^^^^^^^^^^^ method not found in `Vec<Row>`

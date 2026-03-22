@@ -1,5 +1,5 @@
 error[E0425]: cannot find type `TaskMachineSuperState` in this scope
-  --> tests/ui/invalid_legacy_superstate.rs:46:17
+  --> tests/ui/invalid_legacy_superstate.rs:52:17
    |
-46 |     let _state: TaskMachineSuperState = Row { status: "draft" }
+52 |     let _state: TaskMachineSuperState = Row { status: "draft" }
    |                 ^^^^^^^^^^^^^^^^^^^^^ not found in this scope

@@ -9,13 +9,14 @@ use syn::{
     ItemImpl, LitStr, PathArguments, ReturnType, Type, TypePath,
 };
 
-use crate::machine::transition_support_module_ident;
-use crate::{EnumInfo, MachineInfo};
+use crate::machine::{to_shouty_snake_identifier, transition_slice_ident, transition_support_module_ident};
+use crate::{EnumInfo, MachineInfo, to_snake_case};
 
 /// Stores all metadata for a single transition method in an `impl` block
 #[allow(unused)]
 pub struct TransitionFn {
     pub name: Ident,
+    pub attrs: Vec<syn::Attribute>,
     pub has_receiver: bool,
     pub return_type: Option<Type>,
     pub return_type_span: Option<Span>,
@@ -43,6 +44,25 @@ impl TransitionFn {
 
         Ok(return_state)
     }
+
+    pub fn return_states(&self) -> Result<Vec<String>, TokenStream> {
+        let Some(return_type) = self.return_type.as_ref() else {
+            return Err(invalid_return_type_error(self, "missing return type"));
+        };
+        let machine_ident = format_ident!("{}", self.machine_name);
+        let return_states = collect_machine_and_states(return_type, machine_ident)
+            .into_iter()
+            .map(|(_, state)| state)
+            .collect::<Vec<_>>();
+        if return_states.is_empty() {
+            return Err(invalid_return_type_error(
+                self,
+                "expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`)",
+            ));
+        }
+
+        Ok(return_states)
+    }
 }
 
 /// Represents the entire `impl` block of our `transition` macro
@@ -55,6 +75,7 @@ pub struct TransitionImpl {
     /// The source state extracted from `target_type` (e.g. `Draft`)
     pub source_state: String,
     pub source_state_span: Span,
+    pub attrs: Vec<syn::Attribute>,
     /// All transition methods extracted from the `impl`
     pub functions: Vec<TransitionFn>,
 }
@@ -86,6 +107,7 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, Tok
         machine_span,
         source_state,
         source_state_span,
+        attrs: item_impl.attrs.clone(),
         functions,
     })
 }
@@ -136,6 +158,7 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str, source_state
 
     TransitionFn {
         name: method.sig.ident.clone(),
+        attrs: method.attrs.clone(),
         has_receiver,
         return_type,
         return_type_span,
@@ -174,7 +197,7 @@ pub fn validate_transition_functions(
         .get_variant_from_name(&tr_impl.source_state)
         .is_none()
     {
-            return Some(invalid_transition_state_error(
+        return Some(invalid_transition_state_error(
             tr_impl.source_state_span,
             &tr_impl.machine_name,
             &tr_impl.source_state,
@@ -206,6 +229,21 @@ pub fn validate_transition_functions(
                 &state_enum_info,
             ));
         }
+
+        let return_states = match func.return_states() {
+            Ok(states) => states,
+            Err(err) => return Some(err),
+        };
+        for return_state in return_states {
+            if state_enum_info.get_variant_from_name(&return_state).is_none() {
+                return Some(invalid_transition_method_state_error(
+                    func,
+                    &tr_impl.machine_name,
+                    &return_state,
+                    &state_enum_info,
+                ));
+            }
+        }
     }
 
     None
@@ -215,12 +253,17 @@ pub fn generate_transition_impl(
     input: &ItemImpl,
     tr_impl: &TransitionImpl,
     target_machine_info: &MachineInfo,
-    _module_path: &str,
 ) -> TokenStream {
     let target_type = &tr_impl.target_type;
     let machine_target_ident = format_ident!("{}", target_machine_info.name);
     let transition_support_module_ident = transition_support_module_ident(target_machine_info);
     let field_names = target_machine_info.field_names();
+    let machine_module_ident = format_ident!("{}", to_snake_case(&target_machine_info.name));
+    let transition_slice_ident = transition_slice_ident(
+        &target_machine_info.name,
+        target_machine_info.file_path.as_deref(),
+        target_machine_info.line_number,
+    );
     let state_enum_info = match target_machine_info.get_matching_state_enum() {
         Ok(enum_info) => enum_info,
         Err(err) => return err,
@@ -329,9 +372,61 @@ pub fn generate_transition_impl(
             Err(err) => err,
         })
     });
+    let transition_registrations = tr_impl.functions.iter().enumerate().map(|(idx, function)| {
+        let return_states = match function.return_states() {
+            Ok(states) => states,
+            Err(err) => return err,
+        };
+        let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
+        let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
+        let targets_ident = format_ident!("__STATUM_TRANSITION_TARGETS_{}", unique_suffix);
+        let registration_ident = format_ident!("__STATUM_TRANSITION_SITE_{}", unique_suffix);
+        let id_const_ident = format_ident!(
+            "{}",
+            to_shouty_snake_identifier(&function.name.to_string())
+        );
+        let method_name = LitStr::new(&function.name.to_string(), function.name.span());
+        let source_state_ident = format_ident!("{}", tr_impl.source_state);
+        let target_state_idents = return_states.iter().map(|state| {
+            let state_ident = format_ident!("{}", state);
+            quote! { #machine_module_ident::StateId::#state_ident }
+        });
+        let target_state_count = return_states.len();
+        let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
+
+        quote! {
+            #(#cfg_attrs)*
+            static #targets_ident: [#machine_module_ident::StateId; #target_state_count] = [
+                #(#target_state_idents),*
+            ];
+
+            #(#cfg_attrs)*
+            static #token_ident: statum::__private::TransitionToken =
+                statum::__private::TransitionToken::new();
+
+            #(#cfg_attrs)*
+            #[statum::__private::linkme::distributed_slice(#machine_module_ident::#transition_slice_ident)]
+            #[linkme(crate = statum::__private::linkme)]
+            static #registration_ident:
+                statum::TransitionDescriptor<#machine_module_ident::StateId, #machine_module_ident::TransitionId> =
+                statum::TransitionDescriptor {
+                    id: #machine_module_ident::TransitionId::from_token(&#token_ident),
+                    method_name: #method_name,
+                    from: #machine_module_ident::StateId::#source_state_ident,
+                    to: &#targets_ident,
+                };
+
+            #(#cfg_attrs)*
+            impl #target_type {
+                pub const #id_const_ident: #machine_module_ident::TransitionId =
+                    #machine_module_ident::TransitionId::from_token(&#token_ident);
+            }
+        }
+    });
 
     quote! {
         #(#transition_impls)*
+        #(#transition_registrations)*
         #input
     }
 }
@@ -456,6 +551,60 @@ fn machine_return_signature(machine_name: &str) -> String {
     format!("{machine_name}<NextState>")
 }
 
+fn propagated_cfg_attrs(
+    impl_attrs: &[syn::Attribute],
+    function_attrs: &[syn::Attribute],
+) -> Vec<syn::Attribute> {
+    impl_attrs
+        .iter()
+        .chain(function_attrs.iter())
+        .filter(|attr| {
+            attr.path()
+                .get_ident()
+                .is_some_and(|ident| ident == "cfg" || ident == "cfg_attr")
+        })
+        .cloned()
+        .collect()
+}
+
+fn transition_site_unique_suffix(
+    tr_impl: &TransitionImpl,
+    function: &TransitionFn,
+    index: usize,
+) -> String {
+    let attrs = function
+        .attrs
+        .iter()
+        .map(|attr| attr.to_token_stream().to_string())
+        .collect::<Vec<_>>()
+        .join("|");
+    let return_type = function
+        .return_type
+        .as_ref()
+        .map(|ty| ty.to_token_stream().to_string())
+        .unwrap_or_default();
+    let signature = format!(
+        "{}::{}::{}::{}::{}::{}",
+        tr_impl.machine_name,
+        tr_impl.source_state,
+        function.name,
+        index,
+        attrs,
+        return_type,
+    );
+
+    format!("{:016x}", stable_hash(&signature))
+}
+
+fn stable_hash(input: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
 fn compile_error_at(span: Span, message: &str) -> TokenStream {
     let message = LitStr::new(message, span);
     quote::quote_spanned! { span =>
@@ -474,48 +623,118 @@ fn compile_error_at(span: Span, message: &str) -> TokenStream {
 ///
 /// Walks through wrapper types (`Option`/`Result`) via their first generic argument.
 pub fn parse_machine_and_state(ty: &Type, target_machine_ident: Ident) -> Option<(String, String)> {
+    parse_primary_machine_and_state(ty, target_machine_ident)
+}
+
+/// Attempts to parse the primary visible next state from `ty`.
+///
+/// This preserves the existing transition helper behavior by following the first
+/// generic argument through supported wrappers until it reaches `Machine<State>`.
+pub fn parse_primary_machine_and_state(
+    ty: &Type,
+    target_machine_ident: Ident,
+) -> Option<(String, String)> {
     let mut current = ty;
     loop {
-        match classify_return_wrapper(current, &target_machine_ident)? {
-            ReturnWrapper::Machine(segment) => {
+        match classify_primary_return_wrapper(current, &target_machine_ident)? {
+            PrimaryReturnWrapper::Machine(segment) => {
                 return extract_machine_generic(&segment.arguments, target_machine_ident)
                     .map(|(machine, state, _)| (machine, state));
             }
-            ReturnWrapper::Option(inner) | ReturnWrapper::Result(inner) => {
+            PrimaryReturnWrapper::Option(inner) | PrimaryReturnWrapper::Result(inner) => {
                 current = inner;
             }
         }
     }
 }
 
-enum ReturnWrapper<'a> {
+/// Collects every `Machine<State>` target mentioned in supported wrapper trees.
+///
+/// This is used for exact branch introspection and intentionally inspects both
+/// sides of `Result<T, E>` while still ignoring arbitrary custom decision enums.
+pub fn collect_machine_and_states(
+    ty: &Type,
+    target_machine_ident: Ident,
+) -> Vec<(String, String)> {
+    let mut targets = Vec::new();
+    collect_machine_targets(ty, &target_machine_ident, &mut targets);
+    targets
+}
+
+enum PrimaryReturnWrapper<'a> {
     Machine(&'a syn::PathSegment),
     Option(&'a Type),
     Result(&'a Type),
 }
 
-fn classify_return_wrapper<'a>(
+fn classify_primary_return_wrapper<'a>(
     ty: &'a Type,
     target_machine_ident: &Ident,
-) -> Option<ReturnWrapper<'a>> {
+) -> Option<PrimaryReturnWrapper<'a>> {
     let Type::Path(TypePath { path, .. }) = ty else {
         return None;
     };
     let segment = path.segments.last()?;
 
     if &segment.ident == target_machine_ident {
-        return Some(ReturnWrapper::Machine(segment));
+        return Some(PrimaryReturnWrapper::Machine(segment));
     }
 
     if segment.ident == "Option" {
-        return extract_first_generic_type_ref(&segment.arguments).map(ReturnWrapper::Option);
+        return extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Option);
     }
 
     if segment.ident == "Result" {
-        return extract_first_generic_type_ref(&segment.arguments).map(ReturnWrapper::Result);
+        return extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Result);
     }
 
     None
+}
+
+fn collect_machine_targets(
+    ty: &Type,
+    target_machine_ident: &Ident,
+    targets: &mut Vec<(String, String)>,
+) {
+    let Type::Path(TypePath { path, .. }) = ty else {
+        return;
+    };
+    let Some(segment) = path.segments.last() else {
+        return;
+    };
+
+    if &segment.ident == target_machine_ident {
+        if let Some((machine, state, _)) =
+            extract_machine_generic(&segment.arguments, target_machine_ident.clone())
+        {
+            push_unique_target(targets, machine, state);
+        }
+        return;
+    }
+
+    if segment.ident == "Option" {
+        if let Some(inner) = extract_first_generic_type_ref(&segment.arguments) {
+            collect_machine_targets(inner, target_machine_ident, targets);
+        }
+        return;
+    }
+
+    if segment.ident == "Result"
+        && let Some(types) = extract_generic_type_refs(&segment.arguments)
+    {
+        for inner in types {
+            collect_machine_targets(inner, target_machine_ident, targets);
+        }
+    }
+}
+
+fn push_unique_target(targets: &mut Vec<(String, String)>, machine: String, state: String) {
+    if !targets
+        .iter()
+        .any(|(existing_machine, existing_state)| existing_machine == &machine && existing_state == &state)
+    {
+        targets.push((machine, state));
+    }
 }
 
 fn extract_machine_generic(
@@ -558,17 +777,88 @@ fn same_named_machine_candidates_elsewhere(
 }
 
 fn extract_first_generic_type_ref(args: &PathArguments) -> Option<&Type> {
+    extract_generic_type_refs(args)?.into_iter().next()
+}
+
+fn extract_generic_type_refs(args: &PathArguments) -> Option<Vec<&Type>> {
     let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
         args: generic_args, ..
     }) = args
     else {
         return None;
     };
-    if generic_args.is_empty() {
+
+    let types = generic_args
+        .iter()
+        .filter_map(|arg| match arg {
+            GenericArgument::Type(ty) => Some(ty),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if types.is_empty() {
         return None;
     }
-    let GenericArgument::Type(ty) = &generic_args[0] else {
-        return None;
-    };
-    Some(ty)
+
+    Some(types)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_machine_and_states, parse_machine_and_state, parse_primary_machine_and_state};
+    use quote::format_ident;
+    use syn::Type;
+
+    fn parse_type(source: &str) -> Type {
+        syn::parse_str(source).expect("valid type")
+    }
+
+    #[test]
+    fn primary_parser_preserves_existing_result_behavior() {
+        let ty = parse_type("Result<Machine<Accepted>, Machine<Rejected>>");
+
+        assert_eq!(
+            parse_primary_machine_and_state(&ty, format_ident!("Machine")),
+            Some(("Machine".to_owned(), "Accepted".to_owned()))
+        );
+        assert_eq!(
+            parse_machine_and_state(&ty, format_ident!("Machine")),
+            Some(("Machine".to_owned(), "Accepted".to_owned()))
+        );
+    }
+
+    #[test]
+    fn target_collector_reads_both_result_branches() {
+        let ty = parse_type("Result<Machine<Accepted>, Machine<Rejected>>");
+
+        assert_eq!(
+            collect_machine_and_states(&ty, format_ident!("Machine")),
+            vec![
+                ("Machine".to_owned(), "Accepted".to_owned()),
+                ("Machine".to_owned(), "Rejected".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn target_collector_reads_nested_wrappers() {
+        let ty = parse_type("Option<core::result::Result<Machine<Accepted>, Machine<Rejected>>>");
+
+        assert_eq!(
+            collect_machine_and_states(&ty, format_ident!("Machine")),
+            vec![
+                ("Machine".to_owned(), "Accepted".to_owned()),
+                ("Machine".to_owned(), "Rejected".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn target_collector_ignores_non_machine_payloads_and_dedups() {
+        let ty = parse_type("Result<Option<Machine<Accepted>>, Result<Machine<Accepted>, Error>>");
+
+        assert_eq!(
+            collect_machine_and_states(&ty, format_ident!("Machine")),
+            vec![("Machine".to_owned(), "Accepted".to_owned())]
+        );
+    }
 }

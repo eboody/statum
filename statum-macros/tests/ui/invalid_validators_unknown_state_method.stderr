@@ -1,14 +1,14 @@
 error: Error: `#[validators(TaskMachine)]` on `impl DbRow` defines methods that do not match any variant in `TaskState`: is_archived.
        Valid validator methods for `TaskMachine` are: is_draft, is_done.
-  --> tests/ui/invalid_validators_unknown_state_method.rs:23:1
+  --> tests/ui/invalid_validators_unknown_state_method.rs:29:1
    |
-23 | #[validators(TaskMachine)]
+29 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_validators_unknown_state_method.rs:42:2
+  --> tests/ui/invalid_validators_unknown_state_method.rs:48:2
    |
-42 | }
+48 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_unknown_state_method.rs`

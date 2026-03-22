@@ -1,11 +1,7 @@
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fs;
 use std::rc::Rc;
 
-use crate::cache::{file_fingerprint, fresh_cached_value, CachedValue};
-
-/// Cached enum entry extracted from a parsed source file.
+/// Enum entry extracted from a parsed source file.
 #[derive(Clone)]
 pub struct EnumEntry {
     pub item: syn::ItemEnum,
@@ -13,7 +9,7 @@ pub struct EnumEntry {
     pub attrs: Vec<String>,
 }
 
-/// Cached struct entry extracted from a parsed source file.
+/// Struct entry extracted from a parsed source file.
 #[derive(Clone)]
 pub struct StructEntry {
     pub item: syn::ItemStruct,
@@ -21,61 +17,55 @@ pub struct StructEntry {
     pub attrs: Vec<String>,
 }
 
-/// Parsed/cached representation of enums and structs in one source file.
+/// Impl entry extracted from a parsed source file.
+#[derive(Clone)]
+pub struct ImplEntry {
+    pub item: syn::ItemImpl,
+    pub line_number: usize,
+    pub attrs: Vec<String>,
+}
+
+/// Parsed representation of enums, structs, and impls in one source file.
 #[derive(Clone, Default)]
 pub struct FileAnalysis {
     pub enums: Vec<EnumEntry>,
     pub structs: Vec<StructEntry>,
+    pub impls: Vec<ImplEntry>,
 }
 
-type CachedFileAnalysis = CachedValue<Rc<FileAnalysis>>;
-
-thread_local! {
-    static FILE_ANALYSIS_CACHE: RefCell<HashMap<String, CachedFileAnalysis>> = RefCell::new(HashMap::new());
-}
-
-/// Returns cached analysis for `file_path`, parsing and caching on first access.
+/// Returns parsed analysis for `file_path`.
 pub fn get_file_analysis(file_path: &str) -> Option<Rc<FileAnalysis>> {
-    let fingerprint = file_fingerprint(file_path)?;
-
-    if let Some(cached) = fresh_cached_value(
-        FILE_ANALYSIS_CACHE.with(|cache| cache.borrow().get(file_path).cloned()),
-        fingerprint,
-    ) {
-        return Some(cached);
-    }
-
-    let analysis = Rc::new(build_file_analysis(file_path)?);
-    FILE_ANALYSIS_CACHE.with(|cache| {
-        cache.borrow_mut().insert(
-            file_path.to_string(),
-            CachedFileAnalysis::new(fingerprint, analysis.clone()),
-        );
-    });
-    Some(analysis)
+    Some(Rc::new(build_file_analysis(file_path)?))
 }
 
 fn build_file_analysis(file_path: &str) -> Option<FileAnalysis> {
     let contents = fs::read_to_string(file_path).ok()?;
     let parsed = syn::parse_file(&contents).ok()?;
     let mut analysis = FileAnalysis::default();
+    let mut next_search_line = 1usize;
 
-    collect_items(parsed.items, &contents, &mut analysis)?;
+    collect_items(
+        parsed.items,
+        &contents,
+        &mut analysis,
+        &mut next_search_line,
+    )?;
 
     Some(analysis)
 }
 
-fn collect_items(items: Vec<syn::Item>, contents: &str, analysis: &mut FileAnalysis) -> Option<()> {
+fn collect_items(
+    items: Vec<syn::Item>,
+    contents: &str,
+    analysis: &mut FileAnalysis,
+    next_search_line: &mut usize,
+) -> Option<()> {
     for item in items {
         match item {
             syn::Item::Enum(item_enum) => {
                 let name = item_enum.ident.to_string();
-                let span_line = item_enum.ident.span().start().line;
-                let line_number = if span_line > 0 {
-                    span_line
-                } else {
-                    find_item_line(contents, "enum", &name)?
-                };
+                let line_number = find_item_line_from(contents, "enum", &name, *next_search_line)?;
+                *next_search_line = line_number.saturating_add(1);
                 analysis.enums.push(EnumEntry {
                     attrs: attribute_names(&item_enum.attrs),
                     item: item_enum,
@@ -84,21 +74,27 @@ fn collect_items(items: Vec<syn::Item>, contents: &str, analysis: &mut FileAnaly
             }
             syn::Item::Struct(item_struct) => {
                 let name = item_struct.ident.to_string();
-                let span_line = item_struct.ident.span().start().line;
-                let line_number = if span_line > 0 {
-                    span_line
-                } else {
-                    find_item_line(contents, "struct", &name)?
-                };
+                let line_number =
+                    find_item_line_from(contents, "struct", &name, *next_search_line)?;
+                *next_search_line = line_number.saturating_add(1);
                 analysis.structs.push(StructEntry {
                     attrs: attribute_names(&item_struct.attrs),
                     item: item_struct,
                     line_number,
                 });
             }
+            syn::Item::Impl(item_impl) => {
+                let line_number = find_impl_line_from(contents, *next_search_line)?;
+                *next_search_line = line_number.saturating_add(1);
+                analysis.impls.push(ImplEntry {
+                    attrs: attribute_names(&item_impl.attrs),
+                    item: item_impl,
+                    line_number,
+                });
+            }
             syn::Item::Mod(item_mod) => {
                 if let Some((_, nested_items)) = item_mod.content {
-                    collect_items(nested_items, contents, analysis)?;
+                    collect_items(nested_items, contents, analysis, next_search_line)?;
                 }
             }
             _ => {}
@@ -124,10 +120,34 @@ fn attribute_names(attrs: &[syn::Attribute]) -> Vec<String> {
     names
 }
 
-fn find_item_line(contents: &str, kind: &str, item_name: &str) -> Option<usize> {
-    for (idx, line) in contents.lines().enumerate() {
+fn find_item_line_from(
+    contents: &str,
+    kind: &str,
+    item_name: &str,
+    start_line: usize,
+) -> Option<usize> {
+    for (idx, line) in contents
+        .lines()
+        .enumerate()
+        .skip(start_line.saturating_sub(1))
+    {
         let trimmed = line.trim_start();
         if line_starts_item_decl(trimmed, kind, item_name) {
+            return Some(idx + 1);
+        }
+    }
+
+    None
+}
+
+fn find_impl_line_from(contents: &str, start_line: usize) -> Option<usize> {
+    for (idx, line) in contents
+        .lines()
+        .enumerate()
+        .skip(start_line.saturating_sub(1))
+    {
+        let trimmed = line.trim_start();
+        if line_starts_impl_decl(trimmed) {
             return Some(idx + 1);
         }
     }
@@ -164,6 +184,27 @@ fn line_starts_item_decl(line: &str, kind: &str, item_name: &str) -> bool {
         .chars()
         .next()
         .is_none_or(|ch| ch.is_whitespace() || matches!(ch, '<' | '{' | '(' | ';' | ':'))
+}
+
+fn line_starts_impl_decl(line: &str) -> bool {
+    let mut rest = line.trim_start();
+
+    if let Some(after_default) = consume_keyword(rest, "default") {
+        rest = after_default.trim_start();
+    }
+
+    if let Some(after_unsafe) = consume_keyword(rest, "unsafe") {
+        rest = after_unsafe.trim_start();
+    }
+
+    let Some(after_impl) = consume_keyword(rest, "impl") else {
+        return false;
+    };
+
+    after_impl
+        .chars()
+        .next()
+        .is_none_or(|ch| ch.is_whitespace() || matches!(ch, '<'))
 }
 
 fn consume_keyword<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
@@ -231,20 +272,28 @@ pub(crate) enum MyState {
 pub struct MyMachine<MyState> {
     id: u64,
 }
+
+impl MyMachine<MyState> {
+    fn run(self) -> Self {
+        self
+    }
+}
 "#,
         );
 
         let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
         assert_eq!(analysis.enums.len(), 1);
         assert_eq!(analysis.structs.len(), 1);
+        assert_eq!(analysis.impls.len(), 1);
         assert!(analysis.enums[0].line_number > 0);
         assert!(analysis.structs[0].line_number > 0);
+        assert!(analysis.impls[0].line_number > 0);
 
         let _ = fs::remove_file(path);
     }
 
     #[test]
-    fn file_analysis_cache_is_scoped_per_file_path() {
+    fn get_file_analysis_reparses_each_request() {
         let path_a = write_temp_rust_file(
             r#"
 #[state]
@@ -262,7 +311,7 @@ enum StateB { B }
         let a_second = get_file_analysis(path_a.to_str().expect("a path")).expect("analysis a2");
         let b_first = get_file_analysis(path_b.to_str().expect("b path")).expect("analysis b1");
 
-        assert!(Rc::ptr_eq(&a_first, &a_second));
+        assert!(!Rc::ptr_eq(&a_first, &a_second));
         assert!(!Rc::ptr_eq(&a_first, &b_first));
 
         let _ = fs::remove_file(path_a);
@@ -290,6 +339,7 @@ mod workflow {
         let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
         assert_eq!(analysis.enums.len(), 1);
         assert_eq!(analysis.structs.len(), 1);
+        assert_eq!(analysis.impls.len(), 0);
         assert_eq!(analysis.enums[0].item.ident, "TaskState");
         assert_eq!(analysis.structs[0].item.ident, "TaskMachine");
 
@@ -297,25 +347,65 @@ mod workflow {
     }
 
     #[test]
-    fn analysis_cache_reuses_when_file_unchanged() {
+    fn collects_impl_blocks_from_inline_modules() {
         let path = write_temp_rust_file(
             r#"
-#[state]
-enum ReuseState { A }
+mod workflow {
+    #[transition]
+    impl Machine<State> {
+        fn run(self) -> Self {
+            self
+        }
+    }
+}
 "#,
         );
-        let path_str = path.to_str().expect("path").to_string();
 
-        let first = get_file_analysis(&path_str).expect("analysis first");
-        let second = get_file_analysis(&path_str).expect("analysis second");
-
-        assert!(Rc::ptr_eq(&first, &second));
+        let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
+        assert_eq!(analysis.impls.len(), 1);
+        assert!(analysis.impls[0]
+            .attrs
+            .iter()
+            .any(|attr| attr == "transition"));
+        assert!(analysis.impls[0].line_number > 0);
 
         let _ = fs::remove_file(path);
     }
 
     #[test]
-    fn analysis_cache_invalidates_when_file_changes() {
+    fn collects_distinct_line_numbers_for_same_named_structs_in_sibling_modules() {
+        let path = write_temp_rust_file(
+            r#"
+mod shared {
+    pub struct Payload {
+        id: u64,
+    }
+}
+
+mod workflow {
+    pub struct Payload {
+        id: u64,
+    }
+}
+"#,
+        );
+
+        let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
+        let payload_lines = analysis
+            .structs
+            .iter()
+            .filter(|entry| entry.item.ident == "Payload")
+            .map(|entry| entry.line_number)
+            .collect::<Vec<_>>();
+
+        assert_eq!(payload_lines.len(), 2);
+        assert_ne!(payload_lines[0], payload_lines[1]);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn get_file_analysis_reflects_file_changes() {
         let path = write_temp_rust_file(
             r#"
 #[state]
@@ -364,5 +454,14 @@ enum ChangedState { A, B }
             "struct",
             "Machine",
         ));
+
+        assert!(line_starts_impl_decl("impl Machine<State> {"));
+        assert!(line_starts_impl_decl(
+            "unsafe impl Trait for Machine<State> {"
+        ));
+        assert!(line_starts_impl_decl(
+            "default impl Trait for Machine<State> {"
+        ));
+        assert!(!line_starts_impl_decl("simple_machine_impl();"));
     }
 }

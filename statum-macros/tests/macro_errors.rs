@@ -32,6 +32,7 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_transition_plain_struct_machine_name.rs");
     t.compile_fail("tests/ui/invalid_transition_unknown_source_state.rs");
     t.compile_fail("tests/ui/invalid_transition_unknown_return_state.rs");
+    t.compile_fail("tests/ui/invalid_transition_unknown_secondary_return_state.rs");
     t.compile_fail("tests/ui/invalid_transition_map_undeclared_edge.rs");
     t.compile_fail("tests/ui/invalid_legacy_transition_helper_trait.rs");
 }
@@ -71,6 +72,8 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_transition_nested_wrappers.rs");
     t.pass("tests/ui/valid_into_machines_by.rs");
     t.pass("tests/ui/valid_transition_map.rs");
+    t.pass("tests/ui/valid_machine_introspection.rs");
+    t.pass("tests/ui/valid_machine_introspection_cfg_dedup.rs");
     t.pass("tests/ui/valid_visibility_and_reconstruction.rs");
     t.pass("tests/ui/valid_multiple_machines_same_module.rs");
     t.pass("tests/ui/valid_machine_field_aliases.rs");

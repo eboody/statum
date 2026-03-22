@@ -1,11 +1,11 @@
 error: Error: `#[transition]` method `Machine<A>::to_b` must take `self` or `mut self` as its receiver.
-  --> tests/ui/invalid_transition_not_method.rs:19:5
+  --> tests/ui/invalid_transition_not_method.rs:25:5
    |
-19 |     fn to_b(_value: u64) -> Machine<B> {
+25 |     fn to_b(_value: u64) -> Machine<B> {
    |     ^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_transition_not_method.rs:22:2
+  --> tests/ui/invalid_transition_not_method.rs:28:2
    |
-22 | }
+28 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_not_method.rs`

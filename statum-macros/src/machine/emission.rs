@@ -1,13 +1,13 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{GenericParam, Generics, Ident, ItemStruct, Visibility};
+use syn::{GenericParam, Generics, Ident, ItemStruct, LitStr, Visibility};
 
 use crate::state::{ParsedEnumInfo, ParsedVariantInfo};
 use crate::{EnumInfo, to_snake_case};
 
 use super::metadata::{ParsedMachineInfo, field_type_alias_name, is_rust_analyzer};
 use super::registry::get_machine_map;
-use super::MachineInfo;
+use super::{MachineInfo, transition_slice_ident};
 
 pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> proc_macro2::TokenStream {
     let map_guard = match get_machine_map().read() {
@@ -77,6 +77,12 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
         Ok(surface) => surface,
         Err(err) => return err,
     };
+    let introspection_impls = generate_machine_introspection_impls(
+        machine_info,
+        &state_enum,
+        &parsed_state,
+        &machine_ident,
+    );
 
     quote! {
         #transition_support
@@ -84,6 +90,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
         #struct_def
         #builder_methods
         #machine_state_surface
+        #introspection_impls
     }
 }
 
@@ -256,7 +263,8 @@ fn generate_machine_state_surface(
             }
         }
     });
-    let module_ident = format_ident!("{}", to_snake_case(&machine_info.name));
+    let module_ident = machine_state_module_ident(machine_info);
+    let introspection_surface = generate_machine_module_introspection(machine_info, parsed_state);
 
     Ok(quote! {
         #vis mod #module_ident {
@@ -284,6 +292,8 @@ fn generate_machine_state_surface(
             impl SomeState {
                 #(#is_methods)*
             }
+
+            #introspection_surface
         }
     })
 }
@@ -312,6 +322,136 @@ pub(crate) fn transition_support_module_ident(machine_info: &MachineInfo) -> Ide
         "__statum_{}_transition",
         to_snake_case(&machine_info.name)
     )
+}
+
+fn machine_state_module_ident(machine_info: &MachineInfo) -> Ident {
+    format_ident!("{}", to_snake_case(&machine_info.name))
+}
+
+fn generate_machine_module_introspection(
+    machine_info: &MachineInfo,
+    parsed_state: &ParsedEnumInfo,
+) -> TokenStream {
+    let transition_slice_ident = transition_slice_ident(
+        &machine_info.name,
+        machine_info.file_path.as_deref(),
+        machine_info.line_number,
+    );
+    let state_id_variants = parsed_state.variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        quote! { #variant_ident }
+    });
+    let state_descriptors = parsed_state.variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        let rust_name = LitStr::new(&variant.name, Span::call_site());
+        let has_data = variant.data_type.is_some();
+        quote! {
+            statum::StateDescriptor {
+                id: StateId::#variant_ident,
+                rust_name: #rust_name,
+                has_data: #has_data,
+            }
+        }
+    });
+    let module_path = LitStr::new(machine_info.module_path.as_ref(), Span::call_site());
+    let rust_type_path = LitStr::new(
+        &format!("{}::{}", machine_info.module_path, machine_info.name),
+        Span::call_site(),
+    );
+    let state_count = parsed_state.variants.len();
+
+    quote! {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+        pub enum StateId {
+            #(#state_id_variants),*
+        }
+
+        #[derive(Clone, Copy)]
+        pub struct TransitionId(&'static statum::__private::TransitionToken);
+
+        impl TransitionId {
+            #[doc(hidden)]
+            pub const fn from_token(token: &'static statum::__private::TransitionToken) -> Self {
+                Self(token)
+            }
+        }
+
+        impl core::fmt::Debug for TransitionId {
+            fn fmt(
+                &self,
+                formatter: &mut core::fmt::Formatter<'_>,
+            ) -> core::result::Result<(), core::fmt::Error> {
+                formatter.write_str("TransitionId(..)")
+            }
+        }
+
+        impl core::cmp::PartialEq for TransitionId {
+            fn eq(&self, other: &Self) -> bool {
+                core::ptr::eq(self.0, other.0)
+            }
+        }
+
+        impl core::cmp::Eq for TransitionId {}
+
+        impl core::hash::Hash for TransitionId {
+            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+                let ptr = core::ptr::from_ref(self.0) as usize;
+                <usize as core::hash::Hash>::hash(&ptr, state);
+            }
+        }
+
+        static __STATUM_STATES: [statum::StateDescriptor<StateId>; #state_count] = [
+            #(#state_descriptors),*
+        ];
+
+        #[doc(hidden)]
+        #[statum::__private::linkme::distributed_slice]
+        #[linkme(crate = statum::__private::linkme)]
+        pub static #transition_slice_ident: [statum::TransitionDescriptor<StateId, TransitionId>];
+
+        fn __statum_transitions() -> &'static [statum::TransitionDescriptor<StateId, TransitionId>] {
+            &#transition_slice_ident
+        }
+
+        pub static GRAPH: statum::MachineGraph<StateId, TransitionId> = statum::MachineGraph {
+            machine: statum::MachineDescriptor {
+                module_path: #module_path,
+                rust_type_path: #rust_type_path,
+            },
+            states: &__STATUM_STATES,
+            transitions: statum::TransitionInventory::new(__statum_transitions),
+        };
+    }
+}
+
+fn generate_machine_introspection_impls(
+    machine_info: &MachineInfo,
+    state_enum: &EnumInfo,
+    parsed_state: &ParsedEnumInfo,
+    machine_ident: &Ident,
+) -> TokenStream {
+    let module_ident = machine_state_module_ident(machine_info);
+    let state_trait_ident = state_enum.get_trait_name();
+    let state_identity_impls = parsed_state.variants.iter().map(|variant| {
+        let variant_ident = format_ident!("{}", variant.name);
+        quote! {
+            impl statum::MachineStateIdentity for #machine_ident<#variant_ident> {
+                const STATE_ID: Self::StateId = #module_ident::StateId::#variant_ident;
+            }
+        }
+    });
+
+    quote! {
+        impl<S: #state_trait_ident> statum::MachineIntrospection for #machine_ident<S> {
+            type StateId = #module_ident::StateId;
+            type TransitionId = #module_ident::TransitionId;
+
+            const GRAPH: &'static statum::MachineGraph<Self::StateId, Self::TransitionId> =
+                &#module_ident::GRAPH;
+        }
+
+        #(#state_identity_impls)*
+    }
 }
 
 fn generate_struct_definition(
