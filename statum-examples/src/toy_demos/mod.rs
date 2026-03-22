@@ -27,3 +27,5 @@ pub mod example_13_review_flow;
 pub mod example_14_batch_machine_fields;
 #[path = "15-transition-map.rs"]
 pub mod example_15_transition_map;
+#[path = "16-machine-introspection.rs"]
+pub mod example_16_machine_introspection;

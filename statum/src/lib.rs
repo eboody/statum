@@ -153,6 +153,79 @@
 //! let _ = light.switch_off(); // no such method on Light<Off>
 //! ```
 //!
+//! # Machine Introspection
+//!
+//! Statum can also expose the static machine structure as typed metadata.
+//! This is useful when the same machine definition should drive:
+//!
+//! - CLI explainers
+//! - generated docs
+//! - graph exports
+//! - exact transition assertions in tests
+//! - runtime replay or debug tooling
+//!
+//! The important detail is that the graph is exact at the transition-site
+//! level. A consumer can ask for the legal targets of one specific method on
+//! one specific source state.
+//!
+//! ```rust
+//! use statum::{
+//!     machine, state, transition, MachineIntrospection, MachineTransitionRecorder,
+//! };
+//!
+//! #[state]
+//! enum FlowState {
+//!     Fetched,
+//!     Accepted,
+//!     Rejected,
+//! }
+//!
+//! #[machine]
+//! struct Flow<FlowState> {}
+//!
+//! #[transition]
+//! impl Flow<Fetched> {
+//!     fn validate(self, accept: bool) -> Result<Flow<Accepted>, Flow<Rejected>> {
+//!         if accept {
+//!             Ok(self.accept())
+//!         } else {
+//!             Err(self.reject())
+//!         }
+//!     }
+//!
+//!     fn accept(self) -> Flow<Accepted> {
+//!         self.transition()
+//!     }
+//!
+//!     fn reject(self) -> Flow<Rejected> {
+//!         self.transition()
+//!     }
+//! }
+//!
+//! fn main() {
+//!     let graph = <Flow<Fetched> as MachineIntrospection>::GRAPH;
+//!     let validate = graph
+//!         .transition_from_method(flow::StateId::Fetched, "validate")
+//!         .unwrap();
+//!
+//!     assert_eq!(
+//!         graph.legal_targets(validate.id).unwrap(),
+//!         &[flow::StateId::Accepted, flow::StateId::Rejected]
+//!     );
+//!
+//!     let event = <Flow<Fetched> as MachineTransitionRecorder>::try_record_transition_to::<
+//!         Flow<Accepted>,
+//!     >(Flow::<Fetched>::VALIDATE)
+//!     .unwrap();
+//!
+//!     assert_eq!(event.chosen, flow::StateId::Accepted);
+//! }
+//! ```
+//!
+//! Transition ids are exact and typed, but they are exposed as generated
+//! associated consts on the source-state machine type, such as
+//! `Flow::<Fetched>::VALIDATE`.
+//!
 //! # Where To Look Next
 //!
 //! - Start with [`state`](macro@state), [`machine`](macro@machine), and
