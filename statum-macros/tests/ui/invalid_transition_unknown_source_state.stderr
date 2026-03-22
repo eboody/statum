@@ -1,7 +1,7 @@
 error: Error: source state `Ghost` in `#[transition]` target `Machine<Ghost>` is not a variant of `#[state]` enum `State`.
        Valid states for `Machine` are: A, B.
        Help: change the impl target to `impl Machine<ValidState>` using one of those variants.
-  --> tests/ui/invalid_transition_unknown_source_state.rs:24:14
+  --> tests/ui/invalid_transition_unknown_source_state.rs:26:14
    |
-24 | impl Machine<Ghost> {
+26 | impl Machine<Ghost> {
    |              ^^^^^

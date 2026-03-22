@@ -8,29 +8,34 @@ pub use statum_core::{
     TransitionDescriptor, UnitState,
 };
 
-
 use statum_macros::{machine, state, transition};
 
-
 #[state]
-enum WorkflowState {
+enum FlowState {
     Draft,
-    Done,
+    Accepted,
+    Rejected,
 }
 
 #[machine]
-struct WorkflowMachine<WorkflowState> {}
+struct Flow<FlowState> {}
 
 #[transition]
-impl WorkflowMachine<Draft> {
-    fn finish(self) -> WorkflowMachine<Done> {
+impl Flow<Draft> {
+    #[cfg(any())]
+    fn validate(self) -> Flow<Accepted> {
+        self.transition()
+    }
+
+    #[cfg(not(any()))]
+    fn validate(self) -> Flow<Rejected> {
         self.transition()
     }
 }
 
-fn assert_transition_trait<T: WorkflowMachineTransitionTo<Done>>(_machine: T) {}
-
 fn main() {
-    let machine = WorkflowMachine::<Draft>::builder().build();
-    assert_transition_trait(machine);
+    let graph = <Flow<Draft> as statum::MachineIntrospection>::GRAPH;
+    let _validate = graph
+        .transition_from_method(flow::StateId::Draft, "validate")
+        .expect("validate");
 }

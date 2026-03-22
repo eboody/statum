@@ -1,4 +1,5 @@
 use macro_registry::callsite::{current_source_info, module_path_for_line};
+use macro_registry::registry::SourceContext;
 use macro_registry::query;
 use macro_registry::registry;
 use proc_macro2::{Span, TokenStream};
@@ -7,7 +8,8 @@ use syn::{Generics, Ident, ItemStruct, LitStr, Type, Visibility};
 
 use crate::{
     EnumInfo, ModulePath, StateModulePath, ensure_state_enum_loaded,
-    ensure_state_enum_loaded_by_name, extract_derives,
+    ensure_state_enum_loaded_by_name, ensure_state_enum_loaded_by_name_from_source,
+    ensure_state_enum_loaded_from_source, extract_derives,
 };
 
 pub type MachinePath = ModulePath;
@@ -19,6 +21,7 @@ pub struct MachineInfo {
     pub derives: Vec<String>,
     pub fields: Vec<MachineField>,
     pub module_path: MachinePath,
+    pub line_number: usize,
     pub generics: String,
     pub state_generic_name: Option<String>,
     pub file_path: Option<String>,
@@ -65,10 +68,24 @@ impl MachineInfo {
 
     pub fn get_matching_state_enum(&self) -> Result<EnumInfo, TokenStream> {
         let state_path: StateModulePath = self.module_path.clone().into();
+        // Included transition fragments must resolve the state enum against the
+        // machine's source file, not the include file's pseudo-module context.
+        let source = self
+            .file_path
+            .as_ref()
+            .map(|file_path| SourceContext::new(file_path.clone(), self.line_number));
         let state_enum = if let Some(expected_name) = self.state_generic_name.as_deref() {
-            ensure_state_enum_loaded_by_name(&state_path, expected_name)
+            source
+                .as_ref()
+                .and_then(|source| {
+                    ensure_state_enum_loaded_by_name_from_source(&state_path, expected_name, source)
+                })
+                .or_else(|| ensure_state_enum_loaded_by_name(&state_path, expected_name))
         } else {
-            ensure_state_enum_loaded(&state_path)
+            source
+                .as_ref()
+                .and_then(|source| ensure_state_enum_loaded_from_source(&state_path, source))
+                .or_else(|| ensure_state_enum_loaded(&state_path))
         };
         let Some(state_enum) = state_enum else {
             return Err(missing_state_enum_error(self));
@@ -109,6 +126,7 @@ impl MachineInfo {
                 .flatten()
                 .collect(),
             module_path,
+            line_number,
             fields,
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
@@ -121,6 +139,7 @@ impl MachineInfo {
             return None;
         }
 
+        let line_number = current_source_info().map(|(_, line)| line).unwrap_or_default();
         Some(Self {
             name: item.ident.to_string(),
             vis: item.vis.to_token_stream().to_string(),
@@ -132,6 +151,7 @@ impl MachineInfo {
                 .collect(),
             fields: collect_fields(item),
             module_path: module_path.clone(),
+            line_number,
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
             file_path: current_source_info().map(|(path, _)| path),
@@ -228,7 +248,10 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
                 machine_info.name
             )
         });
-    let available = available_state_candidates_in_module(machine_info.module_path.as_ref());
+    let available = available_state_candidates_in_module(
+        machine_info.file_path.as_deref(),
+        machine_info.module_path.as_ref(),
+    );
     let available_line = if available.is_empty() {
         "No `#[state]` enums were found in that module.".to_string()
     } else {
@@ -238,7 +261,13 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
         )
     };
     let elsewhere_line = expected
-        .and_then(|name| same_named_state_candidates_elsewhere(name, machine_info.module_path.as_ref()))
+        .and_then(|name| {
+            same_named_state_candidates_elsewhere(
+                machine_info.file_path.as_deref(),
+                name,
+                machine_info.module_path.as_ref(),
+            )
+        })
         .map(|candidates| {
             format!(
                 "Same-named `#[state]` enums elsewhere in this file: {}.",
@@ -247,7 +276,7 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
         })
         .unwrap_or_else(|| "No same-named `#[state]` enums were found in other modules of this file.".to_string());
     let missing_attr_line = expected.and_then(|name| {
-        plain_enum_line_in_module(machine_info.module_path.as_ref(), name).map(|line| {
+        plain_enum_line_in_module(machine_info.file_path.as_deref(), machine_info.module_path.as_ref(), name).map(|line| {
             format!("An enum named `{name}` exists on line {line}, but it is not annotated with `#[state]`.")
         })
     });
@@ -265,15 +294,27 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
     quote! { compile_error!(#message); }
 }
 
-fn available_state_candidates_in_module(module_path: &str) -> Vec<query::ItemCandidate> {
-    let Some((file_path, _)) = current_source_info() else {
+fn available_state_candidates_in_module(
+    file_path: Option<&str>,
+    module_path: &str,
+) -> Vec<query::ItemCandidate> {
+    let Some(file_path) = file_path
+        .map(str::to_owned)
+        .or_else(|| current_source_info().map(|(path, _)| path))
+    else {
         return Vec::new();
     };
     query::candidates_in_module(&file_path, module_path, query::ItemKind::Enum, Some("state"))
 }
 
-fn plain_enum_line_in_module(module_path: &str, enum_name: &str) -> Option<usize> {
-    let (file_path, _) = current_source_info()?;
+fn plain_enum_line_in_module(
+    file_path: Option<&str>,
+    module_path: &str,
+    enum_name: &str,
+) -> Option<usize> {
+    let file_path = file_path
+        .map(str::to_owned)
+        .or_else(|| current_source_info().map(|(path, _)| path))?;
     query::plain_item_line_in_module(
         &file_path,
         module_path,
@@ -284,10 +325,13 @@ fn plain_enum_line_in_module(module_path: &str, enum_name: &str) -> Option<usize
 }
 
 fn same_named_state_candidates_elsewhere(
+    file_path: Option<&str>,
     enum_name: &str,
     module_path: &str,
 ) -> Option<Vec<query::ItemCandidate>> {
-    let (file_path, _) = current_source_info()?;
+    let file_path = file_path
+        .map(str::to_owned)
+        .or_else(|| current_source_info().map(|(path, _)| path))?;
     let candidates = query::same_named_candidates_elsewhere(
         &file_path,
         module_path,

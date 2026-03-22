@@ -10,6 +10,50 @@ pub trait MachineIntrospection {
     const GRAPH: &'static MachineGraph<Self::StateId, Self::TransitionId>;
 }
 
+/// Runtime accessor for transition descriptors that may be supplied by a
+/// distributed registration surface.
+#[derive(Clone, Copy)]
+pub struct TransitionInventory<S: 'static, T: 'static> {
+    get: fn() -> &'static [TransitionDescriptor<S, T>],
+}
+
+impl<S, T> TransitionInventory<S, T> {
+    /// Creates a transition inventory from a `'static` getter.
+    pub const fn new(get: fn() -> &'static [TransitionDescriptor<S, T>]) -> Self {
+        Self { get }
+    }
+
+    /// Returns the transition descriptors as a slice.
+    pub fn as_slice(&self) -> &'static [TransitionDescriptor<S, T>] {
+        (self.get)()
+    }
+}
+
+impl<S, T> core::ops::Deref for TransitionInventory<S, T> {
+    type Target = [TransitionDescriptor<S, T>];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl<S, T> core::fmt::Debug for TransitionInventory<S, T> {
+    fn fmt(
+        &self,
+        formatter: &mut core::fmt::Formatter<'_>,
+    ) -> core::result::Result<(), core::fmt::Error> {
+        formatter.debug_tuple("TransitionInventory").finish()
+    }
+}
+
+impl<S, T> core::cmp::PartialEq for TransitionInventory<S, T> {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self.as_slice(), other.as_slice())
+    }
+}
+
+impl<S, T> core::cmp::Eq for TransitionInventory<S, T> {}
+
 /// Identity for one concrete machine state.
 pub trait MachineStateIdentity: MachineIntrospection {
     /// The state id for this concrete machine instantiation.
@@ -204,7 +248,7 @@ pub struct MachineGraph<S: 'static, T: 'static> {
     /// All states known to the machine.
     pub states: &'static [StateDescriptor<S>],
     /// All transition sites known to the machine.
-    pub transitions: &'static [TransitionDescriptor<S, T>],
+    pub transitions: TransitionInventory<S, T>,
 }
 
 impl<S, T> MachineGraph<S, T>
@@ -300,7 +344,7 @@ mod tests {
         MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
         MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
         RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
-        TransitionPresentation,
+        TransitionInventory, TransitionPresentation,
     };
     use core::marker::PhantomData;
 
@@ -311,14 +355,47 @@ mod tests {
         Published,
     }
 
-    #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-    enum TransitionId {
-        SubmitFromDraft,
-        PublishFromReview,
+    #[derive(Clone, Copy)]
+    struct TransitionId(&'static crate::__private::TransitionToken);
+
+    impl TransitionId {
+        const fn from_token(token: &'static crate::__private::TransitionToken) -> Self {
+            Self(token)
+        }
+    }
+
+    impl core::fmt::Debug for TransitionId {
+        fn fmt(
+            &self,
+            formatter: &mut core::fmt::Formatter<'_>,
+        ) -> core::result::Result<(), core::fmt::Error> {
+            formatter.write_str("TransitionId(..)")
+        }
+    }
+
+    impl core::cmp::PartialEq for TransitionId {
+        fn eq(&self, other: &Self) -> bool {
+            core::ptr::eq(self.0, other.0)
+        }
+    }
+
+    impl core::cmp::Eq for TransitionId {}
+
+    impl core::hash::Hash for TransitionId {
+        fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+            let ptr = core::ptr::from_ref(self.0) as usize;
+            <usize as core::hash::Hash>::hash(&ptr, state);
+        }
     }
 
     static REVIEW_TARGETS: [StateId; 1] = [StateId::Review];
     static PUBLISH_TARGETS: [StateId; 1] = [StateId::Published];
+    static SUBMIT_FROM_DRAFT_TOKEN: crate::__private::TransitionToken =
+        crate::__private::TransitionToken::new();
+    static PUBLISH_FROM_REVIEW_TOKEN: crate::__private::TransitionToken =
+        crate::__private::TransitionToken::new();
+    const SUBMIT_FROM_DRAFT: TransitionId = TransitionId::from_token(&SUBMIT_FROM_DRAFT_TOKEN);
+    const PUBLISH_FROM_REVIEW: TransitionId = TransitionId::from_token(&PUBLISH_FROM_REVIEW_TOKEN);
     static STATES: [StateDescriptor<StateId>; 3] = [
         StateDescriptor {
             id: StateId::Draft,
@@ -338,13 +415,13 @@ mod tests {
     ];
     static TRANSITIONS: [TransitionDescriptor<StateId, TransitionId>; 2] = [
         TransitionDescriptor {
-            id: TransitionId::SubmitFromDraft,
+            id: SUBMIT_FROM_DRAFT,
             method_name: "submit",
             from: StateId::Draft,
             to: &REVIEW_TARGETS,
         },
         TransitionDescriptor {
-            id: TransitionId::PublishFromReview,
+            id: PUBLISH_FROM_REVIEW,
             method_name: "publish",
             from: StateId::Review,
             to: &PUBLISH_TARGETS,
@@ -425,7 +502,7 @@ mod tests {
         ],
         transitions: &[
             TransitionPresentation {
-                id: TransitionId::SubmitFromDraft,
+                id: SUBMIT_FROM_DRAFT,
                 label: Some("Submit"),
                 description: Some("Move work into review."),
                 metadata: TransitionMeta {
@@ -434,7 +511,7 @@ mod tests {
                 },
             },
             TransitionPresentation {
-                id: TransitionId::PublishFromReview,
+                id: PUBLISH_FROM_REVIEW,
                 label: Some("Publish"),
                 description: Some("Complete the workflow."),
                 metadata: TransitionMeta {
@@ -455,7 +532,7 @@ mod tests {
                 rust_type_path: "workflow::Machine",
             },
             states: &STATES,
-            transitions: &TRANSITIONS,
+            transitions: TransitionInventory::new(|| &TRANSITIONS),
         };
     }
 
@@ -479,7 +556,7 @@ mod tests {
                 rust_type_path: "workflow::Machine",
             },
             states: &STATES,
-            transitions: &TRANSITIONS,
+            transitions: TransitionInventory::new(|| &TRANSITIONS),
         };
 
         assert_eq!(
@@ -488,7 +565,7 @@ mod tests {
         );
         assert_eq!(
             graph
-                .transition(TransitionId::PublishFromReview)
+                .transition(PUBLISH_FROM_REVIEW)
                 .map(|transition| transition.method_name),
             Some("publish")
         );
@@ -496,10 +573,10 @@ mod tests {
             graph
                 .transition_from_method(StateId::Draft, "submit")
                 .map(|transition| transition.id),
-            Some(TransitionId::SubmitFromDraft)
+            Some(SUBMIT_FROM_DRAFT)
         );
         assert_eq!(
-            graph.legal_targets(TransitionId::SubmitFromDraft),
+            graph.legal_targets(SUBMIT_FROM_DRAFT),
             Some(REVIEW_TARGETS.as_slice())
         );
         assert_eq!(graph.transitions_from(StateId::Draft).count(), 1);
@@ -509,7 +586,7 @@ mod tests {
     #[test]
     fn runtime_transition_recording_joins_back_to_static_graph() {
         let event = Workflow::<DraftMarker>::try_record_transition_to::<Workflow<ReviewMarker>>(
-            TransitionId::SubmitFromDraft,
+            SUBMIT_FROM_DRAFT,
         )
         .expect("valid runtime transition");
 
@@ -521,7 +598,7 @@ mod tests {
                     rust_type_path: "workflow::Machine",
                 },
                 StateId::Draft,
-                TransitionId::SubmitFromDraft,
+                SUBMIT_FROM_DRAFT,
                 StateId::Review,
             )
         );
@@ -544,13 +621,13 @@ mod tests {
     #[test]
     fn runtime_transition_recording_rejects_illegal_target_or_site() {
         assert!(Workflow::<DraftMarker>::try_record_transition(
-            TransitionId::PublishFromReview,
+            PUBLISH_FROM_REVIEW,
             StateId::Published,
         )
         .is_none());
         assert!(
             Workflow::<ReviewMarker>::try_record_transition_to::<Workflow<PublishedMarker>>(
-                TransitionId::SubmitFromDraft,
+                SUBMIT_FROM_DRAFT,
             )
             .is_none()
         );
@@ -559,7 +636,7 @@ mod tests {
     #[test]
     fn presentation_queries_join_with_runtime_transitions() {
         let event = Workflow::<DraftMarker>::try_record_transition_to::<Workflow<ReviewMarker>>(
-            TransitionId::SubmitFromDraft,
+            SUBMIT_FROM_DRAFT,
         )
         .expect("valid runtime transition");
 
@@ -576,7 +653,7 @@ mod tests {
         assert_eq!(
             PRESENTATION.transition(event.transition),
             Some(&TransitionPresentation {
-                id: TransitionId::SubmitFromDraft,
+                id: SUBMIT_FROM_DRAFT,
                 label: Some("Submit"),
                 description: Some("Move work into review."),
                 metadata: TransitionMeta {

@@ -120,7 +120,12 @@ fn attribute_names(attrs: &[syn::Attribute]) -> Vec<String> {
     names
 }
 
-fn find_item_line_from(contents: &str, kind: &str, item_name: &str, start_line: usize) -> Option<usize> {
+fn find_item_line_from(
+    contents: &str,
+    kind: &str,
+    item_name: &str,
+    start_line: usize,
+) -> Option<usize> {
     for (idx, line) in contents
         .lines()
         .enumerate()

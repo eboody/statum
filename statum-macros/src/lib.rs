@@ -27,7 +27,7 @@ moddef::moddef!(
 
 pub(crate) use syntax::{ItemTarget, ModulePath, extract_derives};
 
-use crate::{MachinePath, ensure_machine_loaded_by_name};
+use crate::{MachinePath, ensure_machine_loaded_by_name, unique_loaded_machine_elsewhere};
 use macro_registry::callsite::current_module_path_opt;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
@@ -123,7 +123,10 @@ pub fn transition(
     };
 
     let machine_path: MachinePath = module_path.clone().into();
-    let machine_info_owned = ensure_machine_loaded_by_name(&machine_path, &tr_impl.machine_name);
+    // `include!` gives the transition macro the included file as its source context,
+    // so exact module lookup can miss the already-loaded parent machine.
+    let machine_info_owned = ensure_machine_loaded_by_name(&machine_path, &tr_impl.machine_name)
+        .or_else(|| unique_loaded_machine_elsewhere(&tr_impl.machine_name));
     let machine_info = match machine_info_owned.as_ref() {
         Some(info) => info,
         None => {
@@ -141,7 +144,7 @@ pub fn transition(
     }
 
     // -- Step 3: Generate new code
-    let expanded = generate_transition_impl(&input, &tr_impl, machine_info, &module_path);
+    let expanded = generate_transition_impl(&input, &tr_impl, machine_info);
 
     // Combine expanded code with the original `impl` if needed
     // or simply return the expanded code

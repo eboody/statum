@@ -12,11 +12,27 @@ mod introspection;
 
 pub mod projection;
 
+#[doc(hidden)]
+pub mod __private {
+    pub use linkme;
+
+    #[derive(Debug)]
+    pub struct TransitionToken {
+        _private: u8,
+    }
+
+    impl TransitionToken {
+        pub const fn new() -> Self {
+            Self { _private: 0 }
+        }
+    }
+}
+
 pub use introspection::{
     MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
     MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
     RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
-    TransitionPresentation,
+    TransitionInventory, TransitionPresentation,
 };
 
 /// A generated state marker type.

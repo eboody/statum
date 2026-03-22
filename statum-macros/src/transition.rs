@@ -9,13 +9,14 @@ use syn::{
     ItemImpl, LitStr, PathArguments, ReturnType, Type, TypePath,
 };
 
-use crate::machine::transition_support_module_ident;
-use crate::{EnumInfo, MachineInfo};
+use crate::machine::{to_shouty_snake_identifier, transition_slice_ident, transition_support_module_ident};
+use crate::{EnumInfo, MachineInfo, to_snake_case};
 
 /// Stores all metadata for a single transition method in an `impl` block
 #[allow(unused)]
 pub struct TransitionFn {
     pub name: Ident,
+    pub attrs: Vec<syn::Attribute>,
     pub has_receiver: bool,
     pub return_type: Option<Type>,
     pub return_type_span: Option<Span>,
@@ -74,6 +75,7 @@ pub struct TransitionImpl {
     /// The source state extracted from `target_type` (e.g. `Draft`)
     pub source_state: String,
     pub source_state_span: Span,
+    pub attrs: Vec<syn::Attribute>,
     /// All transition methods extracted from the `impl`
     pub functions: Vec<TransitionFn>,
 }
@@ -105,6 +107,7 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, Tok
         machine_span,
         source_state,
         source_state_span,
+        attrs: item_impl.attrs.clone(),
         functions,
     })
 }
@@ -155,6 +158,7 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str, source_state
 
     TransitionFn {
         name: method.sig.ident.clone(),
+        attrs: method.attrs.clone(),
         has_receiver,
         return_type,
         return_type_span,
@@ -249,12 +253,17 @@ pub fn generate_transition_impl(
     input: &ItemImpl,
     tr_impl: &TransitionImpl,
     target_machine_info: &MachineInfo,
-    _module_path: &str,
 ) -> TokenStream {
     let target_type = &tr_impl.target_type;
     let machine_target_ident = format_ident!("{}", target_machine_info.name);
     let transition_support_module_ident = transition_support_module_ident(target_machine_info);
     let field_names = target_machine_info.field_names();
+    let machine_module_ident = format_ident!("{}", to_snake_case(&target_machine_info.name));
+    let transition_slice_ident = transition_slice_ident(
+        &target_machine_info.name,
+        target_machine_info.file_path.as_deref(),
+        target_machine_info.line_number,
+    );
     let state_enum_info = match target_machine_info.get_matching_state_enum() {
         Ok(enum_info) => enum_info,
         Err(err) => return err,
@@ -363,9 +372,61 @@ pub fn generate_transition_impl(
             Err(err) => err,
         })
     });
+    let transition_registrations = tr_impl.functions.iter().enumerate().filter_map(|(idx, function)| {
+        let return_states = match function.return_states() {
+            Ok(states) => states,
+            Err(err) => return Some(err),
+        };
+        let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
+        let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
+        let targets_ident = format_ident!("__STATUM_TRANSITION_TARGETS_{}", unique_suffix);
+        let registration_ident = format_ident!("__STATUM_TRANSITION_SITE_{}", unique_suffix);
+        let id_const_ident = format_ident!(
+            "{}",
+            to_shouty_snake_identifier(&function.name.to_string())
+        );
+        let method_name = LitStr::new(&function.name.to_string(), function.name.span());
+        let source_state_ident = format_ident!("{}", tr_impl.source_state);
+        let target_state_idents = return_states.iter().map(|state| {
+            let state_ident = format_ident!("{}", state);
+            quote! { #machine_module_ident::StateId::#state_ident }
+        });
+        let target_state_count = return_states.len();
+        let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
+
+        Some(quote! {
+            #(#cfg_attrs)*
+            static #targets_ident: [#machine_module_ident::StateId; #target_state_count] = [
+                #(#target_state_idents),*
+            ];
+
+            #(#cfg_attrs)*
+            static #token_ident: statum::__private::TransitionToken =
+                statum::__private::TransitionToken::new();
+
+            #(#cfg_attrs)*
+            #[statum::__private::linkme::distributed_slice(#machine_module_ident::#transition_slice_ident)]
+            #[linkme(crate = statum::__private::linkme)]
+            static #registration_ident:
+                statum::TransitionDescriptor<#machine_module_ident::StateId, #machine_module_ident::TransitionId> =
+                statum::TransitionDescriptor {
+                    id: #machine_module_ident::TransitionId::from_token(&#token_ident),
+                    method_name: #method_name,
+                    from: #machine_module_ident::StateId::#source_state_ident,
+                    to: &#targets_ident,
+                };
+
+            #(#cfg_attrs)*
+            impl #target_type {
+                pub const #id_const_ident: #machine_module_ident::TransitionId =
+                    #machine_module_ident::TransitionId::from_token(&#token_ident);
+            }
+        })
+    });
 
     quote! {
         #(#transition_impls)*
+        #(#transition_registrations)*
         #input
     }
 }
@@ -488,6 +549,60 @@ Help:\n  return `{machine_name}<NextState>` directly, or wrap it in `Option<...>
 
 fn machine_return_signature(machine_name: &str) -> String {
     format!("{machine_name}<NextState>")
+}
+
+fn propagated_cfg_attrs(
+    impl_attrs: &[syn::Attribute],
+    function_attrs: &[syn::Attribute],
+) -> Vec<syn::Attribute> {
+    impl_attrs
+        .iter()
+        .chain(function_attrs.iter())
+        .filter(|attr| {
+            attr.path()
+                .get_ident()
+                .is_some_and(|ident| ident == "cfg" || ident == "cfg_attr")
+        })
+        .cloned()
+        .collect()
+}
+
+fn transition_site_unique_suffix(
+    tr_impl: &TransitionImpl,
+    function: &TransitionFn,
+    index: usize,
+) -> String {
+    let attrs = function
+        .attrs
+        .iter()
+        .map(|attr| attr.to_token_stream().to_string())
+        .collect::<Vec<_>>()
+        .join("|");
+    let return_type = function
+        .return_type
+        .as_ref()
+        .map(|ty| ty.to_token_stream().to_string())
+        .unwrap_or_default();
+    let signature = format!(
+        "{}::{}::{}::{}::{}::{}",
+        tr_impl.machine_name,
+        tr_impl.source_state,
+        function.name,
+        index,
+        attrs,
+        return_type,
+    );
+
+    format!("{:016x}", stable_hash(&signature))
+}
+
+fn stable_hash(input: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn compile_error_at(span: Span, message: &str) -> TokenStream {

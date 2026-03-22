@@ -166,7 +166,7 @@ static FLOW_PRESENTATION: MachinePresentation<
     ],
     transitions: &[
         TransitionPresentation {
-            id: flow::TransitionId::SubmitFromDraft,
+            id: Flow::<Draft>::SUBMIT,
             label: Some("Submit"),
             description: Some("Move draft work into review."),
             metadata: FlowTransitionMeta {
@@ -175,7 +175,7 @@ static FLOW_PRESENTATION: MachinePresentation<
             },
         },
         TransitionPresentation {
-            id: flow::TransitionId::MaybeDecideFromReview,
+            id: Flow::<Review>::MAYBE_DECIDE,
             label: Some("Validate"),
             description: Some("Choose whether the reviewed work is accepted or rejected."),
             metadata: FlowTransitionMeta {
@@ -184,7 +184,7 @@ static FLOW_PRESENTATION: MachinePresentation<
             },
         },
         TransitionPresentation {
-            id: flow::TransitionId::AcceptFromReview,
+            id: Flow::<Review>::ACCEPT,
             label: Some("Accept"),
             description: Some("Approve the work."),
             metadata: FlowTransitionMeta {
@@ -193,7 +193,7 @@ static FLOW_PRESENTATION: MachinePresentation<
             },
         },
         TransitionPresentation {
-            id: flow::TransitionId::RejectFromReview,
+            id: Flow::<Review>::REJECT,
             label: Some("Reject"),
             description: Some("Reject the work."),
             metadata: FlowTransitionMeta {
@@ -202,7 +202,7 @@ static FLOW_PRESENTATION: MachinePresentation<
             },
         },
         TransitionPresentation {
-            id: flow::TransitionId::ExplainFromAccepted,
+            id: Flow::<Accepted>::EXPLAIN,
             label: Some("Publish"),
             description: Some("Move accepted work into published."),
             metadata: FlowTransitionMeta {
@@ -211,7 +211,7 @@ static FLOW_PRESENTATION: MachinePresentation<
             },
         },
         TransitionPresentation {
-            id: flow::TransitionId::ExplainFromRejected,
+            id: Flow::<Rejected>::EXPLAIN,
             label: Some("Rework"),
             description: Some("Loop rejected work back to draft."),
             metadata: FlowTransitionMeta {
@@ -237,12 +237,14 @@ fn graph_exposes_exact_transition_sites() {
         .transitions_from(flow::StateId::Review)
         .map(|transition| transition.method_name)
         .collect::<Vec<_>>();
-    assert_eq!(review_methods, vec!["maybe_decide", "accept", "reject"]);
+    let mut review_methods = review_methods;
+    review_methods.sort_unstable();
+    assert_eq!(review_methods, vec!["accept", "maybe_decide", "reject"]);
 
     let maybe_decide = graph
         .transition_from_method(flow::StateId::Review, "maybe_decide")
         .unwrap();
-    assert_eq!(maybe_decide.id, flow::TransitionId::MaybeDecideFromReview);
+    assert_eq!(maybe_decide.id, Flow::<Review>::MAYBE_DECIDE);
     assert_eq!(
         graph.legal_targets(maybe_decide.id).unwrap(),
         &[flow::StateId::Accepted, flow::StateId::Rejected]
@@ -251,11 +253,11 @@ fn graph_exposes_exact_transition_sites() {
     let accepted_explain = graph
         .transition_from_method(flow::StateId::Accepted, "explain")
         .unwrap();
-    assert_eq!(accepted_explain.id, flow::TransitionId::ExplainFromAccepted);
+    assert_eq!(accepted_explain.id, Flow::<Accepted>::EXPLAIN);
     let rejected_explain = graph
         .transition_from_method(flow::StateId::Rejected, "explain")
         .unwrap();
-    assert_eq!(rejected_explain.id, flow::TransitionId::ExplainFromRejected);
+    assert_eq!(rejected_explain.id, Flow::<Rejected>::EXPLAIN);
     assert_eq!(graph.transitions_named("explain").count(), 2);
 }
 
@@ -265,16 +267,14 @@ fn graph_collection_is_scoped_per_machine() {
     let beta_graph = <BetaMachine<Draft> as MachineIntrospection>::GRAPH;
 
     let alpha_finish = alpha_graph
-        .transition(alpha_machine::TransitionId::FinishFromDraft)
+        .transition(AlphaMachine::<Draft>::FINISH)
         .unwrap();
     assert_eq!(
         alpha_graph.legal_targets(alpha_finish.id).unwrap(),
         &[alpha_machine::StateId::Published]
     );
 
-    let beta_finish = beta_graph
-        .transition(beta_machine::TransitionId::FinishFromDraft)
-        .unwrap();
+    let beta_finish = beta_graph.transition(BetaMachine::<Draft>::FINISH).unwrap();
     assert_eq!(
         beta_graph.legal_targets(beta_finish.id).unwrap(),
         &[beta_machine::StateId::Rejected]
@@ -283,10 +283,9 @@ fn graph_collection_is_scoped_per_machine() {
 
 #[test]
 fn runtime_transition_recording_joins_to_static_metadata() {
-    let event = Flow::<Review>::try_record_transition_to::<Flow<Accepted>>(
-        flow::TransitionId::MaybeDecideFromReview,
-    )
-    .unwrap();
+    let event =
+        Flow::<Review>::try_record_transition_to::<Flow<Accepted>>(Flow::<Review>::MAYBE_DECIDE)
+            .unwrap();
     let graph = <Flow<Review> as MachineIntrospection>::GRAPH;
     let transition = graph.transition(event.transition).unwrap();
 
@@ -299,13 +298,12 @@ fn runtime_transition_recording_joins_to_static_metadata() {
 
 #[test]
 fn runtime_transition_recording_rejects_illegal_runtime_join() {
-    assert!(Flow::<Review>::try_record_transition(
-        flow::TransitionId::SubmitFromDraft,
-        flow::StateId::Accepted,
-    )
-    .is_none());
+    assert!(
+        Flow::<Review>::try_record_transition(Flow::<Draft>::SUBMIT, flow::StateId::Accepted,)
+            .is_none()
+    );
     assert!(Flow::<Review>::try_record_transition_to::<Flow<Published>>(
-        flow::TransitionId::MaybeDecideFromReview,
+        Flow::<Review>::MAYBE_DECIDE,
     )
     .is_none());
 }
@@ -313,10 +311,9 @@ fn runtime_transition_recording_rejects_illegal_runtime_join() {
 #[test]
 fn consumer_owned_presentation_metadata_joins_with_graph_and_runtime_event() {
     let graph = <Flow<Review> as MachineIntrospection>::GRAPH;
-    let event = Flow::<Review>::try_record_transition_to::<Flow<Accepted>>(
-        flow::TransitionId::MaybeDecideFromReview,
-    )
-    .unwrap();
+    let event =
+        Flow::<Review>::try_record_transition_to::<Flow<Accepted>>(Flow::<Review>::MAYBE_DECIDE)
+            .unwrap();
 
     assert_eq!(
         FLOW_PRESENTATION.machine,

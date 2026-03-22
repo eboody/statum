@@ -208,11 +208,39 @@ pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo>
     registry::ensure_loaded::<StateRegistryDomain>(&STATE_ENUMS, enum_path)
 }
 
+pub fn ensure_state_enum_loaded_from_source(
+    enum_path: &StateModulePath,
+    source: &registry::SourceContext,
+) -> Option<EnumInfo> {
+    registry::try_ensure_loaded_from_source::<StateRegistryDomain>(
+        &STATE_ENUMS,
+        registry::LookupMode::from_key(enum_path),
+        source,
+    )
+    .ok()
+    .map(|loaded| loaded.value)
+}
+
 pub fn ensure_state_enum_loaded_by_name(
     enum_path: &StateModulePath,
     enum_name: &str,
 ) -> Option<EnumInfo> {
     registry::ensure_loaded_by_name::<StateRegistryDomain>(&STATE_ENUMS, enum_path, enum_name)
+}
+
+pub fn ensure_state_enum_loaded_by_name_from_source(
+    enum_path: &StateModulePath,
+    enum_name: &str,
+    source: &registry::SourceContext,
+) -> Option<EnumInfo> {
+    registry::try_ensure_loaded_by_name_from_source::<StateRegistryDomain>(
+        &STATE_ENUMS,
+        registry::LookupMode::from_key(enum_path),
+        enum_name,
+        source,
+    )
+    .ok()
+    .map(|loaded| loaded.value)
 }
 impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {

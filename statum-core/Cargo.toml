@@ -1,4 +1,5 @@
 [dependencies]
+linkme = "0.3"
 
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]

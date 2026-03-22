@@ -8,13 +8,13 @@ error: Invalid transition return type for `Machine<A>::to_b`: expected return ty
 
        Help:
          return `Machine<NextState>` directly, or wrap it in `Option<...>` / `Result<..., E>` and build the next state with `self.transition()` or `self.transition_with(...)`.
-  --> tests/ui/invalid_transition_wrong_return.rs:23:22
+  --> tests/ui/invalid_transition_wrong_return.rs:25:22
    |
-23 |     fn to_b(self) -> u64 {
+25 |     fn to_b(self) -> u64 {
    |                      ^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_transition_wrong_return.rs:26:2
+  --> tests/ui/invalid_transition_wrong_return.rs:28:2
    |
-26 | }
+28 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_wrong_return.rs`

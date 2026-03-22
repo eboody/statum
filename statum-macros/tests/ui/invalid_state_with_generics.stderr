@@ -1,13 +1,13 @@
 error: Error: #[state] enum `GenericState` cannot declare generics.
        Fix: keep `GenericState` non-generic and move generic data into payload types.
        Found: `enum GenericState< 'a, T > { ... }`.
-  --> tests/ui/invalid_state_with_generics.rs:11:18
+  --> tests/ui/invalid_state_with_generics.rs:13:18
    |
-11 | enum GenericState<'a, T> {
+13 | enum GenericState<'a, T> {
    |                  ^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_state_with_generics.rs:14:2
+  --> tests/ui/invalid_state_with_generics.rs:16:2
    |
-14 | }
+16 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_with_generics.rs`

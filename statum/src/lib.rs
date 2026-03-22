@@ -162,6 +162,8 @@
 //! - The repository README and `docs/` directory contain longer guides and
 //!   showcase applications.
 
+#[doc(hidden)]
+pub use statum_core::__private;
 #[doc(inline)]
 pub use statum_core::projection;
 #[doc(inline)]
@@ -169,7 +171,8 @@ pub use statum_core::{
     CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, MachineDescriptor,
     MachineGraph, MachineIntrospection, MachinePresentation, MachinePresentationDescriptor,
     MachineStateIdentity, MachineTransitionRecorder, RecordedTransition, Result, StateDescriptor,
-    StateMarker, StatePresentation, TransitionDescriptor, TransitionPresentation, UnitState,
+    StateMarker, StatePresentation, TransitionDescriptor, TransitionInventory,
+    TransitionPresentation, UnitState,
 };
 
 /// Define the legal lifecycle phases for a machine.

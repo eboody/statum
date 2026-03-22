@@ -1,17 +1,17 @@
 error[E0405]: cannot find trait `StateVariant` in this scope
-  --> tests/ui/invalid_legacy_state_helper_traits.rs:19:28
+  --> tests/ui/invalid_legacy_state_helper_traits.rs:21:28
    |
-19 | fn assert_state_variant<T: StateVariant>() {}
+21 | fn assert_state_variant<T: StateVariant>() {}
    |                            ^^^^^^^^^^^^ not found in this scope
 
 error[E0405]: cannot find trait `RequiresStateData` in this scope
-  --> tests/ui/invalid_legacy_state_helper_traits.rs:21:34
+  --> tests/ui/invalid_legacy_state_helper_traits.rs:23:34
    |
-21 | fn assert_requires_state_data<T: RequiresStateData>() {}
+23 | fn assert_requires_state_data<T: RequiresStateData>() {}
    |                                  ^^^^^^^^^^^^^^^^^ not found in this scope
 
 error[E0405]: cannot find trait `DoesNotRequireStateData` in this scope
-  --> tests/ui/invalid_legacy_state_helper_traits.rs:23:42
+  --> tests/ui/invalid_legacy_state_helper_traits.rs:25:42
    |
-23 | fn assert_does_not_require_state_data<T: DoesNotRequireStateData>() {}
+25 | fn assert_does_not_require_state_data<T: DoesNotRequireStateData>() {}
    |                                          ^^^^^^^^^^^^^^^^^^^^^^^ not found in this scope

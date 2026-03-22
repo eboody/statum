@@ -1,12 +1,12 @@
 error: Error: #[machine] must be applied to a struct, but `NotAStruct` is an enum.
        Fix: declare `struct NotAStruct<State> { ... }` and apply `#[machine]` to that struct.
-  --> tests/ui/invalid_machine_not_struct.rs:13:6
+  --> tests/ui/invalid_machine_not_struct.rs:15:6
    |
-13 | enum NotAStruct {
+15 | enum NotAStruct {
    |      ^^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_machine_not_struct.rs:15:2
+  --> tests/ui/invalid_machine_not_struct.rs:17:2
    |
-15 | }
+17 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_not_struct.rs`

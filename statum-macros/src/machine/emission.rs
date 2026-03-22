@@ -1,15 +1,13 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use std::collections::HashSet;
 use syn::{GenericParam, Generics, Ident, ItemStruct, LitStr, Visibility};
 
 use crate::state::{ParsedEnumInfo, ParsedVariantInfo};
 use crate::{EnumInfo, to_snake_case};
 
-use super::introspection::TransitionSite;
 use super::metadata::{ParsedMachineInfo, field_type_alias_name, is_rust_analyzer};
 use super::registry::get_machine_map;
-use super::{MachineInfo, collect_transition_sites, to_pascal_case_identifier};
+use super::{MachineInfo, transition_slice_ident};
 
 pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> proc_macro2::TokenStream {
     let map_guard = match get_machine_map().read() {
@@ -46,25 +44,6 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
         Ok(parsed) => parsed,
         Err(err) => return err,
     };
-    let transition_sites = match collect_transition_sites(machine_info) {
-        Ok(sites) => sites,
-        Err(err) => return err,
-    };
-    let valid_state_names = parsed_state
-        .variants
-        .iter()
-        .map(|variant| variant.name.as_str())
-        .collect::<HashSet<_>>();
-    let transition_sites = transition_sites
-        .into_iter()
-        .filter(|site| {
-            valid_state_names.contains(site.source_state.as_str())
-                && site
-                    .target_states
-                    .iter()
-                    .all(|state| valid_state_names.contains(state.as_str()))
-        })
-        .collect::<Vec<_>>();
     let machine_ident = format_ident!("{}", machine_info.name);
     let generics = match parse_generics(&parsed_machine, &state_enum) {
         Ok(generics) => generics,
@@ -94,7 +73,6 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
         &parsed_machine,
         &parsed_state,
         &machine_ident,
-        &transition_sites,
     ) {
         Ok(surface) => surface,
         Err(err) => return err,
@@ -257,7 +235,6 @@ fn generate_machine_state_surface(
     parsed_machine: &ParsedMachineInfo,
     parsed_state: &ParsedEnumInfo,
     machine_ident: &Ident,
-    transition_sites: &[TransitionSite],
 ) -> Result<TokenStream, TokenStream> {
     let fields_struct_fields = parsed_machine.fields.iter().map(|field| {
         let field_ident = &field.ident;
@@ -287,8 +264,7 @@ fn generate_machine_state_surface(
         }
     });
     let module_ident = machine_state_module_ident(machine_info);
-    let introspection_surface =
-        generate_machine_module_introspection(machine_info, parsed_state, transition_sites);
+    let introspection_surface = generate_machine_module_introspection(machine_info, parsed_state);
 
     Ok(quote! {
         #vis mod #module_ident {
@@ -355,13 +331,16 @@ fn machine_state_module_ident(machine_info: &MachineInfo) -> Ident {
 fn generate_machine_module_introspection(
     machine_info: &MachineInfo,
     parsed_state: &ParsedEnumInfo,
-    transition_sites: &[TransitionSite],
 ) -> TokenStream {
+    let transition_slice_ident = transition_slice_ident(
+        &machine_info.name,
+        machine_info.file_path.as_deref(),
+        machine_info.line_number,
+    );
     let state_id_variants = parsed_state.variants.iter().map(|variant| {
         let variant_ident = format_ident!("{}", variant.name);
         quote! { #variant_ident }
     });
-    let transition_id_variants = transition_sites.iter().map(transition_site_id_ident);
     let state_descriptors = parsed_state.variants.iter().map(|variant| {
         let variant_ident = format_ident!("{}", variant.name);
         let rust_name = LitStr::new(&variant.name, Span::call_site());
@@ -374,38 +353,12 @@ fn generate_machine_module_introspection(
             }
         }
     });
-    let transition_target_arrays = transition_sites.iter().enumerate().map(|(idx, site)| {
-        let targets_ident = transition_target_array_ident(idx);
-        let target_states = site.target_states.iter().map(|state| {
-            let state_ident = format_ident!("{}", state);
-            quote! { StateId::#state_ident }
-        });
-        let target_count = site.target_states.len();
-        quote! {
-            static #targets_ident: [StateId; #target_count] = [#(#target_states),*];
-        }
-    });
-    let transition_descriptors = transition_sites.iter().enumerate().map(|(idx, site)| {
-        let transition_id_ident = transition_site_id_ident(site);
-        let method_name = LitStr::new(&site.method_name, Span::call_site());
-        let source_state_ident = format_ident!("{}", site.source_state);
-        let targets_ident = transition_target_array_ident(idx);
-        quote! {
-            statum::TransitionDescriptor {
-                id: TransitionId::#transition_id_ident,
-                method_name: #method_name,
-                from: StateId::#source_state_ident,
-                to: &#targets_ident,
-            }
-        }
-    });
     let module_path = LitStr::new(machine_info.module_path.as_ref(), Span::call_site());
     let rust_type_path = LitStr::new(
         &format!("{}::{}", machine_info.module_path, machine_info.name),
         Span::call_site(),
     );
     let state_count = parsed_state.variants.len();
-    let transition_count = transition_sites.len();
 
     quote! {
         #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -413,20 +366,52 @@ fn generate_machine_module_introspection(
             #(#state_id_variants),*
         }
 
-        #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
-        pub enum TransitionId {
-            #(#transition_id_variants),*
+        #[derive(Clone, Copy)]
+        pub struct TransitionId(&'static statum::__private::TransitionToken);
+
+        impl TransitionId {
+            #[doc(hidden)]
+            pub const fn from_token(token: &'static statum::__private::TransitionToken) -> Self {
+                Self(token)
+            }
+        }
+
+        impl core::fmt::Debug for TransitionId {
+            fn fmt(
+                &self,
+                formatter: &mut core::fmt::Formatter<'_>,
+            ) -> core::result::Result<(), core::fmt::Error> {
+                formatter.write_str("TransitionId(..)")
+            }
+        }
+
+        impl core::cmp::PartialEq for TransitionId {
+            fn eq(&self, other: &Self) -> bool {
+                core::ptr::eq(self.0, other.0)
+            }
+        }
+
+        impl core::cmp::Eq for TransitionId {}
+
+        impl core::hash::Hash for TransitionId {
+            fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+                let ptr = core::ptr::from_ref(self.0) as usize;
+                <usize as core::hash::Hash>::hash(&ptr, state);
+            }
         }
 
         static __STATUM_STATES: [statum::StateDescriptor<StateId>; #state_count] = [
             #(#state_descriptors),*
         ];
 
-        #(#transition_target_arrays)*
+        #[doc(hidden)]
+        #[statum::__private::linkme::distributed_slice]
+        #[linkme(crate = statum::__private::linkme)]
+        pub static #transition_slice_ident: [statum::TransitionDescriptor<StateId, TransitionId>];
 
-        static __STATUM_TRANSITIONS: [statum::TransitionDescriptor<StateId, TransitionId>; #transition_count] = [
-            #(#transition_descriptors),*
-        ];
+        fn __statum_transitions() -> &'static [statum::TransitionDescriptor<StateId, TransitionId>] {
+            &#transition_slice_ident
+        }
 
         pub static GRAPH: statum::MachineGraph<StateId, TransitionId> = statum::MachineGraph {
             machine: statum::MachineDescriptor {
@@ -434,7 +419,7 @@ fn generate_machine_module_introspection(
                 rust_type_path: #rust_type_path,
             },
             states: &__STATUM_STATES,
-            transitions: &__STATUM_TRANSITIONS,
+            transitions: statum::TransitionInventory::new(__statum_transitions),
         };
     }
 }
@@ -467,18 +452,6 @@ fn generate_machine_introspection_impls(
 
         #(#state_identity_impls)*
     }
-}
-
-fn transition_target_array_ident(idx: usize) -> Ident {
-    format_ident!("__STATUM_TRANSITION_TARGETS_{}", idx)
-}
-
-fn transition_site_id_ident(site: &TransitionSite) -> Ident {
-    format_ident!(
-        "{}From{}",
-        to_pascal_case_identifier(&site.method_name),
-        to_pascal_case_identifier(&site.source_state),
-    )
 }
 
 fn generate_struct_definition(
