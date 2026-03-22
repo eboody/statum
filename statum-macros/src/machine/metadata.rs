@@ -1,15 +1,13 @@
 use macro_registry::callsite::{current_source_info, module_path_for_line};
-use macro_registry::registry::SourceContext;
 use macro_registry::query;
-use macro_registry::registry;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use syn::{Generics, Ident, ItemStruct, LitStr, Type, Visibility};
 
 use crate::{
-    EnumInfo, ModulePath, StateModulePath, ensure_state_enum_loaded,
-    ensure_state_enum_loaded_by_name, ensure_state_enum_loaded_by_name_from_source,
-    ensure_state_enum_loaded_from_source, extract_derives,
+    EnumInfo, LoadedStateLookupFailure, ModulePath, SourceFingerprint, StateModulePath,
+    crate_root_for_file, extract_derives, format_loaded_state_candidates,
+    lookup_loaded_state_enum, lookup_loaded_state_enum_by_name, source_file_fingerprint,
 };
 
 pub type MachinePath = ModulePath;
@@ -25,6 +23,8 @@ pub struct MachineInfo {
     pub generics: String,
     pub state_generic_name: Option<String>,
     pub file_path: Option<String>,
+    pub crate_root: Option<String>,
+    pub file_fingerprint: Option<SourceFingerprint>,
 }
 
 impl MachineInfo {
@@ -68,29 +68,12 @@ impl MachineInfo {
 
     pub fn get_matching_state_enum(&self) -> Result<EnumInfo, TokenStream> {
         let state_path: StateModulePath = self.module_path.clone();
-        // Included transition fragments must resolve the state enum against the
-        // machine's source file, not the include file's pseudo-module context.
-        let source = self
-            .file_path
-            .as_ref()
-            .map(|file_path| SourceContext::new(file_path.clone(), self.line_number));
         let state_enum = if let Some(expected_name) = self.state_generic_name.as_deref() {
-            source
-                .as_ref()
-                .and_then(|source| {
-                    ensure_state_enum_loaded_by_name_from_source(&state_path, expected_name, source)
-                })
-                .or_else(|| ensure_state_enum_loaded_by_name(&state_path, expected_name))
+            lookup_loaded_state_enum_by_name(&state_path, expected_name)
         } else {
-            source
-                .as_ref()
-                .and_then(|source| ensure_state_enum_loaded_from_source(&state_path, source))
-                .or_else(|| ensure_state_enum_loaded(&state_path))
+            lookup_loaded_state_enum(&state_path)
         };
-        let Some(state_enum) = state_enum else {
-            return Err(missing_state_enum_error(self));
-        };
-        Ok(state_enum)
+        state_enum.map_err(|failure| missing_state_enum_error(self, failure))
     }
 
     pub fn from_item_struct(item: &ItemStruct) -> syn::Result<Self> {
@@ -115,6 +98,8 @@ impl MachineInfo {
 
         let module_path: MachinePath = module_path.into();
         let fields = collect_fields(item);
+        let crate_root = crate_root_for_file(&file_path);
+        let file_fingerprint = source_file_fingerprint(&file_path);
 
         Ok(Self {
             name: item.ident.to_string(),
@@ -131,15 +116,19 @@ impl MachineInfo {
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
             file_path: Some(file_path),
+            crate_root,
+            file_fingerprint,
         })
     }
 
+    #[cfg(test)]
     pub fn from_item_struct_with_module(item: &ItemStruct, module_path: &MachinePath) -> Option<Self> {
         if item.generics.params.is_empty() {
             return None;
         }
 
         let line_number = current_source_info().map(|(_, line)| line).unwrap_or_default();
+        let file_path = current_source_info().map(|(path, _)| path);
         Some(Self {
             name: item.ident.to_string(),
             vis: item.vis.to_token_stream().to_string(),
@@ -154,18 +143,14 @@ impl MachineInfo {
             line_number,
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
-            file_path: current_source_info().map(|(path, _)| path),
+            crate_root: file_path
+                .as_deref()
+                .and_then(crate_root_for_file),
+            file_fingerprint: file_path
+                .as_deref()
+                .and_then(source_file_fingerprint),
+            file_path,
         })
-    }
-}
-
-impl registry::RegistryValue for MachineInfo {
-    fn file_path(&self) -> Option<&str> {
-        self.file_path.as_deref()
-    }
-
-    fn set_file_path(&mut self, file_path: String) {
-        self.file_path = Some(file_path);
     }
 }
 
@@ -234,7 +219,10 @@ fn extract_state_generic_name(generics: &Generics) -> Option<String> {
     }
 }
 
-fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
+fn missing_state_enum_error(
+    machine_info: &MachineInfo,
+    failure: LoadedStateLookupFailure,
+) -> TokenStream {
     if is_rust_analyzer() {
         return TokenStream::new();
     }
@@ -260,6 +248,22 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
             query::format_candidates(&available)
         )
     };
+    let ordering_line = expected.and_then(|name| {
+        available
+            .iter()
+            .find(|candidate| {
+                candidate.name == name && candidate.line_number > machine_info.line_number
+            })
+            .map(|candidate| {
+                format!(
+                    "Source scan found `#[state]` enum `{name}` later in this module on line {}. If that item is active for this build, move it above machine `{}` because Statum resolves these relationships in expansion order.",
+                    candidate.line_number, machine_info.name
+                )
+            })
+    });
+    let ordering_line = ordering_line
+        .map(|line| format!("{line}\n"))
+        .unwrap_or_default();
     let elsewhere_line = expected
         .and_then(|name| {
             same_named_state_candidates_elsewhere(
@@ -280,10 +284,21 @@ fn missing_state_enum_error(machine_info: &MachineInfo) -> TokenStream {
             format!("An enum named `{name}` exists on line {line}, but it is not annotated with `#[state]`.")
         })
     });
+    let authority_line = match failure {
+        LoadedStateLookupFailure::NotFound => {
+            "Statum only resolves `#[state]` enums that have already expanded before this `#[machine]` declaration.".to_string()
+        }
+        LoadedStateLookupFailure::Ambiguous(candidates) => format!(
+            "Loaded `#[state]` candidates were ambiguous: {}.",
+            format_loaded_state_candidates(&candidates)
+        ),
+    };
     let message = format!(
-        "Failed to resolve the #[state] enum for machine `{}`.\n{}\n{}\n{}\n{}\nHelp: make sure the machine's first generic names the right `#[state]` enum in this module.\nCorrect shape: `struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`.",
+        "Failed to resolve the #[state] enum for machine `{}`.\n{}\n{}\n{}{}\n{}\n{}\nHelp: make sure the machine's first generic names the right `#[state]` enum in this module and declare that `#[state]` enum before the machine.\nCorrect shape: `struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`.",
         machine_info.name,
         expected_line,
+        authority_line,
+        ordering_line,
         missing_attr_line.unwrap_or_else(|| "No plain enum with that expected name was found in that module either.".to_string()),
         elsewhere_line,
         available_line,

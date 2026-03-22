@@ -5,3 +5,7 @@ pub mod analysis;
 pub mod callsite;
 pub mod query;
 pub mod registry;
+
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+mod readme_doctests {}

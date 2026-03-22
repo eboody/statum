@@ -12,6 +12,10 @@
 //! - [`transition`] for validating legal transition impls
 //! - [`validators`] for rebuilding typed machines from persisted data
 
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+mod readme_doctests {}
+
 mod syntax;
 
 moddef::moddef!(
@@ -25,9 +29,16 @@ moddef::moddef!(
     }
 );
 
-pub(crate) use syntax::{ItemTarget, ModulePath, extract_derives};
+pub(crate) use syntax::{
+    ItemTarget, ModulePath, SourceFingerprint, crate_root_for_file, current_crate_root,
+    extract_derives, source_file_fingerprint,
+};
 
-use crate::{MachinePath, ensure_machine_loaded_by_name, unique_loaded_machine_elsewhere};
+use crate::{
+    LoadedMachineLookupFailure, MachinePath, ambiguous_transition_machine_error,
+    ambiguous_transition_machine_fallback_error, lookup_loaded_machine_in_module,
+    lookup_unique_loaded_machine_by_name,
+};
 use macro_registry::callsite::current_module_path_opt;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
@@ -60,7 +71,7 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     store_state_enum(&enum_info);
 
     // Generate structs and implementations dynamically
-    let expanded = generate_state_impls(&enum_info.module_path);
+    let expanded = generate_state_impls(&enum_info);
 
     TokenStream::from(expanded)
 }
@@ -123,10 +134,34 @@ pub fn transition(
     };
 
     let machine_path: MachinePath = module_path.clone().into();
-    // `include!` gives the transition macro the included file as its source context,
-    // so exact module lookup can miss the already-loaded parent machine.
-    let machine_info_owned = ensure_machine_loaded_by_name(&machine_path, &tr_impl.machine_name)
-        .or_else(|| unique_loaded_machine_elsewhere(&tr_impl.machine_name));
+    let machine_info_owned =
+        match lookup_loaded_machine_in_module(&machine_path, &tr_impl.machine_name) {
+            Ok(info) => Some(info),
+            Err(LoadedMachineLookupFailure::Ambiguous(candidates)) => {
+                return ambiguous_transition_machine_error(
+                    &tr_impl.machine_name,
+                    &module_path,
+                    &candidates,
+                    tr_impl.machine_span,
+                )
+                .into();
+            }
+            Err(LoadedMachineLookupFailure::NotFound) => {
+                match lookup_unique_loaded_machine_by_name(&tr_impl.machine_name) {
+                    Ok(info) => Some(info),
+                    Err(LoadedMachineLookupFailure::Ambiguous(candidates)) => {
+                        return ambiguous_transition_machine_fallback_error(
+                            &tr_impl.machine_name,
+                            &module_path,
+                            &candidates,
+                            tr_impl.machine_span,
+                        )
+                        .into();
+                    }
+                    Err(LoadedMachineLookupFailure::NotFound) => None,
+                }
+            }
+        };
     let machine_info = match machine_info_owned.as_ref() {
         Some(info) => info,
         None => {

@@ -68,6 +68,45 @@ fn raw_identifier_len(bytes: &[u8], start: usize) -> Option<usize> {
     Some(idx - start)
 }
 
+fn char_literal_len(content: &str, bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes.get(start) != Some(&b'\'') {
+        return None;
+    }
+
+    let mut idx = start + 1;
+    if idx >= bytes.len() || bytes[idx] == b'\n' {
+        return None;
+    }
+
+    if bytes[idx] == b'\\' {
+        idx += 1;
+        if idx >= bytes.len() {
+            return None;
+        }
+
+        if bytes[idx] == b'u' && bytes.get(idx + 1) == Some(&b'{') {
+            idx += 2;
+            while idx < bytes.len() && bytes[idx] != b'}' {
+                if bytes[idx] == b'\n' {
+                    return None;
+                }
+                idx += 1;
+            }
+            if bytes.get(idx) != Some(&b'}') {
+                return None;
+            }
+            idx += 1;
+        } else {
+            idx += 1;
+        }
+    } else {
+        let next = content.get(idx..)?.chars().next()?;
+        idx += next.len_utf8();
+    }
+
+    (bytes.get(idx) == Some(&b'\'')).then_some(idx - start + 1)
+}
+
 fn handle_identifier_token(
     token: &str,
     expect_mod_ident: &mut bool,
@@ -98,7 +137,6 @@ fn build_line_module_paths(content: &str) -> Vec<String> {
         LineComment,
         BlockComment { depth: usize },
         String { escaped: bool },
-        Char { escaped: bool },
         RawString { hashes: usize },
     }
 
@@ -170,17 +208,6 @@ fn build_line_module_paths(content: &str) -> Vec<String> {
                 i += 1;
                 continue;
             }
-            Mode::Char { escaped } => {
-                if byte == b'\\' && !escaped {
-                    mode = Mode::Char { escaped: true };
-                } else if byte == b'\'' && !escaped {
-                    mode = Mode::Normal;
-                } else {
-                    mode = Mode::Char { escaped: false };
-                }
-                i += 1;
-                continue;
-            }
             Mode::RawString { hashes } => {
                 if byte == b'"' {
                     let mut matched = true;
@@ -217,8 +244,12 @@ fn build_line_module_paths(content: &str) -> Vec<String> {
             i += 1;
             continue;
         }
+        if let Some(consumed) = char_literal_len(content, bytes, i) {
+            i += consumed;
+            continue;
+        }
         if byte == b'\'' {
-            mode = Mode::Char { escaped: false };
+            // Lifetimes and labels are not string delimiters and should not hide module tokens.
             i += 1;
             continue;
         }

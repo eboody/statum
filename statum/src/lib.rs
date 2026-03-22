@@ -62,6 +62,7 @@
 //!     let _paid = ready.pay();
 //! }
 //! ```
+
 //!
 //! # Typed Rehydration
 //!
@@ -234,6 +235,14 @@
 //! - For append-only event logs, use [`projection`] before validator rebuilds.
 //! - The repository README and `docs/` directory contain longer guides and
 //!   showcase applications.
+
+#[cfg(doctest)]
+#[doc = include_str!("../../README.md")]
+mod root_readme_doctests {}
+
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+mod crate_readme_doctests {}
 
 #[doc(hidden)]
 pub use statum_core::__private;

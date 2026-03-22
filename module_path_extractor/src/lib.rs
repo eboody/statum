@@ -4,6 +4,10 @@ mod cache;
 mod parser;
 mod pathing;
 
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+mod readme_doctests {}
+
 use std::path::Path;
 
 use crate::cache::{
@@ -181,6 +185,33 @@ mod tests {
 
         let found = find_module_path_in_file(&lib.to_string_lossy(), 4, &src);
         assert_eq!(found.as_deref(), Some("r#async::r#type"));
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
+    fn find_module_path_in_file_separates_sibling_modules_with_similar_shapes() {
+        let crate_dir = unique_temp_dir("sibling_modules");
+        let src = crate_dir.join("src");
+        let lib = src.join("lib.rs");
+
+        write_file(
+            &lib,
+            "mod alpha {\n    mod support {\n        pub struct Text;\n    }\n\n    pub enum WorkflowState {\n        Draft,\n    }\n\n    pub struct Row {\n        pub status: &'static str,\n    }\n}\n\nmod beta {\n    mod support {\n        pub struct Text;\n    }\n\n    pub enum WorkflowState {\n        Draft,\n    }\n\n    pub struct Row {\n        pub status: &'static str,\n    }\n}\n",
+        );
+
+        assert_eq!(
+            find_module_path_in_file(&lib.to_string_lossy(), 6, &src).as_deref(),
+            Some("alpha")
+        );
+        assert_eq!(
+            find_module_path_in_file(&lib.to_string_lossy(), 20, &src).as_deref(),
+            Some("beta")
+        );
+        assert_eq!(
+            find_module_path_in_file(&lib.to_string_lossy(), 19, &src).as_deref(),
+            Some("beta")
+        );
 
         let _ = fs::remove_dir_all(crate_dir);
     }
