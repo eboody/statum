@@ -1,5 +1,17 @@
 # Repository Guidelines
 
+## Mandatory Skills
+- Use `ai-slop-guard` for every task that produces user-facing prose.
+- Use `crimee-audit` after any task that creates or modifies code.
+- Use `semantic-authority-audit` for macros, code generation, introspection, schema or policy extraction, docs generation, static analysis, or any work claiming exact, authoritative, exhaustive, or source-of-truth semantics.
+
+## Semantic Authority Rule
+- Treat words like `exact`, `source of truth`, `authoritative`, `exhaustive`, `no drift`, and `exact branch alternatives` as proof obligations.
+- Before shipping such a feature, state the observation point the implementation actually uses: raw source, parsed AST, cfg-pruned AST, expanded items, type-checked items, runtime values, or persisted state.
+- If the observation point is weaker than the public claim, the feature must fail closed or the claim must be narrowed.
+- Happy-path tests are not sufficient for authority features. Add adversarial cases for constructs that differ across observation stages, including `#[cfg]`, macro-generated items, `include!`, and duplicate-id pressure where relevant.
+- Closeout for authority features must state: claimed authority surface, actual observation point, unsupported cases rejected or still open, and adversarial tests added.
+
 ## Project Structure & Module Organization
 This is a Rust workspace with four crates:
 - `statum/` public API crate.
