@@ -8,6 +8,10 @@
 //! - runtime error and result types
 //! - projection helpers for event-log style rebuilds
 
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+mod readme_doctests {}
+
 mod introspection;
 
 pub mod projection;

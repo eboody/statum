@@ -37,6 +37,7 @@ Simple query example:
 ```rust
 use macro_registry::query::{ItemKind, candidates_in_module};
 
+# let file_path = "/tmp/lib.rs";
 let machines = candidates_in_module(
     file_path,
     "crate::workflow",

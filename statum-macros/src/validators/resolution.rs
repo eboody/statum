@@ -7,8 +7,10 @@ use macro_registry::callsite::current_source_info;
 use macro_registry::query;
 
 use crate::{
-    EnumInfo, MachineInfo, MachinePath, StateModulePath, ensure_machine_loaded_by_name,
-    ensure_state_enum_loaded_by_name, get_state_enum, to_snake_case,
+    EnumInfo, LoadedMachineLookupFailure, LoadedStateLookupFailure, MachineInfo, MachinePath,
+    StateModulePath, format_loaded_machine_candidates, format_loaded_state_candidates,
+    lookup_loaded_machine_in_module, lookup_loaded_state_enum, lookup_loaded_state_enum_by_name,
+    to_snake_case,
 };
 
 use super::signatures::validator_state_name_from_ident;
@@ -114,7 +116,8 @@ pub(super) fn resolve_machine_metadata(
 ) -> Result<MachineInfo, TokenStream> {
     let module_path_key: MachinePath = module_path.into();
     let machine_name = machine_ident.to_string();
-    ensure_machine_loaded_by_name(&module_path_key, &machine_name).ok_or_else(|| {
+    lookup_loaded_machine_in_module(&module_path_key, &machine_name).map_err(|failure| {
+        let current_line = current_source_info().map(|(_, line)| line).unwrap_or_default();
         let available = available_machine_candidates_in_module(module_path);
         let suggested_machine_name = available
             .first()
@@ -128,6 +131,19 @@ pub(super) fn resolve_machine_metadata(
                 query::format_candidates(&available)
             )
         };
+        let ordering_line = available
+            .iter()
+            .find(|candidate| {
+                candidate.name == machine_name && candidate.line_number > current_line
+            })
+            .map(|candidate| {
+                format!(
+                    "Source scan found `#[machine]` item `{machine_name}` later in this module on line {}. If that item is active for this build, move it above this `#[validators]` impl because Statum resolves these relationships in expansion order.",
+                    candidate.line_number
+                )
+            })
+            .map(|line| format!("{line}\n"))
+            .unwrap_or_default();
         let elsewhere_line = same_named_machine_candidates_elsewhere(&machine_name, module_path)
             .map(|candidates| {
                 format!(
@@ -141,8 +157,17 @@ pub(super) fn resolve_machine_metadata(
                 "A struct named `{machine_name}` exists on line {line}, but it is not annotated with `#[machine]`."
             )
         });
+        let authority_line = match failure {
+            LoadedMachineLookupFailure::NotFound => {
+                "Statum only resolves `#[machine]` items that have already expanded before this `#[validators]` impl.".to_string()
+            }
+            LoadedMachineLookupFailure::Ambiguous(candidates) => format!(
+                "Loaded `#[machine]` candidates were ambiguous: {}.",
+                format_loaded_machine_candidates(&candidates)
+            ),
+        };
         let message = format!(
-            "Error: no `#[machine]` named `{machine_name}` was found in module `{module_path}`.\n{}\n{elsewhere_line}\n{available_line}\nHelp: point `#[validators(...)]` at the Statum machine type in this module.\nCorrect shape: `#[validators({suggested_machine_name})] impl PersistedRow {{ ... }}` where `{suggested_machine_name}` is declared with `#[machine]` in `{module_path}`.",
+            "Error: no resolved `#[machine]` named `{machine_name}` was found in module `{module_path}`.\n{authority_line}\n{ordering_line}{}\n{elsewhere_line}\n{available_line}\nHelp: point `#[validators(...)]` at the Statum machine type in this module and declare that `#[machine]` item before this validators impl.\nCorrect shape: `#[validators({suggested_machine_name})] impl PersistedRow {{ ... }}` where `{suggested_machine_name}` is declared with `#[machine]` in `{module_path}`.",
             missing_attr_line.unwrap_or_else(|| "No plain struct with that name was found in this module either.".to_string()),
         );
         quote! {
@@ -158,17 +183,12 @@ pub(super) fn resolve_state_enum_info(
     let state_path_key: StateModulePath = module_path.into();
     let machine_name = machine_metadata.name.clone();
     let expected_state_name = machine_metadata.state_generic_name.as_deref();
-    let _ = if let Some(expected_name) = expected_state_name {
-        ensure_state_enum_loaded_by_name(&state_path_key, expected_name)
-    } else {
-        None
-    };
-
     let state_enum_info = match expected_state_name {
-        Some(expected_name) => ensure_state_enum_loaded_by_name(&state_path_key, expected_name),
-        None => get_state_enum(&state_path_key),
+        Some(expected_name) => lookup_loaded_state_enum_by_name(&state_path_key, expected_name),
+        None => lookup_loaded_state_enum(&state_path_key),
     };
-    state_enum_info.ok_or_else(|| {
+    state_enum_info.map_err(|failure| {
+        let current_line = current_source_info().map(|(_, line)| line).unwrap_or_default();
         let available = available_state_candidates_in_module(module_path);
         let available_line = if available.is_empty() {
             "No `#[state]` enums were found in this module.".to_string()
@@ -198,13 +218,38 @@ pub(super) fn resolve_state_enum_info(
                     "Machine `{machine_name}` did not expose a resolvable first generic parameter for its `#[state]` enum."
                 )
             });
+        let ordering_line = expected_state_name.and_then(|name| {
+            available
+                .iter()
+                .find(|candidate| {
+                    candidate.name == name && candidate.line_number > current_line
+                })
+                .map(|candidate| {
+                    format!(
+                        "Source scan found `#[state]` enum `{name}` later in this module on line {}. If that item is active for this build, move it above the machine and this `#[validators]` impl because Statum resolves these relationships in expansion order.",
+                        candidate.line_number
+                    )
+                })
+        });
+        let ordering_line = ordering_line
+            .map(|line| format!("{line}\n"))
+            .unwrap_or_default();
         let missing_attr_line = expected_state_name.as_ref().and_then(|name| {
             plain_enum_line_in_module(module_path, name).map(|line| {
                 format!("An enum named `{name}` exists on line {line}, but it is not annotated with `#[state]`.")
             })
         });
+        let authority_line = match failure {
+            LoadedStateLookupFailure::NotFound => {
+                "Statum only resolves `#[state]` enums that have already expanded before this `#[validators]` impl.".to_string()
+            }
+            LoadedStateLookupFailure::Ambiguous(candidates) => format!(
+                "Loaded `#[state]` candidates were ambiguous: {}.",
+                format_loaded_state_candidates(&candidates)
+            ),
+        };
         let message = format!(
-            "Error: could not resolve the `#[state]` enum for machine `{machine_name}` in module `{module_path}`.\n{expected_line}\n{}\n{elsewhere_line}\n{available_line}\nHelp: make sure the machine's first generic names the right `#[state]` enum in this module.\nCorrect shape: `struct {machine_name}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum declared in `{module_path}`.",
+            "Error: could not resolve the `#[state]` enum for machine `{machine_name}` in module `{module_path}`.\n{expected_line}\n{authority_line}\n{ordering_line}{}\n{elsewhere_line}\n{available_line}\nHelp: make sure the machine's first generic names the right `#[state]` enum in this module and declare that `#[state]` enum before the machine and validators impl.\nCorrect shape: `struct {machine_name}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum declared in `{module_path}`.",
             missing_attr_line.unwrap_or_else(|| "No plain enum with that expected name was found in this module either.".to_string())
         );
         quote! {

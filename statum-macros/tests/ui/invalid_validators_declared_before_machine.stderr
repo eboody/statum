@@ -1,0 +1,14 @@
+error: Error: no resolved `#[machine]` named `WorkflowMachine` was found in module `invalid_validators_declared_before_machine`.
+       Statum only resolves `#[machine]` items that have already expanded before this `#[validators]` impl.
+       Source scan found `#[machine]` item `WorkflowMachine` later in this module on line 34. If that item is active for this build, move it above this `#[validators]` impl because Statum resolves these relationships in expansion order.
+       No plain struct with that name was found in this module either.
+       No same-named `#[machine]` items were found in other modules of this file.
+       Available `#[machine]` items in this module: `WorkflowMachine` in `invalid_validators_declared_before_machine` (line 34).
+       Help: point `#[validators(...)]` at the Statum machine type in this module and declare that `#[machine]` item before this validators impl.
+       Correct shape: `#[validators(WorkflowMachine)] impl PersistedRow { ... }` where `WorkflowMachine` is declared with `#[machine]` in `invalid_validators_declared_before_machine`.
+  --> tests/ui/invalid_validators_declared_before_machine.rs:22:1
+   |
+22 | #[validators(WorkflowMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)

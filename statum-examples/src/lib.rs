@@ -3,3 +3,7 @@
 
 pub mod showcases;
 pub mod toy_demos;
+
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+mod readme_doctests {}

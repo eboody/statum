@@ -19,6 +19,7 @@ fn test_invalid_machine_usage() {
     t.compile_fail("tests/ui/invalid_machine_private_field_access.rs");
     t.compile_fail("tests/ui/invalid_machine_missing_state_derive.rs");
     t.compile_fail("tests/ui/invalid_machine_plain_enum_missing_state_attr.rs");
+    t.compile_fail("tests/ui/invalid_machine_declared_before_state.rs");
 }
 
 #[test]
@@ -34,6 +35,7 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_transition_unknown_return_state.rs");
     t.compile_fail("tests/ui/invalid_transition_unknown_secondary_return_state.rs");
     t.compile_fail("tests/ui/invalid_transition_map_undeclared_edge.rs");
+    t.compile_fail("tests/ui/invalid_transition_include_ambiguous_machine_name.rs");
     t.compile_fail("tests/ui/invalid_legacy_transition_helper_trait.rs");
 }
 
@@ -50,6 +52,7 @@ fn test_invalid_validators_usage() {
     t.compile_fail("tests/ui/invalid_validators_unknown_machine.rs");
     t.compile_fail("tests/ui/invalid_validators_plain_struct_machine_name.rs");
     t.compile_fail("tests/ui/invalid_validators_parameter_name_collision.rs");
+    t.compile_fail("tests/ui/invalid_validators_declared_before_machine.rs");
     t.compile_fail("tests/ui/invalid_legacy_superstate.rs");
     t.compile_fail("tests/ui/invalid_legacy_machine_builder.rs");
     t.compile_fail("tests/ui/invalid_legacy_machines_builder.rs");
@@ -81,6 +84,7 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_machine_field_aliases_local_validators.rs");
     t.pass("tests/ui/valid_machine_field_module_paths.rs");
     t.pass("tests/ui/valid_machine_field_aliases_renamed_import.rs");
+    t.pass("tests/ui/valid_cfg_hidden_duplicate_state_machine.rs");
     t.pass("tests/ui/valid_builder_overwrite.rs");
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");

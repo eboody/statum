@@ -1,11 +1,13 @@
-use macro_registry::analysis::{EnumEntry, FileAnalysis};
 use macro_registry::callsite::{current_source_info, module_path_for_line};
-use macro_registry::registry;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
+use std::sync::{OnceLock, RwLock};
 use syn::{Fields, Ident, Item, ItemEnum, Path, Type, Visibility};
 
-use crate::{ItemTarget, ModulePath, extract_derives};
+use crate::{
+    ItemTarget, ModulePath, SourceFingerprint, crate_root_for_file, current_crate_root,
+    extract_derives, source_file_fingerprint,
+};
 
 // Structure to hold extracted enum data
 #[derive(Clone)]
@@ -18,6 +20,9 @@ pub struct EnumInfo {
     pub generics: String,
     pub module_path: StateModulePath,
     pub file_path: Option<String>,
+    pub crate_root: Option<String>,
+    pub file_fingerprint: Option<SourceFingerprint>,
+    pub line_number: usize,
 }
 
 impl EnumInfo {
@@ -25,16 +30,6 @@ impl EnumInfo {
         self.variants
             .iter()
             .find(|v| v.name == variant_name || to_snake_case(&v.name) == variant_name)
-    }
-}
-
-impl registry::RegistryValue for EnumInfo {
-    fn file_path(&self) -> Option<&str> {
-        self.file_path.as_deref()
-    }
-
-    fn set_file_path(&mut self, file_path: String) {
-        self.file_path = Some(file_path);
     }
 }
 
@@ -140,51 +135,109 @@ impl ToTokens for EnumInfo {
     }
 }
 
-// Global storage for `#[state]` enums
+static LOADED_STATE_ENUMS: OnceLock<RwLock<Vec<EnumInfo>>> = OnceLock::new();
 
-static STATE_ENUMS: registry::StaticRegistry<StateModulePath, EnumInfo> =
-    registry::StaticRegistry::new();
+#[derive(Clone)]
+pub enum LoadedStateLookupFailure {
+    NotFound,
+    Ambiguous(Vec<EnumInfo>),
+}
 
-struct StateRegistryDomain;
+fn loaded_state_enums() -> &'static RwLock<Vec<EnumInfo>> {
+    LOADED_STATE_ENUMS.get_or_init(|| RwLock::new(Vec::new()))
+}
 
-impl registry::RegistryDomain for StateRegistryDomain {
-    type Key = StateModulePath;
-    type Value = EnumInfo;
-    type Entry = EnumEntry;
+fn same_loaded_state(left: &EnumInfo, right: &EnumInfo) -> bool {
+    left.name == right.name
+        && left.module_path.as_ref() == right.module_path.as_ref()
+        && left.file_path == right.file_path
+        && left.line_number == right.line_number
+}
 
-    fn entries(analysis: &FileAnalysis) -> &[Self::Entry] {
-        &analysis.enums
-    }
+fn upsert_loaded_state(enum_info: &EnumInfo) {
+    let Ok(mut states) = loaded_state_enums().write() else {
+        return;
+    };
 
-    fn entry_line(entry: &Self::Entry) -> usize {
-        entry.line_number
-    }
-
-    fn build_value(entry: &Self::Entry, module_path: &Self::Key) -> Option<Self::Value> {
-        EnumInfo::from_item_enum_with_module(&entry.item, module_path.clone()).ok()
-    }
-
-    fn matches_entry(entry: &Self::Entry) -> bool {
-        entry.attrs.iter().any(|attr| attr == "state")
-    }
-
-    fn entry_hint(entry: &Self::Entry) -> Option<String> {
-        Some(entry.item.ident.to_string())
+    if let Some(existing) = states
+        .iter_mut()
+        .find(|existing| same_loaded_state(existing, enum_info))
+    {
+        *existing = enum_info.clone();
+    } else {
+        states.push(enum_info.clone());
     }
 }
 
-impl registry::NamedRegistryDomain for StateRegistryDomain {
-    fn entry_name(entry: &Self::Entry) -> String {
-        entry.item.ident.to_string()
+fn loaded_state_candidates_matching<F>(matches: F) -> Vec<EnumInfo>
+where
+    F: Fn(&EnumInfo) -> bool,
+{
+    let current_crate_root = current_crate_root();
+    let Ok(states) = loaded_state_enums().read() else {
+        return Vec::new();
+    };
+
+    states
+        .iter()
+        .filter(|state| loaded_state_is_current(state, current_crate_root.as_deref()))
+        .filter(|state| matches(state))
+        .cloned()
+        .collect()
+}
+
+fn loaded_state_is_current(state: &EnumInfo, current_crate_root: Option<&str>) -> bool {
+    if current_crate_root.is_some() && state.crate_root.as_deref() != current_crate_root {
+        return false;
     }
 
-    fn value_name(value: &Self::Value) -> String {
-        value.name.clone()
+    match (state.file_path.as_deref(), state.file_fingerprint.as_ref()) {
+        (Some(file_path), Some(fingerprint)) => {
+            source_file_fingerprint(file_path).as_ref() == Some(fingerprint)
+        }
+        _ => true,
     }
 }
 
-pub fn get_state_enum(enum_path: &StateModulePath) -> Option<EnumInfo> {
-    STATE_ENUMS.get_cloned(enum_path)
+fn lookup_loaded_state_candidates(
+    candidates: Vec<EnumInfo>,
+) -> Result<EnumInfo, LoadedStateLookupFailure> {
+    match candidates.len() {
+        0 => Err(LoadedStateLookupFailure::NotFound),
+        1 => Ok(candidates.into_iter().next().expect("single candidate")),
+        _ => Err(LoadedStateLookupFailure::Ambiguous(candidates)),
+    }
+}
+
+pub fn lookup_loaded_state_enum(
+    enum_path: &StateModulePath,
+) -> Result<EnumInfo, LoadedStateLookupFailure> {
+    lookup_loaded_state_candidates(loaded_state_candidates_matching(|state| {
+        state.module_path.as_ref() == enum_path.as_ref()
+    }))
+}
+
+pub fn lookup_loaded_state_enum_by_name(
+    enum_path: &StateModulePath,
+    enum_name: &str,
+) -> Result<EnumInfo, LoadedStateLookupFailure> {
+    lookup_loaded_state_candidates(loaded_state_candidates_matching(|state| {
+        state.module_path.as_ref() == enum_path.as_ref() && state.name == enum_name
+    }))
+}
+
+pub fn format_loaded_state_candidates(candidates: &[EnumInfo]) -> String {
+    candidates
+        .iter()
+        .map(|candidate| {
+            let file_path = candidate.file_path.as_deref().unwrap_or("<unknown file>");
+            format!(
+                "`{}` in `{}` ({file_path}:{})",
+                candidate.name, candidate.module_path, candidate.line_number
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub fn invalid_state_target_error(item: &Item) -> TokenStream {
@@ -204,44 +257,6 @@ pub fn invalid_state_target_error(item: &Item) -> TokenStream {
     syn::Error::new(target.span(), message).to_compile_error()
 }
 
-pub fn ensure_state_enum_loaded(enum_path: &StateModulePath) -> Option<EnumInfo> {
-    registry::ensure_loaded::<StateRegistryDomain>(&STATE_ENUMS, enum_path)
-}
-
-pub fn ensure_state_enum_loaded_from_source(
-    enum_path: &StateModulePath,
-    source: &registry::SourceContext,
-) -> Option<EnumInfo> {
-    registry::try_ensure_loaded_from_source::<StateRegistryDomain>(
-        &STATE_ENUMS,
-        registry::LookupMode::from_key(enum_path),
-        source,
-    )
-    .ok()
-    .map(|loaded| loaded.value)
-}
-
-pub fn ensure_state_enum_loaded_by_name(
-    enum_path: &StateModulePath,
-    enum_name: &str,
-) -> Option<EnumInfo> {
-    registry::ensure_loaded_by_name::<StateRegistryDomain>(&STATE_ENUMS, enum_path, enum_name)
-}
-
-pub fn ensure_state_enum_loaded_by_name_from_source(
-    enum_path: &StateModulePath,
-    enum_name: &str,
-    source: &registry::SourceContext,
-) -> Option<EnumInfo> {
-    registry::try_ensure_loaded_by_name_from_source::<StateRegistryDomain>(
-        &STATE_ENUMS,
-        registry::LookupMode::from_key(enum_path),
-        enum_name,
-        source,
-    )
-    .ok()
-    .map(|loaded| loaded.value)
-}
 impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
         let Some((file_path, line_number)) = current_source_info() else {
@@ -262,23 +277,37 @@ impl EnumInfo {
                 ),
             ));
         };
-        Self::from_item_enum_with_module_and_file(item, module_path.into(), Some(file_path))
+        Self::from_item_enum_with_module_and_file(
+            item,
+            module_path.into(),
+            Some(file_path),
+            line_number,
+        )
     }
 
+    #[cfg(test)]
     pub fn from_item_enum_with_module(
         item: &ItemEnum,
         module_path: StateModulePath,
     ) -> syn::Result<Self> {
         let file_path = current_source_info().map(|(path, _)| path);
-        Self::from_item_enum_with_module_and_file(item, module_path, file_path)
+        let line_number = current_source_info().map(|(_, line)| line).unwrap_or_default();
+        Self::from_item_enum_with_module_and_file(item, module_path, file_path, line_number)
     }
 
     fn from_item_enum_with_module_and_file(
         item: &ItemEnum,
         module_path: StateModulePath,
         file_path: Option<String>,
+        line_number: usize,
     ) -> syn::Result<Self> {
         validate_state_enum_shape(item)?;
+        let crate_root = file_path
+            .as_deref()
+            .and_then(crate_root_for_file);
+        let file_fingerprint = file_path
+            .as_deref()
+            .and_then(source_file_fingerprint);
 
         let name = item.ident.to_string();
         let vis = item.vis.to_token_stream().to_string();
@@ -316,6 +345,9 @@ impl EnumInfo {
             generics,
             module_path,
             file_path,
+            crate_root,
+            file_fingerprint,
+            line_number,
         })
     }
 }
@@ -371,17 +403,7 @@ fn validate_state_enum_shape(item: &ItemEnum) -> syn::Result<()> {
     Ok(())
 }
 
-pub fn generate_state_impls(enum_path: &StateModulePath) -> proc_macro2::TokenStream {
-    let Some(enum_info) = get_state_enum(enum_path) else {
-        let message = format!(
-            "Internal error: state metadata for module `{}` was not cached during code generation.\nEnsure `#[state]` is applied in that module and try re-running `cargo check`.",
-            enum_path
-        );
-        return quote! {
-            compile_error!(#message);
-        };
-    };
-
+pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {
     let state_trait_ident = enum_info.get_trait_name();
     let parsed_enum = match enum_info.parse() {
         Ok(parsed) => parsed,
@@ -481,7 +503,7 @@ pub fn validate_state_enum(item: &ItemEnum) -> Option<TokenStream> {
 }
 
 pub fn store_state_enum(enum_info: &EnumInfo) {
-    STATE_ENUMS.insert(enum_info.module_path.clone(), enum_info.clone());
+    upsert_loaded_state(enum_info);
 }
 
 #[cfg(test)]

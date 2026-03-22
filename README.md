@@ -100,11 +100,19 @@ they can become typed machines.
 If you add derives, place them below `#[state]` and `#[machine]`:
 
 ```rust
+# use statum::{machine, state};
+# #[state]
+# #[derive(Debug, Clone)]
+# enum LightState {
+#     Off,
+# }
 #[machine]
 #[derive(Debug, Clone)]
 struct LightSwitch<LightState> {
     name: String,
 }
+
+# fn main() {}
 ```
 
 That avoids the common `missing fields marker and state_data` error.

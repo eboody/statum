@@ -60,6 +60,8 @@ impl Light<On> {
         self.transition()
     }
 }
+
+# fn main() {}
 ```
 
 ## Docs

@@ -2,7 +2,9 @@ use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{Item, ItemStruct};
 
-use crate::{ItemTarget, StateModulePath, ensure_state_enum_loaded};
+use crate::{
+    ItemTarget, StateModulePath, lookup_loaded_state_enum, lookup_loaded_state_enum_by_name,
+};
 
 use super::metadata::is_rust_analyzer;
 use super::MachineInfo;
@@ -39,7 +41,11 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
     };
 
     let state_path: StateModulePath = machine_info.module_path.clone();
-    let matching_state_enum = ensure_state_enum_loaded(&state_path);
+    let matching_state_enum = machine_info
+        .state_generic_name
+        .as_deref()
+        .and_then(|state_name| lookup_loaded_state_enum_by_name(&state_path, state_name).ok())
+        .or_else(|| lookup_loaded_state_enum(&state_path).ok());
 
     if item.generics.params.len() > 1 {
         let generics_display = item.generics.to_token_stream().to_string();
