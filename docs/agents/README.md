@@ -50,6 +50,8 @@ dynamic.
 - parent, child, or nested-machine structure when one workflow owns another
 - likely `#[transition]` impl blocks and the legal edges they encode
 - whether `#[validators]` or `statum::projection` should be part of the design
+- whether downstream tooling should use Statum's emitted introspection instead
+  of a handwritten graph table
 - the explicit hybrid boundary: what should stay runtime-validated and why
 - the smallest first migration slice that improves correctness without forcing a
   repo-wide rewrite
@@ -70,9 +72,11 @@ The templates are intentionally short. Point agents back to the canonical docs
 when they need detail:
 
 - [../../README.md](../../README.md)
+- [../introspection.md](../introspection.md)
 - [../typestate-builder-design-playbook.md](../typestate-builder-design-playbook.md)
 - [../patterns.md](../patterns.md)
 - [../persistence-and-validators.md](../persistence-and-validators.md)
+- [../../statum-examples/src/toy_demos/16-machine-introspection.rs](../../statum-examples/src/toy_demos/16-machine-introspection.rs)
 - [../../statum-examples/src/toy_demos/13-review-flow.rs](../../statum-examples/src/toy_demos/13-review-flow.rs)
 - [../../statum-examples/src/showcases/sqlite_event_log_rebuild.rs](../../statum-examples/src/showcases/sqlite_event_log_rebuild.rs)
 - [../../statum-examples/src/showcases/tokio_websocket_session.rs](../../statum-examples/src/showcases/tokio_websocket_session.rs)

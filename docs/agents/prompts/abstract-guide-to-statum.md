@@ -26,6 +26,8 @@ Tasks:
    - the legal `#[transition]` impl blocks
    - any parent, child, or nested machine relationships
    - whether `#[validators]` or `statum::projection` belongs at a persistence boundary
+   - whether downstream tooling should use Statum introspection instead of a
+     handwritten graph table
 3. Call out what should explicitly stay outside Statum and why.
 4. Keep the first implementation slice small enough for one focused PR.
 5. If a claim is underspecified, name the missing protocol or evidence question instead of guessing.
@@ -42,6 +44,7 @@ Be concrete. Do not stop at "consider typestate."
 
 Use these references if needed:
 - https://github.com/eboody/statum/blob/main/README.md
+- https://github.com/eboody/statum/blob/main/docs/introspection.md
 - https://github.com/eboody/statum/blob/main/docs/typestate-builder-design-playbook.md
 - https://github.com/eboody/statum/blob/main/docs/patterns.md
 - https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md

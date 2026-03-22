@@ -141,89 +141,15 @@ flagship persistence story, see
 
 ## Machine Introspection
 
-Statum now emits typed machine introspection directly from the machine
-definition itself. That matters if you want the machine definition to be the
-source of truth not just for compile-time legality, but also for tooling and
-inspection surfaces.
+Statum can also emit typed machine introspection directly from the machine
+definition itself. Use it when downstream tooling needs the machine structure
+without rebuilding a parallel graph table by hand: CLI explainers, generated
+docs, graph exports, branch-strip views, test assertions about exact legal
+transitions, and replay or debug tooling.
 
-You might want this if you need:
-
-- CLI explainers
-- generated docs
-- graph exports
-- branch-strip visualizations
-- tests that assert exact legal transitions
-- replay or debug tooling that joins runtime events back to the static machine graph
-
-The important point is precision. Statum does not just expose “all states this
-machine can ever reach.” It exposes exact transition sites:
-
-- source state
-- transition method
-- exact legal target states from that site
-
-That means a branching transition like `Flow<Fetched>::validate() ->
-Accepted | Rejected` can be rendered without maintaining a parallel handwritten
-graph table.
-
-```rust
-use statum::{
-    machine, state, transition, MachineIntrospection, MachineTransitionRecorder,
-};
-
-#[state]
-enum FlowState {
-    Fetched,
-    Accepted,
-    Rejected,
-}
-
-#[machine]
-struct Flow<FlowState> {}
-
-#[transition]
-impl Flow<Fetched> {
-    fn validate(self, accept: bool) -> Result<Flow<Accepted>, Flow<Rejected>> {
-        if accept {
-            Ok(self.accept())
-        } else {
-            Err(self.reject())
-        }
-    }
-
-    fn accept(self) -> Flow<Accepted> {
-        self.transition()
-    }
-
-    fn reject(self) -> Flow<Rejected> {
-        self.transition()
-    }
-}
-
-let graph = <Flow<Fetched> as MachineIntrospection>::GRAPH;
-let validate = graph
-    .transition_from_method(flow::StateId::Fetched, "validate")
-    .unwrap();
-
-assert_eq!(
-    graph.legal_targets(validate.id).unwrap(),
-    &[flow::StateId::Accepted, flow::StateId::Rejected]
-);
-
-let event = <Flow<Fetched> as MachineTransitionRecorder>::try_record_transition_to::<
-    Flow<Accepted>,
->(Flow::<Fetched>::VALIDATE)
-.unwrap();
-
-assert_eq!(event.chosen, flow::StateId::Accepted);
-```
-
-Transition ids are typed and exact, but they are exposed as generated
-associated consts on the source-state machine type, such as
-`Flow::<Fetched>::VALIDATE`.
-
-Runnable example:
+See [docs/introspection.md](docs/introspection.md) for the full guide and
 [statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)
+for a runnable example.
 
 ## Typed Rehydration
 

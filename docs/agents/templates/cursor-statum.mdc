@@ -29,12 +29,15 @@ If you propose Statum:
 - cite the files and symbols that show the lifecycle
 - sketch `#[state]`, `#[machine]`, and `#[transition]`
 - decide whether `#[validators]` or `statum::projection` should be used
+- if downstream tooling needs machine structure, prefer Statum introspection
+  over a parallel handwritten graph table
 - explain why runtime validation is weaker here
 - keep the first migration slice small
 
 References:
 
 - <https://github.com/eboody/statum/blob/main/README.md>
+- <https://github.com/eboody/statum/blob/main/docs/introspection.md>
 - <https://github.com/eboody/statum/blob/main/docs/typestate-builder-design-playbook.md>
 - <https://github.com/eboody/statum/blob/main/docs/patterns.md>
 - <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>
