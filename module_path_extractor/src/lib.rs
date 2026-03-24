@@ -276,6 +276,39 @@ mod tests {
     }
 
     #[test]
+    fn find_module_path_in_file_ignores_modules_inside_macro_invocations_for_all_delimiters() {
+        let crate_dir = unique_temp_dir("macro_invocation_delimiters");
+        let src = crate_dir.join("src");
+        let lib = src.join("lib.rs");
+
+        for (label, open, close) in [
+            ("brace", "{", "}"),
+            ("paren", "(", ")"),
+            ("bracket", "[", "]"),
+        ] {
+            write_file(
+                &lib,
+                &format!(
+                    "mod outer {{\n    generated!{open}\n        mod fake {{\n            pub fn hidden() {{}}\n        }}\n    {close};\n\n    mod inner {{\n        pub fn marker() {{}}\n    }}\n}}\n"
+                ),
+            );
+
+            assert_eq!(
+                find_module_path_in_file(&lib.to_string_lossy(), 4, &src).as_deref(),
+                Some("outer"),
+                "fake module should stay opaque for {label} delimiter"
+            );
+            assert_eq!(
+                find_module_path_in_file(&lib.to_string_lossy(), 9, &src).as_deref(),
+                Some("outer::inner"),
+                "real nested module should resolve for {label} delimiter"
+            );
+        }
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
     fn find_module_path_invalidates_stale_line_cache_when_file_changes() {
         let crate_dir = unique_temp_dir("invalidate_cache");
         let src = crate_dir.join("src");

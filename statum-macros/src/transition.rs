@@ -1294,6 +1294,23 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_std_wrapper_paths() {
+        let target = parse_type("Machine<Draft>");
+        let ty = parse_type(
+            "::std::option::Option<::std::result::Result<Machine<Accepted>, Error>>",
+        );
+
+        assert_eq!(
+            parse_primary_machine_and_state(&ty, &target),
+            Some(("Machine".to_owned(), "Accepted".to_owned()))
+        );
+        assert_eq!(
+            collect_machine_and_states(&ty, &target),
+            vec![("Machine".to_owned(), "Accepted".to_owned())]
+        );
+    }
+
+    #[test]
     fn impl_target_rejects_qualified_state_paths() {
         let ty = parse_type("Machine<crate::Draft>");
         assert!(extract_impl_machine_and_state(&ty).is_none());

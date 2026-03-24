@@ -776,4 +776,32 @@ struct Real<State> {
 
         let _ = fs::remove_file(path);
     }
+
+    #[test]
+    fn line_numbers_ignore_enum_struct_and_impl_inside_macro_invocations_for_all_delimiters() {
+        for (label, open, close) in [
+            ("brace", "{", "}"),
+            ("paren", "(", ")"),
+            ("bracket", "[", "]"),
+        ] {
+            let lines = scan_declaration_lines(&format!(
+                "generated!{open}\n    enum FakeState {{\n        Hidden,\n    }}\n\n    struct FakeMachine<FakeState> {{}}\n\n    impl FakeMachine<FakeState> {{\n        fn run(self) -> Self {{ self }}\n    }}\n{close};\n\nenum RealState {{\n    Ready,\n}}\n\nstruct RealMachine<RealState> {{}}\n\nimpl RealMachine<RealState> {{\n    fn run(self) -> Self {{ self }}\n}}\n"
+            ));
+            assert_eq!(
+                lines.enums.into_iter().collect::<Vec<_>>(),
+                vec![13],
+                "enum lines for {label} delimiter"
+            );
+            assert_eq!(
+                lines.structs.into_iter().collect::<Vec<_>>(),
+                vec![17],
+                "struct lines for {label} delimiter"
+            );
+            assert_eq!(
+                lines.impls.into_iter().collect::<Vec<_>>(),
+                vec![19],
+                "impl lines for {label} delimiter"
+            );
+        }
+    }
 }
