@@ -181,7 +181,11 @@
 //! `::core::result::Result<Machine<NextState>, E>`, and
 //! `::statum::Branch<Machine<Left>, Machine<Right>>`.
 //! Unsupported custom decision enums, wrapper aliases, and differently-qualified
-//! machine paths are rejected instead of approximated.
+//! machine paths are rejected instead of approximated. Whole-item `#[cfg]`
+//! gates are supported, but nested `#[cfg]` or `#[cfg_attr]` on `#[state]`
+//! variants, variant payload fields, or `#[machine]` fields are rejected
+//! because they would otherwise drift the generated metadata from the active
+//! build.
 //!
 //! For small amounts of human-facing metadata, Statum can also generate a
 //! `machine::PRESENTATION` constant from `#[present(...)]` attributes. Add

@@ -1,0 +1,13 @@
+error: Error: #[state] enum `WorkflowState` variant `Hidden` uses `#[cfg]`, but Statum does not support conditionally compiled state variants.
+       Fix: move the cfg gate to the whole `#[state]` enum or split cfg-specific workflows into separate modules.
+  --> tests/ui/invalid_state_cfg_variant.rs:15:5
+   |
+15 | /     #[cfg(any())]
+16 | |     Hidden,
+   | |__________^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_state_cfg_variant.rs:17:2
+   |
+17 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_cfg_variant.rs`

@@ -3,6 +3,8 @@ fn test_invalid_state_usage() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_state_not_enum.rs");
     t.compile_fail("tests/ui/invalid_state_empty_enum.rs");
+    t.compile_fail("tests/ui/invalid_state_cfg_variant.rs");
+    t.compile_fail("tests/ui/invalid_state_cfg_payload_field.rs");
     t.compile_fail("tests/ui/invalid_state_named_field_payload_collision.rs");
     t.compile_fail("tests/ui/invalid_state_tuple_variant.rs");
     t.compile_fail("tests/ui/invalid_state_with_generics.rs");
@@ -15,6 +17,7 @@ fn test_invalid_state_usage() {
 fn test_invalid_machine_usage() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_machine_not_struct.rs");
+    t.compile_fail("tests/ui/invalid_machine_cfg_field.rs");
     t.compile_fail("tests/ui/invalid_machine_no_state_generic.rs");
     t.compile_fail("tests/ui/invalid_machine_wrong_generic.rs");
     t.compile_fail("tests/ui/invalid_machine_generic_not_first.rs");

@@ -1,0 +1,13 @@
+error: Error: #[state] enum `WorkflowState` variant `Review` field `priority` uses `#[cfg_attr]`, but Statum does not support conditionally compiled state payload fields.
+       Fix: move the cfg gate to the whole variant or wrap cfg-specific payload shape behind a separate type.
+  --> tests/ui/invalid_state_cfg_payload_field.rs:16:9
+   |
+16 | /         #[cfg_attr(any(), allow(dead_code))]
+17 | |         priority: u8,
+   | |____________________^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_state_cfg_payload_field.rs:19:2
+   |
+19 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_cfg_payload_field.rs`

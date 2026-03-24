@@ -161,7 +161,10 @@ The generated graph is derived from macro-expanded, cfg-pruned
 types: `::core::option::Option<...>`, `::core::result::Result<..., E>`, and
 `::statum::Branch<..., ...>`. Unsupported custom decision enums, wrapper
 aliases, and differently-qualified machine paths are rejected instead of
-exported as best-effort graph metadata.
+exported as best-effort graph metadata. Whole-item `#[cfg]` gates are
+supported, but nested `#[cfg]` or `#[cfg_attr]` on `#[state]` variants,
+variant payload fields, or `#[machine]` fields are rejected because they would
+otherwise drift the generated metadata from the active build.
 
 See [docs/introspection.md](docs/introspection.md) for the full guide and
 [statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)

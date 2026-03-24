@@ -345,4 +345,40 @@ mod workflow {
 
         let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
     }
+
+    #[test]
+    fn candidates_in_module_ignores_local_same_named_items_in_other_modules() {
+        let path = write_temp_rust_file(
+            r#"
+mod alpha {
+    fn helper() {
+        struct Machine<State> {
+            _marker: core::marker::PhantomData<State>,
+        }
+    }
+}
+
+mod beta {
+    #[machine]
+    pub struct Machine<State> {
+        _marker: core::marker::PhantomData<State>,
+    }
+}
+"#,
+        );
+
+        let candidates = candidates_in_module(
+            path.to_str().expect("path"),
+            "beta",
+            ItemKind::Struct,
+            Some("machine"),
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "Machine");
+        assert_eq!(candidates[0].module_path, "beta");
+        assert_eq!(candidates[0].line_number, 12);
+
+        let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
+    }
 }

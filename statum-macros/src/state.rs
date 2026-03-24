@@ -479,6 +479,33 @@ fn validate_state_enum_shape(item: &ItemEnum) -> syn::Result<()> {
     }
 
     for variant in &item.variants {
+        if let Some(attr_name) = cfg_like_attr_name(&variant.attrs) {
+            let variant_name = variant.ident.to_string();
+            return Err(syn::Error::new_spanned(
+                variant,
+                format!(
+                    "Error: #[state] enum `{enum_name}` variant `{variant_name}` uses `#[{attr_name}]`, but Statum does not support conditionally compiled state variants.\nFix: move the cfg gate to the whole `#[state]` enum or split cfg-specific workflows into separate modules."
+                ),
+            ));
+        }
+
+        for field in variant.fields.iter() {
+            if let Some(attr_name) = cfg_like_attr_name(&field.attrs) {
+                let variant_name = variant.ident.to_string();
+                let field_name = field
+                    .ident
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "payload field".to_string());
+                return Err(syn::Error::new_spanned(
+                    field,
+                    format!(
+                        "Error: #[state] enum `{enum_name}` variant `{variant_name}` field `{field_name}` uses `#[{attr_name}]`, but Statum does not support conditionally compiled state payload fields.\nFix: move the cfg gate to the whole variant or wrap cfg-specific payload shape behind a separate type."
+                    ),
+                ));
+            }
+        }
+
         match &variant.fields {
             Fields::Unit => {}
             Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {}
@@ -506,6 +533,18 @@ fn validate_state_enum_shape(item: &ItemEnum) -> syn::Result<()> {
     }
 
     Ok(())
+}
+
+fn cfg_like_attr_name(attrs: &[syn::Attribute]) -> Option<&'static str> {
+    attrs.iter().find_map(|attr| {
+        if attr.path().is_ident("cfg") {
+            Some("cfg")
+        } else if attr.path().is_ident("cfg_attr") {
+            Some("cfg_attr")
+        } else {
+            None
+        }
+    })
 }
 
 pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {

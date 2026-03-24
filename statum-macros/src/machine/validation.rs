@@ -28,6 +28,22 @@ pub fn invalid_machine_target_error(item: &Item) -> TokenStream {
 
 pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) -> Option<TokenStream> {
     let machine_name = machine_info.name.clone();
+
+    for field in &item.fields {
+        let Some(attr_name) = cfg_like_attr_name(&field.attrs) else {
+            continue;
+        };
+        let field_name = field
+            .ident
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "field".to_string());
+        let message = format!(
+            "Error: #[machine] struct `{machine_name}` field `{field_name}` uses `#[{attr_name}]`, but Statum does not support conditionally compiled machine fields.\nFix: move the cfg gate to the whole `#[machine]` item or split cfg-specific field sets into separate machines."
+        );
+        return Some(syn::Error::new_spanned(field, message).to_compile_error());
+    }
+
     let Some(first_generic_param) = item.generics.params.first() else {
         return Some(
             syn::Error::new_spanned(
@@ -94,4 +110,16 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
     }
 
     None
+}
+
+fn cfg_like_attr_name(attrs: &[syn::Attribute]) -> Option<&'static str> {
+    attrs.iter().find_map(|attr| {
+        if attr.path().is_ident("cfg") {
+            Some("cfg")
+        } else if attr.path().is_ident("cfg_attr") {
+            Some("cfg_attr")
+        } else {
+            None
+        }
+    })
 }

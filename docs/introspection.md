@@ -29,7 +29,10 @@ signatures and supported wrapper shapes. Today that means direct
 types: `::core::option::Option<...>`, `::core::result::Result<..., E>`, and
 `::statum::Branch<..., ...>`. Unsupported custom decision enums, wrapper
 aliases, and differently-qualified machine paths are rejected instead of
-approximated.
+approximated. Whole-item `#[cfg]` gates are supported, but nested `#[cfg]` or
+`#[cfg_attr]` on `#[state]` variants, variant payload fields, or `#[machine]`
+fields are rejected because they would otherwise drift the generated metadata
+from the active build.
 
 ## Static Graph Access
 

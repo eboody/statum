@@ -55,6 +55,7 @@ enum TokenKind {
 
 #[derive(Clone, Debug)]
 enum BlockContext {
+    Module { close: char },
     Opaque { close: char },
     Normal { close: char },
 }
@@ -118,16 +119,38 @@ fn scan_declaration_lines(content: &str) -> DeclarationLines {
     let mut lines = DeclarationLines::default();
     let mut block_stack = Vec::new();
     let mut opaque_depth = 0usize;
+    let mut pending_module_open = None::<usize>;
     let mut pending_opaque_open = None::<usize>;
 
     for (index, token) in tokens.iter().enumerate() {
         match &token.kind {
-            TokenKind::Ident(keyword) if opaque_depth == 0 => match keyword.as_str() {
-                "enum" => lines.enums.push_back(token.line),
-                "struct" => lines.structs.push_back(token.line),
-                "impl" => lines.impls.push_back(token.line),
-                _ => {}
-            },
+            TokenKind::Ident(keyword)
+                if opaque_depth == 0 && module_items_allowed(&block_stack) =>
+            {
+                match keyword.as_str() {
+                    "enum" => lines.enums.push_back(token.line),
+                    "struct" => lines.structs.push_back(token.line),
+                    "impl" => lines.impls.push_back(token.line),
+                    "mod" => {
+                        if matches!(
+                            tokens.get(index + 1),
+                            Some(ScannedToken {
+                                kind: TokenKind::Ident(_),
+                                ..
+                            })
+                        ) && matches!(
+                            tokens.get(index + 2),
+                            Some(ScannedToken {
+                                kind: TokenKind::Punct('{'),
+                                ..
+                            })
+                        ) {
+                            pending_module_open = Some(index + 2);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             TokenKind::Punct('!') if opaque_depth == 0 => {
                 if matches!(
                     tokens.get(index + 1),
@@ -160,6 +183,11 @@ fn scan_declaration_lines(content: &str) -> DeclarationLines {
                     });
                     opaque_depth += 1;
                     pending_opaque_open = None;
+                } else if pending_module_open == Some(index) {
+                    block_stack.push(BlockContext::Module {
+                        close: matching_close(*open),
+                    });
+                    pending_module_open = None;
                 } else {
                     block_stack.push(BlockContext::Normal {
                         close: matching_close(*open),
@@ -172,6 +200,9 @@ fn scan_declaration_lines(content: &str) -> DeclarationLines {
                 };
 
                 match context {
+                    BlockContext::Module {
+                        close: expected_close,
+                    } if expected_close == *close => {}
                     BlockContext::Opaque {
                         close: expected_close,
                     } if expected_close == *close => {
@@ -180,7 +211,9 @@ fn scan_declaration_lines(content: &str) -> DeclarationLines {
                     BlockContext::Normal {
                         close: expected_close,
                     } if expected_close == *close => {}
-                    BlockContext::Opaque { .. } | BlockContext::Normal { .. } => {}
+                    BlockContext::Module { .. }
+                    | BlockContext::Opaque { .. }
+                    | BlockContext::Normal { .. } => {}
                 }
             }
             _ => {}
@@ -188,6 +221,12 @@ fn scan_declaration_lines(content: &str) -> DeclarationLines {
     }
 
     lines
+}
+
+fn module_items_allowed(block_stack: &[BlockContext]) -> bool {
+    block_stack
+        .iter()
+        .all(|context| matches!(context, BlockContext::Module { .. }))
 }
 
 fn tokenize_source(content: &str) -> Vec<ScannedToken> {
@@ -803,5 +842,42 @@ struct Real<State> {
                 "impl lines for {label} delimiter"
             );
         }
+    }
+
+    #[test]
+    fn line_numbers_ignore_local_items_inside_function_bodies() {
+        let lines = scan_declaration_lines(
+            r#"
+mod alpha {
+    fn helper() {
+        enum LocalState {
+            Hidden,
+        }
+
+        struct LocalMachine<LocalState> {}
+
+        impl LocalMachine<LocalState> {
+            fn run(self) -> Self { self }
+        }
+    }
+}
+
+mod beta {
+    enum RealState {
+        Ready,
+    }
+
+    struct RealMachine<RealState> {}
+
+    impl RealMachine<RealState> {
+        fn run(self) -> Self { self }
+    }
+}
+"#,
+        );
+
+        assert_eq!(lines.enums.into_iter().collect::<Vec<_>>(), vec![17]);
+        assert_eq!(lines.structs.into_iter().collect::<Vec<_>>(), vec![21]);
+        assert_eq!(lines.impls.into_iter().collect::<Vec<_>>(), vec![23]);
     }
 }
