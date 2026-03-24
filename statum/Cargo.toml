@@ -6,9 +6,6 @@ version = "0.6.8"
 path = "../statum-macros"
 version = "0.6.8"
 
-[dev-dependencies]
-futures = "0.3"
-
 [dev-dependencies.tokio]
 features = ["full"]
 version = "1"

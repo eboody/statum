@@ -440,7 +440,7 @@ fn generate_finalization_logic(
         }
     } else {
         quote! {
-            futures::future::join_all(
+            statum::__private::futures::future::join_all(
                 __statum_items.iter().map(|__statum_item| {
                     __statum_item.into_machine()
                         #field_builder_chain
@@ -472,7 +472,7 @@ fn generate_per_item_finalization_logic(
     } else {
         quote! {
             let __statum_field_fn = &self.__statum_fields_fn;
-            futures::future::join_all(
+            statum::__private::futures::future::join_all(
                 self.__statum_items.iter().map(|__statum_item| {
                     let __statum_fields = __statum_field_fn(__statum_item);
                     __statum_item.into_machine()

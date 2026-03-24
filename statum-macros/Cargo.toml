@@ -9,7 +9,7 @@ version = "0.6.8"
 version = "0.2.6"
 
 [dependencies.proc-macro2]
-features = []
+features = ["span-locations"]
 version = "1.0"
 
 [dependencies.syn]

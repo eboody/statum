@@ -1,4 +1,5 @@
 [dependencies]
+futures = "0.3"
 linkme = "0.3"
 
 [package]
