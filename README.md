@@ -157,9 +157,11 @@ transitions, and replay or debug tooling.
 
 The generated graph is derived from macro-expanded, cfg-pruned
 `#[transition]` method signatures. Supported return shapes are direct
-`Machine<NextState>` values plus `Option`, `Result`, and `statum::Branch`
-wrappers around those machine types. Unsupported custom decision enums are
-rejected instead of exported as best-effort graph metadata.
+`Machine<NextState>` values plus canonical wrapper paths around those machine
+types: `::core::option::Option<...>`, `::core::result::Result<..., E>`, and
+`::statum::Branch<..., ...>`. Unsupported custom decision enums, wrapper
+aliases, and differently-qualified machine paths are rejected instead of
+exported as best-effort graph metadata.
 
 See [docs/introspection.md](docs/introspection.md) for the full guide and
 [statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)
@@ -300,7 +302,7 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
 
 - Apply it to `impl Machine<State>` blocks that define legal transitions.
 - Transition methods must take `self` or `mut self`.
-- Return `Machine<NextState>` directly, or wrap it in `Result` / `Option` / `statum::Branch` when the transition is conditional.
+- Return `Machine<NextState>` directly, or wrap it in canonical `::core::result::Result`, `::core::option::Option`, or `::statum::Branch` when the transition is conditional.
 - Use `transition_with(data)` when the target state carries data.
 
 `#[validators]`

@@ -25,9 +25,11 @@ graph table.
 
 The graph is derived from macro-expanded, cfg-pruned `#[transition]` method
 signatures and supported wrapper shapes. Today that means direct
-`Machine<NextState>` returns plus `Option`, `Result`, and `statum::Branch`
-wrappers around those machine types. Unsupported custom decision enums are
-rejected instead of approximated.
+`Machine<NextState>` returns plus canonical wrapper paths around those machine
+types: `::core::option::Option<...>`, `::core::result::Result<..., E>`, and
+`::statum::Branch<..., ...>`. Unsupported custom decision enums, wrapper
+aliases, and differently-qualified machine paths are rejected instead of
+approximated.
 
 ## Static Graph Access
 
@@ -48,7 +50,10 @@ struct Flow<FlowState> {}
 
 #[transition]
 impl Flow<Fetched> {
-    fn validate(self, accept: bool) -> Result<Flow<Accepted>, Flow<Rejected>> {
+    fn validate(
+        self,
+        accept: bool,
+    ) -> ::core::result::Result<Flow<Accepted>, Flow<Rejected>> {
         if accept {
             Ok(self.accept())
         } else {
@@ -116,7 +121,10 @@ struct Flow<FlowState> {}
 
 #[transition]
 impl Flow<Fetched> {
-    fn validate(self, accept: bool) -> Result<Flow<Accepted>, Flow<Rejected>> {
+    fn validate(
+        self,
+        accept: bool,
+    ) -> ::core::result::Result<Flow<Accepted>, Flow<Rejected>> {
         if accept {
             Ok(self.accept())
         } else {

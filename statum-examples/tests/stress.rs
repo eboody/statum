@@ -60,7 +60,7 @@ mod wrapped_option_transition {
 
     #[transition]
     impl Machine<A> {
-        fn to_b_option(self) -> Option<Machine<B>> {
+        fn to_b_option(self) -> ::core::option::Option<Machine<B>> {
             Some(self.transition())
         }
     }
@@ -87,7 +87,7 @@ mod wrapped_result_transition {
 
     #[transition]
     impl Machine<A> {
-        fn to_b_result(self) -> Result<Machine<B>, statum::Error> {
+        fn to_b_result(self) -> ::core::result::Result<Machine<B>, statum::Error> {
             Ok(self.transition())
         }
     }

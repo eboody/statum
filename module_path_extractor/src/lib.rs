@@ -234,6 +234,48 @@ mod tests {
     }
 
     #[test]
+    fn find_module_path_in_file_ignores_modules_inside_macro_rules_bodies() {
+        let crate_dir = unique_temp_dir("macro_rules_body");
+        let src = crate_dir.join("src");
+        let lib = src.join("lib.rs");
+
+        write_file(
+            &lib,
+            "mod outer {\n    macro_rules! generated {\n        () => {\n            mod fake {\n                pub fn hidden() {}\n            }\n        };\n    }\n}\n",
+        );
+
+        assert_eq!(
+            find_module_path_in_file(&lib.to_string_lossy(), 5, &src).as_deref(),
+            Some("outer")
+        );
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
+    fn find_module_path_in_file_ignores_modules_inside_macro_invocation_bodies() {
+        let crate_dir = unique_temp_dir("macro_invocation_body");
+        let src = crate_dir.join("src");
+        let lib = src.join("lib.rs");
+
+        write_file(
+            &lib,
+            "mod outer {\n    generated! {\n        mod fake {\n            pub fn hidden() {}\n        }\n    }\n\n    mod inner {\n        pub fn marker() {}\n    }\n}\n",
+        );
+
+        assert_eq!(
+            find_module_path_in_file(&lib.to_string_lossy(), 4, &src).as_deref(),
+            Some("outer")
+        );
+        assert_eq!(
+            find_module_path_in_file(&lib.to_string_lossy(), 8, &src).as_deref(),
+            Some("outer::inner")
+        );
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
     fn find_module_path_invalidates_stale_line_cache_when_file_changes() {
         let crate_dir = unique_temp_dir("invalidate_cache");
         let src = crate_dir.join("src");
@@ -293,5 +335,66 @@ mod tests {
         assert_eq!(cache::line_cache_entries_for(&lib_path), 2);
 
         let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
+    fn find_module_path_handles_non_src_fixture_files_with_nested_modules() {
+        let crate_dir = unique_temp_dir("non_src_fixture");
+        let tests_ui = crate_dir.join("tests").join("ui");
+        let fixture = tests_ui.join("fixture.rs");
+
+        write_file(
+            &fixture,
+            "pub mod public_flow {\n    #[allow(dead_code)]\n    pub struct Machine;\n}\n",
+        );
+
+        assert_eq!(
+            find_module_path(&fixture.to_string_lossy(), 3).as_deref(),
+            Some("fixture::public_flow")
+        );
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
+    fn find_module_path_handles_nested_trybuild_style_fixture() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../statum-macros/tests/ui/valid_helper_trait_visibility.rs");
+
+        assert_eq!(
+            find_module_path(&fixture.to_string_lossy(), 30).as_deref(),
+            Some("valid_helper_trait_visibility::public_flow")
+        );
+        assert_eq!(
+            find_module_path(&fixture.to_string_lossy(), 39).as_deref(),
+            Some("valid_helper_trait_visibility::public_flow")
+        );
+        assert_eq!(
+            find_module_path(&fixture.to_string_lossy(), 103).as_deref(),
+            Some("valid_helper_trait_visibility::crate_flow")
+        );
+    }
+
+    #[test]
+    fn find_module_path_handles_sibling_trybuild_modules() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../statum-macros/tests/ui/valid_matrix.rs");
+
+        assert_eq!(
+            find_module_path(&fixture.to_string_lossy(), 18).as_deref(),
+            Some("valid_matrix::simple")
+        );
+        assert_eq!(
+            find_module_path(&fixture.to_string_lossy(), 47).as_deref(),
+            Some("valid_matrix::data_state")
+        );
+        assert_eq!(
+            find_module_path(&fixture.to_string_lossy(), 69).as_deref(),
+            Some("valid_matrix::wrappers_option")
+        );
+        assert_eq!(
+            find_module_path(&fixture.to_string_lossy(), 113).as_deref(),
+            Some("valid_matrix::validators_sync")
+        );
     }
 }

@@ -44,7 +44,7 @@ use crate::{
     ambiguous_transition_machine_fallback_error, lookup_loaded_machine_in_module,
     lookup_unique_loaded_machine_by_name,
 };
-use macro_registry::callsite::current_module_path_opt;
+use macro_registry::callsite::{current_module_path_at_line, current_module_path_opt};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use syn::{Item, ItemImpl, parse_macro_input};
@@ -214,7 +214,14 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn resolved_current_module_path(span: Span, macro_name: &str) -> Result<String, TokenStream> {
-    current_module_path_opt().ok_or_else(|| {
+    let line_number = span.start().line;
+    let resolved = if line_number == 0 {
+        current_module_path_opt()
+    } else {
+        current_module_path_at_line(line_number).or_else(current_module_path_opt)
+    };
+
+    resolved.ok_or_else(|| {
         let message = format!(
             "Internal error: could not resolve the module path for `{macro_name}` at this call site."
         );

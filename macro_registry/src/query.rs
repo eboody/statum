@@ -280,4 +280,69 @@ mod beta {
 
         let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
     }
+
+    #[test]
+    fn candidates_in_module_ignores_comment_only_declarations() {
+        let path = write_temp_rust_file(
+            r#"
+mod comment_only {
+    /*
+    #[machine]
+    struct Machine<State> {
+        id: u64,
+    }
+    */
+}
+
+mod workflow {
+    #[machine]
+    pub struct Machine<State> {
+        id: u64,
+    }
+}
+"#,
+        );
+
+        let candidates = candidates_in_module(
+            path.to_str().expect("path"),
+            "workflow",
+            ItemKind::Struct,
+            Some("machine"),
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "Machine");
+        assert_eq!(candidates[0].module_path, "workflow");
+
+        let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
+    }
+
+    #[test]
+    fn candidates_in_module_handles_split_declaration_lines() {
+        let path = write_temp_rust_file(
+            r#"
+mod workflow {
+    #[machine]
+    pub
+    struct
+    Machine<State> {
+        id: u64,
+    }
+}
+"#,
+        );
+
+        let candidates = candidates_in_module(
+            path.to_str().expect("path"),
+            "workflow",
+            ItemKind::Struct,
+            Some("machine"),
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "Machine");
+        assert_eq!(candidates[0].line_number, 5);
+
+        let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
+    }
 }

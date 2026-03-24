@@ -37,34 +37,32 @@ pub struct TransitionFn {
 }
 
 impl TransitionFn {
-    pub fn return_state(&self) -> Result<String, TokenStream> {
+    pub fn return_state(&self, target_type: &Type) -> Result<String, TokenStream> {
         let Some(return_type) = self.return_type.as_ref() else {
             return Err(invalid_return_type_error(self, "missing return type"));
         };
-        let machine_ident = format_ident!("{}", self.machine_name);
-        let Some((_, return_state)) = parse_machine_and_state(return_type, machine_ident) else {
+        let Some((_, return_state)) = parse_machine_and_state(return_type, target_type) else {
             return Err(invalid_return_type_error(
                 self,
-                "expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`/`Branch`)",
+                "expected the impl target machine path directly, or the same path wrapped in a canonical `::core::option::Option`, `::core::result::Result`, or `::statum::Branch`",
             ));
         };
 
         Ok(return_state)
     }
 
-    pub fn return_states(&self) -> Result<Vec<String>, TokenStream> {
+    pub fn return_states(&self, target_type: &Type) -> Result<Vec<String>, TokenStream> {
         let Some(return_type) = self.return_type.as_ref() else {
             return Err(invalid_return_type_error(self, "missing return type"));
         };
-        let machine_ident = format_ident!("{}", self.machine_name);
-        let return_states = collect_machine_and_states(return_type, machine_ident)
+        let return_states = collect_machine_and_states(return_type, target_type)
             .into_iter()
             .map(|(_, state)| state)
             .collect::<Vec<_>>();
         if return_states.is_empty() {
             return Err(invalid_return_type_error(
                 self,
-                "expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`/`Branch`)",
+                "expected the impl target machine path directly, or the same path wrapped in a canonical `::core::option::Option`, `::core::result::Result`, or `::statum::Branch`",
             ));
         }
 
@@ -124,15 +122,14 @@ fn extract_impl_machine_and_state(target_type: &Type) -> Option<(String, Span, S
         return None;
     };
     let segment = type_path.path.segments.last()?;
-    extract_machine_generic(&segment.arguments, segment.ident.clone())
-        .map(|(_, state_name, state_span)| {
-            (
-                segment.ident.to_string(),
-                segment.ident.span(),
-                state_name,
-                state_span,
-            )
-        })
+    extract_machine_state_from_segment(segment).map(|(_, state_name, state_span)| {
+        (
+            segment.ident.to_string(),
+            segment.ident.span(),
+            state_name,
+            state_span,
+        )
+    })
 }
 
 pub fn parse_transition_fn(
@@ -190,7 +187,7 @@ pub fn validate_transition_functions(
 ) -> Option<TokenStream> {
     if tr_impl.functions.is_empty() {
         let message = format!(
-            "Error: #[transition] impl for `{}<{}>` must contain at least one method returning `{}` or a supported wrapper like `Option<{}>` / `Result<{}, E>` / `Branch<{}, {}>`.",
+            "Error: #[transition] impl for `{}<{}>` must contain at least one method returning `{}` or the same machine path wrapped in a canonical `::core::option::Option<{}>`, `::core::result::Result<{}, E>`, or `::statum::Branch<{}, {}>`.",
             tr_impl.machine_name,
             tr_impl.source_state,
             machine_return_signature(&tr_impl.machine_name),
@@ -231,7 +228,7 @@ pub fn validate_transition_functions(
             return Some(compile_error_at(func.span, &message));
         }
 
-        let return_state = match func.return_state() {
+        let return_state = match func.return_state(&tr_impl.target_type) {
             Ok(state) => state,
             Err(err) => return Some(err),
         };
@@ -244,7 +241,7 @@ pub fn validate_transition_functions(
             ));
         }
 
-        let return_states = match func.return_states() {
+        let return_states = match func.return_states(&tr_impl.target_type) {
             Ok(states) => states,
             Err(err) => return Some(err),
         };
@@ -310,7 +307,7 @@ pub fn generate_transition_impl(
     let mut emitted_states = HashSet::new();
     let mut transition_impls = Vec::new();
     for function in &tr_impl.functions {
-        let return_states = match function.return_states() {
+        let return_states = match function.return_states(target_type) {
             Ok(states) => states,
             Err(err) => return err,
         };
@@ -408,7 +405,7 @@ pub fn generate_transition_impl(
         }
     }
     let transition_registrations = tr_impl.functions.iter().enumerate().map(|(idx, function)| {
-        let return_states = match function.return_states() {
+        let return_states = match function.return_states(target_type) {
             Ok(states) => states,
             Err(err) => return err,
         };
@@ -795,7 +792,7 @@ fn invalid_return_type_error(func: &TransitionFn, reason: &str) -> TokenStream {
         "Invalid transition return type for `{}<{}>::{func_name}`: {reason}.\n\n\
 Expected:\n  fn {func_name}(self) -> {machine_name}<NextState>\n\n\
 Actual:\n  {return_type}\n\n\
-Help:\n  return `{machine_name}<NextState>` directly, or wrap it in `Option<...>` / `Result<..., E>` / `Branch<..., ...>` and build the next state with `self.transition()` or `self.transition_with(...)`."
+Help:\n  return `{machine_name}<NextState>` directly using the same machine path as the impl target, or wrap that same machine path in `::core::option::Option<...>`, `::core::result::Result<..., E>`, or `::statum::Branch<..., ...>` and build the next state with `self.transition()` or `self.transition_with(...)`.\n  Bare, aliased, or differently-qualified wrapper and machine paths are rejected because transition introspection only accepts exact syntactic return shapes."
         ,
         machine_name,
         func.source_state,
@@ -870,32 +867,27 @@ fn compile_error_at(span: Span, message: &str) -> TokenStream {
 
 /// Attempts to parse `ty` into the form:
 ///
-///   - `Machine<SomeState>`
-///   - `Option<Machine<SomeState>>`
-///   - `Result<Machine<SomeState>, E>`
-///   - `Branch<Machine<FirstState>, Machine<SecondState>>`
-///   - `some::error::Result<Machine<SomeState>, E>`
+///   - the same machine path as the impl target, with a different state marker
+///   - `::core::option::Option<...>` or `::std::option::Option<...>`
+///   - `::core::result::Result<..., E>` or `::std::result::Result<..., E>`
+///   - `::statum::Branch<..., ...>` or `::statum_core::Branch<..., ...>`
 ///
-/// On success, returns ("Machine", "SomeState").
-///
-/// Walks through wrapper types (`Option`/`Result`/`Branch`) via their first generic argument.
-pub fn parse_machine_and_state(ty: &Type, target_machine_ident: Ident) -> Option<(String, String)> {
-    parse_primary_machine_and_state(ty, target_machine_ident)
+/// On success, returns (`"Machine"`, `"SomeState"`).
+pub fn parse_machine_and_state(ty: &Type, target_type: &Type) -> Option<(String, String)> {
+    parse_primary_machine_and_state(ty, target_type)
 }
 
 /// Attempts to parse the primary visible next state from `ty`.
 ///
-/// This preserves the existing transition helper behavior by following the first
-/// generic argument through supported wrappers until it reaches `Machine<State>`.
-pub fn parse_primary_machine_and_state(
-    ty: &Type,
-    target_machine_ident: Ident,
-) -> Option<(String, String)> {
+/// This preserves transition helper behavior by following the first generic
+/// argument through supported wrappers until it reaches the same machine path
+/// used by the impl target.
+pub fn parse_primary_machine_and_state(ty: &Type, target_type: &Type) -> Option<(String, String)> {
     let mut current = ty;
     loop {
-        match classify_primary_return_wrapper(current, &target_machine_ident)? {
+        match classify_primary_return_wrapper(current, target_type)? {
             PrimaryReturnWrapper::Machine(segment) => {
-                return extract_machine_generic(&segment.arguments, target_machine_ident)
+                return extract_machine_state_from_segment(segment)
                     .map(|(machine, state, _)| (machine, state));
             }
             PrimaryReturnWrapper::Option(inner)
@@ -910,13 +902,10 @@ pub fn parse_primary_machine_and_state(
 /// Collects every `Machine<State>` target mentioned in supported wrapper trees.
 ///
 /// This is used for exact branch introspection and intentionally inspects both
-/// sides of `Result<T, E>` while still ignoring arbitrary custom decision enums.
-pub fn collect_machine_and_states(
-    ty: &Type,
-    target_machine_ident: Ident,
-) -> Vec<(String, String)> {
+/// sides of `Result<T, E>` while still ignoring arbitrary non-machine payloads.
+pub fn collect_machine_and_states(ty: &Type, target_type: &Type) -> Vec<(String, String)> {
     let mut targets = Vec::new();
-    collect_machine_targets(ty, &target_machine_ident, &mut targets);
+    collect_machine_targets(ty, target_type, &mut targets);
     targets
 }
 
@@ -927,93 +916,195 @@ enum PrimaryReturnWrapper<'a> {
     Branch(&'a Type),
 }
 
+#[derive(Clone, Copy)]
+enum SupportedWrapper {
+    Option,
+    Result,
+    Branch,
+}
+
 fn classify_primary_return_wrapper<'a>(
     ty: &'a Type,
-    target_machine_ident: &Ident,
+    target_type: &Type,
 ) -> Option<PrimaryReturnWrapper<'a>> {
-    let Type::Path(TypePath { path, .. }) = ty else {
-        return None;
-    };
-    let segment = path.segments.last()?;
+    let type_path = type_path(ty)?;
 
-    if &segment.ident == target_machine_ident {
+    if let Some(segment) = machine_segment_matching_target(&type_path.path, target_type) {
         return Some(PrimaryReturnWrapper::Machine(segment));
     }
 
-    if segment.ident == "Option" {
-        return extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Option);
+    let segment = type_path.path.segments.last()?;
+    match supported_wrapper(&type_path.path)? {
+        SupportedWrapper::Option => {
+            extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Option)
+        }
+        SupportedWrapper::Result => {
+            extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Result)
+        }
+        SupportedWrapper::Branch => {
+            extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Branch)
+        }
     }
-
-    if segment.ident == "Result" {
-        return extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Result);
-    }
-
-    if segment.ident == "Branch" {
-        return extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Branch);
-    }
-
-    None
 }
 
-fn collect_machine_targets(
-    ty: &Type,
-    target_machine_ident: &Ident,
-    targets: &mut Vec<(String, String)>,
-) {
-    let Type::Path(TypePath { path, .. }) = ty else {
+fn collect_machine_targets(ty: &Type, target_type: &Type, targets: &mut Vec<(String, String)>) {
+    let Some(type_path) = type_path(ty) else {
         return;
     };
-    let Some(segment) = path.segments.last() else {
+    let Some(segment) = type_path.path.segments.last() else {
         return;
     };
 
-    if &segment.ident == target_machine_ident {
-        if let Some((machine, state, _)) =
-            extract_machine_generic(&segment.arguments, target_machine_ident.clone())
-        {
+    if machine_segment_matching_target(&type_path.path, target_type).is_some() {
+        if let Some((machine, state, _)) = extract_machine_state_from_segment(segment) {
             push_unique_target(targets, machine, state);
         }
         return;
     }
 
-    if segment.ident == "Option" {
-        if let Some(inner) = extract_first_generic_type_ref(&segment.arguments) {
-            collect_machine_targets(inner, target_machine_ident, targets);
+    match supported_wrapper(&type_path.path) {
+        Some(SupportedWrapper::Option) => {
+            if let Some(inner) = extract_first_generic_type_ref(&segment.arguments) {
+                collect_machine_targets(inner, target_type, targets);
+            }
         }
-        return;
-    }
-
-    if segment.ident == "Result"
-        && let Some(types) = extract_generic_type_refs(&segment.arguments)
-    {
-        for inner in types {
-            collect_machine_targets(inner, target_machine_ident, targets);
+        Some(SupportedWrapper::Result | SupportedWrapper::Branch) => {
+            if let Some(types) = extract_generic_type_refs(&segment.arguments) {
+                for inner in types {
+                    collect_machine_targets(inner, target_type, targets);
+                }
+            }
         }
-        return;
-    }
-
-    if segment.ident == "Branch"
-        && let Some(types) = extract_generic_type_refs(&segment.arguments)
-    {
-        for inner in types {
-            collect_machine_targets(inner, target_machine_ident, targets);
-        }
+        None => {}
     }
 }
 
 fn push_unique_target(targets: &mut Vec<(String, String)>, machine: String, state: String) {
-    if !targets
-        .iter()
-        .any(|(existing_machine, existing_state)| existing_machine == &machine && existing_state == &state)
-    {
+    if !targets.iter().any(|(existing_machine, existing_state)| {
+        existing_machine == &machine && existing_state == &state
+    }) {
         targets.push((machine, state));
     }
 }
 
-fn extract_machine_generic(
-    args: &PathArguments,
-    target_machine_ident: Ident,
-) -> Option<(String, String, Span)> {
+fn type_path(ty: &Type) -> Option<&TypePath> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    type_path.qself.is_none().then_some(type_path)
+}
+
+fn machine_segment_matching_target<'a>(
+    candidate_path: &'a syn::Path,
+    target_type: &Type,
+) -> Option<&'a syn::PathSegment> {
+    let target_path = &type_path(target_type)?.path;
+    path_matches_target_machine(candidate_path, target_path)
+        .then(|| candidate_path.segments.last())
+        .flatten()
+}
+
+fn path_matches_target_machine(candidate: &syn::Path, target: &syn::Path) -> bool {
+    if candidate.leading_colon.is_some() != target.leading_colon.is_some() {
+        return false;
+    }
+    if candidate.segments.len() != target.segments.len() {
+        return false;
+    }
+
+    let last_index = candidate.segments.len().saturating_sub(1);
+    for (index, (candidate_segment, target_segment)) in
+        candidate.segments.iter().zip(target.segments.iter()).enumerate()
+    {
+        if candidate_segment.ident != target_segment.ident {
+            return false;
+        }
+
+        let arguments_match = if index == last_index {
+            machine_generic_arguments_match(&candidate_segment.arguments, &target_segment.arguments)
+        } else {
+            path_arguments_equal(&candidate_segment.arguments, &target_segment.arguments)
+        };
+
+        if !arguments_match {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn machine_generic_arguments_match(candidate: &PathArguments, target: &PathArguments) -> bool {
+    let PathArguments::AngleBracketed(candidate_args) = candidate else {
+        return false;
+    };
+    let PathArguments::AngleBracketed(target_args) = target else {
+        return false;
+    };
+    if candidate_args.args.len() != target_args.args.len() || candidate_args.args.is_empty() {
+        return false;
+    }
+
+    matches!(candidate_args.args.first(), Some(GenericArgument::Type(_)))
+        && matches!(target_args.args.first(), Some(GenericArgument::Type(_)))
+        && candidate_args
+            .args
+            .iter()
+            .skip(1)
+            .map(argument_tokens)
+            .eq(target_args.args.iter().skip(1).map(argument_tokens))
+}
+
+fn path_arguments_equal(left: &PathArguments, right: &PathArguments) -> bool {
+    argument_tokens(left) == argument_tokens(right)
+}
+
+fn argument_tokens<T: ToTokens>(tokens: &T) -> String {
+    tokens.to_token_stream().to_string()
+}
+
+fn supported_wrapper(path: &syn::Path) -> Option<SupportedWrapper> {
+    if matches_absolute_type_path(path, &["core", "option", "Option"])
+        || matches_absolute_type_path(path, &["std", "option", "Option"])
+    {
+        return Some(SupportedWrapper::Option);
+    }
+
+    if matches_absolute_type_path(path, &["core", "result", "Result"])
+        || matches_absolute_type_path(path, &["std", "result", "Result"])
+    {
+        return Some(SupportedWrapper::Result);
+    }
+
+    if matches_absolute_type_path(path, &["statum", "Branch"])
+        || matches_absolute_type_path(path, &["statum_core", "Branch"])
+    {
+        return Some(SupportedWrapper::Branch);
+    }
+
+    None
+}
+
+fn matches_absolute_type_path(path: &syn::Path, expected: &[&str]) -> bool {
+    path.leading_colon.is_some()
+        && path.segments.len() == expected.len()
+        && path
+            .segments
+            .iter()
+            .zip(expected.iter())
+            .enumerate()
+            .all(|(index, (segment, expected_ident))| {
+                segment.ident == *expected_ident
+                    && (index + 1 == expected.len()
+                        || matches!(segment.arguments, PathArguments::None))
+            })
+}
+
+fn extract_machine_state_from_segment(segment: &syn::PathSegment) -> Option<(String, String, Span)> {
+    extract_machine_generic(&segment.arguments, &segment.ident.to_string())
+}
+
+fn extract_machine_generic(args: &PathArguments, machine_name: &str) -> Option<(String, String, Span)> {
     let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
         args: generic_args, ..
     }) = args
@@ -1024,15 +1115,24 @@ fn extract_machine_generic(
         GenericArgument::Type(ty) => Some(ty),
         _ => None,
     })?;
-    let Type::Path(state_path) = first_generic else {
+    let (state_name, state_span) = extract_state_marker(first_generic)?;
+    Some((machine_name.to_string(), state_name, state_span))
+}
+
+fn extract_state_marker(ty: &Type) -> Option<(String, Span)> {
+    let Type::Path(TypePath { qself: None, path }) = ty else {
         return None;
     };
-    let state_seg = state_path.path.segments.last()?;
-    Some((
-        target_machine_ident.to_string(),
-        state_seg.ident.to_string(),
-        state_seg.ident.span(),
-    ))
+    if path.leading_colon.is_some() || path.segments.len() != 1 {
+        return None;
+    }
+
+    let state_segment = path.segments.last()?;
+    if !matches!(state_segment.arguments, PathArguments::None) {
+        return None;
+    }
+
+    Some((state_segment.ident.to_string(), state_segment.ident.span()))
 }
 
 fn same_named_machine_candidates_elsewhere(
@@ -1078,8 +1178,10 @@ fn extract_generic_type_refs(args: &PathArguments) -> Option<Vec<&Type>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_machine_and_states, parse_machine_and_state, parse_primary_machine_and_state};
-    use quote::format_ident;
+    use super::{
+        collect_machine_and_states, extract_impl_machine_and_state, parse_machine_and_state,
+        parse_primary_machine_and_state,
+    };
     use syn::Type;
 
     fn parse_type(source: &str) -> Type {
@@ -1088,24 +1190,26 @@ mod tests {
 
     #[test]
     fn primary_parser_preserves_existing_result_behavior() {
-        let ty = parse_type("Result<Machine<Accepted>, Machine<Rejected>>");
+        let target = parse_type("Machine<Draft>");
+        let ty = parse_type("::core::result::Result<Machine<Accepted>, Machine<Rejected>>");
 
         assert_eq!(
-            parse_primary_machine_and_state(&ty, format_ident!("Machine")),
+            parse_primary_machine_and_state(&ty, &target),
             Some(("Machine".to_owned(), "Accepted".to_owned()))
         );
         assert_eq!(
-            parse_machine_and_state(&ty, format_ident!("Machine")),
+            parse_machine_and_state(&ty, &target),
             Some(("Machine".to_owned(), "Accepted".to_owned()))
         );
     }
 
     #[test]
     fn target_collector_reads_both_result_branches() {
-        let ty = parse_type("Result<Machine<Accepted>, Machine<Rejected>>");
+        let target = parse_type("Machine<Draft>");
+        let ty = parse_type("::core::result::Result<Machine<Accepted>, Machine<Rejected>>");
 
         assert_eq!(
-            collect_machine_and_states(&ty, format_ident!("Machine")),
+            collect_machine_and_states(&ty, &target),
             vec![
                 ("Machine".to_owned(), "Accepted".to_owned()),
                 ("Machine".to_owned(), "Rejected".to_owned()),
@@ -1115,24 +1219,26 @@ mod tests {
 
     #[test]
     fn primary_parser_reads_first_branch_target() {
-        let ty = parse_type("statum::Branch<Machine<Accepted>, Machine<Rejected>>");
+        let target = parse_type("Machine<Draft>");
+        let ty = parse_type("::statum::Branch<Machine<Accepted>, Machine<Rejected>>");
 
         assert_eq!(
-            parse_primary_machine_and_state(&ty, format_ident!("Machine")),
+            parse_primary_machine_and_state(&ty, &target),
             Some(("Machine".to_owned(), "Accepted".to_owned()))
         );
         assert_eq!(
-            parse_machine_and_state(&ty, format_ident!("Machine")),
+            parse_machine_and_state(&ty, &target),
             Some(("Machine".to_owned(), "Accepted".to_owned()))
         );
     }
 
     #[test]
     fn target_collector_reads_both_branch_targets() {
-        let ty = parse_type("statum::Branch<Machine<Accepted>, Machine<Rejected>>");
+        let target = parse_type("Machine<Draft>");
+        let ty = parse_type("::statum::Branch<Machine<Accepted>, Machine<Rejected>>");
 
         assert_eq!(
-            collect_machine_and_states(&ty, format_ident!("Machine")),
+            collect_machine_and_states(&ty, &target),
             vec![
                 ("Machine".to_owned(), "Accepted".to_owned()),
                 ("Machine".to_owned(), "Rejected".to_owned()),
@@ -1142,12 +1248,13 @@ mod tests {
 
     #[test]
     fn target_collector_reads_nested_wrappers() {
+        let target = parse_type("Machine<Draft>");
         let ty = parse_type(
-            "Option<core::result::Result<Machine<Accepted>, statum::Branch<Machine<Rejected>, Error>>>",
+            "::core::option::Option<::core::result::Result<Machine<Accepted>, ::statum::Branch<Machine<Rejected>, Error>>>",
         );
 
         assert_eq!(
-            collect_machine_and_states(&ty, format_ident!("Machine")),
+            collect_machine_and_states(&ty, &target),
             vec![
                 ("Machine".to_owned(), "Accepted".to_owned()),
                 ("Machine".to_owned(), "Rejected".to_owned()),
@@ -1157,11 +1264,38 @@ mod tests {
 
     #[test]
     fn target_collector_ignores_non_machine_payloads_and_dedups() {
-        let ty = parse_type("Result<Option<Machine<Accepted>>, Result<Machine<Accepted>, Error>>");
+        let target = parse_type("Machine<Draft>");
+        let ty = parse_type(
+            "::core::result::Result<::core::option::Option<Machine<Accepted>>, ::core::result::Result<Machine<Accepted>, Error>>",
+        );
 
         assert_eq!(
-            collect_machine_and_states(&ty, format_ident!("Machine")),
+            collect_machine_and_states(&ty, &target),
             vec![("Machine".to_owned(), "Accepted".to_owned())]
         );
+    }
+
+    #[test]
+    fn parser_rejects_bare_wrappers() {
+        let target = parse_type("Machine<Draft>");
+        let ty = parse_type("Result<Machine<Accepted>, Machine<Rejected>>");
+
+        assert_eq!(parse_machine_and_state(&ty, &target), None);
+        assert!(collect_machine_and_states(&ty, &target).is_empty());
+    }
+
+    #[test]
+    fn parser_rejects_same_leaf_machine_in_other_module() {
+        let target = parse_type("FlowMachine<Draft>");
+        let ty = parse_type("other::FlowMachine<Done>");
+
+        assert_eq!(parse_machine_and_state(&ty, &target), None);
+        assert!(collect_machine_and_states(&ty, &target).is_empty());
+    }
+
+    #[test]
+    fn impl_target_rejects_qualified_state_paths() {
+        let ty = parse_type("Machine<crate::Draft>");
+        assert!(extract_impl_machine_and_state(&ty).is_none());
     }
 }

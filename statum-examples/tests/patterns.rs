@@ -151,7 +151,7 @@ mod guarded_transitions {
             self.allowed
         }
 
-        fn try_activate(self) -> Result<Machine<Active>, statum::Error> {
+        fn try_activate(self) -> ::core::result::Result<Machine<Active>, statum::Error> {
             if self.can_activate() {
                 Ok(self.activate())
             } else {

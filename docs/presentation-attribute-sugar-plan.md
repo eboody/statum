@@ -44,7 +44,7 @@ enum FlowState {
 #[transition]
 impl Flow<Fetched> {
     #[present(label = "Validate", description = "Choose accepted or rejected")]
-    fn validate(self) -> Result<Flow<Accepted>, Flow<Rejected>> {
+    fn validate(self) -> ::core::result::Result<Flow<Accepted>, Flow<Rejected>> {
         ...
     }
 }

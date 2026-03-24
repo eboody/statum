@@ -22,7 +22,7 @@ struct Machine<State> {}
 
 #[transition]
 impl Machine<A> {
-    fn to_b(self) -> Option<core::result::Result<Machine<B>, statum_core::Error>> {
+    fn to_b(self) -> ::core::option::Option<::core::result::Result<Machine<B>, statum_core::Error>> {
         Some(Ok(self.transition()))
     }
 }

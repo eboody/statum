@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs;
 use std::rc::Rc;
 
@@ -33,68 +34,76 @@ pub struct FileAnalysis {
     pub impls: Vec<ImplEntry>,
 }
 
+#[derive(Default)]
+struct DeclarationLines {
+    enums: VecDeque<usize>,
+    structs: VecDeque<usize>,
+    impls: VecDeque<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct ScannedToken {
+    kind: TokenKind,
+    line: usize,
+}
+
+#[derive(Clone, Debug)]
+enum TokenKind {
+    Ident(String),
+    Punct(char),
+}
+
+#[derive(Clone, Debug)]
+enum BlockContext {
+    Opaque { close: char },
+    Normal { close: char },
+}
+
 /// Returns parsed analysis for `file_path`.
 pub fn get_file_analysis(file_path: &str) -> Option<Rc<FileAnalysis>> {
     Some(Rc::new(build_file_analysis(file_path)?))
 }
 
 fn build_file_analysis(file_path: &str) -> Option<FileAnalysis> {
-    let contents = fs::read_to_string(file_path).ok()?;
-    let parsed = syn::parse_file(&contents).ok()?;
+    let content = fs::read_to_string(file_path).ok()?;
+    let parsed = syn::parse_file(&content).ok()?;
+    let mut lines = scan_declaration_lines(&content);
     let mut analysis = FileAnalysis::default();
-    let mut next_search_line = 1usize;
-
-    collect_items(
-        parsed.items,
-        &contents,
-        &mut analysis,
-        &mut next_search_line,
-    )?;
-
+    collect_items(parsed.items, &mut analysis, &mut lines)?;
     Some(analysis)
 }
 
 fn collect_items(
     items: Vec<syn::Item>,
-    contents: &str,
     analysis: &mut FileAnalysis,
-    next_search_line: &mut usize,
+    lines: &mut DeclarationLines,
 ) -> Option<()> {
     for item in items {
         match item {
             syn::Item::Enum(item_enum) => {
-                let name = item_enum.ident.to_string();
-                let line_number = find_item_line_from(contents, "enum", &name, *next_search_line)?;
-                *next_search_line = line_number.saturating_add(1);
                 analysis.enums.push(EnumEntry {
                     attrs: attribute_names(&item_enum.attrs),
+                    line_number: lines.enums.pop_front()?,
                     item: item_enum,
-                    line_number,
                 });
             }
             syn::Item::Struct(item_struct) => {
-                let name = item_struct.ident.to_string();
-                let line_number =
-                    find_item_line_from(contents, "struct", &name, *next_search_line)?;
-                *next_search_line = line_number.saturating_add(1);
                 analysis.structs.push(StructEntry {
                     attrs: attribute_names(&item_struct.attrs),
+                    line_number: lines.structs.pop_front()?,
                     item: item_struct,
-                    line_number,
                 });
             }
             syn::Item::Impl(item_impl) => {
-                let line_number = find_impl_line_from(contents, *next_search_line)?;
-                *next_search_line = line_number.saturating_add(1);
                 analysis.impls.push(ImplEntry {
                     attrs: attribute_names(&item_impl.attrs),
+                    line_number: lines.impls.pop_front()?,
                     item: item_impl,
-                    line_number,
                 });
             }
             syn::Item::Mod(item_mod) => {
                 if let Some((_, nested_items)) = item_mod.content {
-                    collect_items(nested_items, contents, analysis, next_search_line)?;
+                    collect_items(nested_items, analysis, lines)?;
                 }
             }
             _ => {}
@@ -102,6 +111,382 @@ fn collect_items(
     }
 
     Some(())
+}
+
+fn scan_declaration_lines(content: &str) -> DeclarationLines {
+    let tokens = tokenize_source(content);
+    let mut lines = DeclarationLines::default();
+    let mut block_stack = Vec::new();
+    let mut opaque_depth = 0usize;
+    let mut pending_opaque_open = None::<usize>;
+
+    for (index, token) in tokens.iter().enumerate() {
+        match &token.kind {
+            TokenKind::Ident(keyword) if opaque_depth == 0 => match keyword.as_str() {
+                "enum" => lines.enums.push_back(token.line),
+                "struct" => lines.structs.push_back(token.line),
+                "impl" => lines.impls.push_back(token.line),
+                _ => {}
+            },
+            TokenKind::Punct('!') if opaque_depth == 0 => {
+                if matches!(
+                    tokens.get(index + 1),
+                    Some(ScannedToken {
+                        kind: TokenKind::Punct('{') | TokenKind::Punct('(') | TokenKind::Punct('['),
+                        ..
+                    })
+                ) {
+                    pending_opaque_open = Some(index + 1);
+                } else if matches!(
+                    tokens.get(index + 1),
+                    Some(ScannedToken {
+                        kind: TokenKind::Ident(_),
+                        ..
+                    })
+                ) && matches!(
+                    tokens.get(index + 2),
+                    Some(ScannedToken {
+                        kind: TokenKind::Punct('{') | TokenKind::Punct('(') | TokenKind::Punct('['),
+                        ..
+                    })
+                ) {
+                    pending_opaque_open = Some(index + 2);
+                }
+            }
+            TokenKind::Punct(open @ ('{' | '(' | '[')) => {
+                if pending_opaque_open == Some(index) {
+                    block_stack.push(BlockContext::Opaque {
+                        close: matching_close(*open),
+                    });
+                    opaque_depth += 1;
+                    pending_opaque_open = None;
+                } else {
+                    block_stack.push(BlockContext::Normal {
+                        close: matching_close(*open),
+                    });
+                }
+            }
+            TokenKind::Punct(close @ ('}' | ')' | ']')) => {
+                let Some(context) = block_stack.pop() else {
+                    continue;
+                };
+
+                match context {
+                    BlockContext::Opaque {
+                        close: expected_close,
+                    } if expected_close == *close => {
+                        opaque_depth = opaque_depth.saturating_sub(1);
+                    }
+                    BlockContext::Normal {
+                        close: expected_close,
+                    } if expected_close == *close => {}
+                    BlockContext::Opaque { .. } | BlockContext::Normal { .. } => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    lines
+}
+
+fn tokenize_source(content: &str) -> Vec<ScannedToken> {
+    let chars: Vec<char> = content.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0usize;
+    let mut line = 1usize;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        match ch {
+            '\n' => {
+                line += 1;
+                index += 1;
+            }
+            c if c.is_whitespace() => index += 1,
+            '/' if chars.get(index + 1) == Some(&'/') => {
+                index += 2;
+                while let Some(next) = chars.get(index) {
+                    if *next == '\n' {
+                        break;
+                    }
+                    index += 1;
+                }
+            }
+            '/' if chars.get(index + 1) == Some(&'*') => {
+                let (next_index, next_line) = skip_block_comment(&chars, index, line);
+                index = next_index;
+                line = next_line;
+            }
+            '"' => {
+                let (next_index, next_line) = skip_quoted_literal(&chars, index, line, '"');
+                index = next_index;
+                line = next_line;
+            }
+            '\'' if is_char_literal_start(&chars, index) => {
+                let (next_index, next_line) = skip_quoted_literal(&chars, index, line, '\'');
+                index = next_index;
+                line = next_line;
+            }
+            'b' => {
+                if chars.get(index + 1) == Some(&'"') {
+                    let (next_index, next_line) = skip_quoted_literal(&chars, index + 1, line, '"');
+                    index = next_index;
+                    line = next_line;
+                } else if chars.get(index + 1) == Some(&'\'')
+                    && is_char_literal_start(&chars, index + 1)
+                {
+                    let (next_index, next_line) =
+                        skip_quoted_literal(&chars, index + 1, line, '\'');
+                    index = next_index;
+                    line = next_line;
+                } else if is_raw_string_start(&chars, index + 1) {
+                    let (next_index, next_line) = skip_raw_string_literal(&chars, index + 1, line);
+                    index = next_index;
+                    line = next_line;
+                } else {
+                    let (ident, next_index) = read_identifier(&chars, index);
+                    tokens.push(ScannedToken {
+                        kind: TokenKind::Ident(ident),
+                        line,
+                    });
+                    index = next_index;
+                }
+            }
+            'r' if is_raw_string_start(&chars, index) => {
+                let (next_index, next_line) = skip_raw_string_literal(&chars, index, line);
+                index = next_index;
+                line = next_line;
+            }
+            'r' if chars.get(index + 1) == Some(&'#')
+                && chars
+                    .get(index + 2)
+                    .is_some_and(|next| is_ident_start(*next)) =>
+            {
+                let (ident, next_index) = read_raw_identifier(&chars, index);
+                tokens.push(ScannedToken {
+                    kind: TokenKind::Ident(ident),
+                    line,
+                });
+                index = next_index;
+            }
+            c if is_ident_start(c) => {
+                let (ident, next_index) = read_identifier(&chars, index);
+                tokens.push(ScannedToken {
+                    kind: TokenKind::Ident(ident),
+                    line,
+                });
+                index = next_index;
+            }
+            '{' | '}' | '(' | ')' | '[' | ']' | '!' => {
+                tokens.push(ScannedToken {
+                    kind: TokenKind::Punct(ch),
+                    line,
+                });
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+
+    tokens
+}
+
+fn skip_block_comment(chars: &[char], start: usize, line: usize) -> (usize, usize) {
+    let mut index = start + 2;
+    let mut depth = 1usize;
+    let mut current_line = line;
+
+    while index < chars.len() {
+        match (chars[index], chars.get(index + 1).copied()) {
+            ('/', Some('*')) => {
+                depth += 1;
+                index += 2;
+            }
+            ('*', Some('/')) => {
+                depth -= 1;
+                index += 2;
+                if depth == 0 {
+                    break;
+                }
+            }
+            ('\n', _) => {
+                current_line += 1;
+                index += 1;
+            }
+            _ => index += 1,
+        }
+    }
+
+    (index, current_line)
+}
+
+fn skip_quoted_literal(
+    chars: &[char],
+    start: usize,
+    line: usize,
+    terminator: char,
+) -> (usize, usize) {
+    let mut index = start + 1;
+    let mut current_line = line;
+    let mut escaped = false;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '\n' {
+            current_line += 1;
+        }
+
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                escaped = true;
+                index += 1;
+            }
+            c if c == terminator => {
+                index += 1;
+                break;
+            }
+            _ => index += 1,
+        }
+    }
+
+    (index, current_line)
+}
+
+fn skip_raw_string_literal(chars: &[char], start: usize, line: usize) -> (usize, usize) {
+    let mut index = start;
+    let mut current_line = line;
+
+    if chars.get(index) == Some(&'b') {
+        index += 1;
+    }
+    index += 1; // skip `r`
+
+    let mut hashes = 0usize;
+    while chars.get(index) == Some(&'#') {
+        hashes += 1;
+        index += 1;
+    }
+
+    if chars.get(index) != Some(&'"') {
+        return (index, current_line);
+    }
+    index += 1;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '\n' {
+            current_line += 1;
+            index += 1;
+            continue;
+        }
+
+        if ch == '"' {
+            let mut cursor = index + 1;
+            let mut matched_hashes = 0usize;
+            while matched_hashes < hashes && chars.get(cursor) == Some(&'#') {
+                matched_hashes += 1;
+                cursor += 1;
+            }
+            if matched_hashes == hashes {
+                index = cursor;
+                break;
+            }
+        }
+
+        index += 1;
+    }
+
+    (index, current_line)
+}
+
+fn is_char_literal_start(chars: &[char], start: usize) -> bool {
+    let mut index = start + 1;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.get(index).copied() {
+        if ch == '\n' {
+            return false;
+        }
+
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                escaped = true;
+                index += 1;
+            }
+            '\'' => return true,
+            c if c.is_whitespace() => return false,
+            _ => index += 1,
+        }
+    }
+
+    false
+}
+
+fn is_raw_string_start(chars: &[char], start: usize) -> bool {
+    if chars.get(start) != Some(&'r') {
+        return false;
+    }
+
+    let mut index = start + 1;
+    while chars.get(index) == Some(&'#') {
+        index += 1;
+    }
+
+    chars.get(index) == Some(&'"')
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch == '_' || ch.is_alphabetic()
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+fn read_identifier(chars: &[char], start: usize) -> (String, usize) {
+    let mut index = start + 1;
+    while chars
+        .get(index)
+        .is_some_and(|next| is_ident_continue(*next))
+    {
+        index += 1;
+    }
+
+    (chars[start..index].iter().collect(), index)
+}
+
+fn read_raw_identifier(chars: &[char], start: usize) -> (String, usize) {
+    let mut index = start + 2;
+    while chars
+        .get(index)
+        .is_some_and(|next| is_ident_continue(*next))
+    {
+        index += 1;
+    }
+
+    (chars[start..index].iter().collect(), index)
+}
+
+fn matching_close(open: char) -> char {
+    match open {
+        '{' => '}',
+        '(' => ')',
+        '[' => ']',
+        _ => open,
+    }
 }
 
 fn attribute_names(attrs: &[syn::Attribute]) -> Vec<String> {
@@ -118,127 +503,6 @@ fn attribute_names(attrs: &[syn::Attribute]) -> Vec<String> {
     }
 
     names
-}
-
-fn find_item_line_from(
-    contents: &str,
-    kind: &str,
-    item_name: &str,
-    start_line: usize,
-) -> Option<usize> {
-    for (idx, line) in contents
-        .lines()
-        .enumerate()
-        .skip(start_line.saturating_sub(1))
-    {
-        let trimmed = line.trim_start();
-        if line_starts_item_decl(trimmed, kind, item_name) {
-            return Some(idx + 1);
-        }
-    }
-
-    None
-}
-
-fn find_impl_line_from(contents: &str, start_line: usize) -> Option<usize> {
-    for (idx, line) in contents
-        .lines()
-        .enumerate()
-        .skip(start_line.saturating_sub(1))
-    {
-        let trimmed = line.trim_start();
-        if line_starts_impl_decl(trimmed) {
-            return Some(idx + 1);
-        }
-    }
-
-    None
-}
-
-fn line_starts_item_decl(line: &str, kind: &str, item_name: &str) -> bool {
-    let mut rest = line.trim_start();
-
-    if let Some(after_pub) = consume_keyword(rest, "pub") {
-        rest = after_pub.trim_start();
-        if rest.starts_with('(') {
-            let Some(after_vis) = consume_parenthesized(rest) else {
-                return false;
-            };
-            rest = after_vis.trim_start();
-        }
-    }
-
-    if let Some(after_unsafe) = consume_keyword(rest, "unsafe") {
-        rest = after_unsafe.trim_start();
-    }
-
-    let Some(after_kind) = consume_keyword(rest, kind) else {
-        return false;
-    };
-    let rest = after_kind.trim_start();
-    let Some(after_name) = rest.strip_prefix(item_name) else {
-        return false;
-    };
-
-    after_name
-        .chars()
-        .next()
-        .is_none_or(|ch| ch.is_whitespace() || matches!(ch, '<' | '{' | '(' | ';' | ':'))
-}
-
-fn line_starts_impl_decl(line: &str) -> bool {
-    let mut rest = line.trim_start();
-
-    if let Some(after_default) = consume_keyword(rest, "default") {
-        rest = after_default.trim_start();
-    }
-
-    if let Some(after_unsafe) = consume_keyword(rest, "unsafe") {
-        rest = after_unsafe.trim_start();
-    }
-
-    let Some(after_impl) = consume_keyword(rest, "impl") else {
-        return false;
-    };
-
-    after_impl
-        .chars()
-        .next()
-        .is_none_or(|ch| ch.is_whitespace() || matches!(ch, '<'))
-}
-
-fn consume_keyword<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
-    let rest = input.strip_prefix(keyword)?;
-    if rest
-        .chars()
-        .next()
-        .is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric())
-    {
-        return None;
-    }
-    Some(rest)
-}
-
-fn consume_parenthesized(input: &str) -> Option<&str> {
-    let mut chars = input.char_indices();
-    let Some((_, '(')) = chars.next() else {
-        return None;
-    };
-
-    let mut depth = 1usize;
-    for (idx, ch) in chars {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&input[idx + 1..]);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -285,9 +549,9 @@ impl MyMachine<MyState> {
         assert_eq!(analysis.enums.len(), 1);
         assert_eq!(analysis.structs.len(), 1);
         assert_eq!(analysis.impls.len(), 1);
-        assert!(analysis.enums[0].line_number > 0);
-        assert!(analysis.structs[0].line_number > 0);
-        assert!(analysis.impls[0].line_number > 0);
+        assert_eq!(analysis.enums[0].line_number, 3);
+        assert_eq!(analysis.structs[0].line_number, 8);
+        assert_eq!(analysis.impls[0].line_number, 12);
 
         let _ = fs::remove_file(path);
     }
@@ -367,7 +631,7 @@ mod workflow {
             .attrs
             .iter()
             .any(|attr| attr == "transition"));
-        assert!(analysis.impls[0].line_number > 0);
+        assert_eq!(analysis.impls[0].line_number, 4);
 
         let _ = fs::remove_file(path);
     }
@@ -398,8 +662,7 @@ mod workflow {
             .map(|entry| entry.line_number)
             .collect::<Vec<_>>();
 
-        assert_eq!(payload_lines.len(), 2);
-        assert_ne!(payload_lines[0], payload_lines[1]);
+        assert_eq!(payload_lines, vec![3, 9]);
 
         let _ = fs::remove_file(path);
     }
@@ -438,30 +701,79 @@ enum ChangedState { A, B }
     }
 
     #[test]
-    fn fallback_line_match_handles_visibility_modifiers() {
-        assert!(line_starts_item_decl(
-            "pub(crate) struct Machine<State> {",
-            "struct",
-            "Machine",
-        ));
-        assert!(line_starts_item_decl(
-            "pub(in crate::x) enum WorkflowState {",
-            "enum",
-            "WorkflowState",
-        ));
-        assert!(!line_starts_item_decl(
-            "pub(crate) struct NotMachine<State> {",
-            "struct",
-            "Machine",
-        ));
+    fn line_numbers_ignore_comments_and_use_real_item_lines() {
+        let path = write_temp_rust_file(
+            r#"
+mod comment_only {
+    /*
+    struct Machine<State> {
+        id: u64,
+    }
+    */
+}
 
-        assert!(line_starts_impl_decl("impl Machine<State> {"));
-        assert!(line_starts_impl_decl(
-            "unsafe impl Trait for Machine<State> {"
-        ));
-        assert!(line_starts_impl_decl(
-            "default impl Trait for Machine<State> {"
-        ));
-        assert!(!line_starts_impl_decl("simple_machine_impl();"));
+mod workflow {
+    #[machine]
+    pub struct Machine<State> {
+        id: u64,
+    }
+}
+"#,
+        );
+
+        let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
+        assert_eq!(analysis.structs.len(), 1);
+        assert_eq!(analysis.structs[0].item.ident, "Machine");
+        assert_eq!(analysis.structs[0].line_number, 12);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn line_numbers_handle_split_item_declarations() {
+        let path = write_temp_rust_file(
+            r#"
+mod workflow {
+    #[machine]
+    pub
+    struct
+    Machine<State> {
+        id: u64,
+    }
+}
+"#,
+        );
+
+        let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
+        assert_eq!(analysis.structs.len(), 1);
+        assert_eq!(analysis.structs[0].item.ident, "Machine");
+        assert_eq!(analysis.structs[0].line_number, 5);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn line_numbers_ignore_items_inside_macro_bodies() {
+        let path = write_temp_rust_file(
+            r#"
+generated! {
+    struct Fake<State> {
+        id: u64,
+    }
+}
+
+#[machine]
+struct Real<State> {
+    id: u64,
+}
+"#,
+        );
+
+        let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
+        assert_eq!(analysis.structs.len(), 1);
+        assert_eq!(analysis.structs[0].item.ident, "Real");
+        assert_eq!(analysis.structs[0].line_number, 9);
+
+        let _ = fs::remove_file(path);
     }
 }

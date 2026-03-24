@@ -18,9 +18,20 @@ pub fn current_source_info() -> Option<(String, usize)> {
     get_source_info().map(|(file_path, line_number)| (normalize_file_path(&file_path), line_number))
 }
 
+/// Returns the best-effort source file for the current macro call-site.
+pub fn current_source_file() -> Option<String> {
+    current_source_info().map(|(file_path, _)| file_path)
+}
+
 /// Returns the best-effort module path for the current macro call-site.
 pub fn current_module_path_opt() -> Option<String> {
     let (file_path, line_number) = current_source_info()?;
+    module_path_for_line(&file_path, line_number)
+}
+
+/// Returns the best-effort module path for the current macro call-site file at `line_number`.
+pub fn current_module_path_at_line(line_number: usize) -> Option<String> {
+    let file_path = current_source_file()?;
     module_path_for_line(&file_path, line_number)
 }
 

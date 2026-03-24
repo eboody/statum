@@ -26,312 +26,524 @@ pub(crate) fn resolve_module_path_from_lines(
     }
 }
 
-fn is_ident_start(byte: u8) -> bool {
-    byte == b'_' || byte.is_ascii_alphabetic()
+#[derive(Clone, Debug)]
+struct ScannedToken {
+    kind: TokenKind,
+    line: usize,
 }
 
-fn is_ident_continue(byte: u8) -> bool {
-    is_ident_start(byte) || byte.is_ascii_digit()
+#[derive(Clone, Debug)]
+enum TokenKind {
+    Ident(String),
+    Punct(char),
 }
 
-fn raw_string_prefix_len(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
-    if bytes.get(start) != Some(&b'r') {
-        return None;
-    }
-    let mut idx = start + 1;
-    let mut hashes = 0usize;
-    while bytes.get(idx) == Some(&b'#') {
-        hashes += 1;
-        idx += 1;
-    }
-    if bytes.get(idx) != Some(&b'"') {
-        return None;
-    }
-    Some((hashes, idx - start + 1))
+#[derive(Clone, Debug)]
+struct PendingModule {
+    open_index: usize,
+    name: String,
+    start_line: usize,
 }
 
-fn raw_identifier_len(bytes: &[u8], start: usize) -> Option<usize> {
-    if bytes.get(start) != Some(&b'r') || bytes.get(start + 1) != Some(&b'#') {
-        return None;
-    }
-
-    let mut idx = start + 2;
-    if !is_ident_start(*bytes.get(idx)?) {
-        return None;
-    }
-
-    idx += 1;
-    while idx < bytes.len() && is_ident_continue(bytes[idx]) {
-        idx += 1;
-    }
-
-    Some(idx - start)
+#[derive(Clone, Debug)]
+struct ModuleRange {
+    path: String,
+    start_line: usize,
+    end_line: usize,
+    depth: usize,
 }
 
-fn char_literal_len(content: &str, bytes: &[u8], start: usize) -> Option<usize> {
-    if bytes.get(start) != Some(&b'\'') {
-        return None;
+#[derive(Clone, Debug)]
+enum BlockContext {
+    Module {
+        close: char,
+        path: String,
+        start_line: usize,
+        depth: usize,
+    },
+    Opaque {
+        close: char,
+    },
+    Normal {
+        close: char,
+    },
+}
+
+fn build_line_module_paths(content: &str) -> Option<Vec<String>> {
+    let line_count = content.lines().count().max(1);
+    let tokens = tokenize_source(content);
+    let module_ranges = scan_inline_module_ranges(&tokens);
+    let mut line_paths = vec![String::new(); line_count];
+
+    for range in module_ranges {
+        set_line_range(
+            &mut line_paths,
+            range.start_line,
+            range.end_line,
+            &range.path,
+        );
     }
 
-    let mut idx = start + 1;
-    if idx >= bytes.len() || bytes[idx] == b'\n' {
-        return None;
-    }
+    Some(line_paths)
+}
 
-    if bytes[idx] == b'\\' {
-        idx += 1;
-        if idx >= bytes.len() {
-            return None;
-        }
+fn tokenize_source(content: &str) -> Vec<ScannedToken> {
+    let chars: Vec<char> = content.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0;
+    let mut line = 1;
 
-        if bytes[idx] == b'u' && bytes.get(idx + 1) == Some(&b'{') {
-            idx += 2;
-            while idx < bytes.len() && bytes[idx] != b'}' {
-                if bytes[idx] == b'\n' {
-                    return None;
+    while index < chars.len() {
+        let ch = chars[index];
+        match ch {
+            '\n' => {
+                line += 1;
+                index += 1;
+            }
+            c if c.is_whitespace() => {
+                index += 1;
+            }
+            '/' if chars.get(index + 1) == Some(&'/') => {
+                index += 2;
+                while let Some(next) = chars.get(index) {
+                    if *next == '\n' {
+                        break;
+                    }
+                    index += 1;
                 }
-                idx += 1;
             }
-            if bytes.get(idx) != Some(&b'}') {
-                return None;
+            '/' if chars.get(index + 1) == Some(&'*') => {
+                let (next_index, next_line) = skip_block_comment(&chars, index, line);
+                index = next_index;
+                line = next_line;
             }
-            idx += 1;
-        } else {
-            idx += 1;
+            '"' => {
+                let (next_index, next_line) = skip_quoted_literal(&chars, index, line, '"');
+                index = next_index;
+                line = next_line;
+            }
+            '\'' if is_char_literal_start(&chars, index) => {
+                let (next_index, next_line) = skip_quoted_literal(&chars, index, line, '\'');
+                index = next_index;
+                line = next_line;
+            }
+            'b' => {
+                if chars.get(index + 1) == Some(&'"') {
+                    let (next_index, next_line) = skip_quoted_literal(&chars, index + 1, line, '"');
+                    index = next_index;
+                    line = next_line;
+                } else if chars.get(index + 1) == Some(&'\'')
+                    && is_char_literal_start(&chars, index + 1)
+                {
+                    let (next_index, next_line) =
+                        skip_quoted_literal(&chars, index + 1, line, '\'');
+                    index = next_index;
+                    line = next_line;
+                } else if is_raw_string_start(&chars, index + 1) {
+                    let (next_index, next_line) = skip_raw_string_literal(&chars, index + 1, line);
+                    index = next_index;
+                    line = next_line;
+                } else {
+                    let (ident, next_index) = read_identifier(&chars, index);
+                    tokens.push(ScannedToken {
+                        kind: TokenKind::Ident(ident),
+                        line,
+                    });
+                    index = next_index;
+                }
+            }
+            'r' if is_raw_string_start(&chars, index) => {
+                let (next_index, next_line) = skip_raw_string_literal(&chars, index, line);
+                index = next_index;
+                line = next_line;
+            }
+            'r' if chars.get(index + 1) == Some(&'#')
+                && chars
+                    .get(index + 2)
+                    .is_some_and(|next| is_ident_start(*next)) =>
+            {
+                let (ident, next_index) = read_raw_identifier(&chars, index);
+                tokens.push(ScannedToken {
+                    kind: TokenKind::Ident(ident),
+                    line,
+                });
+                index = next_index;
+            }
+            c if is_ident_start(c) => {
+                let (ident, next_index) = read_identifier(&chars, index);
+                tokens.push(ScannedToken {
+                    kind: TokenKind::Ident(ident),
+                    line,
+                });
+                index = next_index;
+            }
+            '{' | '}' | '(' | ')' | '[' | ']' | '!' => {
+                tokens.push(ScannedToken {
+                    kind: TokenKind::Punct(ch),
+                    line,
+                });
+                index += 1;
+            }
+            _ => {
+                index += 1;
+            }
         }
-    } else {
-        let next = content.get(idx..)?.chars().next()?;
-        idx += next.len_utf8();
     }
 
-    (bytes.get(idx) == Some(&b'\'')).then_some(idx - start + 1)
+    tokens
 }
 
-fn handle_identifier_token(
-    token: &str,
-    expect_mod_ident: &mut bool,
-    pending_mod_name: &mut Option<String>,
-    expect_mod_open: &mut bool,
-) {
-    if *expect_mod_ident {
-        *pending_mod_name = Some(token.to_string());
-        *expect_mod_ident = false;
-        *expect_mod_open = true;
+fn skip_block_comment(chars: &[char], start: usize, line: usize) -> (usize, usize) {
+    let mut index = start + 2;
+    let mut depth = 1usize;
+    let mut current_line = line;
+
+    while index < chars.len() {
+        match (chars[index], chars.get(index + 1).copied()) {
+            ('/', Some('*')) => {
+                depth += 1;
+                index += 2;
+            }
+            ('*', Some('/')) => {
+                depth -= 1;
+                index += 2;
+                if depth == 0 {
+                    break;
+                }
+            }
+            ('\n', _) => {
+                current_line += 1;
+                index += 1;
+            }
+            _ => {
+                index += 1;
+            }
+        }
+    }
+
+    (index, current_line)
+}
+
+fn skip_quoted_literal(
+    chars: &[char],
+    start: usize,
+    line: usize,
+    terminator: char,
+) -> (usize, usize) {
+    let mut index = start + 1;
+    let mut current_line = line;
+    let mut escaped = false;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '\n' {
+            current_line += 1;
+        }
+
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                escaped = true;
+                index += 1;
+            }
+            c if c == terminator => {
+                index += 1;
+                break;
+            }
+            _ => {
+                index += 1;
+            }
+        }
+    }
+
+    (index, current_line)
+}
+
+fn skip_raw_string_literal(chars: &[char], start: usize, line: usize) -> (usize, usize) {
+    let mut index = start;
+    let mut current_line = line;
+
+    if chars.get(index) == Some(&'b') {
+        index += 1;
+    }
+    index += 1; // skip `r`
+
+    let mut hashes = 0usize;
+    while chars.get(index) == Some(&'#') {
+        hashes += 1;
+        index += 1;
+    }
+
+    if chars.get(index) != Some(&'"') {
+        return (index, current_line);
+    }
+    index += 1;
+
+    while index < chars.len() {
+        let ch = chars[index];
+        if ch == '\n' {
+            current_line += 1;
+            index += 1;
+            continue;
+        }
+
+        if ch == '"' {
+            let mut cursor = index + 1;
+            let mut matched_hashes = 0usize;
+            while matched_hashes < hashes && chars.get(cursor) == Some(&'#') {
+                matched_hashes += 1;
+                cursor += 1;
+            }
+            if matched_hashes == hashes {
+                index = cursor;
+                break;
+            }
+        }
+
+        index += 1;
+    }
+
+    (index, current_line)
+}
+
+fn is_char_literal_start(chars: &[char], start: usize) -> bool {
+    let mut index = start + 1;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.get(index).copied() {
+        if ch == '\n' {
+            return false;
+        }
+
+        if escaped {
+            escaped = false;
+            index += 1;
+            continue;
+        }
+
+        match ch {
+            '\\' => {
+                escaped = true;
+                index += 1;
+            }
+            '\'' => return true,
+            c if c.is_whitespace() => return false,
+            _ => index += 1,
+        }
+    }
+
+    false
+}
+
+fn is_raw_string_start(chars: &[char], start: usize) -> bool {
+    if chars.get(start) != Some(&'r') {
+        return false;
+    }
+
+    let mut index = start + 1;
+    while chars.get(index) == Some(&'#') {
+        index += 1;
+    }
+
+    chars.get(index) == Some(&'"')
+}
+
+fn is_ident_start(ch: char) -> bool {
+    ch == '_' || ch.is_alphabetic()
+}
+
+fn is_ident_continue(ch: char) -> bool {
+    ch == '_' || ch.is_alphanumeric()
+}
+
+fn read_identifier(chars: &[char], start: usize) -> (String, usize) {
+    let mut index = start + 1;
+    while chars
+        .get(index)
+        .is_some_and(|next| is_ident_continue(*next))
+    {
+        index += 1;
+    }
+
+    (chars[start..index].iter().collect(), index)
+}
+
+fn read_raw_identifier(chars: &[char], start: usize) -> (String, usize) {
+    let mut index = start + 2;
+    while chars
+        .get(index)
+        .is_some_and(|next| is_ident_continue(*next))
+    {
+        index += 1;
+    }
+
+    (chars[start..index].iter().collect(), index)
+}
+
+fn scan_inline_module_ranges(tokens: &[ScannedToken]) -> Vec<ModuleRange> {
+    let mut ranges = Vec::new();
+    let mut active_modules = Vec::new();
+    let mut block_stack = Vec::new();
+    let mut opaque_depth = 0usize;
+    let mut pending_module = None::<PendingModule>;
+    let mut pending_opaque_open = None::<usize>;
+
+    for (index, token) in tokens.iter().enumerate() {
+        match &token.kind {
+            TokenKind::Ident(keyword) if opaque_depth == 0 && keyword == "mod" => {
+                let Some(ScannedToken {
+                    kind: TokenKind::Ident(name),
+                    ..
+                }) = tokens.get(index + 1)
+                else {
+                    continue;
+                };
+                let Some(ScannedToken {
+                    kind: TokenKind::Punct('{'),
+                    ..
+                }) = tokens.get(index + 2)
+                else {
+                    continue;
+                };
+
+                pending_module = Some(PendingModule {
+                    open_index: index + 2,
+                    name: name.clone(),
+                    start_line: token.line,
+                });
+            }
+            TokenKind::Punct('!') if opaque_depth == 0 => {
+                if matches!(
+                    tokens.get(index + 1),
+                    Some(ScannedToken {
+                        kind: TokenKind::Punct('{') | TokenKind::Punct('(') | TokenKind::Punct('['),
+                        ..
+                    })
+                ) {
+                    pending_opaque_open = Some(index + 1);
+                } else if matches!(
+                    tokens.get(index + 1),
+                    Some(ScannedToken {
+                        kind: TokenKind::Ident(_),
+                        ..
+                    })
+                ) && matches!(
+                    tokens.get(index + 2),
+                    Some(ScannedToken {
+                        kind: TokenKind::Punct('{') | TokenKind::Punct('(') | TokenKind::Punct('['),
+                        ..
+                    })
+                ) {
+                    pending_opaque_open = Some(index + 2);
+                }
+            }
+            TokenKind::Punct(open @ ('{' | '(' | '[')) => {
+                if pending_opaque_open == Some(index) {
+                    block_stack.push(BlockContext::Opaque {
+                        close: matching_close(*open),
+                    });
+                    opaque_depth += 1;
+                    pending_opaque_open = None;
+                    continue;
+                }
+
+                if *open == '{'
+                    && pending_module
+                        .as_ref()
+                        .is_some_and(|pending| pending.open_index == index)
+                {
+                    let pending = pending_module.take().expect("pending module");
+                    let path = if active_modules.is_empty() {
+                        pending.name.clone()
+                    } else {
+                        format!("{}::{}", active_modules.join("::"), pending.name)
+                    };
+                    let depth = active_modules.len() + 1;
+                    active_modules.push(pending.name);
+                    block_stack.push(BlockContext::Module {
+                        close: '}',
+                        path,
+                        start_line: pending.start_line,
+                        depth,
+                    });
+                    continue;
+                }
+
+                block_stack.push(BlockContext::Normal {
+                    close: matching_close(*open),
+                });
+            }
+            TokenKind::Punct(close @ ('}' | ')' | ']')) => {
+                let Some(context) = block_stack.pop() else {
+                    continue;
+                };
+
+                match context {
+                    BlockContext::Module {
+                        close: expected_close,
+                        path,
+                        start_line,
+                        depth,
+                    } if expected_close == *close => {
+                        let end_line = if token.line > start_line {
+                            token.line - 1
+                        } else {
+                            token.line
+                        };
+
+                        ranges.push(ModuleRange {
+                            path,
+                            start_line,
+                            end_line,
+                            depth,
+                        });
+                        active_modules.pop();
+                    }
+                    BlockContext::Opaque {
+                        close: expected_close,
+                    } if expected_close == *close => {
+                        opaque_depth = opaque_depth.saturating_sub(1);
+                    }
+                    BlockContext::Normal {
+                        close: expected_close,
+                    } if expected_close == *close => {}
+                    BlockContext::Module { .. }
+                    | BlockContext::Opaque { .. }
+                    | BlockContext::Normal { .. } => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    ranges.sort_by_key(|range| (range.depth, range.start_line));
+    ranges
+}
+
+fn matching_close(open: char) -> char {
+    match open {
+        '{' => '}',
+        '(' => ')',
+        '[' => ']',
+        _ => open,
+    }
+}
+
+fn set_line_range(line_paths: &mut [String], start_line: usize, end_line: usize, path: &str) {
+    if start_line == 0 || end_line < start_line {
         return;
     }
 
-    if token == "mod" {
-        *expect_mod_ident = true;
-        *pending_mod_name = None;
-        *expect_mod_open = false;
-    } else if *expect_mod_open {
-        *pending_mod_name = None;
-        *expect_mod_open = false;
+    for line in start_line..=end_line {
+        if let Some(slot) = line_paths.get_mut(line - 1) {
+            *slot = path.to_string();
+        }
     }
-}
-
-fn build_line_module_paths(content: &str) -> Vec<String> {
-    #[derive(Clone, Copy)]
-    enum Mode {
-        Normal,
-        LineComment,
-        BlockComment { depth: usize },
-        String { escaped: bool },
-        RawString { hashes: usize },
-    }
-
-    let bytes = content.as_bytes();
-    let mut line_paths = vec![String::new()];
-    let mut line = 1usize;
-    let mut i = 0usize;
-    let mut mode = Mode::Normal;
-    let mut brace_stack: Vec<Option<String>> = Vec::new();
-    let mut module_stack: Vec<String> = Vec::new();
-    let mut expect_mod_ident = false;
-    let mut pending_mod_name: Option<String> = None;
-    let mut expect_mod_open = false;
-
-    let current_module_path = |stack: &[String]| -> String {
-        if stack.is_empty() {
-            String::new()
-        } else {
-            stack.join("::")
-        }
-    };
-
-    while i < bytes.len() {
-        let byte = bytes[i];
-
-        if byte == b'\n' {
-            line += 1;
-            if line_paths.len() < line {
-                line_paths.push(current_module_path(&module_stack));
-            } else if let Some(existing) = line_paths.get_mut(line - 1) {
-                *existing = current_module_path(&module_stack);
-            }
-        }
-
-        match mode {
-            Mode::LineComment => {
-                if byte == b'\n' {
-                    mode = Mode::Normal;
-                }
-                i += 1;
-                continue;
-            }
-            Mode::BlockComment { depth } => {
-                if byte == b'/' && bytes.get(i + 1) == Some(&b'*') {
-                    mode = Mode::BlockComment { depth: depth + 1 };
-                    i += 2;
-                    continue;
-                }
-                if byte == b'*' && bytes.get(i + 1) == Some(&b'/') {
-                    if depth == 1 {
-                        mode = Mode::Normal;
-                    } else {
-                        mode = Mode::BlockComment { depth: depth - 1 };
-                    }
-                    i += 2;
-                    continue;
-                }
-                i += 1;
-                continue;
-            }
-            Mode::String { escaped } => {
-                if byte == b'\\' && !escaped {
-                    mode = Mode::String { escaped: true };
-                } else if byte == b'"' && !escaped {
-                    mode = Mode::Normal;
-                } else {
-                    mode = Mode::String { escaped: false };
-                }
-                i += 1;
-                continue;
-            }
-            Mode::RawString { hashes } => {
-                if byte == b'"' {
-                    let mut matched = true;
-                    for offset in 0..hashes {
-                        if bytes.get(i + 1 + offset) != Some(&b'#') {
-                            matched = false;
-                            break;
-                        }
-                    }
-                    if matched {
-                        mode = Mode::Normal;
-                        i += 1 + hashes;
-                        continue;
-                    }
-                }
-                i += 1;
-                continue;
-            }
-            Mode::Normal => {}
-        }
-
-        if byte == b'/' && bytes.get(i + 1) == Some(&b'/') {
-            mode = Mode::LineComment;
-            i += 2;
-            continue;
-        }
-        if byte == b'/' && bytes.get(i + 1) == Some(&b'*') {
-            mode = Mode::BlockComment { depth: 1 };
-            i += 2;
-            continue;
-        }
-        if byte == b'"' {
-            mode = Mode::String { escaped: false };
-            i += 1;
-            continue;
-        }
-        if let Some(consumed) = char_literal_len(content, bytes, i) {
-            i += consumed;
-            continue;
-        }
-        if byte == b'\'' {
-            // Lifetimes and labels are not string delimiters and should not hide module tokens.
-            i += 1;
-            continue;
-        }
-        if let Some((hashes, consumed)) = raw_string_prefix_len(bytes, i) {
-            mode = Mode::RawString { hashes };
-            i += consumed;
-            continue;
-        }
-
-        if let Some(consumed) = raw_identifier_len(bytes, i) {
-            let token = &content[i..i + consumed];
-            i += consumed;
-            handle_identifier_token(
-                token,
-                &mut expect_mod_ident,
-                &mut pending_mod_name,
-                &mut expect_mod_open,
-            );
-            continue;
-        }
-
-        if is_ident_start(byte) {
-            let start = i;
-            i += 1;
-            while i < bytes.len() && is_ident_continue(bytes[i]) {
-                i += 1;
-            }
-            let token = &content[start..i];
-            handle_identifier_token(
-                token,
-                &mut expect_mod_ident,
-                &mut pending_mod_name,
-                &mut expect_mod_open,
-            );
-            continue;
-        }
-
-        if byte == b'{' {
-            if let Some(module_name) = pending_mod_name.take() {
-                // Only inline `mod name { ... }` blocks affect the active module stack.
-                // `mod name;` declarations leave the current file's line mapping unchanged.
-                module_stack.push(module_name.clone());
-                brace_stack.push(Some(module_name));
-                if let Some(current) = line_paths.get_mut(line - 1) {
-                    *current = current_module_path(&module_stack);
-                }
-            } else {
-                brace_stack.push(None);
-            }
-            expect_mod_ident = false;
-            expect_mod_open = false;
-            i += 1;
-            continue;
-        }
-
-        if byte == b'}' {
-            if let Some(marker) = brace_stack.pop() {
-                if marker.is_some() {
-                    let _ = module_stack.pop();
-                    if let Some(current) = line_paths.get_mut(line - 1) {
-                        *current = current_module_path(&module_stack);
-                    }
-                }
-            }
-            expect_mod_ident = false;
-            expect_mod_open = false;
-            i += 1;
-            continue;
-        }
-
-        if byte == b';' {
-            pending_mod_name = None;
-            expect_mod_ident = false;
-            expect_mod_open = false;
-            i += 1;
-            continue;
-        }
-
-        i += 1;
-    }
-
-    line_paths
 }
 
 pub(crate) fn parse_file_modules(
@@ -340,6 +552,6 @@ pub(crate) fn parse_file_modules(
 ) -> Option<(String, Vec<String>)> {
     let content = fs::read_to_string(file_path).ok()?;
     let base_module = module_path_from_file_with_root(file_path, module_root);
-    let line_modules = build_line_module_paths(&content);
+    let line_modules = build_line_module_paths(&content)?;
     Some((base_module, line_modules))
 }

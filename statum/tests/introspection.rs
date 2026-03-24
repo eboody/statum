@@ -52,7 +52,9 @@ impl Flow<Draft> {
 
 #[transition]
 impl Flow<Review> {
-    fn maybe_decide(self) -> Option<Result<Flow<Accepted>, Flow<Rejected>>> {
+    fn maybe_decide(
+        self,
+    ) -> ::core::option::Option<::core::result::Result<Flow<Accepted>, Flow<Rejected>>> {
         if true {
             Some(Ok(self.accept()))
         } else {

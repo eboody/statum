@@ -71,7 +71,7 @@ mod wrappers_option {
 
     #[transition]
     impl Machine<X> {
-        fn to_y_option(self) -> Option<Machine<Y>> {
+        fn to_y_option(self) -> ::core::option::Option<Machine<Y>> {
             Some(self.transition())
         }
     }
@@ -91,7 +91,7 @@ mod wrappers_result {
 
     #[transition]
     impl Machine<X> {
-        fn to_y_result(self) -> Result<Machine<Y>, statum_core::Error> {
+        fn to_y_result(self) -> ::core::result::Result<Machine<Y>, statum_core::Error> {
             Ok(self.transition())
         }
     }

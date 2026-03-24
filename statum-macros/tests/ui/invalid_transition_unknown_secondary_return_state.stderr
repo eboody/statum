@@ -3,5 +3,5 @@ error: Error: transition method `to_b_or_ghost` returns state `Ghost`, but `Ghos
        Help: return `Machine<ValidState>` using one of those variants, or call `self.transition()` / `self.transition_with(...)`.
   --> tests/ui/invalid_transition_unknown_secondary_return_state.rs:24:31
    |
-24 |     fn to_b_or_ghost(self) -> Result<Machine<B>, Machine<Ghost>> {
-   |                               ^^^^^^
+24 |     fn to_b_or_ghost(self) -> ::core::result::Result<Machine<B>, Machine<Ghost>> {
+   |                               ^

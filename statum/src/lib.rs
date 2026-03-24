@@ -176,8 +176,12 @@
 //!
 //! The graph is derived from macro-expanded, cfg-pruned `#[transition]`
 //! method signatures. Supported return shapes are direct machine returns plus
-//! `Option`, `Result`, and `statum::Branch` wrappers around machine types.
-//! Unsupported custom decision enums are rejected instead of approximated.
+//! canonical wrapper paths around machine types:
+//! `::core::option::Option<Machine<NextState>>`,
+//! `::core::result::Result<Machine<NextState>, E>`, and
+//! `::statum::Branch<Machine<Left>, Machine<Right>>`.
+//! Unsupported custom decision enums, wrapper aliases, and differently-qualified
+//! machine paths are rejected instead of approximated.
 //!
 //! For small amounts of human-facing metadata, Statum can also generate a
 //! `machine::PRESENTATION` constant from `#[present(...)]` attributes. Add
@@ -202,7 +206,10 @@
 //!
 //! #[transition]
 //! impl Flow<Fetched> {
-//!     fn validate(self, accept: bool) -> Result<Flow<Accepted>, Flow<Rejected>> {
+//!     fn validate(
+//!         self,
+//!         accept: bool,
+//!     ) -> ::core::result::Result<Flow<Accepted>, Flow<Rejected>> {
 //!         if accept {
 //!             Ok(self.accept())
 //!         } else {
@@ -346,9 +353,11 @@ pub use statum_macros::machine;
 /// Validate and generate legal transitions for one source state.
 ///
 /// Apply `#[transition]` to an `impl Machine<CurrentState>` block. Transition
-/// methods consume `self` and return `Machine<NextState>` or wrappers around it
-/// such as `Result<Machine<NextState>, E>`, `Option<Machine<NextState>>`, or
-/// `statum::Branch<Machine<Left>, Machine<Right>>`.
+/// methods consume `self` and return `Machine<NextState>` or exact wrapper
+/// shapes around that same machine path such as
+/// `::core::result::Result<Machine<NextState>, E>`,
+/// `::core::option::Option<Machine<NextState>>`, or
+/// `::statum::Branch<Machine<Left>, Machine<Right>>`.
 ///
 /// Inside the impl, use:
 ///

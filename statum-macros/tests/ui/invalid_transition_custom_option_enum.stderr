@@ -1,0 +1,15 @@
+error: Invalid transition return type for `Machine<Draft>::maybe_accept`: expected the impl target machine path directly, or the same path wrapped in a canonical `::core::option::Option`, `::core::result::Result`, or `::statum::Branch`.
+
+       Expected:
+         fn maybe_accept(self) -> Machine<NextState>
+
+       Actual:
+         Option < Machine < Accepted > >
+
+       Help:
+         return `Machine<NextState>` directly using the same machine path as the impl target, or wrap that same machine path in `::core::option::Option<...>`, `::core::result::Result<..., E>`, or `::statum::Branch<..., ...>` and build the next state with `self.transition()` or `self.transition_with(...)`.
+         Bare, aliased, or differently-qualified wrapper and machine paths are rejected because transition introspection only accepts exact syntactic return shapes.
+  --> tests/ui/invalid_transition_custom_option_enum.rs:30:44
+   |
+30 |     fn maybe_accept(self, accept: bool) -> Option<Machine<Accepted>> {
+   |                                            ^^^^^^

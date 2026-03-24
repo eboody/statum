@@ -1,4 +1,4 @@
-error: Error: #[transition] impl for `Machine<A>` must contain at least one method returning `Machine<NextState>` or a supported wrapper like `Option<Machine<NextState>>` / `Result<Machine<NextState>, E>` / `Branch<Machine<NextState>, Machine<NextState>>`.
+error: Error: #[transition] impl for `Machine<A>` must contain at least one method returning `Machine<NextState>` or the same machine path wrapped in a canonical `::core::option::Option<Machine<NextState>>`, `::core::result::Result<Machine<NextState>, E>`, or `::statum::Branch<Machine<NextState>, Machine<NextState>>`.
   --> tests/ui/invalid_transition_no_methods.rs:24:6
    |
 24 | impl Machine<A> {}

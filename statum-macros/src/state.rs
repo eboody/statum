@@ -1,4 +1,4 @@
-use macro_registry::callsite::{current_source_info, module_path_for_line};
+use macro_registry::callsite::{current_source_file, module_path_for_line};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::sync::{OnceLock, RwLock};
@@ -338,7 +338,7 @@ pub fn invalid_state_target_error(item: &Item) -> TokenStream {
 
 impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
-        let Some((file_path, line_number)) = current_source_info() else {
+        let Some(file_path) = current_source_file() else {
             return Err(syn::Error::new(
                 item.ident.span(),
                 format!(
@@ -347,6 +347,7 @@ impl EnumInfo {
                 ),
             ));
         };
+        let line_number = item.ident.span().start().line;
         let Some(module_path) = module_path_for_line(&file_path, line_number) else {
             return Err(syn::Error::new(
                 item.ident.span(),
@@ -369,8 +370,8 @@ impl EnumInfo {
         item: &ItemEnum,
         module_path: StateModulePath,
     ) -> syn::Result<Self> {
-        let file_path = current_source_info().map(|(path, _)| path);
-        let line_number = current_source_info().map(|(_, line)| line).unwrap_or_default();
+        let file_path = current_source_file();
+        let line_number = item.ident.span().start().line;
         Self::from_item_enum_with_module_and_file(item, module_path, file_path, line_number)
     }
 

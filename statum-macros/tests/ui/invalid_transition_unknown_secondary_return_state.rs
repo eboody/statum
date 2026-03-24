@@ -21,7 +21,7 @@ struct Machine<State> {}
 
 #[transition]
 impl Machine<A> {
-    fn to_b_or_ghost(self) -> Result<Machine<B>, Machine<Ghost>> {
+    fn to_b_or_ghost(self) -> ::core::result::Result<Machine<B>, Machine<Ghost>> {
         if true {
             Ok(self.to_b())
         } else {

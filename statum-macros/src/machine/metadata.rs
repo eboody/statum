@@ -1,4 +1,4 @@
-use macro_registry::callsite::{current_source_info, module_path_for_line};
+use macro_registry::callsite::{current_source_file, current_source_info, module_path_for_line};
 use macro_registry::query;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
@@ -84,7 +84,7 @@ impl MachineInfo {
     }
 
     pub fn from_item_struct(item: &ItemStruct) -> syn::Result<Self> {
-        let Some((file_path, line_number)) = current_source_info() else {
+        let Some(file_path) = current_source_file() else {
             return Err(syn::Error::new(
                 item.ident.span(),
                 format!(
@@ -93,6 +93,7 @@ impl MachineInfo {
                 ),
             ));
         };
+        let line_number = item.ident.span().start().line;
         let Some(module_path) = module_path_for_line(&file_path, line_number) else {
             return Err(syn::Error::new(
                 item.ident.span(),
@@ -102,7 +103,6 @@ impl MachineInfo {
                 ),
             ));
         };
-
         let module_path: MachinePath = module_path.into();
         let fields = collect_fields(item);
         let crate_root = crate_root_for_file(&file_path);
@@ -136,8 +136,8 @@ impl MachineInfo {
             return None;
         }
 
-        let line_number = current_source_info().map(|(_, line)| line).unwrap_or_default();
-        let file_path = current_source_info().map(|(path, _)| path);
+        let line_number = item.ident.span().start().line;
+        let file_path = current_source_file();
         let presentation = parse_present_attrs(&item.attrs).ok()?;
         let presentation_types = parse_presentation_types_attr(&item.attrs).ok()?;
         Some(Self {

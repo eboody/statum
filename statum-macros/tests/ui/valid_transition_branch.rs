@@ -22,7 +22,10 @@ struct Machine<State> {}
 
 #[transition]
 impl Machine<Draft> {
-    fn decide(self, accept: bool) -> Branch<Machine<Accepted>, Machine<Rejected>> {
+    fn decide(
+        self,
+        accept: bool,
+    ) -> ::statum::Branch<Machine<Accepted>, Machine<Rejected>> {
         if accept {
             Branch::First(self.transition())
         } else {

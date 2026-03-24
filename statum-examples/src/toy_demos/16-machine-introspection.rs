@@ -17,7 +17,7 @@ struct Flow<FlowState> {
 
 #[transition]
 impl Flow<Fetched> {
-    fn validate(self, accept: bool) -> Result<Flow<Accepted>, Flow<Rejected>> {
+    fn validate(self, accept: bool) -> ::core::result::Result<Flow<Accepted>, Flow<Rejected>> {
         if accept {
             Ok(self.accept())
         } else {

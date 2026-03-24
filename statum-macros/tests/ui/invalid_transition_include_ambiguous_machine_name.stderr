@@ -1,5 +1,5 @@
 error: Error: `#[transition]` impl for `FlowMachine` in module `ambiguous_transition_include` could not use include-style fallback because the loaded machine name was ambiguous.
-       Loaded `#[machine]` candidates: `FlowMachine` in `invalid_transition_include_ambiguous_machine_name::beta` ($DIR/tests/ui/invalid_transition_include_ambiguous_machine_name.rs:22), `FlowMachine` in `invalid_transition_include_ambiguous_machine_name::alpha` ($DIR/tests/ui/invalid_transition_include_ambiguous_machine_name.rs:35).
+       Loaded `#[machine]` candidates: `FlowMachine` in `invalid_transition_include_ambiguous_machine_name::beta` ($DIR/tests/ui/invalid_transition_include_ambiguous_machine_name.rs:23), `FlowMachine` in `invalid_transition_include_ambiguous_machine_name::alpha` ($DIR/tests/ui/invalid_transition_include_ambiguous_machine_name.rs:36).
        Help: keep the machine name unique within the current crate when using include-generated transition fragments, or move the transition impl next to its machine definition.
  --> tests/ui/support/ambiguous_transition_include.rs
   |

@@ -14,7 +14,7 @@ mod transaction {
 
     #[transition]
     impl Machine<Pending> {
-        pub fn confirm(self) -> Result<Machine<Confirmed>, Machine<Reverted>> {
+        pub fn confirm(self) -> ::core::result::Result<Machine<Confirmed>, Machine<Reverted>> {
             if true {
                 Ok(self.transition())
             } else {

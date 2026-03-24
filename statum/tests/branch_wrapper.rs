@@ -14,7 +14,7 @@ struct BranchFlow<BranchState> {}
 
 #[transition]
 impl BranchFlow<Draft> {
-    fn decide(self, accept: bool) -> Branch<BranchFlow<Accepted>, BranchFlow<Rejected>> {
+    fn decide(self, accept: bool) -> ::statum::Branch<BranchFlow<Accepted>, BranchFlow<Rejected>> {
         if accept {
             Branch::First(self.transition())
         } else {

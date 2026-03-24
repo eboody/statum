@@ -255,11 +255,11 @@ Common transition signatures:
 
 ```rust
 fn approve(self) -> DocumentMachine<Published>;
-fn try_publish(self) -> Result<DocumentMachine<Published>, statum::Error>;
-fn maybe_publish(self) -> Option<DocumentMachine<Published>>;
+fn try_publish(self) -> ::core::result::Result<DocumentMachine<Published>, statum::Error>;
+fn maybe_publish(self) -> ::core::option::Option<DocumentMachine<Published>>;
 ```
 
-Use a direct return when transition is always legal from that source state. Use `Result`/`Option` when runtime checks (permissions, feature flags, side-effect outcomes) gate that edge.
+Use a direct return when transition is always legal from that source state. Use canonical `::core::result::Result` or `::core::option::Option` when runtime checks (permissions, feature flags, side-effect outcomes) gate that edge.
 
 ### Why it matters
 
@@ -315,7 +315,10 @@ enum ReviewDecision {
 }
 
 impl DocumentMachine<InReview> {
-    fn decide(self, decision: ReviewDecision) -> Result<DocumentMachine<Published>, statum::Error> {
+    fn decide(
+        self,
+        decision: ReviewDecision,
+    ) -> ::core::result::Result<DocumentMachine<Published>, statum::Error> {
         match decision {
             ReviewDecision::Approve => Ok(self.publish(now_unix())),
             ReviewDecision::Reject => Err(statum::Error::InvalidState),
