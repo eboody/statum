@@ -1,4 +1,4 @@
-error: Error: validator `is_in_progress` for `impl DbRow` rebuilding `TaskMachine` state `TaskState::InProgress` must return `Result<Progress, _>` (or an equivalent alias), but found `Result < (), statum_core :: Error >` with payload `()`.
+error: Error: validator `is_in_progress` for `impl DbRow` rebuilding `TaskMachine` state `TaskState::InProgress` must return `Result<Progress, _>` or `Validation<Progress>` (or an equivalent supported alias), but found `Result < (), statum_core :: Error >` with payload `()`.
   --> tests/ui/invalid_validators_wrong_return.rs:44:33
    |
 44 |     fn is_in_progress(&self) -> Result<(), statum_core::Error> {

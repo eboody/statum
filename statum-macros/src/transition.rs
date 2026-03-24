@@ -9,14 +9,21 @@ use syn::{
     ItemImpl, LitStr, PathArguments, ReturnType, Type, TypePath,
 };
 
-use crate::machine::{to_shouty_snake_identifier, transition_slice_ident, transition_support_module_ident};
-use crate::{EnumInfo, MachineInfo, to_snake_case};
+use crate::machine::{
+    to_shouty_snake_identifier, transition_presentation_slice_ident, transition_slice_ident,
+    transition_support_module_ident,
+};
+use crate::{
+    EnumInfo, MachineInfo, PresentationAttr, PresentationTypesAttr, parse_present_attrs,
+    strip_present_attrs, to_snake_case,
+};
 
 /// Stores all metadata for a single transition method in an `impl` block
 #[allow(unused)]
 pub struct TransitionFn {
     pub name: Ident,
     pub attrs: Vec<syn::Attribute>,
+    pub presentation: Option<PresentationAttr>,
     pub has_receiver: bool,
     pub return_type: Option<Type>,
     pub return_type_span: Option<Span>,
@@ -38,7 +45,7 @@ impl TransitionFn {
         let Some((_, return_state)) = parse_machine_and_state(return_type, machine_ident) else {
             return Err(invalid_return_type_error(
                 self,
-                "expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`)",
+                "expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`/`Branch`)",
             ));
         };
 
@@ -57,7 +64,7 @@ impl TransitionFn {
         if return_states.is_empty() {
             return Err(invalid_return_type_error(
                 self,
-                "expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`)",
+                "expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`/`Branch`)",
             ));
         }
 
@@ -97,7 +104,7 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, Tok
     let mut functions = Vec::new();
     for item in &item_impl.items {
         if let ImplItem::Fn(method) = item {
-            functions.push(parse_transition_fn(method, &machine_name, &source_state));
+            functions.push(parse_transition_fn(method, &machine_name, &source_state)?);
         }
     }
 
@@ -128,7 +135,11 @@ fn extract_impl_machine_and_state(target_type: &Type) -> Option<(String, Span, S
         })
 }
 
-pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str, source_state: &str) -> TransitionFn {
+pub fn parse_transition_fn(
+    method: &ImplItemFn,
+    machine_name: &str,
+    source_state: &str,
+) -> Result<TransitionFn, TokenStream> {
     let has_receiver = matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)));
 
     let return_type = match &method.sig.output {
@@ -156,9 +167,10 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str, source_state
 
     let is_async = method.sig.asyncness.is_some();
 
-    TransitionFn {
+    Ok(TransitionFn {
         name: method.sig.ident.clone(),
         attrs: method.attrs.clone(),
+        presentation: parse_present_attrs(&method.attrs).map_err(|err| err.to_compile_error())?,
         has_receiver,
         return_type,
         return_type_span,
@@ -169,7 +181,7 @@ pub fn parse_transition_fn(method: &ImplItemFn, machine_name: &str, source_state
         is_async,
         vis: method.vis.to_owned(),
         span: method.span(),
-    }
+    })
 }
 
 pub fn validate_transition_functions(
@@ -178,9 +190,11 @@ pub fn validate_transition_functions(
 ) -> Option<TokenStream> {
     if tr_impl.functions.is_empty() {
         let message = format!(
-            "Error: #[transition] impl for `{}<{}>` must contain at least one method returning `{}` or a supported wrapper like `Option<{}>` / `Result<{}, E>`.",
+            "Error: #[transition] impl for `{}<{}>` must contain at least one method returning `{}` or a supported wrapper like `Option<{}>` / `Result<{}, E>` / `Branch<{}, {}>`.",
             tr_impl.machine_name,
             tr_impl.source_state,
+            machine_return_signature(&tr_impl.machine_name),
+            machine_return_signature(&tr_impl.machine_name),
             machine_return_signature(&tr_impl.machine_name),
             machine_return_signature(&tr_impl.machine_name),
             machine_return_signature(&tr_impl.machine_name),
@@ -255,11 +269,17 @@ pub fn generate_transition_impl(
     target_machine_info: &MachineInfo,
 ) -> TokenStream {
     let target_type = &tr_impl.target_type;
+    let (impl_generics, _, where_clause) = input.generics.split_for_impl();
     let machine_target_ident = format_ident!("{}", target_machine_info.name);
     let transition_support_module_ident = transition_support_module_ident(target_machine_info);
     let field_names = target_machine_info.field_names();
     let machine_module_ident = format_ident!("{}", to_snake_case(&target_machine_info.name));
     let transition_slice_ident = transition_slice_ident(
+        &target_machine_info.name,
+        target_machine_info.file_path.as_deref(),
+        target_machine_info.line_number,
+    );
+    let transition_presentation_slice_ident = transition_presentation_slice_ident(
         &target_machine_info.name,
         target_machine_info.file_path.as_deref(),
         target_machine_info.line_number,
@@ -282,96 +302,111 @@ pub fn generate_transition_impl(
         Ok(None) => quote! { () },
         Err(err) => return err,
     };
+    let extra_transition_trait_args = match extra_machine_generic_argument_tokens(target_type) {
+        Ok(args) => args,
+        Err(err) => return err,
+    };
 
     let mut emitted_states = HashSet::new();
-    let transition_impls = tr_impl.functions.iter().filter_map(|function| {
-        let return_state = match function.return_state() {
-            Ok(state) => state,
-            Err(err) => return Some(err),
+    let mut transition_impls = Vec::new();
+    for function in &tr_impl.functions {
+        let return_states = match function.return_states() {
+            Ok(states) => states,
+            Err(err) => return err,
         };
-        if !emitted_states.insert(return_state.clone()) {
-            return None;
+
+        for return_state in return_states {
+            if !emitted_states.insert(return_state.clone()) {
+                continue;
+            }
+            let return_state_ident = format_ident!("{}", return_state);
+            let next_machine_ty = match replace_machine_state_in_target_type(
+                target_type,
+                syn::parse_quote!(#return_state_ident),
+            ) {
+                Ok(ty) => ty,
+                Err(err) => return err,
+            };
+            let Some(variant_info) = state_enum_info.get_variant_from_name(&return_state) else {
+                return invalid_transition_method_state_error(
+                    function,
+                    &tr_impl.machine_name,
+                    &return_state,
+                    &state_enum_info,
+                );
+            };
+
+            transition_impls.push(match variant_info.parse_data_type() {
+                Ok(Some(data_ty)) => {
+                    quote! {
+                        impl #impl_generics #transition_support_module_ident::TransitionWith<#data_ty #extra_transition_trait_args> for #target_type #where_clause {
+                            type NextState = #return_state_ident;
+                            fn transition_with(self, data: #data_ty) -> #next_machine_ty {
+                                #machine_target_ident {
+                                    marker: core::marker::PhantomData,
+                                    state_data: data,
+                                    #(#field_names: self.#field_names,)*
+                                }
+                            }
+                        }
+
+                        impl #impl_generics statum::CanTransitionWith<#data_ty> for #target_type #where_clause {
+                            type NextState = #return_state_ident;
+                            type Output = #next_machine_ty;
+
+                            fn transition_with_data(self, data: #data_ty) -> Self::Output {
+                                <Self as #transition_support_module_ident::TransitionWith<#data_ty #extra_transition_trait_args>>::transition_with(self, data)
+                            }
+                        }
+
+                        impl #impl_generics statum::CanTransitionMap<#return_state_ident> for #target_type #where_clause {
+                            type CurrentData = #source_data_ty;
+                            type Output = #next_machine_ty;
+
+                            fn transition_map<F>(self, f: F) -> Self::Output
+                            where
+                                F: FnOnce(Self::CurrentData) -> <#return_state_ident as statum::StateMarker>::Data,
+                            {
+                                let Self {
+                                    marker: _,
+                                    state_data,
+                                    #(#field_names),*
+                                } = self;
+
+                                #machine_target_ident {
+                                    marker: core::marker::PhantomData,
+                                    state_data: f(state_data),
+                                    #(#field_names),*
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(None) => {
+                    quote! {
+                        impl #impl_generics #transition_support_module_ident::TransitionTo<#return_state_ident #extra_transition_trait_args> for #target_type #where_clause {
+                            fn transition(self) -> #next_machine_ty {
+                                #machine_target_ident {
+                                    marker: core::marker::PhantomData,
+                                    state_data: (),
+                                    #(#field_names: self.#field_names,)*
+                                }
+                            }
+                        }
+
+                        impl #impl_generics statum::CanTransitionTo<#return_state_ident> for #target_type #where_clause {
+                            type Output = #next_machine_ty;
+
+                            fn transition_to(self) -> Self::Output {
+                                <Self as #transition_support_module_ident::TransitionTo<#return_state_ident #extra_transition_trait_args>>::transition(self)
+                            }
+                        }
+                    }
+                }
+                Err(err) => return err,
+            });
         }
-        let return_state_ident = format_ident!("{}", return_state);
-        let Some(variant_info) = state_enum_info.get_variant_from_name(&return_state) else {
-            return Some(invalid_transition_method_state_error(
-                function,
-                &tr_impl.machine_name,
-                &return_state,
-                &state_enum_info,
-            ));
-        };
-
-        Some(match variant_info.parse_data_type() {
-            Ok(Some(data_ty)) => {
-                quote! {
-                    impl #transition_support_module_ident::TransitionWith<#data_ty> for #target_type {
-                        type NextState = #return_state_ident;
-                        fn transition_with(self, data: #data_ty) -> #machine_target_ident<Self::NextState> {
-                            #machine_target_ident {
-                                marker: core::marker::PhantomData,
-                                state_data: data,
-                                #(#field_names: self.#field_names,)*
-                            }
-                        }
-                    }
-
-                    impl statum::CanTransitionWith<#data_ty> for #target_type {
-                        type NextState = #return_state_ident;
-                        type Output = #machine_target_ident<#return_state_ident>;
-
-                        fn transition_with_data(self, data: #data_ty) -> Self::Output {
-                            <Self as #transition_support_module_ident::TransitionWith<#data_ty>>::transition_with(self, data)
-                        }
-                    }
-
-                    impl statum::CanTransitionMap<#return_state_ident> for #target_type {
-                        type CurrentData = #source_data_ty;
-                        type Output = #machine_target_ident<#return_state_ident>;
-
-                        fn transition_map<F>(self, f: F) -> Self::Output
-                        where
-                            F: FnOnce(Self::CurrentData) -> <#return_state_ident as statum::StateMarker>::Data,
-                        {
-                            let #machine_target_ident {
-                                marker: _,
-                                state_data,
-                                #(#field_names),*
-                            } = self;
-
-                            #machine_target_ident {
-                                marker: core::marker::PhantomData,
-                                state_data: f(state_data),
-                                #(#field_names),*
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(None) => {
-                quote! {
-                    impl #transition_support_module_ident::TransitionTo<#return_state_ident> for #target_type {
-                        fn transition(self) -> #machine_target_ident<#return_state_ident> {
-                            #machine_target_ident {
-                                marker: core::marker::PhantomData,
-                                state_data: (),
-                                #(#field_names: self.#field_names,)*
-                            }
-                        }
-                    }
-
-                    impl statum::CanTransitionTo<#return_state_ident> for #target_type {
-                        type Output = #machine_target_ident<#return_state_ident>;
-
-                        fn transition_to(self) -> Self::Output {
-                            <Self as #transition_support_module_ident::TransitionTo<#return_state_ident>>::transition(self)
-                        }
-                    }
-                }
-            }
-            Err(err) => err,
-        })
-    });
+    }
     let transition_registrations = tr_impl.functions.iter().enumerate().map(|(idx, function)| {
         let return_states = match function.return_states() {
             Ok(states) => states,
@@ -417,17 +452,200 @@ pub fn generate_transition_impl(
                 };
 
             #(#cfg_attrs)*
-            impl #target_type {
+            impl #impl_generics #target_type #where_clause {
                 pub const #id_const_ident: #machine_module_ident::TransitionId =
                     #machine_module_ident::TransitionId::from_token(&#token_ident);
             }
         }
     });
+    let transition_presentation_registrations = tr_impl.functions.iter().enumerate().filter_map(|(idx, function)| {
+        let presentation = function.presentation.as_ref()?;
+        let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
+        let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
+        let registration_ident =
+            format_ident!("__STATUM_TRANSITION_PRESENTATION_{}", unique_suffix);
+        let label = optional_lit_str_tokens(presentation.label.as_deref(), function.name.span());
+        let description =
+            optional_lit_str_tokens(presentation.description.as_deref(), function.name.span());
+        let transition_meta_ty = match transition_presentation_type_tokens(target_machine_info) {
+            Ok(tokens) => tokens,
+            Err(err) => return Some(err),
+        };
+        let metadata = match transition_presentation_metadata_tokens(
+            presentation,
+            function,
+            &target_machine_info.name,
+            target_machine_info,
+        ) {
+            Ok(tokens) => tokens,
+            Err(err) => return Some(err),
+        };
+        let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
+
+        Some(quote! {
+            #(#cfg_attrs)*
+            #[statum::__private::linkme::distributed_slice(#machine_module_ident::#transition_presentation_slice_ident)]
+            #[linkme(crate = statum::__private::linkme)]
+            static #registration_ident:
+                statum::__private::TransitionPresentation<#machine_module_ident::TransitionId, #transition_meta_ty> =
+                statum::__private::TransitionPresentation {
+                    id: #machine_module_ident::TransitionId::from_token(&#token_ident),
+                    label: #label,
+                    description: #description,
+                    metadata: #metadata,
+                };
+        })
+    });
+    let sanitized_input = strip_present_attrs_from_transition_impl(input);
 
     quote! {
         #(#transition_impls)*
         #(#transition_registrations)*
-        #input
+        #(#transition_presentation_registrations)*
+        #sanitized_input
+    }
+}
+
+fn strip_present_attrs_from_transition_impl(input: &ItemImpl) -> ItemImpl {
+    let mut sanitized = input.clone();
+    sanitized.attrs = strip_present_attrs(&sanitized.attrs);
+    for item in &mut sanitized.items {
+        if let ImplItem::Fn(method) = item {
+            method.attrs = strip_present_attrs(&method.attrs);
+        }
+    }
+    sanitized
+}
+
+fn optional_lit_str_tokens(value: Option<&str>, span: Span) -> TokenStream {
+    match value {
+        Some(value) => {
+            let lit = LitStr::new(value, span);
+            quote! { Some(#lit) }
+        }
+        None => quote! { None },
+    }
+}
+
+fn transition_presentation_type_tokens(
+    machine_info: &MachineInfo,
+) -> Result<TokenStream, TokenStream> {
+    let Some(presentation_types) = machine_info.presentation_types.as_ref() else {
+        return Ok(quote! { () });
+    };
+    let Some(transition_ty) = presentation_types
+        .parse_transition_type()
+        .map_err(|err| err.to_compile_error())?
+    else {
+        return Ok(quote! { () });
+    };
+
+    Ok(quote! { #transition_ty })
+}
+
+fn transition_presentation_metadata_tokens(
+    presentation: &PresentationAttr,
+    function: &TransitionFn,
+    machine_name: &str,
+    machine_info: &MachineInfo,
+) -> Result<TokenStream, TokenStream> {
+    let transition_metadata_ty = machine_info
+        .presentation_types
+        .as_ref()
+        .map(PresentationTypesAttr::parse_transition_type)
+        .transpose()
+        .map_err(|err| err.to_compile_error())?
+        .flatten();
+
+    match (presentation.metadata.as_deref(), transition_metadata_ty) {
+        (Some(metadata_expr), Some(_)) => {
+            let metadata = syn::parse_str::<syn::Expr>(metadata_expr)
+                .map_err(|err| err.to_compile_error())?;
+            Ok(quote! { #metadata })
+        }
+        (Some(_), None) => Err(compile_error_at(
+            function.name.span(),
+            &format!(
+                "Error: transition `{}::{}` uses `#[present(metadata = ...)]`, but machine `{machine_name}` did not declare `#[presentation_types(transition = ...)]`.\nFix: add `#[presentation_types(transition = TransitionMeta)]` to `{machine_name}` or remove the metadata expression.",
+                tr_impl_machine_state_display(machine_name, &function.source_state),
+                function.name,
+            ),
+        )),
+        (None, Some(_)) => Err(compile_error_at(
+            function.name.span(),
+            &format!(
+                "Error: transition `{}::{}` uses `#[present(...)]`, and machine `{machine_name}` declared `#[presentation_types(transition = ...)]`.\nFix: add `metadata = ...` to that transition so the generated typed presentation surface has a value for every annotated transition.",
+                tr_impl_machine_state_display(machine_name, &function.source_state),
+                function.name,
+            ),
+        )),
+        _ => Ok(quote! { () }),
+    }
+}
+
+fn tr_impl_machine_state_display(machine_name: &str, source_state: &str) -> String {
+    format!("{machine_name}<{}>", source_state)
+}
+
+fn replace_machine_state_in_target_type(
+    target_type: &Type,
+    next_state: Type,
+) -> Result<Type, TokenStream> {
+    let mut replaced = target_type.clone();
+    let Type::Path(type_path) = &mut replaced else {
+        return Err(compile_error_at(
+            target_type.span(),
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+        ));
+    };
+    let Some(segment) = type_path.path.segments.last_mut() else {
+        return Err(compile_error_at(
+            target_type.span(),
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+        ));
+    };
+    let PathArguments::AngleBracketed(args) = &mut segment.arguments else {
+        return Err(compile_error_at(
+            target_type.span(),
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+        ));
+    };
+
+    let mut replaced_args = syn::punctuated::Punctuated::new();
+    replaced_args.push(GenericArgument::Type(next_state));
+    for argument in args.args.iter().skip(1) {
+        replaced_args.push(argument.clone());
+    }
+    args.args = replaced_args;
+
+    Ok(replaced)
+}
+
+fn extra_machine_generic_argument_tokens(target_type: &Type) -> Result<TokenStream, TokenStream> {
+    let Type::Path(type_path) = target_type else {
+        return Err(compile_error_at(
+            target_type.span(),
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+        ));
+    };
+    let Some(segment) = type_path.path.segments.last() else {
+        return Err(compile_error_at(
+            target_type.span(),
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+        ));
+    };
+    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return Err(compile_error_at(
+            target_type.span(),
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+        ));
+    };
+
+    let extra_args = args.args.iter().skip(1).collect::<Vec<_>>();
+    if extra_args.is_empty() {
+        Ok(quote! {})
+    } else {
+        Ok(quote! {, #(#extra_args),* })
     }
 }
 
@@ -577,7 +795,7 @@ fn invalid_return_type_error(func: &TransitionFn, reason: &str) -> TokenStream {
         "Invalid transition return type for `{}<{}>::{func_name}`: {reason}.\n\n\
 Expected:\n  fn {func_name}(self) -> {machine_name}<NextState>\n\n\
 Actual:\n  {return_type}\n\n\
-Help:\n  return `{machine_name}<NextState>` directly, or wrap it in `Option<...>` / `Result<..., E>` and build the next state with `self.transition()` or `self.transition_with(...)`."
+Help:\n  return `{machine_name}<NextState>` directly, or wrap it in `Option<...>` / `Result<..., E>` / `Branch<..., ...>` and build the next state with `self.transition()` or `self.transition_with(...)`."
         ,
         machine_name,
         func.source_state,
@@ -655,11 +873,12 @@ fn compile_error_at(span: Span, message: &str) -> TokenStream {
 ///   - `Machine<SomeState>`
 ///   - `Option<Machine<SomeState>>`
 ///   - `Result<Machine<SomeState>, E>`
+///   - `Branch<Machine<FirstState>, Machine<SecondState>>`
 ///   - `some::error::Result<Machine<SomeState>, E>`
 ///
 /// On success, returns ("Machine", "SomeState").
 ///
-/// Walks through wrapper types (`Option`/`Result`) via their first generic argument.
+/// Walks through wrapper types (`Option`/`Result`/`Branch`) via their first generic argument.
 pub fn parse_machine_and_state(ty: &Type, target_machine_ident: Ident) -> Option<(String, String)> {
     parse_primary_machine_and_state(ty, target_machine_ident)
 }
@@ -679,7 +898,9 @@ pub fn parse_primary_machine_and_state(
                 return extract_machine_generic(&segment.arguments, target_machine_ident)
                     .map(|(machine, state, _)| (machine, state));
             }
-            PrimaryReturnWrapper::Option(inner) | PrimaryReturnWrapper::Result(inner) => {
+            PrimaryReturnWrapper::Option(inner)
+            | PrimaryReturnWrapper::Result(inner)
+            | PrimaryReturnWrapper::Branch(inner) => {
                 current = inner;
             }
         }
@@ -703,6 +924,7 @@ enum PrimaryReturnWrapper<'a> {
     Machine(&'a syn::PathSegment),
     Option(&'a Type),
     Result(&'a Type),
+    Branch(&'a Type),
 }
 
 fn classify_primary_return_wrapper<'a>(
@@ -724,6 +946,10 @@ fn classify_primary_return_wrapper<'a>(
 
     if segment.ident == "Result" {
         return extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Result);
+    }
+
+    if segment.ident == "Branch" {
+        return extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Branch);
     }
 
     None
@@ -763,6 +989,15 @@ fn collect_machine_targets(
         for inner in types {
             collect_machine_targets(inner, target_machine_ident, targets);
         }
+        return;
+    }
+
+    if segment.ident == "Branch"
+        && let Some(types) = extract_generic_type_refs(&segment.arguments)
+    {
+        for inner in types {
+            collect_machine_targets(inner, target_machine_ident, targets);
+        }
     }
 }
 
@@ -785,10 +1020,11 @@ fn extract_machine_generic(
     else {
         return None;
     };
-    if generic_args.len() != 1 {
-        return None;
-    }
-    let GenericArgument::Type(Type::Path(state_path)) = &generic_args[0] else {
+    let first_generic = generic_args.iter().find_map(|arg| match arg {
+        GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    })?;
+    let Type::Path(state_path) = first_generic else {
         return None;
     };
     let state_seg = state_path.path.segments.last()?;
@@ -878,8 +1114,37 @@ mod tests {
     }
 
     #[test]
+    fn primary_parser_reads_first_branch_target() {
+        let ty = parse_type("statum::Branch<Machine<Accepted>, Machine<Rejected>>");
+
+        assert_eq!(
+            parse_primary_machine_and_state(&ty, format_ident!("Machine")),
+            Some(("Machine".to_owned(), "Accepted".to_owned()))
+        );
+        assert_eq!(
+            parse_machine_and_state(&ty, format_ident!("Machine")),
+            Some(("Machine".to_owned(), "Accepted".to_owned()))
+        );
+    }
+
+    #[test]
+    fn target_collector_reads_both_branch_targets() {
+        let ty = parse_type("statum::Branch<Machine<Accepted>, Machine<Rejected>>");
+
+        assert_eq!(
+            collect_machine_and_states(&ty, format_ident!("Machine")),
+            vec![
+                ("Machine".to_owned(), "Accepted".to_owned()),
+                ("Machine".to_owned(), "Rejected".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
     fn target_collector_reads_nested_wrappers() {
-        let ty = parse_type("Option<core::result::Result<Machine<Accepted>, Machine<Rejected>>>");
+        let ty = parse_type(
+            "Option<core::result::Result<Machine<Accepted>, statum::Branch<Machine<Rejected>, Error>>>",
+        );
 
         assert_eq!(
             collect_machine_and_states(&ty, format_ident!("Machine")),

@@ -1,0 +1,14 @@
+error: Invalid transition return type for `Machine<Draft>::decide`: expected return type like `Machine<NextState>` (optionally wrapped in `Option`/`Result`/`Branch`).
+
+       Expected:
+         fn decide(self) -> Machine<NextState>
+
+       Actual:
+         Decision < Machine < Accepted > , Machine < Rejected > >
+
+       Help:
+         return `Machine<NextState>` directly, or wrap it in `Option<...>` / `Result<..., E>` / `Branch<..., ...>` and build the next state with `self.transition()` or `self.transition_with(...)`.
+  --> tests/ui/invalid_transition_custom_branch_enum.rs:30:38
+   |
+30 |     fn decide(self, accept: bool) -> Decision<Machine<Accepted>, Machine<Rejected>> {
+   |                                      ^^^^^^^^

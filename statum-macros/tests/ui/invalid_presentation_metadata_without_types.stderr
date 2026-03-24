@@ -1,0 +1,8 @@
+error: Error: `Draft` uses `#[present(metadata = ...)]`, but no `#[presentation_types(state = ...)]` was declared on its machine.
+       Fix: add `#[presentation_types(state = StateMeta)]` to the `#[machine]` struct or remove the metadata expression.
+  --> tests/ui/invalid_presentation_metadata_without_types.rs:24:1
+   |
+24 | #[machine]
+   | ^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -6,7 +6,7 @@ use syn::{Fields, Ident, Item, ItemEnum, Path, Type, Visibility};
 
 use crate::{
     ItemTarget, ModulePath, SourceFingerprint, crate_root_for_file, current_crate_root,
-    extract_derives, source_file_fingerprint,
+    extract_derives, parse_present_attrs, source_file_fingerprint, PresentationAttr,
 };
 
 // Structure to hold extracted enum data
@@ -17,6 +17,7 @@ pub struct EnumInfo {
     pub vis: String,
     pub name: String,
     pub variants: Vec<VariantInfo>,
+    pub presentation: Option<PresentationAttr>,
     pub generics: String,
     pub module_path: StateModulePath,
     pub file_path: Option<String>,
@@ -36,7 +37,24 @@ impl EnumInfo {
 #[derive(Clone)]
 pub struct VariantInfo {
     pub name: String,
-    pub data_type: Option<String>,
+    pub shape: VariantShape,
+    pub presentation: Option<PresentationAttr>,
+}
+
+#[derive(Clone)]
+pub enum VariantShape {
+    Unit,
+    Tuple { data_type: String },
+    Named {
+        data_struct_name: String,
+        fields: Vec<NamedFieldInfo>,
+    },
+}
+
+#[derive(Clone)]
+pub struct NamedFieldInfo {
+    pub name: String,
+    pub field_type: String,
 }
 
 pub fn to_snake_case(s: &str) -> String {
@@ -70,7 +88,8 @@ impl EnumInfo {
         for variant in &self.variants {
             variants.push(ParsedVariantInfo {
                 name: variant.name.clone(),
-                data_type: variant.parse_data_type()?,
+                shape: variant.parse_shape()?,
+                presentation: variant.presentation.clone(),
             });
         }
 
@@ -84,10 +103,45 @@ impl EnumInfo {
 
 impl VariantInfo {
     pub(crate) fn parse_data_type(&self) -> Result<Option<Type>, TokenStream> {
-        self.data_type
-            .as_ref()
-            .map(|data_type| syn::parse_str::<Type>(data_type).map_err(|err| err.to_compile_error()))
-            .transpose()
+        match &self.shape {
+            VariantShape::Unit => Ok(None),
+            VariantShape::Tuple { data_type } => syn::parse_str::<Type>(data_type)
+                .map(Some)
+                .map_err(|err| err.to_compile_error()),
+            VariantShape::Named {
+                data_struct_name, ..
+            } => syn::parse_str::<Type>(data_struct_name)
+                .map(Some)
+                .map_err(|err| err.to_compile_error()),
+        }
+    }
+
+    pub(crate) fn parse_shape(&self) -> Result<ParsedVariantShape, TokenStream> {
+        match &self.shape {
+            VariantShape::Unit => Ok(ParsedVariantShape::Unit),
+            VariantShape::Tuple { data_type } => syn::parse_str::<Type>(data_type)
+                .map(|data_type| ParsedVariantShape::Tuple { data_type })
+                .map_err(|err| err.to_compile_error()),
+            VariantShape::Named {
+                data_struct_name,
+                fields,
+            } => {
+                let data_struct_ident = format_ident!("{}", data_struct_name);
+                let mut parsed_fields = Vec::with_capacity(fields.len());
+                for field in fields {
+                    parsed_fields.push(ParsedNamedFieldInfo {
+                        ident: format_ident!("{}", field.name),
+                        field_type: syn::parse_str::<Type>(&field.field_type)
+                            .map_err(|err| err.to_compile_error())?,
+                    });
+                }
+
+                Ok(ParsedVariantShape::Named {
+                    data_struct_ident,
+                    fields: parsed_fields,
+                })
+            }
+        }
     }
 }
 
@@ -99,7 +153,22 @@ pub(crate) struct ParsedEnumInfo {
 
 pub(crate) struct ParsedVariantInfo {
     pub(crate) name: String,
-    pub(crate) data_type: Option<Type>,
+    pub(crate) shape: ParsedVariantShape,
+    pub(crate) presentation: Option<PresentationAttr>,
+}
+
+pub(crate) enum ParsedVariantShape {
+    Unit,
+    Tuple { data_type: Type },
+    Named {
+        data_struct_ident: Ident,
+        fields: Vec<ParsedNamedFieldInfo>,
+    },
+}
+
+pub(crate) struct ParsedNamedFieldInfo {
+    pub(crate) ident: Ident,
+    pub(crate) field_type: Type,
 }
 
 /// Convert `EnumInfo` into a `TokenStream`
@@ -118,9 +187,17 @@ impl ToTokens for EnumInfo {
         let mut variants = Vec::with_capacity(parsed.variants.len());
         for variant in parsed.variants {
             let var_name = syn::Ident::new(&variant.name, proc_macro2::Span::call_site());
-            let variant_tokens = match &variant.data_type {
-                Some(ty) => quote! { #var_name(#ty) },
-                None => quote! { #var_name },
+            let variant_tokens = match &variant.shape {
+                ParsedVariantShape::Unit => quote! { #var_name },
+                ParsedVariantShape::Tuple { data_type } => quote! { #var_name(#data_type) },
+                ParsedVariantShape::Named { fields, .. } => {
+                    let named_fields = fields.iter().map(|field| {
+                        let field_ident = &field.ident;
+                        let field_type = &field.field_type;
+                        quote! { #field_ident: #field_type }
+                    });
+                    quote! { #var_name { #(#named_fields),* } }
+                }
             };
             variants.push(variant_tokens);
         }
@@ -321,20 +398,43 @@ impl EnumInfo {
             .filter_map(extract_derives)
             .flatten()
             .collect();
+        let presentation = parse_present_attrs(&item.attrs)?;
 
         let mut variants = Vec::new();
         for variant in &item.variants {
             let name = variant.ident.to_string();
-            let data_type = match &variant.fields {
-                Fields::Unnamed(fields) => fields
-                    .unnamed
-                    .first()
-                    .map(|first| first.ty.to_token_stream().to_string()),
-                Fields::Unit => None,
-                Fields::Named(_) => unreachable!("state shape already validated"),
+            let shape = match &variant.fields {
+                Fields::Unnamed(fields) => VariantShape::Tuple {
+                    data_type: fields
+                        .unnamed
+                        .first()
+                        .expect("validated state tuple field")
+                        .ty
+                        .to_token_stream()
+                        .to_string(),
+                },
+                Fields::Unit => VariantShape::Unit,
+                Fields::Named(fields) => VariantShape::Named {
+                    data_struct_name: format!("{}Data", variant.ident),
+                    fields: fields
+                        .named
+                        .iter()
+                        .filter_map(|field| {
+                            field.ident.as_ref().map(|ident| NamedFieldInfo {
+                                name: ident.to_string(),
+                                field_type: field.ty.to_token_stream().to_string(),
+                            })
+                        })
+                        .collect(),
+                },
             };
+            let presentation = parse_present_attrs(&variant.attrs)?;
 
-            variants.push(VariantInfo { name, data_type });
+            variants.push(VariantInfo {
+                name,
+                shape,
+                presentation,
+            });
         }
 
         Ok(Self {
@@ -342,6 +442,7 @@ impl EnumInfo {
             vis,
             name,
             variants,
+            presentation,
             generics,
             module_path,
             file_path,
@@ -388,15 +489,16 @@ fn validate_state_enum_shape(item: &ItemEnum) -> syn::Result<()> {
                     ),
                 ));
             }
-            Fields::Named(_) => {
+            Fields::Named(fields) if fields.named.is_empty() => {
                 let variant_name = variant.ident.to_string();
                 return Err(syn::Error::new_spanned(
                     variant,
                     format!(
-                        "Error: #[state] enum `{enum_name}` variant `{variant_name}` uses named fields, but Statum state variants must be unit variants like `{variant_name}` or single-payload tuple variants like `{variant_name}({variant_name}Data)`.\nFix: move the named fields into a payload type and reference that type as the only tuple field."
+                        "Error: #[state] enum `{enum_name}` variant `{variant_name}` uses empty named fields.\nFix: use `{variant_name}` for a unit state or add at least one named field."
                     ),
                 ));
             }
+            Fields::Named(_) => {}
         }
     }
 
@@ -426,27 +528,8 @@ pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {
             quote! { #[derive(#(#derive_tokens),*)] }
         };
 
-        let tokens = match &variant.data_type {
-            // Handle tuple variants (state has associated data)
-            Some(field_type) => {
-                let field_ty = field_type.clone();
-                quote! {
-                    #variant_derives
-                    #vis struct #variant_name (pub #field_ty);
-
-                    impl #state_trait_ident for #variant_name {
-                        type Data = #field_ty;
-                    }
-
-                    impl statum::StateMarker for #variant_name {
-                        type Data = #field_ty;
-                    }
-
-                    impl statum::DataState for #variant_name {}
-                }
-            }
-            // Handle unit variants (state has no associated data)
-            None => {
+        let tokens = match &variant.shape {
+            ParsedVariantShape::Unit => {
                 quote! {
                     #variant_derives
                     #vis struct #variant_name;
@@ -460,6 +543,52 @@ pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {
                     }
 
                     impl statum::UnitState for #variant_name {}
+                }
+            }
+            ParsedVariantShape::Tuple { data_type } => {
+                quote! {
+                    #variant_derives
+                    #vis struct #variant_name (pub #data_type);
+
+                    impl #state_trait_ident for #variant_name {
+                        type Data = #data_type;
+                    }
+
+                    impl statum::StateMarker for #variant_name {
+                        type Data = #data_type;
+                    }
+
+                    impl statum::DataState for #variant_name {}
+                }
+            }
+            ParsedVariantShape::Named {
+                data_struct_ident,
+                fields,
+            } => {
+                let payload_fields = fields.iter().map(|field| {
+                    let field_ident = &field.ident;
+                    let field_type = &field.field_type;
+                    quote! { pub #field_ident: #field_type }
+                });
+
+                quote! {
+                    #variant_derives
+                    #vis struct #data_struct_ident {
+                        #(#payload_fields),*
+                    }
+
+                    #variant_derives
+                    #vis struct #variant_name (pub #data_struct_ident);
+
+                    impl #state_trait_ident for #variant_name {
+                        type Data = #data_struct_ident;
+                    }
+
+                    impl statum::StateMarker for #variant_name {
+                        type Data = #data_struct_ident;
+                    }
+
+                    impl statum::DataState for #variant_name {}
                 }
             }
         };
@@ -511,7 +640,7 @@ mod tests {
     use quote::ToTokens;
     use syn::parse_quote;
 
-    use super::{EnumInfo, StateModulePath};
+    use super::{EnumInfo, ParsedVariantShape, StateModulePath, VariantShape};
 
     #[test]
     fn parse_round_trips_variant_payloads() {
@@ -531,16 +660,11 @@ mod tests {
         assert_eq!(parsed.vis.to_token_stream().to_string(), "pub");
         assert_eq!(parsed.derives.len(), 1);
         assert_eq!(parsed.variants.len(), 2);
-        assert!(parsed.variants[0].data_type.is_none());
-        assert_eq!(
-            parsed.variants[1]
-                .data_type
-                .as_ref()
-                .expect("review payload")
-                .to_token_stream()
-                .to_string(),
-            "String"
-        );
+        assert!(matches!(parsed.variants[0].shape, ParsedVariantShape::Unit));
+        let ParsedVariantShape::Tuple { ref data_type } = parsed.variants[1].shape else {
+            panic!("expected tuple variant");
+        };
+        assert_eq!(data_type.to_token_stream().to_string(), "String");
         assert_eq!(
             info.variants[1]
                 .parse_data_type()
@@ -550,5 +674,56 @@ mod tests {
                 .to_string(),
             "String"
         );
+        assert!(matches!(info.variants[0].shape, VariantShape::Unit));
+    }
+
+    #[test]
+    fn parse_named_variants_into_generated_payloads() {
+        let item: syn::ItemEnum = parse_quote! {
+            pub enum TaskState {
+                Review {
+                    reviewer: String,
+                    priority: u8,
+                },
+            }
+        };
+
+        let module_path: StateModulePath = crate::ModulePath("crate::workflow".into());
+        let info =
+            EnumInfo::from_item_enum_with_module(&item, module_path).expect("state metadata");
+        let parsed = info.parse().expect("parsed state metadata");
+
+        let VariantShape::Named {
+            data_struct_name,
+            fields,
+        } = &info.variants[0].shape
+        else {
+            panic!("expected named variant");
+        };
+        assert_eq!(data_struct_name, "ReviewData");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "reviewer");
+        assert_eq!(fields[1].name, "priority");
+        assert_eq!(
+            info.variants[0]
+                .parse_data_type()
+                .expect("named payload type")
+                .expect("named payload")
+                .to_token_stream()
+                .to_string(),
+            "ReviewData"
+        );
+
+        let ParsedVariantShape::Named {
+            ref data_struct_ident,
+            ref fields,
+        } = parsed.variants[0].shape
+        else {
+            panic!("expected parsed named variant");
+        };
+        assert_eq!(data_struct_ident.to_string(), "ReviewData");
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].ident.to_string(), "reviewer");
+        assert_eq!(fields[0].field_type.to_token_stream().to_string(), "String");
     }
 }

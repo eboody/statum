@@ -35,6 +35,21 @@ pub(crate) fn transition_slice_ident(
     format_ident!("__statum_transitions_{:016x}", stable_hash(&key))
 }
 
+pub(crate) fn transition_presentation_slice_ident(
+    machine_name: &str,
+    file_path: Option<&str>,
+    line_number: usize,
+) -> Ident {
+    let key = format!(
+        "{machine_name}::presentation::{}::{line_number}",
+        file_path.unwrap_or_default()
+    );
+    format_ident!(
+        "__statum_transition_presentation_{:016x}",
+        stable_hash(&key)
+    )
+}
+
 fn stable_hash(input: &str) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in input.as_bytes() {
@@ -46,7 +61,9 @@ fn stable_hash(input: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{to_shouty_snake_identifier, transition_slice_ident};
+    use super::{
+        to_shouty_snake_identifier, transition_presentation_slice_ident, transition_slice_ident,
+    };
 
     #[test]
     fn shouty_snake_identifier_handles_snake_case_and_raw_prefixes() {
@@ -64,6 +81,22 @@ mod tests {
         assert!(first.starts_with("__statum_transitions_"));
         assert!(second.starts_with("__statum_transitions_"));
         assert!(third.starts_with("__statum_transitions_"));
+        assert_ne!(first, second);
+        assert_ne!(first, third);
+    }
+
+    #[test]
+    fn transition_presentation_slice_ident_tracks_machine_source() {
+        let first =
+            transition_presentation_slice_ident("ReviewFlow", Some("src/alpha.rs"), 40).to_string();
+        let second =
+            transition_presentation_slice_ident("ReviewFlow", Some("src/beta.rs"), 40).to_string();
+        let third =
+            transition_presentation_slice_ident("ReviewFlow", Some("src/alpha.rs"), 91).to_string();
+
+        assert!(first.starts_with("__statum_transition_presentation_"));
+        assert!(second.starts_with("__statum_transition_presentation_"));
+        assert!(third.starts_with("__statum_transition_presentation_"));
         assert_ne!(first, second);
         assert_ne!(first, third);
     }

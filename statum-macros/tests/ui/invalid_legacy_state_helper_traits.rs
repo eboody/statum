@@ -5,7 +5,7 @@ pub use statum_core::TransitionInventory;
 
 pub use statum_core::{
     CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, MachineDescriptor,
-    MachineGraph, MachineIntrospection, MachineStateIdentity, StateDescriptor, StateMarker,
+    MachineGraph, MachineIntrospection, MachineStateIdentity, RebuildAttempt, RebuildReport, StateDescriptor, StateMarker,
     TransitionDescriptor, UnitState,
 };
 

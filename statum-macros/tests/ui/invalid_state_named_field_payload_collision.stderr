@@ -1,0 +1,11 @@
+error[E0428]: the name `DraftData` is defined multiple times
+  --> tests/ui/invalid_state_named_field_payload_collision.rs:14:1
+   |
+12 | pub struct DraftData;
+   | --------------------- previous definition of the type `DraftData` here
+13 |
+14 | #[state]
+   | ^^^^^^^^ `DraftData` redefined here
+   |
+   = note: `DraftData` must be defined only once in the type namespace of this module
+   = note: this error originates in the attribute macro `state` (in Nightly builds, run with -Z macro-backtrace for more info)

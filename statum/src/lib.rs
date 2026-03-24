@@ -134,6 +134,11 @@
 //! }
 //! ```
 //!
+//! If you want explainable rebuild traces, validators can also return
+//! [`Validation`]. Then `.build_report()` and `.build_reports()` populate [`RebuildAttempt::reason_key`] and
+//! [`RebuildAttempt::message`] for failed matches while keeping the normal
+//! `.into_result()` surface.
+//!
 //! # Compile-Time Gating
 //!
 //! Methods only exist on states where you define them.
@@ -168,6 +173,12 @@
 //! The important detail is that the graph is exact at the transition-site
 //! level. A consumer can ask for the legal targets of one specific method on
 //! one specific source state.
+//!
+//! For small amounts of human-facing metadata, Statum can also generate a
+//! `machine::PRESENTATION` constant from `#[present(...)]` attributes. Add
+//! `#[presentation_types(...)]` on the machine when those attributes should
+//! carry typed `metadata = ...` payloads instead of just labels and
+//! descriptions.
 //!
 //! ```rust
 //! use statum::{
@@ -250,11 +261,12 @@ pub use statum_core::__private;
 pub use statum_core::projection;
 #[doc(inline)]
 pub use statum_core::{
-    CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, MachineDescriptor,
-    MachineGraph, MachineIntrospection, MachinePresentation, MachinePresentationDescriptor,
-    MachineStateIdentity, MachineTransitionRecorder, RecordedTransition, Result, StateDescriptor,
-    StateMarker, StatePresentation, TransitionDescriptor, TransitionInventory,
-    TransitionPresentation, UnitState,
+    Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error,
+    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
+    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder, RebuildAttempt,
+    RebuildReport, RecordedTransition, Rejection, Result, StateDescriptor, StateMarker,
+    StatePresentation, TransitionDescriptor, TransitionInventory, TransitionPresentation,
+    TransitionPresentationInventory, UnitState, Validation,
 };
 
 /// Define the legal lifecycle phases for a machine.
@@ -263,6 +275,7 @@ pub use statum_core::{
 ///
 /// - unit variants like `Draft`
 /// - single-field tuple variants like `InReview(Assignment)`
+/// - named-field variants like `InReview { reviewer: String }`
 ///
 /// It generates one marker type per variant plus the trait bounds Statum uses
 /// for typed machines and transitions.
@@ -329,7 +342,8 @@ pub use statum_macros::machine;
 ///
 /// Apply `#[transition]` to an `impl Machine<CurrentState>` block. Transition
 /// methods consume `self` and return `Machine<NextState>` or wrappers around it
-/// such as `Result<Machine<NextState>, E>` or `Option<Machine<NextState>>`.
+/// such as `Result<Machine<NextState>, E>`, `Option<Machine<NextState>>`, or
+/// `statum::Branch<Machine<Left>, Machine<Right>>`.
 ///
 /// Inside the impl, use:
 ///

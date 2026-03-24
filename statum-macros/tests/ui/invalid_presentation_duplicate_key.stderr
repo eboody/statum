@@ -1,0 +1,6 @@
+error: Error: duplicate `#[present(...)]` key `label`.
+       Fix: specify each presentation field at most once per item.
+  --> tests/ui/invalid_presentation_duplicate_key.rs:19:27
+   |
+19 | #[present(label = "Flow", label = "Again")]
+   |                           ^^^^^

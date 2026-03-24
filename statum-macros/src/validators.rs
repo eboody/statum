@@ -1,9 +1,12 @@
 use proc_macro::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use std::collections::HashMap;
-use syn::{Ident, ItemImpl, Type, parse_macro_input};
+use syn::{Generics, Ident, ItemImpl, Type, parse_macro_input};
 
 use crate::VariantInfo;
+use crate::machine::{
+    builder_generics, extra_generics, extra_type_arguments_tokens, generic_argument_tokens,
+};
 
 mod emission;
 mod resolution;
@@ -12,7 +15,7 @@ mod type_equivalence;
 
 use emission::{
     BatchBuilderContext, batch_builder_implementation, generate_validator_check,
-    inject_machine_fields,
+    generate_validator_report_check, inject_machine_fields,
 };
 use resolution::{
     resolve_machine_metadata, resolve_state_enum_info, validate_validator_coverage,
@@ -30,6 +33,8 @@ struct VariantSpec {
 
 struct CollectValidatorContext<'a> {
     machine_ident: &'a Ident,
+    machine_module_ident: &'a Ident,
+    machine_generics: &'a Generics,
     machine_state_ty: &'a proc_macro2::TokenStream,
     field_names: &'a [Ident],
     persisted_type_display: &'a str,
@@ -40,10 +45,12 @@ struct CollectValidatorContext<'a> {
 struct IntoMachineBuilderContext<'a> {
     builder_ident: &'a Ident,
     struct_ident: &'a Type,
+    machine_generics: &'a Generics,
     machine_state_ty: &'a proc_macro2::TokenStream,
     field_names: &'a [Ident],
     field_types: &'a [Type],
     validator_checks: &'a [proc_macro2::TokenStream],
+    validator_report_checks: &'a [proc_macro2::TokenStream],
     async_token: &'a proc_macro2::TokenStream,
     machine_vis: &'a syn::Visibility,
 }
@@ -65,7 +72,12 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
     };
     let parsed_fields = parsed_machine.field_idents_and_types();
 
-    let modified_methods = match inject_machine_fields(&item_impl.items, &parsed_fields) {
+    let validator_machine_generics = extra_generics(&parsed_machine.generics);
+    let modified_methods = match inject_machine_fields(
+        &item_impl.items,
+        &parsed_fields,
+        &validator_machine_generics,
+    ) {
         Ok(methods) => methods,
         Err(err) => return err.into(),
     };
@@ -94,11 +106,14 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         .map(|(_, ty)| ty.clone())
         .collect::<Vec<_>>();
     let machine_module_ident = format_ident!("{}", crate::to_snake_case(&machine_ident.to_string()));
-    let machine_state_ty = quote! { #machine_module_ident::SomeState };
+    let machine_extra_ty_args = extra_type_arguments_tokens(&parsed_machine.generics);
+    let machine_state_ty = quote! { #machine_module_ident::SomeState #machine_extra_ty_args };
     let machine_name = machine_ident.to_string();
 
     let collect_context = CollectValidatorContext {
         machine_ident: &machine_ident,
+        machine_module_ident: &machine_module_ident,
+        machine_generics: &parsed_machine.generics,
         machine_state_ty: &machine_state_ty,
         field_names: &field_names,
         persisted_type_display: &persisted_type_display,
@@ -106,7 +121,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         state_enum_name: &state_enum_info.name,
     };
 
-    let (validator_checks, has_async) = match collect_validator_checks(
+    let (validator_checks, validator_report_checks, has_async) = match collect_validator_checks(
         &item_impl,
         &state_enum_info.variants,
         &collect_context,
@@ -151,6 +166,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
     let batch_builder_impl = batch_builder_implementation(BatchBuilderContext {
         machine_ident: &machine_ident,
         machine_module_ident: &machine_module_ident,
+        machine_generics: &parsed_machine.generics,
         struct_ident,
         machine_state_ty: &machine_state_ty,
         field_names: &field_names,
@@ -163,20 +179,33 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
     let into_machine_builder_impl = generate_into_machine_builder(IntoMachineBuilderContext {
         builder_ident: &into_machine_builder_ident,
         struct_ident,
+        machine_generics: &parsed_machine.generics,
         machine_state_ty: &machine_state_ty,
         field_names: &field_names,
         field_types: &field_types,
         validator_checks: &validator_checks,
+        validator_report_checks: &validator_report_checks,
         async_token: &async_token,
         machine_vis: &machine_vis,
     });
+    let into_machine_extra_generics = extra_generics(&parsed_machine.generics);
+    let (into_machine_method_generics, _, into_machine_method_where_clause) =
+        into_machine_extra_generics.split_for_impl();
+    let into_machine_slot_defaults = (0..field_names.len())
+        .map(|_| quote! { false })
+        .collect::<Vec<_>>();
+    let into_machine_builder_ty_generics = generic_argument_tokens(
+        into_machine_extra_generics.params.iter(),
+        Some(quote! { '_ }),
+        &into_machine_slot_defaults,
+    );
 
     let machine_builder_impl = quote! {
         #[allow(unused_imports)]
         use #machine_module_ident::IntoMachinesExt as _;
 
         impl #struct_ident {
-            #machine_vis fn into_machine(&self) -> #into_machine_builder_ident<'_> {
+            #machine_vis fn into_machine #into_machine_method_generics (&self) -> #into_machine_builder_ident #into_machine_builder_ty_generics #into_machine_method_where_clause {
                 #into_machine_builder_ident {
                     __statum_item: self,
                     #(
@@ -204,10 +233,18 @@ fn collect_validator_checks(
     item_impl: &ItemImpl,
     variants: &[VariantInfo],
     context: &CollectValidatorContext<'_>,
-) -> Result<(Vec<proc_macro2::TokenStream>, bool), proc_macro2::TokenStream> {
+) -> Result<
+    (
+        Vec<proc_macro2::TokenStream>,
+        Vec<proc_macro2::TokenStream>,
+        bool,
+    ),
+    proc_macro2::TokenStream,
+> {
     let mut checks = Vec::new();
+    let mut report_checks = Vec::new();
     let mut has_async = false;
-    let receiver = quote! { persisted };
+    let receiver = quote! { __statum_persisted };
     let (variant_specs, variant_by_name) = build_variant_lookup(variants)?;
 
     for item in &item_impl.items {
@@ -231,13 +268,16 @@ fn collect_validator_checks(
             expected_ok_type: &spec.expected_ok_type,
         };
         validate_validator_signature(func, &diagnostic_context)?;
-        validate_validator_return_type(func, &spec.expected_ok_type, &diagnostic_context)?;
+        let return_kind =
+            validate_validator_return_type(func, &spec.expected_ok_type, &diagnostic_context)?;
 
         if func.sig.asyncness.is_some() {
             has_async = true;
         }
         checks.push(generate_validator_check(
             context.machine_ident,
+            context.machine_module_ident,
+            context.machine_generics,
             context.machine_state_ty,
             context.field_names,
             &receiver,
@@ -245,9 +285,21 @@ fn collect_validator_checks(
             spec.has_state_data,
             func.sig.asyncness.is_some(),
         ));
+        report_checks.push(generate_validator_report_check(
+            context.machine_ident,
+            context.machine_module_ident,
+            context.machine_generics,
+            context.machine_state_ty,
+            context.field_names,
+            &receiver,
+            &spec.variant_name,
+            spec.has_state_data,
+            return_kind,
+            func.sig.asyncness.is_some(),
+        ));
     }
 
-    Ok((checks, has_async))
+    Ok((checks, report_checks, has_async))
 }
 
 fn build_variant_lookup(
@@ -274,37 +326,37 @@ fn build_variant_lookup(
 fn generate_into_machine_builder(context: IntoMachineBuilderContext<'_>) -> proc_macro2::TokenStream {
     let builder_ident = context.builder_ident;
     let struct_ident = context.struct_ident;
+    let machine_generics = context.machine_generics;
     let machine_state_ty = context.machine_state_ty;
     let field_names = context.field_names;
     let field_types = context.field_types;
     let validator_checks = context.validator_checks;
+    let validator_report_checks = context.validator_report_checks;
+    let validator_report_count = validator_report_checks.len();
     let async_token = context.async_token;
     let machine_vis = context.machine_vis;
+    let extra_machine_generics = extra_generics(machine_generics);
     let slot_state_idents = (0..field_names.len())
         .map(|idx| format_ident!("__STATUM_SLOT_{}_SET", idx))
         .collect::<Vec<_>>();
-    let builder_defaults = if slot_state_idents.is_empty() {
-        quote! { <'__statum_row> }
-    } else {
-        quote! { <'__statum_row, #(const #slot_state_idents: bool = false),*> }
-    };
-    let builder_impl_generics = if slot_state_idents.is_empty() {
-        quote! { <'__statum_row> }
-    } else {
-        quote! { <'__statum_row, #(const #slot_state_idents: bool),*> }
-    };
-    let builder_ty_generics = if slot_state_idents.is_empty() {
-        quote! { <'__statum_row> }
-    } else {
-        quote! { <'__statum_row, #(#slot_state_idents),*> }
-    };
-    let complete_builder_ty_generics = if slot_state_idents.is_empty() {
-        quote! { <'__statum_row> }
-    } else {
-        let complete = slot_state_idents.iter().map(|_| quote! { true });
-        quote! { <'__statum_row, #(#complete),*> }
-    };
-    let complete_builder_impl_generics = quote! { <'__statum_row> };
+    let builder_defaults = builder_generics(&extra_machine_generics, true, &slot_state_idents, true);
+    let builder_impl_generics_decl =
+        builder_generics(&extra_machine_generics, true, &slot_state_idents, false);
+    let (builder_impl_generics, builder_ty_generics, builder_where_clause) =
+        builder_impl_generics_decl.split_for_impl();
+    let complete_slots = slot_state_idents
+        .iter()
+        .map(|_| quote! { true })
+        .collect::<Vec<_>>();
+    let complete_builder_ty_generics = generic_argument_tokens(
+        extra_machine_generics.params.iter(),
+        Some(quote! { '__statum_row }),
+        &complete_slots,
+    );
+    let complete_builder_impl_generics_decl =
+        builder_generics(&extra_machine_generics, true, &[], false);
+    let (complete_builder_impl_generics, _, complete_builder_where_clause) =
+        complete_builder_impl_generics_decl.split_for_impl();
 
     let struct_fields = field_names
         .iter()
@@ -313,29 +365,36 @@ fn generate_into_machine_builder(context: IntoMachineBuilderContext<'_>) -> proc
             quote! { #field_name: core::option::Option<#field_type> }
         })
         .collect::<Vec<_>>();
-    let field_bindings = field_names.iter().map(|field_name| {
-        let message = format!("statum internal error: `{field_name}` was not set before build");
-        quote! {
-            let #field_name = self.#field_name.expect(#message);
-        }
-    });
+    let field_bindings = field_names
+        .iter()
+        .map(|field_name| {
+            let message = format!("statum internal error: `{field_name}` was not set before build");
+            quote! {
+                let #field_name = self.#field_name.expect(#message);
+            }
+        })
+        .collect::<Vec<_>>();
     let setters = field_names
         .iter()
         .zip(field_types.iter())
         .enumerate()
         .map(|(slot_idx, (field_name, field_type))| {
-            let target_generics = if slot_state_idents.is_empty() {
-                quote! { <'__statum_row> }
-            } else {
-                let generics = slot_state_idents.iter().enumerate().map(|(idx, ident)| {
+            let generics = slot_state_idents
+                .iter()
+                .enumerate()
+                .map(|(idx, ident)| {
                     if idx == slot_idx {
                         quote! { true }
                     } else {
                         quote! { #ident }
                     }
-                });
-                quote! { <'__statum_row, #(#generics),*> }
-            };
+                })
+                .collect::<Vec<_>>();
+            let target_generics = generic_argument_tokens(
+                extra_machine_generics.params.iter(),
+                Some(quote! { '__statum_row }),
+                &generics,
+            );
             let assignments = field_names.iter().enumerate().map(|(idx, existing_field_name)| {
                 if idx == slot_idx {
                     quote! { #existing_field_name: core::option::Option::Some(value) }
@@ -362,17 +421,29 @@ fn generate_into_machine_builder(context: IntoMachineBuilderContext<'_>) -> proc
             #(#struct_fields),*
         }
 
-        impl #builder_impl_generics #builder_ident #builder_ty_generics {
+        impl #builder_impl_generics #builder_ident #builder_ty_generics #builder_where_clause {
             #(#setters)*
         }
 
-        impl #complete_builder_impl_generics #builder_ident #complete_builder_ty_generics {
+        impl #complete_builder_impl_generics #builder_ident #complete_builder_ty_generics #complete_builder_where_clause {
             #machine_vis #async_token fn build(self) -> core::result::Result<#machine_state_ty, statum::Error> {
-                let persisted = self.__statum_item;
+                let __statum_persisted = self.__statum_item;
                 #(#field_bindings)*
                 #(#validator_checks)*
 
                 Err(statum::Error::InvalidState)
+            }
+
+            #machine_vis #async_token fn build_report(self) -> statum::RebuildReport<#machine_state_ty> {
+                let __statum_persisted = self.__statum_item;
+                let mut __statum_attempts = ::std::vec::Vec::with_capacity(#validator_report_count);
+                #(#field_bindings)*
+                #(#validator_report_checks)*
+
+                statum::RebuildReport {
+                    attempts: __statum_attempts,
+                    result: Err(statum::Error::InvalidState),
+                }
             }
         }
     }

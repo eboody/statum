@@ -8,6 +8,8 @@
 //! - runtime error and result types
 //! - projection helpers for event-log style rebuilds
 
+use std::borrow::Cow;
+
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 mod readme_doctests {}
@@ -18,6 +20,10 @@ pub mod projection;
 
 #[doc(hidden)]
 pub mod __private {
+    pub use crate::{
+        MachinePresentation, MachinePresentationDescriptor, RebuildAttempt, RebuildReport,
+        StatePresentation, TransitionPresentation, TransitionPresentationInventory,
+    };
     pub use linkme;
 
     #[derive(Debug)]
@@ -42,7 +48,7 @@ pub use introspection::{
     MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
     MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
     RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
-    TransitionInventory, TransitionPresentation,
+    TransitionInventory, TransitionPresentation, TransitionPresentationInventory,
 };
 
 /// A generated state marker type.
@@ -111,6 +117,18 @@ pub enum Error {
     InvalidState,
 }
 
+/// A first-class two-way branching transition result.
+///
+/// This lets a transition expose two concrete machine targets while keeping the
+/// branch alternatives visible to Statum introspection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Branch<A, B> {
+    /// The first legal target branch.
+    First(A),
+    /// The second legal target branch.
+    Second(B),
+}
+
 /// Convenience result alias used by Statum APIs.
 ///
 /// # Example
@@ -128,6 +146,89 @@ pub enum Error {
 /// assert!(ensure_ready(false).is_err());
 /// ```
 pub type Result<T> = core::result::Result<T, Error>;
+
+/// A structured validator rejection captured during typed rehydration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rejection {
+    /// Stable machine-readable reason key for why the validator rejected.
+    pub reason_key: &'static str,
+    /// Optional human-readable message for debugging and reports.
+    pub message: Option<Cow<'static, str>>,
+}
+
+impl Rejection {
+    /// Create a rejection with a stable reason key and no message.
+    pub const fn new(reason_key: &'static str) -> Self {
+        Self {
+            reason_key,
+            message: None,
+        }
+    }
+
+    /// Attach a human-readable message to this rejection.
+    pub fn with_message(self, message: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            message: Some(message.into()),
+            ..self
+        }
+    }
+}
+
+impl From<&'static str> for Rejection {
+    fn from(reason_key: &'static str) -> Self {
+        Self::new(reason_key)
+    }
+}
+
+impl core::fmt::Display for Rejection {
+    fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match &self.message {
+            Some(message) => write!(fmt, "{}: {}", self.reason_key, message),
+            None => write!(fmt, "{}", self.reason_key),
+        }
+    }
+}
+
+impl std::error::Error for Rejection {}
+
+/// An opt-in validator result that carries structured rejection details.
+pub type Validation<T> = core::result::Result<T, Rejection>;
+
+/// One validator evaluation recorded during typed rehydration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RebuildAttempt {
+    /// Rust method name of the validator that ran.
+    pub validator: &'static str,
+    /// Rust state-marker name the validator was checking.
+    pub target_state: &'static str,
+    /// Whether this validator matched and produced the rebuilt state.
+    pub matched: bool,
+    /// Stable machine-readable rejection key, when the validator exposed one.
+    pub reason_key: Option<&'static str>,
+    /// Optional human-readable rejection message, when the validator exposed one.
+    pub message: Option<Cow<'static, str>>,
+}
+
+/// A typed rehydration result plus the validator attempts that produced it.
+#[derive(Debug)]
+pub struct RebuildReport<M> {
+    /// Validator attempts in evaluation order.
+    pub attempts: Vec<RebuildAttempt>,
+    /// Final rebuild result.
+    pub result: Result<M>,
+}
+
+impl<M> RebuildReport<M> {
+    /// Returns the first matching validator attempt, if any.
+    pub fn matched_attempt(&self) -> Option<&RebuildAttempt> {
+        self.attempts.iter().find(|attempt| attempt.matched)
+    }
+
+    /// Consumes the report and returns the original rebuild result.
+    pub fn into_result(self) -> Result<M> {
+        self.result
+    }
+}
 
 impl<T> From<Error> for core::result::Result<T, Error> {
     fn from(val: Error) -> Self {

@@ -47,27 +47,6 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
         .and_then(|state_name| lookup_loaded_state_enum_by_name(&state_path, state_name).ok())
         .or_else(|| lookup_loaded_state_enum(&state_path).ok());
 
-    if item.generics.params.len() > 1 {
-        let generics_display = item.generics.to_token_stream().to_string();
-        let expected_state_name = matching_state_enum
-            .as_ref()
-            .map(|state| state.name.as_str())
-            .unwrap_or("State");
-        let first_generic_display = first_generic_param.to_token_stream().to_string();
-        let extra_generics = item
-            .generics
-            .params
-            .iter()
-            .skip(1)
-            .map(|param| format!("`{}`", param.to_token_stream()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let message = format!(
-            "Error: machine `{machine_name}` declares unsupported generics `{generics_display}`.\nStatum requires exactly one generic, and it must name the `#[state]` enum `{expected_state_name}`.\nFound first generic `{first_generic_display}` and additional generics {extra_generics}.\nFix: rewrite this as `struct {machine_name}<{expected_state_name}> {{ ... }}` and move other generic data into fields or payload types."
-        );
-        return Some(syn::Error::new_spanned(&item.generics, message).to_compile_error());
-    }
-
     let first_generic_param_display = first_generic_param.to_token_stream().to_string();
     let syn::GenericParam::Type(_) = first_generic_param else {
         return Some(

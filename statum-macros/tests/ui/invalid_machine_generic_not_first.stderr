@@ -1,11 +1,10 @@
-error: Error: machine `BadMachine` declares unsupported generics `< T, FooState >`.
-       Statum requires exactly one generic, and it must name the `#[state]` enum `FooState`.
-       Found first generic `T` and additional generics `FooState`.
-       Fix: rewrite this as `struct BadMachine<FooState> { ... }` and move other generic data into fields or payload types.
-  --> tests/ui/invalid_machine_generic_not_first.rs:20:18
+error: Error: machine `BadMachine` uses `T` as its state generic, but the `#[state]` enum in this module is `FooState`.
+       Fix: declare `BadMachine<FooState>`.
+       Found: `struct BadMachine< T, FooState > { ... }`.
+  --> tests/ui/invalid_machine_generic_not_first.rs:20:19
    |
 20 | struct BadMachine<T, FooState> {
-   |                  ^^^^^^^^^^^^^
+   |                   ^
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_machine_generic_not_first.rs:22:2

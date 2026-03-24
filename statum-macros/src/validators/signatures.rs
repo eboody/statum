@@ -13,6 +13,12 @@ pub(super) struct ValidatorDiagnosticContext<'a> {
     pub(super) expected_ok_type: &'a Type,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ValidatorReturnKind {
+    Plain,
+    Diagnostic,
+}
+
 pub(super) fn validator_state_name_from_ident(ident: &Ident) -> Option<String> {
     ident
         .to_string()
@@ -28,7 +34,7 @@ pub(super) fn validate_validator_signature(
         let collision_line = explicit_param_collision_line(&func.sig.inputs, context.machine_fields);
         let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
         let message = format!(
-            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must declare only `&self`.\nFound parameters: `({})`.\n{}\n{}\nCorrect shape: `{expected_signature}`.",
+            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must declare only `&self`.\nFound parameters: `({})`.\n{}\n{}\nCorrect shapes: {expected_signature}.",
             func.sig.ident,
             context.persisted_type_display,
             context.machine_name,
@@ -59,7 +65,7 @@ pub(super) fn validate_validator_signature(
                 let receiver_display = receiver.to_token_stream().to_string();
                 let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
                 let message = format!(
-                    "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self`, not `{}`.\n{}\nCorrect shape: `{expected_signature}`.",
+                    "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self`, not `{}`.\n{}\nCorrect shapes: {expected_signature}.",
                     func.sig.ident,
                     context.persisted_type_display,
                     context.machine_name,
@@ -74,7 +80,7 @@ pub(super) fn validate_validator_signature(
         FnArg::Typed(_) => {
             let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
             let message = format!(
-                "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self` as its receiver.\n{}\nCorrect shape: `{expected_signature}`.",
+                "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self` as its receiver.\n{}\nCorrect shapes: {expected_signature}.",
                 func.sig.ident,
                 context.persisted_type_display,
                 context.machine_name,
@@ -92,28 +98,29 @@ pub(super) fn validate_validator_return_type(
     func: &syn::ImplItemFn,
     expected_ok_type: &Type,
     context: &ValidatorDiagnosticContext<'_>,
-) -> Result<(), TokenStream> {
+) -> Result<ValidatorReturnKind, TokenStream> {
     let ReturnType::Type(_, return_ty) = &func.sig.output else {
         let expected_ok_display = expected_ok_type.to_token_stream().to_string();
         let message = format!(
-            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>`.\n{}.",
+            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` or `Validation<{}>`.\n{}.",
             func.sig.ident,
             context.persisted_type_display,
             context.machine_name,
             context.state_enum_name,
             context.variant_name,
             expected_ok_display,
+            expected_ok_display,
             expected_state_shape(context.state_enum_name, context.variant_name, &expected_ok_display),
         );
         return Err(syn::Error::new_spanned(&func.sig.output, message).to_compile_error());
     };
 
-    let actual_ok_ty = match extract_result_ok_type(return_ty) {
-        Some(ty) => ty,
+    let (actual_ok_ty, return_kind) = match extract_supported_validator_ok_type(return_ty) {
+        Some(info) => info,
         None => {
             let expected_ok_display = expected_ok_type.to_token_stream().to_string();
             let message = format!(
-                "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return a `Result` whose `Ok` payload is `{}`.\nFound return type `{}`.\nSupported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, and aliases like `statum::Result<T>`.",
+                "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return a supported validator result whose payload is `{}`.\nFound return type `{}`.\nSupported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, aliases like `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`.",
                 func.sig.ident,
                 context.persisted_type_display,
                 context.machine_name,
@@ -131,12 +138,13 @@ pub(super) fn validate_validator_return_type(
         let actual_return_type = return_ty.to_token_stream().to_string();
         let actual_ok_display = actual_ok_ty.to_token_stream().to_string();
         let message = format!(
-            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` (or an equivalent alias), but found `{}` with payload `{}`.",
+            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` or `Validation<{}>` (or an equivalent supported alias), but found `{}` with payload `{}`.",
             func.sig.ident,
             context.persisted_type_display,
             context.machine_name,
             context.state_enum_name,
             context.variant_name,
+            expected_ok_display,
             expected_ok_display,
             actual_return_type,
             actual_ok_display,
@@ -144,7 +152,7 @@ pub(super) fn validate_validator_return_type(
         return Err(syn::Error::new_spanned(return_ty, message).to_compile_error());
     }
 
-    Ok(())
+    Ok(return_kind)
 }
 
 fn injected_machine_fields_line(machine_name: &str, machine_fields: &[Ident]) -> String {
@@ -166,7 +174,8 @@ fn injected_machine_fields_line(machine_name: &str, machine_fields: &[Ident]) ->
 
 fn expected_validator_signature(func_ident: &Ident, expected_ok_type: &Type) -> String {
     format!(
-        "fn {func_ident}(&self) -> Result<{}, _>",
+        "`fn {func_ident}(&self) -> Result<{}, _>` or `fn {func_ident}(&self) -> Validation<{}>`",
+        expected_ok_type.to_token_stream(),
         expected_ok_type.to_token_stream()
     )
 }
@@ -213,12 +222,38 @@ fn expected_state_shape(state_enum_name: &str, variant_name: &str, expected_ok_d
     }
 }
 
-fn extract_result_ok_type(return_ty: &Type) -> Option<Type> {
+fn extract_supported_validator_ok_type(
+    return_ty: &Type,
+) -> Option<(Type, ValidatorReturnKind)> {
     let Type::Path(type_path) = return_ty else {
         return None;
     };
 
     let last_segment = type_path.path.segments.last()?;
+    if last_segment.ident == "Validation" {
+        let PathArguments::AngleBracketed(args) = &last_segment.arguments else {
+            return None;
+        };
+
+        let type_args: Vec<Type> = args
+            .args
+            .iter()
+            .filter_map(|arg| match arg {
+                GenericArgument::Type(ty) => Some(ty.clone()),
+                _ => None,
+            })
+            .collect();
+
+        if type_args.len() != 1 || type_args.len() != args.args.len() {
+            return None;
+        }
+
+        return type_args
+            .first()
+            .cloned()
+            .map(|ty| (ty, ValidatorReturnKind::Diagnostic));
+    }
+
     if last_segment.ident != "Result" {
         return None;
     }
@@ -240,5 +275,26 @@ fn extract_result_ok_type(return_ty: &Type) -> Option<Type> {
         return None;
     }
 
-    type_args.first().cloned()
+    let return_kind = if type_args
+        .get(1)
+        .is_some_and(|err_ty| is_rejection_type(err_ty))
+    {
+        ValidatorReturnKind::Diagnostic
+    } else {
+        ValidatorReturnKind::Plain
+    };
+
+    type_args.first().cloned().map(|ty| (ty, return_kind))
+}
+
+fn is_rejection_type(ty: &Type) -> bool {
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+
+    type_path
+        .path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "Rejection")
 }

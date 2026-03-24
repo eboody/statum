@@ -8,7 +8,10 @@ use crate::{
     EnumInfo, LoadedStateLookupFailure, ModulePath, SourceFingerprint, StateModulePath,
     crate_root_for_file, extract_derives, format_loaded_state_candidates,
     lookup_loaded_state_enum, lookup_loaded_state_enum_by_name, source_file_fingerprint,
+    parse_present_attrs, parse_presentation_types_attr, PresentationAttr,
+    PresentationTypesAttr,
 };
+use super::extra_type_arguments_tokens;
 
 pub type MachinePath = ModulePath;
 
@@ -18,6 +21,8 @@ pub struct MachineInfo {
     pub vis: String,
     pub derives: Vec<String>,
     pub fields: Vec<MachineField>,
+    pub presentation: Option<PresentationAttr>,
+    pub presentation_types: Option<PresentationTypesAttr>,
     pub module_path: MachinePath,
     pub line_number: usize,
     pub generics: String,
@@ -45,12 +50,14 @@ impl MachineInfo {
         }
 
         let mut fields = Vec::with_capacity(self.fields.len());
+        let extra_type_arguments = extra_type_arguments_tokens(&generics);
         for field in &self.fields {
             let ident = format_ident!("{}", field.name);
             let vis =
                 syn::parse_str::<Visibility>(&field.vis).map_err(|err| err.to_compile_error())?;
-            let field_type =
-                syn::parse_str::<Type>(&field.field_type).map_err(|err| err.to_compile_error())?;
+            let alias_ident = format_ident!("{}", field.field_type);
+            let field_type = syn::parse2::<Type>(quote! { #alias_ident #extra_type_arguments })
+                .map_err(|err| err.to_compile_error())?;
             fields.push(ParsedMachineField {
                 ident,
                 vis,
@@ -110,6 +117,8 @@ impl MachineInfo {
                 .filter_map(extract_derives)
                 .flatten()
                 .collect(),
+            presentation: parse_present_attrs(&item.attrs)?,
+            presentation_types: parse_presentation_types_attr(&item.attrs)?,
             module_path,
             line_number,
             fields,
@@ -129,6 +138,8 @@ impl MachineInfo {
 
         let line_number = current_source_info().map(|(_, line)| line).unwrap_or_default();
         let file_path = current_source_info().map(|(path, _)| path);
+        let presentation = parse_present_attrs(&item.attrs).ok()?;
+        let presentation_types = parse_presentation_types_attr(&item.attrs).ok()?;
         Some(Self {
             name: item.ident.to_string(),
             vis: item.vis.to_token_stream().to_string(),
@@ -138,6 +149,8 @@ impl MachineInfo {
                 .filter_map(extract_derives)
                 .flatten()
                 .collect(),
+            presentation,
+            presentation_types,
             fields: collect_fields(item),
             module_path: module_path.clone(),
             line_number,

@@ -54,6 +54,52 @@ impl<S, T> core::cmp::PartialEq for TransitionInventory<S, T> {
 
 impl<S, T> core::cmp::Eq for TransitionInventory<S, T> {}
 
+/// Runtime accessor for transition presentation metadata that may be supplied
+/// by a distributed registration surface.
+#[derive(Clone, Copy)]
+pub struct TransitionPresentationInventory<T: 'static, M: 'static = ()> {
+    get: fn() -> &'static [TransitionPresentation<T, M>],
+}
+
+impl<T, M> TransitionPresentationInventory<T, M> {
+    /// Creates a transition presentation inventory from a `'static` getter.
+    pub const fn new(get: fn() -> &'static [TransitionPresentation<T, M>]) -> Self {
+        Self { get }
+    }
+
+    /// Returns the transition presentation descriptors as a slice.
+    pub fn as_slice(&self) -> &'static [TransitionPresentation<T, M>] {
+        (self.get)()
+    }
+}
+
+impl<T, M> core::ops::Deref for TransitionPresentationInventory<T, M> {
+    type Target = [TransitionPresentation<T, M>];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl<T, M> core::fmt::Debug for TransitionPresentationInventory<T, M> {
+    fn fmt(
+        &self,
+        formatter: &mut core::fmt::Formatter<'_>,
+    ) -> core::result::Result<(), core::fmt::Error> {
+        formatter
+            .debug_tuple("TransitionPresentationInventory")
+            .finish()
+    }
+}
+
+impl<T, M> core::cmp::PartialEq for TransitionPresentationInventory<T, M> {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self.as_slice(), other.as_slice())
+    }
+}
+
+impl<T, M> core::cmp::Eq for TransitionPresentationInventory<T, M> {}
+
 /// Identity for one concrete machine state.
 pub trait MachineStateIdentity: MachineIntrospection {
     /// The state id for this concrete machine instantiation.
@@ -74,7 +120,7 @@ pub struct MachinePresentation<
     /// Optional state-level presentation metadata keyed by state id.
     pub states: &'static [StatePresentation<S, StateMeta>],
     /// Optional transition-level presentation metadata keyed by transition id.
-    pub transitions: &'static [TransitionPresentation<T, TransitionMeta>],
+    pub transitions: TransitionPresentationInventory<T, TransitionMeta>,
 }
 
 impl<S, T, MachineMeta, StateMeta, TransitionMeta>
@@ -344,7 +390,7 @@ mod tests {
         MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
         MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
         RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
-        TransitionInventory, TransitionPresentation,
+        TransitionInventory, TransitionPresentation, TransitionPresentationInventory,
     };
     use core::marker::PhantomData;
 
@@ -427,6 +473,26 @@ mod tests {
             to: &PUBLISH_TARGETS,
         },
     ];
+    static TRANSITION_PRESENTATIONS: [TransitionPresentation<TransitionId, TransitionMeta>; 2] = [
+        TransitionPresentation {
+            id: SUBMIT_FROM_DRAFT,
+            label: Some("Submit"),
+            description: Some("Move work into review."),
+            metadata: TransitionMeta {
+                phase: Phase::Review,
+                branch: false,
+            },
+        },
+        TransitionPresentation {
+            id: PUBLISH_FROM_REVIEW,
+            label: Some("Publish"),
+            description: Some("Complete the workflow."),
+            metadata: TransitionMeta {
+                phase: Phase::Output,
+                branch: false,
+            },
+        },
+    ];
 
     struct Workflow<S>(PhantomData<S>);
     struct DraftMarker;
@@ -500,26 +566,7 @@ mod tests {
                 },
             },
         ],
-        transitions: &[
-            TransitionPresentation {
-                id: SUBMIT_FROM_DRAFT,
-                label: Some("Submit"),
-                description: Some("Move work into review."),
-                metadata: TransitionMeta {
-                    phase: Phase::Review,
-                    branch: false,
-                },
-            },
-            TransitionPresentation {
-                id: PUBLISH_FROM_REVIEW,
-                label: Some("Publish"),
-                description: Some("Complete the workflow."),
-                metadata: TransitionMeta {
-                    phase: Phase::Output,
-                    branch: false,
-                },
-            },
-        ],
+        transitions: TransitionPresentationInventory::new(|| &TRANSITION_PRESENTATIONS),
     };
 
     impl<S> MachineIntrospection for Workflow<S> {

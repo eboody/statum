@@ -22,6 +22,7 @@ moddef::moddef!(
     flat (pub) mod {
     },
     flat (pub(crate)) mod {
+        presentation,
         state,
         machine,
         transition,
@@ -29,6 +30,10 @@ moddef::moddef!(
     }
 );
 
+pub(crate) use presentation::{
+    PresentationAttr, PresentationTypesAttr, parse_present_attrs, parse_presentation_types_attr,
+    strip_present_attrs,
+};
 pub(crate) use syntax::{
     ItemTarget, ModulePath, SourceFingerprint, crate_root_for_file, current_crate_root,
     extract_derives, source_file_fingerprint,

@@ -3,7 +3,7 @@
 use statum::{
     machine, state, transition, MachineIntrospection, MachinePresentation,
     MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
-    StatePresentation, TransitionPresentation,
+    StatePresentation, TransitionPresentation, TransitionPresentationInventory,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,6 +103,94 @@ impl BetaMachine<Draft> {
     }
 }
 
+#[state]
+enum PresentedState {
+    #[present(label = "Queued", description = "Waiting for review.")]
+    QueuedPresentation,
+    ReviewingPresentation,
+    #[present(label = "Done")]
+    DonePresentation,
+}
+
+#[machine]
+#[present(
+    label = "Presented Flow",
+    description = "Macro-generated presentation metadata."
+)]
+struct PresentedFlow<PresentedState> {}
+
+#[transition]
+impl PresentedFlow<QueuedPresentation> {
+    #[present(label = "Start Review", description = "Move queued work into review.")]
+    fn start_review(self) -> PresentedFlow<ReviewingPresentation> {
+        self.transition()
+    }
+}
+
+#[transition]
+impl PresentedFlow<ReviewingPresentation> {
+    #[present(label = "Complete", description = "Finish the workflow.")]
+    fn complete(self) -> PresentedFlow<DonePresentation> {
+        self.transition()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GeneratedMachineMeta {
+    TypedPresentation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GeneratedStateMeta {
+    Queued,
+    Reviewing,
+    Done,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum GeneratedTransitionMeta {
+    StartReview,
+    Complete,
+}
+
+#[state]
+enum TypedPresentedState {
+    #[present(label = "Queued", metadata = GeneratedStateMeta::Queued)]
+    QueuedTyped,
+    #[present(label = "Reviewing", metadata = GeneratedStateMeta::Reviewing)]
+    ReviewingTyped,
+    #[present(label = "Done", metadata = GeneratedStateMeta::Done)]
+    DoneTyped,
+}
+
+#[machine]
+#[presentation_types(
+    machine = GeneratedMachineMeta,
+    state = GeneratedStateMeta,
+    transition = GeneratedTransitionMeta,
+)]
+#[present(
+    label = "Typed Presented Flow",
+    metadata = GeneratedMachineMeta::TypedPresentation
+)]
+struct TypedPresentedFlow<TypedPresentedState> {}
+
+#[transition]
+impl TypedPresentedFlow<QueuedTyped> {
+    #[present(label = "Start Review", metadata = GeneratedTransitionMeta::StartReview)]
+    fn start_review_typed(self) -> TypedPresentedFlow<ReviewingTyped> {
+        self.transition()
+    }
+}
+
+#[transition]
+impl TypedPresentedFlow<ReviewingTyped> {
+    #[present(label = "Complete", metadata = GeneratedTransitionMeta::Complete)]
+    fn complete_typed(self) -> TypedPresentedFlow<DoneTyped> {
+        self.transition()
+    }
+}
+
 static FLOW_PRESENTATION: MachinePresentation<
     flow::StateId,
     flow::TransitionId,
@@ -164,63 +252,65 @@ static FLOW_PRESENTATION: MachinePresentation<
             },
         },
     ],
-    transitions: &[
-        TransitionPresentation {
-            id: Flow::<Draft>::SUBMIT,
-            label: Some("Submit"),
-            description: Some("Move draft work into review."),
-            metadata: FlowTransitionMeta {
-                phase: Phase::Review,
-                branching: false,
-            },
-        },
-        TransitionPresentation {
-            id: Flow::<Review>::MAYBE_DECIDE,
-            label: Some("Validate"),
-            description: Some("Choose whether the reviewed work is accepted or rejected."),
-            metadata: FlowTransitionMeta {
-                phase: Phase::Decision,
-                branching: true,
-            },
-        },
-        TransitionPresentation {
-            id: Flow::<Review>::ACCEPT,
-            label: Some("Accept"),
-            description: Some("Approve the work."),
-            metadata: FlowTransitionMeta {
-                phase: Phase::Decision,
-                branching: false,
-            },
-        },
-        TransitionPresentation {
-            id: Flow::<Review>::REJECT,
-            label: Some("Reject"),
-            description: Some("Reject the work."),
-            metadata: FlowTransitionMeta {
-                phase: Phase::Decision,
-                branching: false,
-            },
-        },
-        TransitionPresentation {
-            id: Flow::<Accepted>::EXPLAIN,
-            label: Some("Publish"),
-            description: Some("Move accepted work into published."),
-            metadata: FlowTransitionMeta {
-                phase: Phase::Output,
-                branching: false,
-            },
-        },
-        TransitionPresentation {
-            id: Flow::<Rejected>::EXPLAIN,
-            label: Some("Rework"),
-            description: Some("Loop rejected work back to draft."),
-            metadata: FlowTransitionMeta {
-                phase: Phase::Output,
-                branching: false,
-            },
-        },
-    ],
+    transitions: TransitionPresentationInventory::new(|| &FLOW_TRANSITIONS),
 };
+
+static FLOW_TRANSITIONS: [TransitionPresentation<flow::TransitionId, FlowTransitionMeta>; 6] = [
+    TransitionPresentation {
+        id: Flow::<Draft>::SUBMIT,
+        label: Some("Submit"),
+        description: Some("Move draft work into review."),
+        metadata: FlowTransitionMeta {
+            phase: Phase::Review,
+            branching: false,
+        },
+    },
+    TransitionPresentation {
+        id: Flow::<Review>::MAYBE_DECIDE,
+        label: Some("Validate"),
+        description: Some("Choose whether the reviewed work is accepted or rejected."),
+        metadata: FlowTransitionMeta {
+            phase: Phase::Decision,
+            branching: true,
+        },
+    },
+    TransitionPresentation {
+        id: Flow::<Review>::ACCEPT,
+        label: Some("Accept"),
+        description: Some("Approve the work."),
+        metadata: FlowTransitionMeta {
+            phase: Phase::Decision,
+            branching: false,
+        },
+    },
+    TransitionPresentation {
+        id: Flow::<Review>::REJECT,
+        label: Some("Reject"),
+        description: Some("Reject the work."),
+        metadata: FlowTransitionMeta {
+            phase: Phase::Decision,
+            branching: false,
+        },
+    },
+    TransitionPresentation {
+        id: Flow::<Accepted>::EXPLAIN,
+        label: Some("Publish"),
+        description: Some("Move accepted work into published."),
+        metadata: FlowTransitionMeta {
+            phase: Phase::Output,
+            branching: false,
+        },
+    },
+    TransitionPresentation {
+        id: Flow::<Rejected>::EXPLAIN,
+        label: Some("Rework"),
+        description: Some("Loop rejected work back to draft."),
+        metadata: FlowTransitionMeta {
+            phase: Phase::Output,
+            branching: false,
+        },
+    },
+];
 
 #[test]
 fn graph_exposes_exact_transition_sites() {
@@ -346,5 +436,70 @@ fn consumer_owned_presentation_metadata_joins_with_graph_and_runtime_event() {
     assert_eq!(
         graph.legal_targets(event.transition).unwrap(),
         &[flow::StateId::Accepted, flow::StateId::Rejected]
+    );
+}
+
+#[test]
+fn generated_presentation_metadata_joins_with_graph_and_runtime_event() {
+    let graph = <PresentedFlow<QueuedPresentation> as MachineIntrospection>::GRAPH;
+    let event = PresentedFlow::<QueuedPresentation>::try_record_transition_to::<
+        PresentedFlow<ReviewingPresentation>,
+    >(PresentedFlow::<QueuedPresentation>::START_REVIEW)
+    .unwrap();
+    let presentation = &presented_flow::PRESENTATION;
+
+    assert_eq!(presentation.machine.unwrap().label, Some("Presented Flow"));
+    assert_eq!(
+        presentation
+            .state(presented_flow::StateId::QueuedPresentation)
+            .unwrap()
+            .description,
+        Some("Waiting for review.")
+    );
+    assert_eq!(
+        presentation.transition(event.transition).unwrap().label,
+        Some("Start Review")
+    );
+    assert_eq!(
+        event.transition_in(graph).unwrap().method_name,
+        "start_review"
+    );
+    assert_eq!(
+        graph.legal_targets(event.transition).unwrap(),
+        &[presented_flow::StateId::ReviewingPresentation]
+    );
+}
+
+#[test]
+fn typed_generated_presentation_metadata_joins_with_graph_and_runtime_event() {
+    let graph = <TypedPresentedFlow<QueuedTyped> as MachineIntrospection>::GRAPH;
+    let event = TypedPresentedFlow::<QueuedTyped>::try_record_transition_to::<
+        TypedPresentedFlow<ReviewingTyped>,
+    >(TypedPresentedFlow::<QueuedTyped>::START_REVIEW_TYPED)
+    .unwrap();
+    let presentation = &typed_presented_flow::PRESENTATION;
+
+    assert_eq!(
+        presentation.machine.unwrap().metadata,
+        GeneratedMachineMeta::TypedPresentation
+    );
+    assert_eq!(
+        presentation
+            .state(typed_presented_flow::StateId::QueuedTyped)
+            .unwrap()
+            .metadata,
+        GeneratedStateMeta::Queued
+    );
+    assert_eq!(
+        presentation.transition(event.transition).unwrap().metadata,
+        GeneratedTransitionMeta::StartReview
+    );
+    assert_eq!(
+        event.transition_in(graph).unwrap().method_name,
+        "start_review_typed"
+    );
+    assert_eq!(
+        graph.legal_targets(event.transition).unwrap(),
+        &[typed_presented_flow::StateId::ReviewingTyped]
     );
 }
