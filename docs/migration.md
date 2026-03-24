@@ -104,8 +104,9 @@ Statum resolves the state family from the machine definition.
 
 - You need one `is_{state}` method per state variant.
 - Validator methods must take exactly `&self`.
-- Unit states return `statum::Result<()>`.
-- Data-bearing states return `statum::Result<StateData>`.
+- Unit states return `statum::Result<()>` or `statum::Validation<()>`.
+- Data-bearing states return `statum::Result<StateData>` or
+  `statum::Validation<StateData>`.
 - If any validator is `async`, the generated builders become `async`.
 
 ## Canonical Rebuild Names Changed
@@ -160,6 +161,9 @@ Use:
 - Must be a struct
 - The first generic parameter must match the `#[state]` enum name
 - Additional type and const generics are supported after the state generic
+- Extra machine lifetime generics are still effectively unavailable because
+  Rust requires lifetimes before type parameters, and Statum reserves the
+  first generic slot for the state family
 - Matching derives on the `#[state]` enum and machine are required when needed
 - `#[machine]` should sit above `#[derive(...)]`
 
@@ -186,6 +190,8 @@ builder is the intended path.
 `0.5` and later also add surface area you may want during migration:
 
 - `.into_machines_by(...)` for heterogeneous batch machine context
+- `statum::Validation<T>`, `.build_report()`, and `.build_reports()` when
+  rebuild traces need stable reason keys or messages
 - `statum::projection::{ProjectionReducer, reduce_one, reduce_grouped}` for
   event-log projection before rehydration
 - `transition_map(...)` for data-to-data transitions that should consume the

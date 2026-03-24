@@ -155,6 +155,12 @@ without rebuilding a parallel graph table by hand: CLI explainers, generated
 docs, graph exports, branch-strip views, test assertions about exact legal
 transitions, and replay or debug tooling.
 
+The generated graph is derived from macro-expanded, cfg-pruned
+`#[transition]` method signatures. Supported return shapes are direct
+`Machine<NextState>` values plus `Option`, `Result`, and `statum::Branch`
+wrappers around those machine types. Unsupported custom decision enums are
+rejected instead of exported as best-effort graph metadata.
+
 See [docs/introspection.md](docs/introspection.md) for the full guide and
 [statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)
 for a runnable example.
@@ -259,7 +265,7 @@ Key details:
 
 - Validator methods run against your persisted type and return either `statum::Result<T>` for simple yes/no membership or `statum::Validation<T>` when a failed match should carry a stable reason key and optional message into rebuild reports.
 - Machine fields are available by name inside validator methods through generated bindings, so `client` and `name` are usable without boilerplate parameter plumbing. Persisted-row fields still live on `self`.
-- Unit states return `statum::Result<()>`; data-bearing states return `statum::Result<StateData>`.
+- Unit states return `statum::Result<()>` or `statum::Validation<()>`; data-bearing states return `statum::Result<StateData>` or `statum::Validation<StateData>`.
 - `.build_report()` and `.build_reports()` keep the same rebuild semantics as `.build()`, but they also record validator attempts in order. Diagnostic validators populate `RebuildAttempt.reason_key` and `RebuildAttempt.message`.
 - `.build()` returns the generated wrapper enum, which you can match as `task_machine::SomeState`.
   `task_machine::State` is kept as an alias so older code still compiles.
@@ -301,7 +307,9 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
 
 - Use `#[validators(Machine)]` on an `impl` block for your persisted type.
 - Define one `is_{state}` method per state variant.
-- Return `statum::Result<()>` for unit states or `statum::Result<StateData>` for data-bearing states.
+- Return `statum::Result<()>` or `statum::Validation<()>` for unit states.
+- Return `statum::Result<StateData>` or `statum::Validation<StateData>` for
+  data-bearing states.
 - Prefer `into_machine()` for single-item reconstruction.
 - For collections that share machine fields, call `.into_machines()`.
 - For collections where machine fields vary per item, call `.into_machines_by(|row| machine::Fields { ... })`.

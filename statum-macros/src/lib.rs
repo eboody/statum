@@ -51,9 +51,10 @@ use syn::{Item, ItemImpl, parse_macro_input};
 
 /// Define the legal lifecycle phases for a Statum machine.
 ///
-/// Apply `#[state]` to an enum with unit variants and single-field tuple
-/// variants. Statum generates one marker type per variant plus the state-family
-/// traits used by `#[machine]`, `#[transition]`, and `#[validators]`.
+/// Apply `#[state]` to an enum with unit variants, single-field tuple
+/// variants, or named-field variants. Statum generates one marker type per
+/// variant plus the state-family traits used by `#[machine]`, `#[transition]`,
+/// and `#[validators]`.
 #[proc_macro_attribute]
 pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as Item);
@@ -84,9 +85,10 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Define a typed machine that carries durable context across states.
 ///
 /// Apply `#[machine]` to a struct whose first generic parameter is the
-/// `#[state]` enum family. Statum generates the typed machine surface, builders,
-/// the machine-scoped `machine::SomeState` enum, a compatibility alias
-/// `machine::State = machine::SomeState`, and helper items such as
+/// `#[state]` enum family. Additional type and const generics are supported
+/// after that state generic. Statum generates the typed machine surface,
+/// builders, the machine-scoped `machine::SomeState` enum, a compatibility
+/// alias `machine::State = machine::SomeState`, and helper items such as
 /// `machine::Fields` for heterogeneous batch rebuilds.
 #[proc_macro_attribute]
 pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -119,7 +121,9 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Apply `#[transition]` to an `impl Machine<CurrentState>` block. Each method
 /// must consume `self` and return a legal `Machine<NextState>` shape or a
-/// supported wrapper around it, such as `Result<Machine<NextState>, E>`.
+/// supported wrapper around it, such as `Result<Machine<NextState>, E>`,
+/// `Option<Machine<NextState>>`, or
+/// `statum::Branch<Machine<Left>, Machine<Right>>`.
 #[proc_macro_attribute]
 pub fn transition(
     _attr: proc_macro::TokenStream,
@@ -196,7 +200,10 @@ pub fn transition(
 /// Apply `#[validators(Machine)]` to an `impl PersistedRow` block. Statum
 /// expects one `is_{state}` method per state variant and generates
 /// `into_machine()`, `.into_machines()`, and `.into_machines_by(...)` helpers
-/// for typed rehydration.
+/// for typed rehydration. Validator methods can return `Result<T, _>` for
+/// ordinary membership checks or `Validation<T>` when rebuild reports should
+/// carry stable rejection details through `.build_report()` and
+/// `.build_reports()`.
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let module_path = match resolved_current_module_path(Span::call_site(), "#[validators]") {

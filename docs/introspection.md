@@ -23,6 +23,12 @@ That means a branching transition like `Flow<Fetched>::validate() ->
 Accepted | Rejected` can be rendered without maintaining a parallel handwritten
 graph table.
 
+The graph is derived from macro-expanded, cfg-pruned `#[transition]` method
+signatures and supported wrapper shapes. Today that means direct
+`Machine<NextState>` returns plus `Option`, `Result`, and `statum::Branch`
+wrappers around those machine types. Unsupported custom decision enums are
+rejected instead of approximated.
+
 ## Static Graph Access
 
 Use `MachineIntrospection` to get the generated graph:

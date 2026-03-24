@@ -334,7 +334,10 @@ impl DocumentMachine<InReview> {
 }
 ```
 
-When runtime branching can lead to multiple target states, return a decision enum that carries typed machines for each branch.
+When runtime branching can lead to multiple target states, use
+`statum::Branch<Machine<A>, Machine<B>>` for a small two-way protocol branch.
+For richer branching, keep a decision enum in a normal helper and let it carry
+typed machines for each branch.
 
 ```rust
 enum Next {

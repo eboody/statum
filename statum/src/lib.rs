@@ -174,6 +174,11 @@
 //! level. A consumer can ask for the legal targets of one specific method on
 //! one specific source state.
 //!
+//! The graph is derived from macro-expanded, cfg-pruned `#[transition]`
+//! method signatures. Supported return shapes are direct machine returns plus
+//! `Option`, `Result`, and `statum::Branch` wrappers around machine types.
+//! Unsupported custom decision enums are rejected instead of approximated.
+//!
 //! For small amounts of human-facing metadata, Statum can also generate a
 //! `machine::PRESENTATION` constant from `#[present(...)]` attributes. Add
 //! `#[presentation_types(...)]` on the machine when those attributes should
@@ -383,8 +388,9 @@ pub use statum_macros::transition;
 /// resolves the state family from the machine definition. Define one
 /// `is_{state}` method per state variant:
 ///
-/// - return `statum::Result<()>` for unit states
-/// - return `statum::Result<StateData>` for data-bearing states
+/// - return `statum::Result<()>` or `statum::Validation<()>` for unit states
+/// - return `statum::Result<StateData>` or `statum::Validation<StateData>` for
+///   data-bearing states
 ///
 /// The generated API includes:
 ///
@@ -392,6 +398,8 @@ pub use statum_macros::transition;
 /// - `.into_machines()` when all items share the same machine fields
 /// - `.into_machines_by(|row| machine::Fields { ... })` when each item needs
 ///   different machine fields
+/// - `.build_report()` / `.build_reports()` when you want rebuild attempts and
+///   stable rejection details alongside the normal result
 ///
 /// Machine fields are available by name inside validator bodies through
 /// generated bindings. Persisted-row fields still live on `self`.
