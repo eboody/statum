@@ -7,25 +7,28 @@ and undesirable states should not be smuggled through ordinary APIs.
 
 ## Branching Decisions
 
-A transition method should still return one concrete next state. Put branching
-in a normal helper and dispatch into explicit transition methods so the branch
-result is still explicit in the type:
+A transition site can expose two explicit legal targets when that branch is
+part of the stable protocol surface. Use `statum::Branch<Machine<A>,
+Machine<B>>` for that narrow case:
 
 ```rust
-enum Decision {
-    Next(ProcessMachine<NextState>),
-    Other(ProcessMachine<OtherState>),
-}
-
+#[transition]
 impl ProcessMachine<Init> {
-    fn decide(self, event: Event) -> Decision {
+    fn decide(
+        self,
+        event: Event,
+    ) -> statum::Branch<ProcessMachine<NextState>, ProcessMachine<OtherState>> {
         match event {
-            Event::Go => Decision::Next(self.to_next()),
-            Event::Alternative => Decision::Other(self.to_other()),
+            Event::Go => statum::Branch::First(self.transition()),
+            Event::Alternative => statum::Branch::Second(self.transition()),
         }
     }
 }
 ```
+
+If the choice needs a richer domain enum, more than two branches, or a lot of
+policy logic, keep that branching in a normal helper and dispatch into explicit
+transition methods from there.
 
 ## Guarded Transitions
 

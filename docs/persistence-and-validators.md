@@ -144,15 +144,36 @@ That is how typed rehydration can fetch extra data or use shared context without
 
 ## Return Types
 
-- Unit state: `statum::Result<()>`
-- Data-bearing state: `statum::Result<StateData>`
+- Unit state: `statum::Result<()>` or `statum::Validation<()>`
+- Data-bearing state: `statum::Result<StateData>` or `statum::Validation<StateData>`
 
 Example:
 
 - `Draft` -> `statum::Result<()>`
 - `InReview(ReviewData)` -> `statum::Result<ReviewData>`
 
-If every validator returns `Err(statum::Error::InvalidState)`, reconstruction fails with `InvalidState`.
+Use `statum::Result<T>` when you only care whether the row matched that state.
+Use `statum::Validation<T>` when a failed match should carry a stable
+`reason_key` and optional message into rebuild reports.
+
+`Result<T, statum::Rejection>` is also supported directly when you want the
+same diagnostic surface without the alias.
+Prefer `Validation<T>` as the stable shape for diagnostic validators; renamed
+rejection aliases are not syntax-recognized for report details today.
+
+If every validator returns `Err(statum::Error::InvalidState)` or a diagnostic
+rejection, reconstruction still fails with `InvalidState`.
+
+## Rebuild Reports
+
+Use `.build_report()` for one row or `.build_reports()` for collections when
+you want the rebuild result plus the evaluation trace that produced it.
+
+- `RebuildAttempt.matched` tells you which validator, if any, selected the state.
+- `RebuildAttempt.reason_key` and `RebuildAttempt.message` are populated only
+  for diagnostic validators.
+- `.into_result()` keeps the normal rebuild result surface, so callers can opt
+  into reports without changing success-path handling.
 
 ## Async Validators
 
@@ -237,7 +258,7 @@ Example: [../statum-examples/src/showcases/sqlite_event_log_rebuild.rs](../statu
 ## Failure Model
 
 - A validator that matches returns `Ok(...)` and selects that state.
-- A validator that does not match should return `Err(statum::Error::InvalidState)`.
+- A validator that does not match should return `Err(statum::Error::InvalidState)` or a diagnostic `Err(statum::Rejection { .. })`.
 - Reconstruction fails when no validator matches.
 - Batch reconstruction returns one result per item, so callers can decide
   whether to stop on the first invalid row or collect partial successes.

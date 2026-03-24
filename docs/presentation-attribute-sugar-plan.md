@@ -3,6 +3,15 @@
 This is an optional follow-up plan for adding metadata authoring sugar on top of
 Statum's existing typed introspection and presentation overlay APIs.
 
+Implementation status:
+
+- Stage 1 is shipped.
+- Stage 2 typed metadata is also shipped.
+- In typed categories declared through `#[presentation_types(...)]`, each
+  annotated item must provide `metadata = ...` so the generated
+  `machine::PRESENTATION` constant stays fully typed without inventing default
+  values.
+
 ## Recommendation
 
 Implement this in two stages.

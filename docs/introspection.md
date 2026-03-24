@@ -152,6 +152,21 @@ add a typed `MachinePresentation` overlay keyed by the generated ids. That lets
 the machine definition remain the source of truth for structure while the
 consumer owns local explanation and presentation.
 
+For lighter-weight cases, Statum can also emit a generated
+`machine::PRESENTATION` constant from source-local attributes:
+
+- `#[present(label = "...", description = "...")]` on the machine, state
+  variants, and transition methods
+- `#[presentation_types(machine = ..., state = ..., transition = ...)]` on the
+  machine when you want typed `metadata = ...` payloads in the generated
+  presentation surface
+
+Typed presentation metadata follows the same observation point as the graph:
+macro-expanded, cfg-pruned items and supported attribute shapes. If a category
+declares `#[presentation_types(...)]`, each annotated item in that category
+must supply `metadata = ...`; otherwise the macro rejects it instead of
+guessing a default value.
+
 ## Example
 
 Runnable example:

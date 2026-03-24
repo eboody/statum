@@ -152,13 +152,14 @@ Use:
 
 - Must be an enum
 - Must have at least one variant
-- Variants must be unit or single-field tuple variants
-- Struct variants and generics are rejected
+- Variants must be unit, single-field tuple, or named-field variants
+- State enum generics are rejected
 
 ### `#[machine]`
 
 - Must be a struct
 - The first generic parameter must match the `#[state]` enum name
+- Additional type and const generics are supported after the state generic
 - Matching derives on the `#[state]` enum and machine are required when needed
 - `#[machine]` should sit above `#[derive(...)]`
 

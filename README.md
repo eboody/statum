@@ -159,6 +159,14 @@ See [docs/introspection.md](docs/introspection.md) for the full guide and
 [statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)
 for a runnable example.
 
+For source-local labels and descriptions, use `#[present(...)]` on the machine,
+state variants, and transition methods. If you also want typed metadata in the
+generated `machine::PRESENTATION` constant, declare
+`#[presentation_types(machine = ..., state = ..., transition = ...)]` on the
+machine and add `metadata = ...` to each annotated item in the typed
+categories. Manual `MachinePresentation` overlays still remain first-class when
+the generated sugar is not the right fit.
+
 ## Typed Rehydration
 
 `#[validators]` is the feature that turns stored data back into typed machines. Each `is_*` method checks whether the persisted value belongs to a state, returns `()` or state-specific data, and Statum builds the right typed output:
@@ -249,15 +257,16 @@ fn main() -> statum::Result<()> {
 
 Key details:
 
-- Validator methods run against your persisted type and return either `Ok(...)` for the matching state or `Err(statum::Error::InvalidState)`.
+- Validator methods run against your persisted type and return either `statum::Result<T>` for simple yes/no membership or `statum::Validation<T>` when a failed match should carry a stable reason key and optional message into rebuild reports.
 - Machine fields are available by name inside validator methods through generated bindings, so `client` and `name` are usable without boilerplate parameter plumbing. Persisted-row fields still live on `self`.
 - Unit states return `statum::Result<()>`; data-bearing states return `statum::Result<StateData>`.
+- `.build_report()` and `.build_reports()` keep the same rebuild semantics as `.build()`, but they also record validator attempts in order. Diagnostic validators populate `RebuildAttempt.reason_key` and `RebuildAttempt.message`.
 - `.build()` returns the generated wrapper enum, which you can match as `task_machine::SomeState`.
   `task_machine::State` is kept as an alias so older code still compiles.
 - If any validator is `async`, the generated builder becomes `async`.
 - Use `.into_machines_by(|row| task_machine::Fields { ... })` when batch reconstruction needs different machine fields per row.
 - For append-only event logs, project events into validator rows first. `statum::projection::reduce_one` and `reduce_grouped` are the small helper layer for that.
-- If no validator matches, `.build()` returns `statum::Error::InvalidState`.
+- If no validator matches, `.build()` and `.build_report().into_result()` both return `statum::Error::InvalidState`.
 
 Examples: [statum-examples/src/toy_demos/09-persistent-data.rs](statum-examples/src/toy_demos/09-persistent-data.rs), [statum-examples/src/toy_demos/10-persistent-data-vecs.rs](statum-examples/src/toy_demos/10-persistent-data-vecs.rs), [statum-examples/src/toy_demos/14-batch-machine-fields.rs](statum-examples/src/toy_demos/14-batch-machine-fields.rs), [statum-examples/src/showcases/sqlite_event_log_rebuild.rs](statum-examples/src/showcases/sqlite_event_log_rebuild.rs)
 
@@ -268,20 +277,24 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
 `#[state]`
 
 - Apply it to an enum.
-- Variants must be unit variants or single-field tuple variants.
+- Variants must be unit variants, single-field tuple variants, or named-field variants.
 - Generics on the state enum are not supported.
 
 `#[machine]`
 
 - Apply it to a struct.
 - The first generic parameter must match the `#[state]` enum name.
+- Additional type and const generics are supported after the state generic.
+- Extra machine lifetime generics are effectively unavailable because Rust
+  requires lifetimes before type parameters, and Statum reserves the first
+  generic slot for the state family.
 - Put `#[machine]` above `#[derive(...)]`.
 
 `#[transition]`
 
 - Apply it to `impl Machine<State>` blocks that define legal transitions.
 - Transition methods must take `self` or `mut self`.
-- Return `Machine<NextState>` directly, or wrap it in `Result` / `Option` when the transition is conditional.
+- Return `Machine<NextState>` directly, or wrap it in `Result` / `Option` / `statum::Branch` when the transition is conditional.
 - Use `transition_with(data)` when the target state carries data.
 
 `#[validators]`
@@ -308,7 +321,7 @@ Use Statum when:
 Do not use Statum when:
 
 - The workflow is highly ad hoc or user-authored.
-- Branching is mostly runtime business logic.
+- The workflow is dominated by large runtime branching or dynamic graph edits.
 - States are still changing faster than the API around them.
 
 More design guidance: [docs/typestate-builder-design-playbook.md](docs/typestate-builder-design-playbook.md)
@@ -325,7 +338,7 @@ Keep non-transition helpers in normal `impl` blocks. `#[transition]` is for prot
 
 **State shape errors**
 
-`#[state]` accepts unit variants and single-field tuple variants only.
+`#[state]` accepts unit variants, single-field tuple variants, and named-field variants.
 
 ## Showcases
 

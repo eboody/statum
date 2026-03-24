@@ -300,11 +300,13 @@ It also keeps extensibility high: adding a new stable state usually means adding
 
 Collapsing all logic into free functions or one large method that hides protocol stages and makes future extensions risky.
 
-## Step 5: Keep Branching and Guards Outside Transition Definitions
+## Step 5: Be Deliberate About Branching and Guards
 
 ### What to do
 
-Branch on runtime conditions in normal methods, then dispatch to explicit transition methods.
+Branch on runtime conditions in normal methods, then dispatch to explicit
+transition methods. For the narrow case where one transition site has two
+explicit legal targets, `statum::Branch<Machine<A>, Machine<B>>` is fine too.
 
 ```rust
 enum ReviewDecision {
@@ -341,15 +343,30 @@ enum Next {
 }
 ```
 
+Or, when the branch is a single protocol edge with exactly two legal targets:
+
+```rust
+#[transition]
+impl DocumentMachine<InReview> {
+    fn resolve(self, approved: bool) -> statum::Branch<DocumentMachine<Published>, DocumentMachine<Draft>> {
+        if approved {
+            statum::Branch::First(self.transition())
+        } else {
+            statum::Branch::Second(self.transition())
+        }
+    }
+}
+```
+
 ### Why it matters
 
 Typestate should encode legal structure. Runtime branching still exists, but it should route into explicit legal edges. This keeps static guarantees and runtime flexibility balanced.
 
-Keeping branching outside transition signatures preserves readability and keeps transition modules focused, which improves modularity.
+Keeping large branching outside transition signatures preserves readability and keeps transition modules focused, which improves modularity.
 
 ### Common mistake
 
-Trying to hide all branching inside one giant transition method that returns different next states ad hoc. Model choices explicitly with enums/results.
+Trying to hide all branching inside one giant transition method that returns different next states ad hoc. Model choices explicitly with enums, helper methods, or `statum::Branch`.
 
 ## Step 5.5: Prefer Associated Methods Over Wrapper Functions
 
@@ -732,7 +749,7 @@ This staged migration avoids big-bang rewrites while still delivering compile-ti
 7. Anti-pattern: non-transition helpers inside `#[transition]` impl blocks.
    - Refactor: move constructors/policy helpers into regular impl blocks and keep transition impls protocol-only.
 8. Anti-pattern: policy branching hidden in procedural glue.
-   - Refactor: return typed decision enums from concrete states and branch explicitly in orchestration.
+   - Refactor: return typed decision enums or `statum::Branch` from concrete states and branch explicitly in orchestration.
 9. Anti-pattern: clone-heavy transition payload churn.
    - Refactor: rebalance machine-context vs state-payload ownership to keep transitions lightweight.
 
