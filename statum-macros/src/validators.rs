@@ -14,8 +14,8 @@ mod signatures;
 mod type_equivalence;
 
 use emission::{
-    BatchBuilderContext, batch_builder_implementation, generate_validator_check,
-    generate_validator_report_check, inject_machine_fields,
+    BatchBuilderContext, ValidatorCheckContext, batch_builder_implementation,
+    generate_validator_check, generate_validator_report_check, inject_machine_fields,
 };
 use resolution::{
     resolve_machine_metadata, resolve_state_enum_info, validate_validator_coverage,
@@ -35,7 +35,6 @@ struct CollectValidatorContext<'a> {
     machine_ident: &'a Ident,
     machine_module_ident: &'a Ident,
     machine_generics: &'a Generics,
-    machine_state_ty: &'a proc_macro2::TokenStream,
     field_names: &'a [Ident],
     persisted_type_display: &'a str,
     machine_name: &'a str,
@@ -114,7 +113,6 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         machine_ident: &machine_ident,
         machine_module_ident: &machine_module_ident,
         machine_generics: &parsed_machine.generics,
-        machine_state_ty: &machine_state_ty,
         field_names: &field_names,
         persisted_type_display: &persisted_type_display,
         machine_name: &machine_name,
@@ -246,6 +244,13 @@ fn collect_validator_checks(
     let mut has_async = false;
     let receiver = quote! { __statum_persisted };
     let (variant_specs, variant_by_name) = build_variant_lookup(variants)?;
+    let emission_context = ValidatorCheckContext {
+        machine_ident: context.machine_ident,
+        machine_module_ident: context.machine_module_ident,
+        machine_generics: context.machine_generics,
+        field_names: context.field_names,
+        receiver: &receiver,
+    };
 
     for item in &item_impl.items {
         let syn::ImplItem::Fn(func) = item else {
@@ -275,23 +280,13 @@ fn collect_validator_checks(
             has_async = true;
         }
         checks.push(generate_validator_check(
-            context.machine_ident,
-            context.machine_module_ident,
-            context.machine_generics,
-            context.machine_state_ty,
-            context.field_names,
-            &receiver,
+            &emission_context,
             &spec.variant_name,
             spec.has_state_data,
             func.sig.asyncness.is_some(),
         ));
         report_checks.push(generate_validator_report_check(
-            context.machine_ident,
-            context.machine_module_ident,
-            context.machine_generics,
-            context.machine_state_ty,
-            context.field_names,
-            &receiver,
+            &emission_context,
             &spec.variant_name,
             spec.has_state_data,
             return_kind,

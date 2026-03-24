@@ -120,7 +120,9 @@ impl VariantInfo {
         match &self.shape {
             VariantShape::Unit => Ok(ParsedVariantShape::Unit),
             VariantShape::Tuple { data_type } => syn::parse_str::<Type>(data_type)
-                .map(|data_type| ParsedVariantShape::Tuple { data_type })
+                .map(|data_type| ParsedVariantShape::Tuple {
+                    data_type: Box::new(data_type),
+                })
                 .map_err(|err| err.to_compile_error()),
             VariantShape::Named {
                 data_struct_name,
@@ -159,7 +161,7 @@ pub(crate) struct ParsedVariantInfo {
 
 pub(crate) enum ParsedVariantShape {
     Unit,
-    Tuple { data_type: Type },
+    Tuple { data_type: Box<Type> },
     Named {
         data_struct_ident: Ident,
         fields: Vec<ParsedNamedFieldInfo>,

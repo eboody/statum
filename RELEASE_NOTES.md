@@ -1,5 +1,15 @@
 # Release Notes
 
+## v0.6.7 (2026-03-23)
+
+### Changes
+- Added rebuild reports with `statum::Validation<T>`, `RebuildAttempt.reason_key`, and `RebuildAttempt.message` so typed rehydration can explain failed matches without changing the normal `.build()` result surface.
+- Added named-field `#[state]` variants, generated payload structs for those variants, and extra `#[machine]` type/const generic support after the state generic.
+- Added first-class `statum::Branch<A, B>` support for two-way transition branching, including exact introspection of both legal targets.
+- Added source-local presentation sugar through `#[present(...)]` plus typed `#[presentation_types(...)]` metadata for generated `machine::PRESENTATION` constants.
+- Expanded adversarial coverage around introspection and rebuild hygiene, including cfg-pruned items, macro/include sources, sibling name pressure, and validator local-name collisions.
+- Refreshed the public docs so the published surface matches the actual authority boundary and supported feature set.
+
 ## v0.6.6 (2026-03-22)
 
 ### Changes

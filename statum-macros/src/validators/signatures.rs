@@ -275,10 +275,7 @@ fn extract_supported_validator_ok_type(
         return None;
     }
 
-    let return_kind = if type_args
-        .get(1)
-        .is_some_and(|err_ty| is_rejection_type(err_ty))
-    {
+    let return_kind = if type_args.get(1).is_some_and(is_rejection_type) {
         ValidatorReturnKind::Diagnostic
     } else {
         ValidatorReturnKind::Plain

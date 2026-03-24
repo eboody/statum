@@ -19,17 +19,25 @@ pub(super) struct BatchBuilderContext<'a> {
     pub(super) machine_vis: syn::Visibility,
 }
 
+pub(super) struct ValidatorCheckContext<'a> {
+    pub(super) machine_ident: &'a Ident,
+    pub(super) machine_module_ident: &'a Ident,
+    pub(super) machine_generics: &'a Generics,
+    pub(super) field_names: &'a [Ident],
+    pub(super) receiver: &'a proc_macro2::TokenStream,
+}
+
 pub(super) fn generate_validator_check(
-    machine_ident: &Ident,
-    machine_module_ident: &Ident,
-    machine_generics: &Generics,
-    _machine_state_ty: &proc_macro2::TokenStream,
-    field_names: &[Ident],
-    receiver: &proc_macro2::TokenStream,
+    context: &ValidatorCheckContext<'_>,
     variant_name: &str,
     has_state_data: bool,
     is_async: bool,
 ) -> proc_macro2::TokenStream {
+    let machine_ident = context.machine_ident;
+    let machine_module_ident = context.machine_module_ident;
+    let machine_generics = context.machine_generics;
+    let field_names = context.field_names;
+    let receiver = context.receiver;
     let variant_ident = format_ident!("{}", variant_name);
     let validator_fn_ident = format_ident!("is_{}", to_snake_case(variant_name));
     let await_token = if is_async { quote! { .await } } else { quote! {} };
@@ -70,17 +78,17 @@ pub(super) fn generate_validator_check(
 }
 
 pub(super) fn generate_validator_report_check(
-    machine_ident: &Ident,
-    machine_module_ident: &Ident,
-    machine_generics: &Generics,
-    _machine_state_ty: &proc_macro2::TokenStream,
-    field_names: &[Ident],
-    receiver: &proc_macro2::TokenStream,
+    context: &ValidatorCheckContext<'_>,
     variant_name: &str,
     has_state_data: bool,
     return_kind: ValidatorReturnKind,
     is_async: bool,
 ) -> proc_macro2::TokenStream {
+    let machine_ident = context.machine_ident;
+    let machine_module_ident = context.machine_module_ident;
+    let machine_generics = context.machine_generics;
+    let field_names = context.field_names;
+    let receiver = context.receiver;
     let variant_ident = format_ident!("{}", variant_name);
     let validator_fn_ident = format_ident!("is_{}", to_snake_case(variant_name));
     let await_token = if is_async { quote! { .await } } else { quote! {} };

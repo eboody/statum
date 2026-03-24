@@ -1048,7 +1048,7 @@ fn generate_custom_builder_tokens(
 fn variant_payload_type(variant: &ParsedVariantInfo) -> Option<syn::Type> {
     match &variant.shape {
         ParsedVariantShape::Unit => None,
-        ParsedVariantShape::Tuple { data_type } => Some(data_type.clone()),
+        ParsedVariantShape::Tuple { data_type } => Some(*data_type.clone()),
         ParsedVariantShape::Named {
             data_struct_ident, ..
         } => Some(syn::parse_quote!(#data_struct_ident)),
