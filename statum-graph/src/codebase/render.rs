@@ -70,6 +70,10 @@ pub fn mermaid(doc: &CodebaseDoc) -> String {
         format!("%% linked machines: {}", doc.machines().len()),
         "graph TD".to_string(),
     ];
+    let has_validator_entries = doc
+        .machines()
+        .iter()
+        .any(|machine| !machine.validator_entries.is_empty());
 
     for machine in doc.machines() {
         lines.push(format!(
@@ -87,7 +91,21 @@ pub fn mermaid(doc: &CodebaseDoc) -> String {
         lines.push("    end".to_string());
     }
 
-    if !doc.machines().is_empty() {
+    if has_validator_entries && !doc.machines().is_empty() {
+        lines.push(String::new());
+    }
+
+    for machine in doc.machines() {
+        for entry in &machine.validator_entries {
+            lines.push(format!(
+                "    {}(\"{}\")",
+                machine.validator_node_id(entry.index),
+                escape_mermaid_label(&entry.display_label())
+            ));
+        }
+    }
+
+    if !doc.machines().is_empty() && (has_validator_entries || any_transitions(doc)) {
         lines.push(String::new());
     }
 
@@ -123,6 +141,21 @@ pub fn mermaid(doc: &CodebaseDoc) -> String {
         ));
     }
 
+    if has_validator_entries
+        && (!doc.links().is_empty() || any_transitions(doc) || !doc.machines().is_empty())
+    {
+        lines.push(String::new());
+    }
+
+    for machine in doc.machines() {
+        for entry in &machine.validator_entries {
+            let from = machine.validator_node_id(entry.index);
+            for target in &entry.target_states {
+                lines.push(format!("    {from} -.-> {}", machine.node_id(*target)));
+            }
+        }
+    }
+
     lines.join("\n")
 }
 
@@ -132,6 +165,10 @@ pub fn dot(doc: &CodebaseDoc) -> String {
         "digraph \"statum_codebase\" {".to_string(),
         "    rankdir=TB;".to_string(),
     ];
+    let has_validator_entries = doc
+        .machines()
+        .iter()
+        .any(|machine| !machine.validator_entries.is_empty());
 
     for machine in doc.machines() {
         lines.push(format!(
@@ -152,7 +189,21 @@ pub fn dot(doc: &CodebaseDoc) -> String {
         lines.push("    }".to_string());
     }
 
-    if !doc.machines().is_empty() {
+    if has_validator_entries && !doc.machines().is_empty() {
+        lines.push(String::new());
+    }
+
+    for machine in doc.machines() {
+        for entry in &machine.validator_entries {
+            lines.push(format!(
+                "    {} [label=\"{}\", shape=ellipse, style=\"rounded,dashed\", color=\"#4b5563\"]",
+                machine.validator_node_id(entry.index),
+                escape_dot_label(&entry.display_label())
+            ));
+        }
+    }
+
+    if !doc.machines().is_empty() && (has_validator_entries || any_transitions(doc)) {
         lines.push(String::new());
     }
 
@@ -188,6 +239,24 @@ pub fn dot(doc: &CodebaseDoc) -> String {
         ));
     }
 
+    if has_validator_entries
+        && (!doc.links().is_empty() || any_transitions(doc) || !doc.machines().is_empty())
+    {
+        lines.push(String::new());
+    }
+
+    for machine in doc.machines() {
+        for entry in &machine.validator_entries {
+            let from = machine.validator_node_id(entry.index);
+            for target in &entry.target_states {
+                lines.push(format!(
+                    "    {from} -> {} [style=dashed, color=\"#4b5563\", penwidth=2, constraint=false]",
+                    machine.node_id(*target)
+                ));
+            }
+        }
+    }
+
     lines.push("}".to_string());
     lines.join("\n")
 }
@@ -198,6 +267,10 @@ pub fn plantuml(doc: &CodebaseDoc) -> String {
         "@startuml".to_string(),
         format!("' linked machines: {}", doc.machines().len()),
     ];
+    let has_validator_entries = doc
+        .machines()
+        .iter()
+        .any(|machine| !machine.validator_entries.is_empty());
 
     for machine in doc.machines() {
         lines.push(format!(
@@ -215,7 +288,21 @@ pub fn plantuml(doc: &CodebaseDoc) -> String {
         lines.push("}".to_string());
     }
 
-    if !doc.machines().is_empty() {
+    if has_validator_entries && !doc.machines().is_empty() {
+        lines.push(String::new());
+    }
+
+    for machine in doc.machines() {
+        for entry in &machine.validator_entries {
+            lines.push(format!(
+                "state \"{}\" as {} <<validator-entry>>",
+                escape_plantuml_label(&entry.display_label()),
+                machine.validator_node_id(entry.index)
+            ));
+        }
+    }
+
+    if !doc.machines().is_empty() && (has_validator_entries || any_transitions(doc)) {
         lines.push(String::new());
     }
 
@@ -251,6 +338,24 @@ pub fn plantuml(doc: &CodebaseDoc) -> String {
         ));
     }
 
+    if has_validator_entries
+        && (!doc.links().is_empty() || any_transitions(doc) || !doc.machines().is_empty())
+    {
+        lines.push(String::new());
+    }
+
+    for machine in doc.machines() {
+        for entry in &machine.validator_entries {
+            let from = machine.validator_node_id(entry.index);
+            for target in &entry.target_states {
+                lines.push(format!(
+                    "{from} ..> {} : validator entry",
+                    machine.node_id(*target)
+                ));
+            }
+        }
+    }
+
     lines.push("@enduml".to_string());
     lines.join("\n")
 }
@@ -266,6 +371,12 @@ fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+fn any_transitions(doc: &CodebaseDoc) -> bool {
+    doc.machines()
+        .iter()
+        .any(|machine| !machine.transitions.is_empty())
 }
 
 fn escape_mermaid_label(label: &str) -> String {

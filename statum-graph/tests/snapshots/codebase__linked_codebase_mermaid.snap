@@ -22,6 +22,9 @@ graph TD
         m3_s2["Complete"]
     end
 
+    m2_v0("TaskRow::into_machine()")
+    m3_v0("WorkflowRow::into_machine()")
+
     m1_s0 -->|settle| m1_s1
     m2_s0 -->|Start Task| m2_s1
     m2_s1 -->|finish| m2_s2
@@ -30,3 +33,10 @@ graph TD
 
     m1_s0 -.->|child| m2_s2
     m3_s1 -.->|state_data| m2_s1
+
+    m2_v0 -.-> m2_s0
+    m2_v0 -.-> m2_s1
+    m2_v0 -.-> m2_s2
+    m3_v0 -.-> m3_s0
+    m3_v0 -.-> m3_s1
+    m3_v0 -.-> m3_s2

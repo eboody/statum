@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
-use statum::{LinkedMachineGraph, StaticMachineLinkDescriptor};
+use statum::{LinkedMachineGraph, LinkedValidatorEntryDescriptor, StaticMachineLinkDescriptor};
 
 pub mod render;
 
@@ -17,13 +17,25 @@ impl CodebaseDoc {
     /// Builds a combined codebase document from every linked machine visible to
     /// the current build.
     pub fn linked() -> Result<Self, CodebaseDocError> {
-        Self::try_from_linked(statum::linked_machines())
+        Self::try_from_linked_with_validator_entries(
+            statum::linked_machines(),
+            statum::linked_validator_entries(),
+        )
     }
 
     /// Builds a combined codebase document from an explicit linked machine
     /// inventory.
     pub fn try_from_linked(
         linked: &'static [LinkedMachineGraph],
+    ) -> Result<Self, CodebaseDocError> {
+        Self::try_from_linked_with_validator_entries(linked, &[])
+    }
+
+    /// Builds a combined codebase document from explicit linked machine and
+    /// validator-entry inventories.
+    pub fn try_from_linked_with_validator_entries(
+        linked: &'static [LinkedMachineGraph],
+        validator_entries: &'static [LinkedValidatorEntryDescriptor],
     ) -> Result<Self, CodebaseDocError> {
         let mut linked = linked.to_vec();
         linked.sort_by(|left, right| {
@@ -48,7 +60,14 @@ impl CodebaseDoc {
             static_links.push(built_links);
         }
 
+        let resolved_validator_entries =
+            resolve_validator_entries(&mut machines, validator_entries)?;
         let links = resolve_static_links(&machines, &static_links)?;
+
+        debug_assert_eq!(
+            resolved_validator_entries,
+            total_validator_entries(&machines)
+        );
 
         Ok(Self { machines, links })
     }
@@ -86,6 +105,8 @@ pub struct CodebaseMachine {
     pub states: Vec<CodebaseState>,
     /// Transition sites exported in deterministic order.
     pub transitions: Vec<CodebaseTransition>,
+    /// Declared validator-entry surfaces exported in deterministic order.
+    pub validator_entries: Vec<CodebaseValidatorEntry>,
 }
 
 impl CodebaseMachine {
@@ -101,9 +122,20 @@ impl CodebaseMachine {
             .find(|state| state.rust_name == rust_name)
     }
 
+    /// Returns one exported validator-entry surface by its stable machine-local
+    /// index.
+    pub fn validator_entry(&self, index: usize) -> Option<&CodebaseValidatorEntry> {
+        self.validator_entries.get(index)
+    }
+
     /// Stable renderer node id for one state in this machine.
     pub fn node_id(&self, state_index: usize) -> String {
         format!("m{}_s{}", self.index, state_index)
+    }
+
+    /// Stable renderer node id for one validator entry in this machine.
+    pub fn validator_node_id(&self, entry_index: usize) -> String {
+        format!("m{}_v{}", self.index, entry_index)
     }
 
     fn cluster_id(&self) -> String {
@@ -132,7 +164,7 @@ pub struct CodebaseState {
     /// Whether the state carries `state_data`.
     pub has_data: bool,
     /// Whether the state has no incoming transition in its machine.
-    pub is_root: bool,
+    pub is_graph_root: bool,
 }
 
 impl CodebaseState {
@@ -143,6 +175,26 @@ impl CodebaseState {
             None if self.has_data => Cow::Owned(format!("{} (data)", self.rust_name)),
             None => Cow::Borrowed(self.rust_name),
         }
+    }
+}
+
+/// One declared validator-entry surface in the codebase export surface.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CodebaseValidatorEntry {
+    /// Stable machine-local validator-entry index.
+    pub index: usize,
+    /// `module_path!()` for the module that owns the `#[validators]` impl.
+    pub source_module_path: &'static str,
+    /// Human-facing source syntax for the persisted impl self type as written.
+    pub source_type_display: &'static str,
+    /// Stable target-state indices in machine state order.
+    pub target_states: Vec<usize>,
+}
+
+impl CodebaseValidatorEntry {
+    /// Human-facing node label used by text renderers.
+    pub fn display_label(&self) -> Cow<'static, str> {
+        Cow::Owned(format!("{}::into_machine()", self.source_type_display))
     }
 }
 
@@ -234,6 +286,41 @@ pub enum CodebaseDocError {
         transition: &'static str,
         state: &'static str,
     },
+    /// One validator-entry surface points at a machine missing from the linked
+    /// machine inventory.
+    MissingValidatorMachine {
+        machine: &'static str,
+        source_module_path: &'static str,
+        source_type_display: &'static str,
+    },
+    /// One validator-entry surface points at a target state missing from the
+    /// linked machine state list.
+    MissingValidatorTargetState {
+        machine: &'static str,
+        source_module_path: &'static str,
+        source_type_display: &'static str,
+        state: &'static str,
+    },
+    /// One validator-entry surface declares no target states.
+    EmptyValidatorTargetSet {
+        machine: &'static str,
+        source_module_path: &'static str,
+        source_type_display: &'static str,
+    },
+    /// One validator-entry surface lists the same target state more than once.
+    DuplicateValidatorTargetState {
+        machine: &'static str,
+        source_module_path: &'static str,
+        source_type_display: &'static str,
+        state: &'static str,
+    },
+    /// One validator-entry surface appears more than once for the same machine
+    /// and impl site.
+    DuplicateValidatorEntry {
+        machine: &'static str,
+        source_module_path: &'static str,
+        source_type_display: &'static str,
+    },
     /// One static payload link points at a source state missing from the
     /// machine state list.
     MissingStaticLinkSourceState {
@@ -295,6 +382,48 @@ Fix: rerun with `--package` to export one crate, or move one machine to a distin
                 formatter,
                 "linked machine `{machine}` contains transition `{transition}` with duplicate target state `{state}`"
             ),
+            Self::MissingValidatorMachine {
+                machine,
+                source_module_path,
+                source_type_display,
+            } => write!(
+                formatter,
+                "linked validator entry `{source_type_display}::into_machine()` from module `{source_module_path}` points at missing machine `{machine}`"
+            ),
+            Self::MissingValidatorTargetState {
+                machine,
+                source_module_path,
+                source_type_display,
+                state,
+            } => write!(
+                formatter,
+                "linked validator entry `{source_type_display}::into_machine()` from module `{source_module_path}` points at missing state `{machine}::{state}`"
+            ),
+            Self::EmptyValidatorTargetSet {
+                machine,
+                source_module_path,
+                source_type_display,
+            } => write!(
+                formatter,
+                "linked validator entry `{source_type_display}::into_machine()` from module `{source_module_path}` for machine `{machine}` contains no target states"
+            ),
+            Self::DuplicateValidatorTargetState {
+                machine,
+                source_module_path,
+                source_type_display,
+                state,
+            } => write!(
+                formatter,
+                "linked validator entry `{source_type_display}::into_machine()` from module `{source_module_path}` for machine `{machine}` contains duplicate target state `{state}`"
+            ),
+            Self::DuplicateValidatorEntry {
+                machine,
+                source_module_path,
+                source_type_display,
+            } => write!(
+                formatter,
+                "linked validator entry `{source_type_display}::into_machine()` from module `{source_module_path}` appears more than once for machine `{machine}`"
+            ),
             Self::MissingStaticLinkSourceState { machine, state } => write!(
                 formatter,
                 "linked machine `{machine}` contains a static payload link from missing source state `{state}`"
@@ -347,7 +476,7 @@ fn build_machine(
             label: state.label,
             description: state.description,
             has_data: state.has_data,
-            is_root: true,
+            is_graph_root: true,
         });
     }
 
@@ -410,7 +539,7 @@ fn build_machine(
     }
 
     for state in &mut states {
-        state.is_root = !incoming.contains(&state.index);
+        state.is_graph_root = !incoming.contains(&state.index);
     }
 
     Ok((
@@ -422,6 +551,7 @@ fn build_machine(
             description: linked.description,
             states,
             transitions: exported_transitions,
+            validator_entries: Vec::new(),
         },
         linked.static_links.iter().collect(),
     ))
@@ -503,6 +633,103 @@ fn resolve_static_links(
     }
 
     Ok(links)
+}
+
+fn resolve_validator_entries(
+    machines: &mut [CodebaseMachine],
+    validator_entries: &'static [LinkedValidatorEntryDescriptor],
+) -> Result<usize, CodebaseDocError> {
+    let mut validator_entries = validator_entries.to_vec();
+    validator_entries.sort_by(compare_validator_entries);
+
+    let machine_positions = machines
+        .iter()
+        .map(|machine| (machine.rust_type_path, machine.index))
+        .collect::<HashMap<_, _>>();
+    let mut seen_entries = HashSet::with_capacity(validator_entries.len());
+
+    for entry in validator_entries {
+        let Some(&machine_index) = machine_positions.get(entry.machine.rust_type_path) else {
+            return Err(CodebaseDocError::MissingValidatorMachine {
+                machine: entry.machine.rust_type_path,
+                source_module_path: entry.source_module_path,
+                source_type_display: entry.source_type_display,
+            });
+        };
+        if !seen_entries.insert((
+            entry.machine.rust_type_path,
+            entry.source_module_path,
+            entry.source_type_display,
+        )) {
+            return Err(CodebaseDocError::DuplicateValidatorEntry {
+                machine: entry.machine.rust_type_path,
+                source_module_path: entry.source_module_path,
+                source_type_display: entry.source_type_display,
+            });
+        }
+        if entry.target_states.is_empty() {
+            return Err(CodebaseDocError::EmptyValidatorTargetSet {
+                machine: entry.machine.rust_type_path,
+                source_module_path: entry.source_module_path,
+                source_type_display: entry.source_type_display,
+            });
+        }
+
+        let machine = &mut machines[machine_index];
+        let mut target_states = Vec::with_capacity(entry.target_states.len());
+        let mut seen_target_states = HashSet::with_capacity(entry.target_states.len());
+
+        for target_state in entry.target_states {
+            let Some(target_index) = machine.state_named(target_state).map(|state| state.index)
+            else {
+                return Err(CodebaseDocError::MissingValidatorTargetState {
+                    machine: machine.rust_type_path,
+                    source_module_path: entry.source_module_path,
+                    source_type_display: entry.source_type_display,
+                    state: target_state,
+                });
+            };
+            if !seen_target_states.insert(*target_state) {
+                return Err(CodebaseDocError::DuplicateValidatorTargetState {
+                    machine: machine.rust_type_path,
+                    source_module_path: entry.source_module_path,
+                    source_type_display: entry.source_type_display,
+                    state: target_state,
+                });
+            }
+            target_states.push(target_index);
+        }
+
+        target_states.sort_unstable();
+
+        machine.validator_entries.push(CodebaseValidatorEntry {
+            index: machine.validator_entries.len(),
+            source_module_path: entry.source_module_path,
+            source_type_display: entry.source_type_display,
+            target_states,
+        });
+    }
+
+    Ok(total_validator_entries(machines))
+}
+
+fn total_validator_entries(machines: &[CodebaseMachine]) -> usize {
+    machines
+        .iter()
+        .map(|machine| machine.validator_entries.len())
+        .sum()
+}
+
+fn compare_validator_entries(
+    left: &LinkedValidatorEntryDescriptor,
+    right: &LinkedValidatorEntryDescriptor,
+) -> core::cmp::Ordering {
+    left.machine
+        .rust_type_path
+        .cmp(right.machine.rust_type_path)
+        .then_with(|| left.source_module_path.cmp(right.source_module_path))
+        .then_with(|| left.source_type_display.cmp(right.source_type_display))
+        .then_with(|| left.target_states.cmp(right.target_states))
 }
 
 fn path_suffix_matches(candidate: &str, suffix: &[&'static str]) -> bool {

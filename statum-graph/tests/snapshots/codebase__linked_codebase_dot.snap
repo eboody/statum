@@ -26,6 +26,9 @@ digraph "statum_codebase" {
         m3_s2 [label="Complete"]
     }
 
+    m2_v0 [label="TaskRow::into_machine()", shape=ellipse, style="rounded,dashed", color="#4b5563"]
+    m3_v0 [label="WorkflowRow::into_machine()", shape=ellipse, style="rounded,dashed", color="#4b5563"]
+
     m1_s0 -> m1_s1 [label="settle"]
     m2_s0 -> m2_s1 [label="Start Task"]
     m2_s1 -> m2_s2 [label="finish"]
@@ -34,4 +37,11 @@ digraph "statum_codebase" {
 
     m1_s0 -> m2_s2 [style=dashed, label="child"]
     m3_s1 -> m2_s1 [style=dashed, label="state_data"]
+
+    m2_v0 -> m2_s0 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+    m2_v0 -> m2_s1 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+    m2_v0 -> m2_s2 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+    m3_v0 -> m3_s0 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+    m3_v0 -> m3_s1 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+    m3_v0 -> m3_s2 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
 }

@@ -4,7 +4,8 @@
 export.
 
 It builds a temporary runner internally, links the selected crate, and writes
-the combined static codebase graph as Mermaid, DOT, PlantUML, and JSON.
+the combined static codebase graph as Mermaid, DOT, PlantUML, and JSON,
+including declared validator-entry nodes from compiled `#[validators]` impls.
 
 ## Install
 

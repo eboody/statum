@@ -9,12 +9,16 @@ It is authoritative only for machine-local structure:
 - states
 - transition sites
 - exact legal targets
-- roots derivable from the static graph itself
+- graph roots derivable from the static graph itself
 
 For linked-build codebase export, `statum-graph` can also combine every linked
 compiled machine family plus direct machine-like payload links written in state
-data. That codebase view is still static only. It does not model runtime-
-selected branches or orchestration order across machines.
+data and declared validator-entry surfaces emitted by compiled
+`#[validators]` impls. That codebase view is still static only. It does not
+model runtime-selected branches or orchestration order across machines.
+Validator node labels come from the impl self type as written in source and are
+display-only, not canonical Rust type identity. Method-level `#[cfg]` and
+`#[cfg_attr]` on validator methods are rejected at the macro layer.
 
 ## Install
 
@@ -269,10 +273,12 @@ assert_eq!(paths.len(), 4);
 
 The codebase view is based on the linked compiled build, not a source scan.
 Static cross-machine links come only from direct machine-like payload types
-written in state data, including named fields. They resolve by normalized path
-suffix plus target state name and fail closed on ambiguity. Wrapper aliases,
-runtime composition, and arbitrary payload-type inference are intentionally out
-of scope.
+written in state data, including named fields. Validator-entry nodes come only
+from compiled `#[validators]` impls and represent declared rebuild surfaces
+such as `DbRow::into_machine()`, not runtime match outcomes. Both surfaces fail
+closed on malformed or ambiguous linked metadata. Wrapper aliases, runtime
+composition, builder overlays, and terminal-state semantics are intentionally
+out of scope.
 
 If you do not want to hand-write a runner crate, install
 `cargo-statum-graph` and point it at an existing library package:

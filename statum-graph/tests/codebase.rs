@@ -4,12 +4,13 @@ use std::fs;
 
 use statum::{
     LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
-    LinkedTransitionInventory, MachineDescriptor, StaticMachineLinkDescriptor,
+    LinkedTransitionInventory, LinkedValidatorEntryDescriptor, MachineDescriptor,
+    StaticMachineLinkDescriptor,
 };
 use statum_graph::{codebase::render, CodebaseDoc};
 
 mod task {
-    use statum::{machine, state, transition};
+    use statum::{machine, state, transition, validators, Error};
 
     #[state]
     pub enum State {
@@ -37,11 +38,42 @@ mod task {
             self.transition()
         }
     }
+
+    pub struct TaskRow {
+        pub status: &'static str,
+    }
+
+    #[validators(Machine)]
+    impl TaskRow {
+        fn is_idle(&self) -> statum::Result<()> {
+            if self.status == "idle" {
+                Ok(())
+            } else {
+                Err(Error::InvalidState)
+            }
+        }
+
+        fn is_running(&self) -> statum::Result<()> {
+            if self.status == "running" {
+                Ok(())
+            } else {
+                Err(Error::InvalidState)
+            }
+        }
+
+        fn is_done(&self) -> statum::Result<()> {
+            if self.status == "done" {
+                Ok(())
+            } else {
+                Err(Error::InvalidState)
+            }
+        }
+    }
 }
 
 mod workflow {
     use super::*;
-    use statum::{machine, state, transition};
+    use statum::{machine, state, transition, validators, Error};
 
     #[state]
     pub enum State {
@@ -67,6 +99,37 @@ mod workflow {
     impl Machine<InProgress> {
         fn finish(self) -> Machine<Complete> {
             self.transition()
+        }
+    }
+
+    pub struct WorkflowRow {
+        pub status: &'static str,
+    }
+
+    #[validators(Machine)]
+    impl WorkflowRow {
+        fn is_draft(&self) -> statum::Result<()> {
+            if self.status == "draft" {
+                Ok(())
+            } else {
+                Err(Error::InvalidState)
+            }
+        }
+
+        fn is_in_progress(&self) -> statum::Result<task::Machine<task::Running>> {
+            if self.status == "in_progress" {
+                Ok(task::Machine::<task::Running>::builder().build())
+            } else {
+                Err(Error::InvalidState)
+            }
+        }
+
+        fn is_complete(&self) -> statum::Result<()> {
+            if self.status == "complete" {
+                Ok(())
+            } else {
+                Err(Error::InvalidState)
+            }
         }
     }
 }
@@ -128,6 +191,12 @@ fn linked_codebase_doc_collects_machines_and_links() {
             .map(|state| state.label),
         Some(Some("In Progress"))
     );
+    assert_eq!(workflow.validator_entries.len(), 1);
+    assert_eq!(
+        workflow.validator_entries[0].source_type_display,
+        "WorkflowRow"
+    );
+    assert_eq!(workflow.validator_entries[0].target_states, vec![0, 1, 2]);
 
     let workflow_link = doc
         .links()
@@ -153,6 +222,11 @@ fn linked_codebase_doc_collects_machines_and_links() {
         .expect("named link target state");
     assert!(target_machine.rust_type_path.ends_with("task::Machine"));
     assert_eq!(target_state.rust_name, "Done");
+    assert_eq!(target_machine.validator_entries.len(), 1);
+    assert_eq!(
+        target_machine.validator_entries[0].display_label().as_ref(),
+        "TaskRow::into_machine()"
+    );
 }
 
 #[test]
@@ -233,5 +307,200 @@ fn malformed_inventory_rejects_missing_static_link_source_state() {
             .unwrap_err()
             .to_string(),
         "linked machine `broken::Machine` contains a static payload link from missing source state `Missing`"
+    );
+}
+
+#[test]
+fn malformed_inventory_rejects_missing_validator_machine() {
+    static VALIDATORS: [LinkedValidatorEntryDescriptor; 1] = [LinkedValidatorEntryDescriptor {
+        machine: MachineDescriptor {
+            module_path: "broken",
+            rust_type_path: "broken::Machine",
+        },
+        source_module_path: "broken",
+        source_type_display: "BrokenRow",
+        target_states: &["Draft"],
+    }];
+
+    assert_eq!(
+        CodebaseDoc::try_from_linked_with_validator_entries(&[], &VALIDATORS)
+            .unwrap_err()
+            .to_string(),
+        "linked validator entry `BrokenRow::into_machine()` from module `broken` points at missing machine `broken::Machine`"
+    );
+}
+
+#[test]
+fn malformed_inventory_rejects_missing_validator_target_state() {
+    fn transitions() -> &'static [LinkedTransitionDescriptor] {
+        &[]
+    }
+
+    static STATES: [LinkedStateDescriptor; 1] = [LinkedStateDescriptor {
+        rust_name: "Draft",
+        label: None,
+        description: None,
+        has_data: false,
+    }];
+    static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
+        machine: MachineDescriptor {
+            module_path: "workflow",
+            rust_type_path: "workflow::Machine",
+        },
+        label: None,
+        description: None,
+        states: &STATES,
+        transitions: LinkedTransitionInventory::new(transitions),
+        static_links: &[],
+    }];
+    static VALIDATORS: [LinkedValidatorEntryDescriptor; 1] = [LinkedValidatorEntryDescriptor {
+        machine: MachineDescriptor {
+            module_path: "workflow",
+            rust_type_path: "workflow::Machine",
+        },
+        source_module_path: "workflow",
+        source_type_display: "DbRow",
+        target_states: &["Missing"],
+    }];
+
+    assert_eq!(
+        CodebaseDoc::try_from_linked_with_validator_entries(&LINKED, &VALIDATORS)
+            .unwrap_err()
+            .to_string(),
+        "linked validator entry `DbRow::into_machine()` from module `workflow` points at missing state `workflow::Machine::Missing`"
+    );
+}
+
+#[test]
+fn malformed_inventory_rejects_empty_validator_target_set() {
+    fn transitions() -> &'static [LinkedTransitionDescriptor] {
+        &[]
+    }
+
+    static STATES: [LinkedStateDescriptor; 1] = [LinkedStateDescriptor {
+        rust_name: "Draft",
+        label: None,
+        description: None,
+        has_data: false,
+    }];
+    static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
+        machine: MachineDescriptor {
+            module_path: "workflow",
+            rust_type_path: "workflow::Machine",
+        },
+        label: None,
+        description: None,
+        states: &STATES,
+        transitions: LinkedTransitionInventory::new(transitions),
+        static_links: &[],
+    }];
+    static VALIDATORS: [LinkedValidatorEntryDescriptor; 1] = [LinkedValidatorEntryDescriptor {
+        machine: MachineDescriptor {
+            module_path: "workflow",
+            rust_type_path: "workflow::Machine",
+        },
+        source_module_path: "workflow",
+        source_type_display: "DbRow",
+        target_states: &[],
+    }];
+
+    assert_eq!(
+        CodebaseDoc::try_from_linked_with_validator_entries(&LINKED, &VALIDATORS)
+            .unwrap_err()
+            .to_string(),
+        "linked validator entry `DbRow::into_machine()` from module `workflow` for machine `workflow::Machine` contains no target states"
+    );
+}
+
+#[test]
+fn malformed_inventory_rejects_duplicate_validator_target_state() {
+    fn transitions() -> &'static [LinkedTransitionDescriptor] {
+        &[]
+    }
+
+    static STATES: [LinkedStateDescriptor; 1] = [LinkedStateDescriptor {
+        rust_name: "Draft",
+        label: None,
+        description: None,
+        has_data: false,
+    }];
+    static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
+        machine: MachineDescriptor {
+            module_path: "workflow",
+            rust_type_path: "workflow::Machine",
+        },
+        label: None,
+        description: None,
+        states: &STATES,
+        transitions: LinkedTransitionInventory::new(transitions),
+        static_links: &[],
+    }];
+    static VALIDATORS: [LinkedValidatorEntryDescriptor; 1] = [LinkedValidatorEntryDescriptor {
+        machine: MachineDescriptor {
+            module_path: "workflow",
+            rust_type_path: "workflow::Machine",
+        },
+        source_module_path: "workflow",
+        source_type_display: "DbRow",
+        target_states: &["Draft", "Draft"],
+    }];
+
+    assert_eq!(
+        CodebaseDoc::try_from_linked_with_validator_entries(&LINKED, &VALIDATORS)
+            .unwrap_err()
+            .to_string(),
+        "linked validator entry `DbRow::into_machine()` from module `workflow` for machine `workflow::Machine` contains duplicate target state `Draft`"
+    );
+}
+
+#[test]
+fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
+    fn transitions() -> &'static [LinkedTransitionDescriptor] {
+        &[]
+    }
+
+    static STATES: [LinkedStateDescriptor; 1] = [LinkedStateDescriptor {
+        rust_name: "Draft",
+        label: None,
+        description: None,
+        has_data: false,
+    }];
+    static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
+        machine: MachineDescriptor {
+            module_path: "workflow",
+            rust_type_path: "workflow::Machine",
+        },
+        label: None,
+        description: None,
+        states: &STATES,
+        transitions: LinkedTransitionInventory::new(transitions),
+        static_links: &[],
+    }];
+    static VALIDATORS: [LinkedValidatorEntryDescriptor; 2] = [
+        LinkedValidatorEntryDescriptor {
+            machine: MachineDescriptor {
+                module_path: "workflow",
+                rust_type_path: "workflow::Machine",
+            },
+            source_module_path: "workflow",
+            source_type_display: "DbRow",
+            target_states: &["Draft"],
+        },
+        LinkedValidatorEntryDescriptor {
+            machine: MachineDescriptor {
+                module_path: "workflow",
+                rust_type_path: "workflow::Machine",
+            },
+            source_module_path: "workflow",
+            source_type_display: "DbRow",
+            target_states: &["Draft"],
+        },
+    ];
+
+    assert_eq!(
+        CodebaseDoc::try_from_linked_with_validator_entries(&LINKED, &VALIDATORS)
+            .unwrap_err()
+            .to_string(),
+        "linked validator entry `DbRow::into_machine()` from module `workflow` appears more than once for machine `workflow::Machine`"
     );
 }

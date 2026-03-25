@@ -277,14 +277,14 @@ pub use statum_core::__private;
 pub use statum_core::projection;
 #[doc(inline)]
 pub use statum_core::{
-    linked_machines, Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState,
-    Error, LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
-    LinkedTransitionInventory, MachineDescriptor, MachineGraph, MachineIntrospection,
-    MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
-    MachineTransitionRecorder, RebuildAttempt, RebuildReport, RecordedTransition, Rejection,
-    Result, StateDescriptor, StateMarker, StatePresentation, StaticMachineLinkDescriptor,
-    TransitionDescriptor, TransitionInventory, TransitionPresentation,
-    TransitionPresentationInventory, UnitState, Validation,
+    linked_machines, linked_validator_entries, Branch, CanTransitionMap, CanTransitionTo,
+    CanTransitionWith, DataState, Error, LinkedMachineGraph, LinkedStateDescriptor,
+    LinkedTransitionDescriptor, LinkedTransitionInventory, LinkedValidatorEntryDescriptor,
+    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
+    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder, RebuildAttempt,
+    RebuildReport, RecordedTransition, Rejection, Result, StateDescriptor, StateMarker,
+    StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
+    TransitionPresentation, TransitionPresentationInventory, UnitState, Validation,
 };
 
 /// Define the legal lifecycle phases for a machine.
@@ -419,7 +419,9 @@ pub use statum_macros::__statum_emit_validator_methods_impl;
 ///   stable rejection details alongside the normal result
 ///
 /// Machine fields are available by name inside validator bodies through
-/// generated bindings. Persisted-row fields still live on `self`.
+/// generated bindings. Persisted-row fields still live on `self`. Put `#[cfg]`
+/// or `#[cfg_attr]` on the whole `#[validators]` impl, not on individual
+/// `is_{state}` methods.
 ///
 /// ```rust
 /// use statum::{machine, state, validators, Error};

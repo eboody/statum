@@ -27,10 +27,12 @@ error[E0433]: failed to resolve: use of unresolved module or unlinked crate `mac
   --> tests/ui/invalid_transition_plain_struct_machine_name.rs:23:1
    |
 23 | #[transition]
-   | ^^^^^^^^^^^^^
-   | |
-   | use of unresolved module or unlinked crate `machine`
-   | help: a struct with a similar name exists: `Machine`
+   | ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `machine`
    |
    = help: if you wanted to use a crate named `machine`, use `cargo add machine` to add it to your `Cargo.toml`
    = note: this error originates in the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: a struct with a similar name exists
+   |
+23 - #[transition]
+23 + Machine
+   |

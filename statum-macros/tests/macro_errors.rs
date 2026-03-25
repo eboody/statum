@@ -64,6 +64,8 @@ fn test_invalid_validators_usage() {
     t.compile_fail("tests/ui/invalid_validators_plain_struct_machine_name.rs");
     t.compile_fail("tests/ui/invalid_validators_parameter_name_collision.rs");
     t.compile_fail("tests/ui/invalid_validators_declared_before_machine.rs");
+    t.compile_fail("tests/ui/invalid_validators_cfg_method.rs");
+    t.compile_fail("tests/ui/invalid_validators_cfg_attr_method.rs");
     t.compile_fail("tests/ui/invalid_legacy_superstate.rs");
     t.compile_fail("tests/ui/invalid_legacy_machine_builder.rs");
     t.compile_fail("tests/ui/invalid_legacy_machines_builder.rs");

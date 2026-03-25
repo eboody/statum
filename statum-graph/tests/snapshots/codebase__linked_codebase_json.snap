@@ -17,10 +17,11 @@ expression: "render::json(&doc)"
           "label": null,
           "description": null,
           "has_data": false,
-          "is_root": true
+          "is_graph_root": true
         }
       ],
-      "transitions": []
+      "transitions": [],
+      "validator_entries": []
     },
     {
       "index": 1,
@@ -35,7 +36,7 @@ expression: "render::json(&doc)"
           "label": null,
           "description": null,
           "has_data": true,
-          "is_root": true
+          "is_graph_root": true
         },
         {
           "index": 1,
@@ -43,7 +44,7 @@ expression: "render::json(&doc)"
           "label": null,
           "description": null,
           "has_data": false,
-          "is_root": false
+          "is_graph_root": false
         }
       ],
       "transitions": [
@@ -57,7 +58,8 @@ expression: "render::json(&doc)"
             1
           ]
         }
-      ]
+      ],
+      "validator_entries": []
     },
     {
       "index": 2,
@@ -72,7 +74,7 @@ expression: "render::json(&doc)"
           "label": null,
           "description": null,
           "has_data": false,
-          "is_root": true
+          "is_graph_root": true
         },
         {
           "index": 1,
@@ -80,7 +82,7 @@ expression: "render::json(&doc)"
           "label": "Running",
           "description": null,
           "has_data": false,
-          "is_root": false
+          "is_graph_root": false
         },
         {
           "index": 2,
@@ -88,7 +90,7 @@ expression: "render::json(&doc)"
           "label": null,
           "description": null,
           "has_data": false,
-          "is_root": false
+          "is_graph_root": false
         }
       ],
       "transitions": [
@@ -112,6 +114,18 @@ expression: "render::json(&doc)"
             2
           ]
         }
+      ],
+      "validator_entries": [
+        {
+          "index": 0,
+          "source_module_path": "codebase::task",
+          "source_type_display": "TaskRow",
+          "target_states": [
+            0,
+            1,
+            2
+          ]
+        }
       ]
     },
     {
@@ -127,7 +141,7 @@ expression: "render::json(&doc)"
           "label": null,
           "description": null,
           "has_data": false,
-          "is_root": true
+          "is_graph_root": true
         },
         {
           "index": 1,
@@ -135,7 +149,7 @@ expression: "render::json(&doc)"
           "label": "In Progress",
           "description": null,
           "has_data": true,
-          "is_root": false
+          "is_graph_root": false
         },
         {
           "index": 2,
@@ -143,7 +157,7 @@ expression: "render::json(&doc)"
           "label": null,
           "description": null,
           "has_data": false,
-          "is_root": false
+          "is_graph_root": false
         }
       ],
       "transitions": [
@@ -164,6 +178,18 @@ expression: "render::json(&doc)"
           "description": null,
           "from": 1,
           "to": [
+            2
+          ]
+        }
+      ],
+      "validator_entries": [
+        {
+          "index": 0,
+          "source_module_path": "codebase::workflow",
+          "source_type_display": "WorkflowRow",
+          "target_states": [
+            0,
+            1,
             2
           ]
         }

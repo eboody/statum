@@ -98,8 +98,15 @@ Mermaid, DOT, PlantUML, or stable JSON output.
 
 For a linked-build codebase view, `statum-graph::CodebaseDoc::linked()` also
 collects every linked compiled machine family and resolves direct machine-like
-payload links written in state data. That combined view is still static. It is
-not a whole-workspace source scan and it does not model runtime orchestration.
+payload links written in state data plus declared validator-entry surfaces from
+compiled `#[validators]` impls. That combined view is still static. It is not a
+whole-workspace source scan, it does not model runtime orchestration, and
+validator entries describe declared rebuild surfaces rather than runtime match
+outcomes. Validator node labels use the impl self type as written in source, so
+they are human-facing display syntax rather than canonical Rust type identity.
+Method-level `#[cfg]` and `#[cfg_attr]` on validator methods are rejected at
+the macro layer, so the linked validator inventory covers only supported
+compiled validator impl shapes.
 
 ## Transition Identity
 

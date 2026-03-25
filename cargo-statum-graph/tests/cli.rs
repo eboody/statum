@@ -25,9 +25,11 @@ fn codebase_command_accepts_workspace_dir_and_writes_bundle_into_workspace_root(
 
     assert!(mermaid.contains("graph TD"));
     assert!(mermaid.contains("-.->|state_data|"));
+    assert!(mermaid.contains("WorkflowRow::into_machine()"));
     assert!(dot.contains("style=dashed"));
     assert!(plantuml.contains("@startuml"));
     assert!(json.contains("\"links\""));
+    assert!(json.contains("\"validator_entries\""));
     assert!(json.contains("workflow::Machine"));
     assert!(json.contains("task::Machine"));
 }
@@ -70,7 +72,7 @@ fn write_fixture(dir: &Path) {
         "[package]\nname = \"fixture-domain\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nstatum = { workspace = true }\n";
     let domain_lib = "pub mod task {\n    use statum::{machine, state, transition};\n\n    #[state]\n    pub enum State {\n        Idle,\n        Running,\n    }\n\n    #[machine]\n    pub struct Machine<State> {}\n\n    #[transition]\n    impl Machine<Idle> {\n        pub fn start(self) -> Machine<Running> {\n            self.transition()\n        }\n    }\n}\n";
     let app_manifest = "[package]\nname = \"fixture-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nfixture-domain = { path = \"../domain\" }\nstatum = { workspace = true }\n";
-    let app_lib = "pub mod workflow {\n    use fixture_domain::task;\n    use statum::{machine, state, transition};\n\n    #[state]\n    pub enum State {\n        Draft,\n        InProgress(task::Machine<task::Running>),\n        Done,\n    }\n\n    #[machine]\n    pub struct Machine<State> {}\n\n    #[transition]\n    impl Machine<Draft> {\n        pub fn start(self, task: task::Machine<task::Running>) -> Machine<InProgress> {\n            self.transition_with(task)\n        }\n    }\n\n    #[transition]\n    impl Machine<InProgress> {\n        pub fn finish(self) -> Machine<Done> {\n            self.transition()\n        }\n    }\n}\n";
+    let app_lib = "pub mod workflow {\n    use fixture_domain::task;\n    use statum::{Error, machine, state, transition, validators};\n\n    #[state]\n    pub enum State {\n        Draft,\n        InProgress(task::Machine<task::Running>),\n        Done,\n    }\n\n    #[machine]\n    pub struct Machine<State> {}\n\n    #[transition]\n    impl Machine<Draft> {\n        pub fn start(self, task: task::Machine<task::Running>) -> Machine<InProgress> {\n            self.transition_with(task)\n        }\n    }\n\n    #[transition]\n    impl Machine<InProgress> {\n        pub fn finish(self) -> Machine<Done> {\n            self.transition()\n        }\n    }\n\n    pub struct WorkflowRow {\n        pub status: &'static str,\n    }\n\n    #[validators(Machine)]\n    impl WorkflowRow {\n        fn is_draft(&self) -> statum::Result<()> {\n            if self.status == \"draft\" {\n                Ok(())\n            } else {\n                Err(Error::InvalidState)\n            }\n        }\n\n        fn is_in_progress(&self) -> statum::Result<task::Machine<task::Running>> {\n            if self.status == \"in_progress\" {\n                Ok(task::Machine::<task::Running>::builder().build())\n            } else {\n                Err(Error::InvalidState)\n            }\n        }\n\n        fn is_done(&self) -> statum::Result<()> {\n            if self.status == \"done\" {\n                Ok(())\n            } else {\n                Err(Error::InvalidState)\n            }\n        }\n    }\n}\n";
 
     fs::create_dir_all(dir.join("crates/domain/src")).expect("fixture domain src dir");
     fs::create_dir_all(dir.join("crates/app/src")).expect("fixture app src dir");

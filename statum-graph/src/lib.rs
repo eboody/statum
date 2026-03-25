@@ -2,12 +2,15 @@
 //!
 //! This crate is authoritative only for machine-local topology:
 //! machine identity, states, transition sites, exact legal targets, and
-//! roots derivable from the static graph itself.
+//! graph roots derivable from the static graph itself.
 //!
 //! For linked-build codebase export, use [`codebase::CodebaseDoc`]. That
-//! surface combines every linked compiled machine family plus statically
-//! written direct machine-like payload links that can be resolved without
-//! runtime execution.
+//! surface combines every linked compiled machine family, statically written
+//! direct machine-like payload links, and declared validator-entry surfaces
+//! emitted by compiled `#[validators]` impls. Validator node labels use the
+//! impl self type as written in source, so they are display syntax rather than
+//! canonical Rust type identity. Method-level `#[cfg]` and `#[cfg_attr]` on
+//! validator methods are rejected at the macro layer.
 //!
 //! Use [`MachineDoc::from_machine`] for Statum-generated machine families and
 //! [`MachineDoc::try_from_graph`] when you need to validate an externally
@@ -29,7 +32,8 @@ mod export;
 pub mod render;
 
 pub use codebase::{
-    CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine, CodebaseState, CodebaseTransition,
+    CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine, CodebaseState,
+    CodebaseTransition, CodebaseValidatorEntry,
 };
 pub use export::{
     ExportDoc, ExportDocError, ExportMachine, ExportSource, ExportState, ExportTransition,
@@ -38,7 +42,7 @@ pub use export::{
 /// Static machine graph exported directly from `MachineIntrospection::GRAPH`.
 ///
 /// This type is authoritative only for machine-local topology:
-/// states, transition sites, exact legal targets, and roots derivable
+/// states, transition sites, exact legal targets, and graph roots derivable
 /// from the static graph itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MachineDoc<S: 'static, T: 'static> {

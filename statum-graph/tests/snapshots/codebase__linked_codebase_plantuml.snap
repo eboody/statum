@@ -22,6 +22,9 @@ state "Workflow Machine" as m3 {
     state "Complete" as m3_s2
 }
 
+state "TaskRow::into_machine()" as m2_v0 <<validator-entry>>
+state "WorkflowRow::into_machine()" as m3_v0 <<validator-entry>>
+
 m1_s0 --> m1_s1 : settle
 m2_s0 --> m2_s1 : Start Task
 m2_s1 --> m2_s2 : finish
@@ -30,4 +33,11 @@ m3_s1 --> m3_s2 : finish
 
 m1_s0 ..> m2_s2 : child
 m3_s1 ..> m2_s1 : state_data
+
+m2_v0 ..> m2_s0 : validator entry
+m2_v0 ..> m2_s1 : validator entry
+m2_v0 ..> m2_s2 : validator entry
+m3_v0 ..> m3_s0 : validator entry
+m3_v0 ..> m3_s1 : validator entry
+m3_v0 ..> m3_s2 : validator entry
 @enduml

@@ -340,6 +340,17 @@ pub fn linked_machines() -> &'static [LinkedMachineGraph] {
     &__STATUM_LINKED_MACHINES
 }
 
+/// Linked compiled validator-entry surfaces visible to the current build.
+#[doc(hidden)]
+#[linkme::distributed_slice]
+pub static __STATUM_LINKED_VALIDATOR_ENTRIES: [LinkedValidatorEntryDescriptor];
+
+/// Returns every linked compiled validator-entry surface visible to the current
+/// build.
+pub fn linked_validator_entries() -> &'static [LinkedValidatorEntryDescriptor] {
+    &__STATUM_LINKED_VALIDATOR_ENTRIES
+}
+
 /// Structural machine graph emitted from macro-generated metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MachineGraph<S: 'static, T: 'static> {
@@ -527,14 +538,27 @@ pub struct StaticMachineLinkDescriptor {
     pub to_state: &'static str,
 }
 
+/// One declared validator-entry surface carried by the linked build inventory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LinkedValidatorEntryDescriptor {
+    /// Rust-facing identity of the rebuilt machine family.
+    pub machine: MachineDescriptor,
+    /// `module_path!()` for the module that owns the `#[validators]` impl.
+    pub source_module_path: &'static str,
+    /// Human-facing source syntax for the persisted impl self type as written.
+    pub source_type_display: &'static str,
+    /// State marker names this `#[validators]` impl can rebuild when it matches.
+    pub target_states: &'static [&'static str],
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
-        LinkedTransitionInventory, MachineDescriptor, MachineGraph, MachineIntrospection,
-        MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
-        MachineTransitionRecorder, RecordedTransition, StateDescriptor, StatePresentation,
-        StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
+        LinkedTransitionInventory, LinkedValidatorEntryDescriptor, MachineDescriptor, MachineGraph,
+        MachineIntrospection, MachinePresentation, MachinePresentationDescriptor,
+        MachineStateIdentity, MachineTransitionRecorder, RecordedTransition, StateDescriptor,
+        StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
         TransitionPresentation, TransitionPresentationInventory,
     };
     use core::marker::PhantomData;
@@ -921,5 +945,23 @@ mod tests {
         );
         assert_eq!(linked.transitions_from("Draft").count(), 1);
         assert_eq!(linked.static_links, &LINKS);
+    }
+
+    #[test]
+    fn linked_validator_entry_descriptor_exposes_declared_surface() {
+        static ENTRY: LinkedValidatorEntryDescriptor = LinkedValidatorEntryDescriptor {
+            machine: MachineDescriptor {
+                module_path: "workflow",
+                rust_type_path: "workflow::Machine",
+            },
+            source_module_path: "workflow::rows",
+            source_type_display: "DbRow",
+            target_states: &["Draft", "Review"],
+        };
+
+        assert_eq!(ENTRY.machine.rust_type_path, "workflow::Machine");
+        assert_eq!(ENTRY.source_module_path, "workflow::rows");
+        assert_eq!(ENTRY.source_type_display, "DbRow");
+        assert_eq!(ENTRY.target_states, &["Draft", "Review"]);
     }
 }
