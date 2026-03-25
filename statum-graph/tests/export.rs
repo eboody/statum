@@ -320,6 +320,19 @@ static VALID_STATE_DESCRIPTORS: [StateDescriptor<InvalidStateId>; 2] = [
     },
 ];
 
+static DUPLICATE_STATE_DESCRIPTORS: [StateDescriptor<InvalidStateId>; 2] = [
+    StateDescriptor {
+        id: InvalidStateId::Draft,
+        rust_name: "Draft",
+        has_data: false,
+    },
+    StateDescriptor {
+        id: InvalidStateId::Draft,
+        rust_name: "DraftDuplicate",
+        has_data: false,
+    },
+];
+
 static INVALID_TARGETS: [InvalidStateId; 1] = [InvalidStateId::Missing];
 
 static INVALID_SOURCE_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>; 1] =
@@ -366,6 +379,15 @@ static INVALID_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> =
     transitions: TransitionInventory::new(invalid_target_transitions),
 };
 
+static DUPLICATE_STATE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
+    machine: MachineDescriptor {
+        module_path: "tests::duplicate_state",
+        rust_type_path: "tests::duplicate_state::Flow",
+    },
+    states: &DUPLICATE_STATE_DESCRIPTORS,
+    transitions: TransitionInventory::new(invalid_target_transitions),
+};
+
 #[test]
 fn rejects_external_graph_with_missing_transition_source() {
     assert_eq!(
@@ -384,6 +406,17 @@ fn rejects_external_graph_with_missing_transition_target() {
         Err(MachineDocError::MissingTargetState {
             machine: "tests::invalid_target::Flow",
             transition: "submit",
+        })
+    );
+}
+
+#[test]
+fn rejects_external_graph_with_duplicate_state_ids() {
+    assert_eq!(
+        MachineDoc::try_from_graph(&DUPLICATE_STATE_GRAPH),
+        Err(MachineDocError::DuplicateStateId {
+            machine: "tests::duplicate_state::Flow",
+            state: "DraftDuplicate",
         })
     );
 }

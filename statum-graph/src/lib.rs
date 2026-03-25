@@ -30,6 +30,11 @@ pub struct MachineDoc<S: 'static, T: 'static> {
 /// Error returned when a `MachineGraph` cannot be exported into a `MachineDoc`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MachineDocError {
+    /// One state id appears more than once in the graph's state list.
+    DuplicateStateId {
+        machine: &'static str,
+        state: &'static str,
+    },
     /// One transition source state is not present in the graph's state list.
     MissingSourceState {
         machine: &'static str,
@@ -45,6 +50,10 @@ pub enum MachineDocError {
 impl core::fmt::Display for MachineDocError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::DuplicateStateId { machine, state } => write!(
+                formatter,
+                "machine graph `{machine}` contains duplicate state id for state `{state}`"
+            ),
             Self::MissingSourceState {
                 machine,
                 transition,
@@ -175,11 +184,21 @@ pub struct EdgeDoc<S: 'static, T: 'static> {
 
 fn validate_graph<S, T>(graph: &MachineGraph<S, T>) -> Result<(), MachineDocError>
 where
-    S: Copy + Eq + 'static,
+    S: Copy + Eq + std::hash::Hash + 'static,
     T: Copy + Eq + 'static,
 {
+    let mut state_ids = HashSet::with_capacity(graph.states.len());
+    for state in graph.states.iter() {
+        if !state_ids.insert(state.id) {
+            return Err(MachineDocError::DuplicateStateId {
+                machine: graph.machine.rust_type_path,
+                state: state.rust_name,
+            });
+        }
+    }
+
     for transition in graph.transitions.iter() {
-        if graph.state(transition.from).is_none() {
+        if !state_ids.contains(&transition.from) {
             return Err(MachineDocError::MissingSourceState {
                 machine: graph.machine.rust_type_path,
                 transition: transition.method_name,
@@ -190,7 +209,7 @@ where
             .to
             .iter()
             .copied()
-            .any(|target| graph.state(target).is_none())
+            .any(|target| !state_ids.contains(&target))
         {
             return Err(MachineDocError::MissingTargetState {
                 machine: graph.machine.rust_type_path,
