@@ -33,8 +33,8 @@ where
 
     for edge in &doc.edges {
         let from = node_id(state_positions[&edge.descriptor.from]);
-        for target in edge.descriptor.to.iter().copied() {
-            let to = node_id(state_positions[&target]);
+        for target in edge.descriptor.to {
+            let to = node_id(state_positions[target]);
             lines.push(format!(
                 "    {from} -->|{}| {to}",
                 escape_label(edge.descriptor.method_name)
