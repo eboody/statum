@@ -1,15 +1,15 @@
 error: Failed to resolve the #[state] enum for machine `WorkflowMachine`.
        Expected a `#[state]` enum named `WorkflowState` in module `invalid_machine_declared_before_state`.
        Statum only resolves `#[state]` enums that have already expanded before this `#[machine]` declaration.
-       Source scan found `#[state]` enum `WorkflowState` later in this module on line 17. If that item is active for this build, move it above machine `WorkflowMachine` because Statum resolves these relationships in expansion order.
+       Source scan found `#[state]` enum `WorkflowState` later in this module on line 18. If that item is active for this build, move it above machine `WorkflowMachine` because Statum resolves these relationships in expansion order.
        No plain enum with that expected name was found in that module either.
        No same-named `#[state]` enums were found in other modules of this file.
-       Available `#[state]` enums in that module: `WorkflowState` in `invalid_machine_declared_before_state` (line 17).
+       Available `#[state]` enums in that module: `WorkflowState` in `invalid_machine_declared_before_state` (line 18).
        Help: make sure the machine's first generic names the right `#[state]` enum in this module and declare that `#[state]` enum before the machine.
        Correct shape: `struct WorkflowMachine<ExpectedState> { ... }` where `ExpectedState` is a `#[state]` enum in `invalid_machine_declared_before_state`.
-  --> tests/ui/invalid_machine_declared_before_state.rs:13:1
+  --> tests/ui/invalid_machine_declared_before_state.rs:14:1
    |
-13 | #[machine]
+14 | #[machine]
    | ^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

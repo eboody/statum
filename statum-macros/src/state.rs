@@ -2,7 +2,7 @@ use macro_registry::callsite::{current_source_file, module_path_for_line};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::sync::{OnceLock, RwLock};
-use syn::{Fields, Ident, Item, ItemEnum, Path, Type, Visibility};
+use syn::{Expr, Fields, Ident, Item, ItemEnum, LitStr, Path, Type, Visibility};
 
 use crate::{
     ItemTarget, ModulePath, SourceFingerprint, crate_root_for_file, current_crate_root,
@@ -24,14 +24,6 @@ pub struct EnumInfo {
     pub crate_root: Option<String>,
     pub file_fingerprint: Option<SourceFingerprint>,
     pub line_number: usize,
-}
-
-impl EnumInfo {
-    pub fn get_variant_from_name(&self, variant_name: &str) -> Option<&VariantInfo> {
-        self.variants
-            .iter()
-            .find(|v| v.name == variant_name || to_snake_case(&v.name) == variant_name)
-    }
 }
 
 #[derive(Clone)]
@@ -72,6 +64,14 @@ pub fn to_snake_case(s: &str) -> String {
 
 pub type StateModulePath = ModulePath;
 
+pub(crate) fn state_family_visitor_macro_ident(state_name: &str) -> Ident {
+    format_ident!("__statum_visit_{}_family", to_snake_case(state_name))
+}
+
+pub(crate) fn state_family_target_resolver_macro_ident(state_name: &str) -> Ident {
+    format_ident!("__statum_resolve_{}_target", to_snake_case(state_name))
+}
+
 impl EnumInfo {
     pub fn get_trait_name(&self) -> Ident {
         format_ident!("{}Trait", self.name)
@@ -89,7 +89,6 @@ impl EnumInfo {
             variants.push(ParsedVariantInfo {
                 name: variant.name.clone(),
                 shape: variant.parse_shape()?,
-                presentation: variant.presentation.clone(),
             });
         }
 
@@ -156,7 +155,6 @@ pub(crate) struct ParsedEnumInfo {
 pub(crate) struct ParsedVariantInfo {
     pub(crate) name: String,
     pub(crate) shape: ParsedVariantShape,
-    pub(crate) presentation: Option<PresentationAttr>,
 }
 
 pub(crate) enum ParsedVariantShape {
@@ -548,7 +546,11 @@ fn cfg_like_attr_name(attrs: &[syn::Attribute]) -> Option<&'static str> {
 }
 
 pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {
+    let family_ident = format_ident!("{}", enum_info.name);
     let state_trait_ident = enum_info.get_trait_name();
+    let visitor_macro_ident = state_family_visitor_macro_ident(&enum_info.name);
+    let target_resolver_macro_ident = state_family_target_resolver_macro_ident(&enum_info.name);
+    let family_name = LitStr::new(&enum_info.name, proc_macro2::Span::call_site());
     let parsed_enum = match enum_info.parse() {
         Ok(parsed) => parsed,
         Err(err) => return err,
@@ -564,6 +566,7 @@ pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {
     // Generate one struct and implementation per variant
     for variant in parsed_enum.variants {
         let variant_name = format_ident!("{}", variant.name);
+        let variant_name_lit = LitStr::new(&variant.name, proc_macro2::Span::call_site());
         let variant_derives = if derive_tokens.is_empty() {
             quote! {}
         } else {
@@ -576,12 +579,15 @@ pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {
                     #variant_derives
                     #vis struct #variant_name;
 
-                    impl #state_trait_ident for #variant_name {
-                        type Data = ();
-                    }
+                    impl #state_trait_ident for #variant_name {}
 
                     impl statum::StateMarker for #variant_name {
                         type Data = ();
+                    }
+
+                    impl statum::__private::StateFamilyMember for #variant_name {
+                        const RUST_NAME: &'static str = #variant_name_lit;
+                        const HAS_DATA: bool = false;
                     }
 
                     impl statum::UnitState for #variant_name {}
@@ -592,12 +598,15 @@ pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {
                     #variant_derives
                     #vis struct #variant_name (pub #data_type);
 
-                    impl #state_trait_ident for #variant_name {
-                        type Data = #data_type;
-                    }
+                    impl #state_trait_ident for #variant_name {}
 
                     impl statum::StateMarker for #variant_name {
                         type Data = #data_type;
+                    }
+
+                    impl statum::__private::StateFamilyMember for #variant_name {
+                        const RUST_NAME: &'static str = #variant_name_lit;
+                        const HAS_DATA: bool = true;
                     }
 
                     impl statum::DataState for #variant_name {}
@@ -622,12 +631,15 @@ pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {
                     #variant_derives
                     #vis struct #variant_name (pub #data_struct_ident);
 
-                    impl #state_trait_ident for #variant_name {
-                        type Data = #data_struct_ident;
-                    }
+                    impl #state_trait_ident for #variant_name {}
 
                     impl statum::StateMarker for #variant_name {
                         type Data = #data_struct_ident;
+                    }
+
+                    impl statum::__private::StateFamilyMember for #variant_name {
+                        const RUST_NAME: &'static str = #variant_name_lit;
+                        const HAS_DATA: bool = true;
                     }
 
                     impl statum::DataState for #variant_name {}
@@ -639,25 +651,120 @@ pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {
 
     let state_trait = quote! {
         #enum_info
-        #vis trait #state_trait_ident {
-            type Data;
-        }
+        #vis trait #state_trait_ident: statum::StateMarker {}
     };
 
     let uninitialized_state_name = format_ident!("Uninitialized{}", enum_info.name);
+    let uninitialized_state_lit = LitStr::new(
+        &format!("Uninitialized{}", enum_info.name),
+        proc_macro2::Span::call_site(),
+    );
 
+    let uninitialized_derives = if derive_tokens.is_empty() {
+        quote! {}
+    } else {
+        quote! { #[derive(#(#derive_tokens),*)] }
+    };
     let uninitialized_state = quote! {
+        #uninitialized_derives
         pub struct #uninitialized_state_name;
 
-        impl #state_trait_ident for #uninitialized_state_name {
-            type Data = ();
-        }
+        impl #state_trait_ident for #uninitialized_state_name {}
 
         impl statum::StateMarker for #uninitialized_state_name {
             type Data = ();
         }
 
+        impl statum::__private::StateFamilyMember for #uninitialized_state_name {
+            const RUST_NAME: &'static str = #uninitialized_state_lit;
+            const HAS_DATA: bool = false;
+        }
+
         impl statum::UnitState for #uninitialized_state_name {}
+    };
+
+    let visitor_entries = match enum_info
+        .variants
+        .iter()
+        .map(|variant| {
+            let marker_ident = format_ident!("{}", variant.name);
+            let is_fn_ident = format_ident!("is_{}", to_snake_case(&variant.name));
+            let rust_name = LitStr::new(&variant.name, proc_macro2::Span::call_site());
+            let has_data = !matches!(variant.shape, VariantShape::Unit);
+            let (presentation, has_presentation, has_metadata) =
+                match presentation_tokens_for_visitor(variant.presentation.as_ref()) {
+                Ok(tokens) => tokens,
+                Err(err) => return Err(err),
+            };
+            let data_ty = match variant.parse_data_type() {
+                Ok(Some(data_ty)) => quote! { #data_ty },
+                Ok(None) => quote! { () },
+                Err(err) => return Err(err),
+            };
+
+            Ok(quote! {
+                {
+                    marker = #marker_ident,
+                    is_fn = #is_fn_ident,
+                    data = #data_ty,
+                    rust_name = #rust_name,
+                    has_data = #has_data,
+                    has_presentation = #has_presentation,
+                    has_metadata = #has_metadata,
+                    presentation = #presentation
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(entries) => entries,
+        Err(err) => return err,
+    };
+    let target_resolver_arms = enum_info.variants.iter().map(|variant| {
+        let marker_ident = format_ident!("{}", variant.name);
+        let has_data = !matches!(variant.shape, VariantShape::Unit);
+
+        quote! {
+            ($callback:ident, #marker_ident) => {
+                $callback! {
+                    target = #marker_ident,
+                    has_data = #has_data
+                }
+            };
+        }
+    });
+    let variant_count = visitor_entries.len();
+    let state_family_support = quote! {
+        impl statum::__private::StateFamily for #family_ident {
+            const NAME: &'static str = #family_name;
+            const VARIANT_COUNT: usize = #variant_count;
+        }
+
+        #[doc(hidden)]
+        macro_rules! #visitor_macro_ident {
+            ($callback:ident) => {
+                $callback! {
+                    family = #family_ident,
+                    state_trait = #state_trait_ident,
+                    uninitialized = #uninitialized_state_name,
+                    variants = [
+                        #(#visitor_entries),*
+                    ],
+                }
+            };
+        }
+
+        #[doc(hidden)]
+        macro_rules! #target_resolver_macro_ident {
+            #(#target_resolver_arms)*
+            ($callback:ident, $unknown:ident) => {
+                compile_error!(concat!(
+                    "Error: transition target `",
+                    stringify!($unknown),
+                    "` is not a variant of the machine's linked `#[state]` family."
+                ));
+            };
+        }
     };
 
     // Generate the trait definition and include all variant structs
@@ -667,6 +774,57 @@ pub fn generate_state_impls(enum_info: &EnumInfo) -> proc_macro2::TokenStream {
         #(#variant_structs)*
 
         #uninitialized_state
+        #state_family_support
+    }
+}
+
+fn presentation_tokens_for_visitor(
+    presentation: Option<&PresentationAttr>,
+) -> Result<(proc_macro2::TokenStream, bool, bool), TokenStream> {
+    let Some(presentation) = presentation else {
+        return Ok((
+            quote! {
+                {
+                    label = None,
+                    description = None,
+                    metadata = (())
+                }
+            },
+            false,
+            false,
+        ));
+    };
+
+    let label = optional_lit_str_option_tokens(presentation.label.as_deref());
+    let description = optional_lit_str_option_tokens(presentation.description.as_deref());
+    let (metadata, has_metadata) = match presentation.metadata.as_deref() {
+        Some(metadata_expr) => {
+            let metadata = syn::parse_str::<Expr>(metadata_expr).map_err(|err| err.to_compile_error())?;
+            (quote! { (#metadata) }, true)
+        }
+        None => (quote! { (()) }, false),
+    };
+
+    Ok((
+        quote! {
+        {
+            label = #label,
+            description = #description,
+            metadata = #metadata
+        }
+    },
+        true,
+        has_metadata,
+    ))
+}
+
+fn optional_lit_str_option_tokens(value: Option<&str>) -> proc_macro2::TokenStream {
+    match value {
+        Some(value) => {
+            let lit = LitStr::new(value, proc_macro2::Span::call_site());
+            quote! { Some(#lit) }
+        }
+        None => quote! { None },
     }
 }
 pub fn validate_state_enum(item: &ItemEnum) -> Option<TokenStream> {
@@ -682,7 +840,10 @@ mod tests {
     use quote::ToTokens;
     use syn::parse_quote;
 
-    use super::{EnumInfo, ParsedVariantShape, StateModulePath, VariantShape};
+    use super::{
+        EnumInfo, ParsedVariantShape, StateModulePath, VariantShape,
+        state_family_visitor_macro_ident,
+    };
 
     #[test]
     fn parse_round_trips_variant_payloads() {
@@ -767,5 +928,13 @@ mod tests {
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0].ident.to_string(), "reviewer");
         assert_eq!(fields[0].field_type.to_token_stream().to_string(), "String");
+    }
+
+    #[test]
+    fn state_family_visitor_macro_name_tracks_state_name() {
+        assert_eq!(
+            state_family_visitor_macro_ident("WorkflowState").to_string(),
+            "__statum_visit_workflow_state_family"
+        );
     }
 }

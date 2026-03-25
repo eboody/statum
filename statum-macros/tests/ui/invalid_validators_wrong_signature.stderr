@@ -2,14 +2,14 @@ error: Error: validator `is_draft` for `impl DbRow` rebuilding `TaskMachine` sta
        Found parameters: `(& self, extra : u8)`.
        Validator methods do not accept explicit machine-field parameters.
        Machine `TaskMachine` injects these fields by bare name inside validator bodies: `name`. Remove explicit parameters and use those bindings directly.
-       Correct shapes: `fn is_draft(&self) -> Result<(), _>` or `fn is_draft(&self) -> Validation<()>`.
-  --> tests/ui/invalid_validators_wrong_signature.rs:30:24
+       Correct shapes: `fn is_draft(&self) -> Result<T, _>` or `fn is_draft(&self) -> Validation<T>`.
+  --> tests/ui/invalid_validators_wrong_signature.rs:31:24
    |
-30 |     fn is_draft(&self, extra: u8) -> Result<(), statum_core::Error> {
+31 |     fn is_draft(&self, extra: u8) -> Result<(), statum_core::Error> {
    |                        ^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_validators_wrong_signature.rs:39:2
+  --> tests/ui/invalid_validators_wrong_signature.rs:40:2
    |
-39 | }
+40 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_wrong_signature.rs`

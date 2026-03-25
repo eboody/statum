@@ -395,6 +395,8 @@ pub use statum_macros::machine;
 /// ```
 pub use statum_macros::transition;
 
+#[doc(hidden)]
+pub use statum_macros::__statum_emit_validator_methods_impl;
 /// Rebuild typed machines from persisted data.
 ///
 /// `#[validators(Machine)]` is attached to an `impl PersistedRow` block. Statum

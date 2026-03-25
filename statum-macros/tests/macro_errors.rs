@@ -47,7 +47,6 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_transition_foreign_same_leaf_machine.rs");
     t.compile_fail("tests/ui/invalid_transition_self_qualified_machine.rs");
     t.compile_fail("tests/ui/invalid_transition_map_undeclared_edge.rs");
-    t.compile_fail("tests/ui/invalid_transition_include_ambiguous_machine_name.rs");
     t.compile_fail("tests/ui/invalid_legacy_transition_helper_trait.rs");
 }
 
@@ -77,11 +76,17 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_state_unit_only.rs");
     t.pass("tests/ui/valid_state_with_data.rs");
     t.pass("tests/ui/valid_state_named_fields.rs");
+    t.pass("tests/ui/valid_state_family_support.rs");
+    t.pass("tests/ui/valid_state_family_support_via_macro.rs");
+    t.pass("tests/ui/valid_state_family_support_via_include.rs");
     t.pass("tests/ui/valid_machine_borrowed_data.rs");
     t.pass("tests/ui/valid_machine_extra_generics.rs");
     t.pass("tests/ui/valid_machine_no_fields.rs");
+    t.pass("tests/ui/valid_machine_supported_derives.rs");
+    t.pass("tests/ui/valid_machine_validator_contract.rs");
     t.pass("tests/ui/valid_machine_state_surface.rs");
     t.pass("tests/ui/valid_validators_sync.rs");
+    t.pass("tests/ui/valid_validators_via_macro_state.rs");
     t.pass("tests/ui/valid_validators_result_aliases.rs");
     t.pass("tests/ui/valid_validators_diagnostic_returns.rs");
     t.pass("tests/ui/valid_validators_generic_payload.rs");
@@ -91,6 +96,7 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_same_names_different_modules.rs");
     t.pass("tests/ui/valid_transition_nested_wrappers.rs");
     t.pass("tests/ui/valid_transition_branch.rs");
+    t.pass("tests/ui/valid_transition_include.rs");
     t.pass("tests/ui/valid_into_machines_by.rs");
     t.pass("tests/ui/valid_transition_map.rs");
     t.pass("tests/ui/valid_machine_introspection.rs");

@@ -39,11 +39,6 @@ pub(crate) use syntax::{
     extract_derives, source_file_fingerprint,
 };
 
-use crate::{
-    LoadedMachineLookupFailure, MachinePath, ambiguous_transition_machine_error,
-    ambiguous_transition_machine_fallback_error, lookup_loaded_machine_in_module,
-    lookup_unique_loaded_machine_by_name,
-};
 use macro_registry::callsite::{current_module_path_at_line, current_module_path_opt};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
@@ -137,58 +132,12 @@ pub fn transition(
         Err(err) => return err.into(),
     };
 
-    let module_path = match resolved_current_module_path(tr_impl.machine_span, "#[transition]") {
-        Ok(path) => path,
-        Err(err) => return err,
-    };
-
-    let machine_path: MachinePath = module_path.clone().into();
-    let machine_info_owned =
-        match lookup_loaded_machine_in_module(&machine_path, &tr_impl.machine_name) {
-            Ok(info) => Some(info),
-            Err(LoadedMachineLookupFailure::Ambiguous(candidates)) => {
-                return ambiguous_transition_machine_error(
-                    &tr_impl.machine_name,
-                    &module_path,
-                    &candidates,
-                    tr_impl.machine_span,
-                )
-                .into();
-            }
-            Err(LoadedMachineLookupFailure::NotFound) => {
-                match lookup_unique_loaded_machine_by_name(&tr_impl.machine_name) {
-                    Ok(info) => Some(info),
-                    Err(LoadedMachineLookupFailure::Ambiguous(candidates)) => {
-                        return ambiguous_transition_machine_fallback_error(
-                            &tr_impl.machine_name,
-                            &module_path,
-                            &candidates,
-                            tr_impl.machine_span,
-                        )
-                        .into();
-                    }
-                    Err(LoadedMachineLookupFailure::NotFound) => None,
-                }
-            }
-        };
-    let machine_info = match machine_info_owned.as_ref() {
-        Some(info) => info,
-        None => {
-            return missing_transition_machine_error(
-                &tr_impl.machine_name,
-                &module_path,
-                tr_impl.machine_span,
-            )
-            .into();
-        }
-    };
-
-    if let Some(err) = validate_transition_functions(&tr_impl, machine_info) {
+    if let Some(err) = validate_transition_functions(&tr_impl) {
         return err.into();
     }
 
     // -- Step 3: Generate new code
-    let expanded = generate_transition_impl(&input, &tr_impl, machine_info);
+    let expanded = generate_transition_impl(&input, &tr_impl);
 
     // Combine expanded code with the original `impl` if needed
     // or simply return the expanded code
@@ -211,6 +160,12 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(err) => return err,
     };
     parse_validators(attr, item, &module_path)
+}
+
+#[doc(hidden)]
+#[proc_macro]
+pub fn __statum_emit_validator_methods_impl(input: TokenStream) -> TokenStream {
+    validators::emit_validator_methods_impl(input)
 }
 
 fn resolved_current_module_path(span: Span, macro_name: &str) -> Result<String, TokenStream> {

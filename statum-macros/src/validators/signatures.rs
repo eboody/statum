@@ -2,21 +2,23 @@ use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{FnArg, GenericArgument, Ident, Pat, PathArguments, ReturnType, Type};
 
-use super::type_equivalence::types_equivalent;
-
 pub(super) struct ValidatorDiagnosticContext<'a> {
     pub(super) persisted_type_display: &'a str,
     pub(super) machine_name: &'a str,
     pub(super) state_enum_name: &'a str,
     pub(super) variant_name: &'a str,
-    pub(super) machine_fields: &'a [Ident],
-    pub(super) expected_ok_type: &'a Type,
+    pub(super) machine_fields: Option<&'a [Ident]>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ValidatorReturnKind {
+pub(crate) enum ValidatorReturnKind {
     Plain,
     Diagnostic,
+}
+
+pub(super) struct AnalyzedValidatorReturn {
+    pub(super) ok_type: Type,
+    pub(super) return_kind: ValidatorReturnKind,
 }
 
 pub(super) fn validator_state_name_from_ident(ident: &Ident) -> Option<String> {
@@ -32,7 +34,8 @@ pub(super) fn validate_validator_signature(
 ) -> Result<(), proc_macro2::TokenStream> {
     if func.sig.inputs.len() != 1 {
         let collision_line = explicit_param_collision_line(&func.sig.inputs, context.machine_fields);
-        let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
+        let expected_signature = expected_validator_signature(&func.sig.ident);
+        let injected_fields_line = injected_machine_fields_line(context.machine_name, context.machine_fields);
         let message = format!(
             "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must declare only `&self`.\nFound parameters: `({})`.\n{}\n{}\nCorrect shapes: {expected_signature}.",
             func.sig.ident,
@@ -50,7 +53,7 @@ pub(super) fn validate_validator_signature(
             collision_line.unwrap_or_else(|| {
                 "Validator methods do not accept explicit machine-field parameters.".to_string()
             }),
-            injected_machine_fields_line(context.machine_name, context.machine_fields),
+            injected_fields_line,
         );
         let error = if let Some(extra_input) = func.sig.inputs.iter().nth(1) {
             syn::Error::new_spanned(extra_input, message)
@@ -63,7 +66,9 @@ pub(super) fn validate_validator_signature(
         FnArg::Receiver(receiver) => {
             if receiver.reference.is_none() || receiver.mutability.is_some() {
                 let receiver_display = receiver.to_token_stream().to_string();
-                let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
+                let expected_signature = expected_validator_signature(&func.sig.ident);
+                let injected_fields_line =
+                    injected_machine_fields_line(context.machine_name, context.machine_fields);
                 let message = format!(
                     "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self`, not `{}`.\n{}\nCorrect shapes: {expected_signature}.",
                     func.sig.ident,
@@ -72,13 +77,15 @@ pub(super) fn validate_validator_signature(
                     context.state_enum_name,
                     context.variant_name,
                     receiver_display,
-                    injected_machine_fields_line(context.machine_name, context.machine_fields),
+                    injected_fields_line,
                 );
                 return Err(syn::Error::new_spanned(receiver, message).to_compile_error());
             }
         }
         FnArg::Typed(_) => {
-            let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
+            let expected_signature = expected_validator_signature(&func.sig.ident);
+            let injected_fields_line =
+                injected_machine_fields_line(context.machine_name, context.machine_fields);
             let message = format!(
                 "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self` as its receiver.\n{}\nCorrect shapes: {expected_signature}.",
                 func.sig.ident,
@@ -86,7 +93,7 @@ pub(super) fn validate_validator_signature(
                 context.machine_name,
                 context.state_enum_name,
                 context.variant_name,
-                injected_machine_fields_line(context.machine_name, context.machine_fields),
+                injected_fields_line,
             );
             return Err(syn::Error::new_spanned(&func.sig.inputs[0], message).to_compile_error());
         }
@@ -94,23 +101,20 @@ pub(super) fn validate_validator_signature(
     Ok(())
 }
 
-pub(super) fn validate_validator_return_type(
+pub(super) fn analyze_validator_return_type(
     func: &syn::ImplItemFn,
-    expected_ok_type: &Type,
     context: &ValidatorDiagnosticContext<'_>,
-) -> Result<ValidatorReturnKind, TokenStream> {
+) -> Result<AnalyzedValidatorReturn, TokenStream> {
     let ReturnType::Type(_, return_ty) = &func.sig.output else {
-        let expected_ok_display = expected_ok_type.to_token_stream().to_string();
         let message = format!(
-            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` or `Validation<{}>`.\n{}.",
+            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return a supported validator result.\nSupported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, aliases like `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`.\nThe payload `T` must match the authoritative state data for `{}::{}`.",
             func.sig.ident,
             context.persisted_type_display,
             context.machine_name,
             context.state_enum_name,
             context.variant_name,
-            expected_ok_display,
-            expected_ok_display,
-            expected_state_shape(context.state_enum_name, context.variant_name, &expected_ok_display),
+            context.state_enum_name,
+            context.variant_name,
         );
         return Err(syn::Error::new_spanned(&func.sig.output, message).to_compile_error());
     };
@@ -118,44 +122,34 @@ pub(super) fn validate_validator_return_type(
     let (actual_ok_ty, return_kind) = match extract_supported_validator_ok_type(return_ty) {
         Some(info) => info,
         None => {
-            let expected_ok_display = expected_ok_type.to_token_stream().to_string();
             let message = format!(
-                "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return a supported validator result whose payload is `{}`.\nFound return type `{}`.\nSupported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, aliases like `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`.",
+                "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return a supported validator result.\nFound return type `{}`.\nSupported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, aliases like `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`.\nThe payload `T` must match the authoritative state data for `{}::{}`.",
                 func.sig.ident,
                 context.persisted_type_display,
                 context.machine_name,
                 context.state_enum_name,
                 context.variant_name,
-                expected_ok_display,
                 return_ty.to_token_stream(),
+                context.state_enum_name,
+                context.variant_name,
             );
             return Err(syn::Error::new_spanned(return_ty, message).to_compile_error());
         }
     };
 
-    if !types_equivalent(&actual_ok_ty, expected_ok_type) {
-        let expected_ok_display = expected_ok_type.to_token_stream().to_string();
-        let actual_return_type = return_ty.to_token_stream().to_string();
-        let actual_ok_display = actual_ok_ty.to_token_stream().to_string();
-        let message = format!(
-            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` or `Validation<{}>` (or an equivalent supported alias), but found `{}` with payload `{}`.",
-            func.sig.ident,
-            context.persisted_type_display,
-            context.machine_name,
-            context.state_enum_name,
-            context.variant_name,
-            expected_ok_display,
-            expected_ok_display,
-            actual_return_type,
-            actual_ok_display,
-        );
-        return Err(syn::Error::new_spanned(return_ty, message).to_compile_error());
-    }
-
-    Ok(return_kind)
+    Ok(AnalyzedValidatorReturn {
+        ok_type: actual_ok_ty,
+        return_kind,
+    })
 }
 
-fn injected_machine_fields_line(machine_name: &str, machine_fields: &[Ident]) -> String {
+fn injected_machine_fields_line(machine_name: &str, machine_fields: Option<&[Ident]>) -> String {
+    let Some(machine_fields) = machine_fields else {
+        return format!(
+            "Machine `{machine_name}` injects its fields by bare name inside validator bodies. Remove explicit parameters and use those bindings directly."
+        );
+    };
+
     if machine_fields.is_empty() {
         format!(
             "Machine `{machine_name}` has no user-defined fields to inject, so validator methods should not take any extra parameters."
@@ -172,18 +166,17 @@ fn injected_machine_fields_line(machine_name: &str, machine_fields: &[Ident]) ->
     }
 }
 
-fn expected_validator_signature(func_ident: &Ident, expected_ok_type: &Type) -> String {
+fn expected_validator_signature(func_ident: &Ident) -> String {
     format!(
-        "`fn {func_ident}(&self) -> Result<{}, _>` or `fn {func_ident}(&self) -> Validation<{}>`",
-        expected_ok_type.to_token_stream(),
-        expected_ok_type.to_token_stream()
+        "`fn {func_ident}(&self) -> Result<T, _>` or `fn {func_ident}(&self) -> Validation<T>`"
     )
 }
 
 fn explicit_param_collision_line(
     inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>,
-    machine_fields: &[Ident],
+    machine_fields: Option<&[Ident]>,
 ) -> Option<String> {
+    let machine_fields = machine_fields?;
     let collisions = inputs
         .iter()
         .skip(1)
@@ -211,14 +204,6 @@ fn explicit_param_collision_line(
             if collisions.len() == 1 { "collides" } else { "collide" },
             if collisions.len() == 1 { "binding" } else { "bindings" }
         ))
-    }
-}
-
-fn expected_state_shape(state_enum_name: &str, variant_name: &str, expected_ok_display: &str) -> String {
-    if expected_ok_display == "()" {
-        format!("`{state_enum_name}::{variant_name}` is a unit state")
-    } else {
-        format!("`{state_enum_name}::{variant_name}` carries `{expected_ok_display}`")
     }
 }
 

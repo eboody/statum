@@ -1,8 +1,8 @@
 error[E0599]: no method named `machine_builder` found for struct `Row` in the current scope
-  --> tests/ui/invalid_legacy_machine_builder.rs:53:17
+  --> tests/ui/invalid_legacy_machine_builder.rs:54:17
    |
-26 | struct Row {
+27 | struct Row {
    | ---------- method `machine_builder` not found for this struct
 ...
-53 |     let _ = row.machine_builder().name("todo".to_string()).build();
+54 |     let _ = row.machine_builder().name("todo".to_string()).build();
    |                 ^^^^^^^^^^^^^^^ method not found in `Row`

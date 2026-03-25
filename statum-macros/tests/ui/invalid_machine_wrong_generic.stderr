@@ -1,13 +1,12 @@
-error: Error: machine `Machine` uses `S : Clone` as its state generic, but the `#[state]` enum in this module is `MachineState`.
-       Fix: declare `Machine<MachineState>`.
-       Found: `struct Machine< S : Clone > { ... }`.
-  --> tests/ui/invalid_machine_wrong_generic.rs:20:16
+error: Error: machine `Machine` must use a plain type parameter as its first generic so Statum can link it to the generated state-family contract.
+       Fix: declare `Machine<State>` where `State` is your `#[state]` enum.
+  --> tests/ui/invalid_machine_wrong_generic.rs:21:16
    |
-20 | struct Machine<S: Clone> {
+21 | struct Machine<S: Clone> {
    |                ^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_machine_wrong_generic.rs:22:2
+  --> tests/ui/invalid_machine_wrong_generic.rs:23:2
    |
-22 | }
+23 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_wrong_generic.rs`

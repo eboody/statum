@@ -226,8 +226,9 @@ impl DbRow {
     fn is_in_review(&self) -> statum::Result<ReviewData> {
         let _ = &name;
         if matches!(self.status, Status::InReview) {
+            let current_client = client;
             Ok(ReviewData {
-                reviewer: format!("reviewer-for-{client}"),
+                reviewer: format!("reviewer-for-{current_client}"),
             })
         } else {
             Err(statum::Error::InvalidState)
@@ -270,6 +271,10 @@ Key details:
 
 - Validator methods run against your persisted type and return either `statum::Result<T>` for simple yes/no membership or `statum::Validation<T>` when a failed match should carry a stable reason key and optional message into rebuild reports.
 - Machine fields are available by name inside validator methods through generated bindings, so `client` and `name` are usable without boilerplate parameter plumbing. Persisted-row fields still live on `self`.
+
+> Note
+> Generated machine-field bindings are rewritten in normal validator expressions, but not inside nested macro token trees such as `format!` or `println!`. If you need to use a machine field there, bind it to a local first, then pass the local into the macro.
+
 - Unit states return `statum::Result<()>` or `statum::Validation<()>`; data-bearing states return `statum::Result<StateData>` or `statum::Validation<StateData>`.
 - `.build_report()` and `.build_reports()` keep the same rebuild semantics as `.build()`, but they also record validator attempts in order. Diagnostic validators populate `RebuildAttempt.reason_key` and `RebuildAttempt.message`.
 - `.build()` returns the generated wrapper enum, which you can match as `task_machine::SomeState`.

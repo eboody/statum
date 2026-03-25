@@ -33,13 +33,6 @@ pub struct MachineInfo {
 }
 
 impl MachineInfo {
-    pub fn field_names(&self) -> Vec<Ident> {
-        self.fields
-            .iter()
-            .map(|field| format_ident!("{}", field.name))
-            .collect()
-    }
-
     pub(crate) fn parse(&self) -> Result<ParsedMachineInfo, TokenStream> {
         let vis = syn::parse_str::<Visibility>(&self.vis).map_err(|err| err.to_compile_error())?;
         let generics =

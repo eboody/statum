@@ -1,13 +1,13 @@
 error: Error: #[machine] struct `WorkflowMachine` field `hidden` uses `#[cfg]`, but Statum does not support conditionally compiled machine fields.
        Fix: move the cfg gate to the whole `#[machine]` item or split cfg-specific field sets into separate machines.
-  --> tests/ui/invalid_machine_cfg_field.rs:21:5
+  --> tests/ui/invalid_machine_cfg_field.rs:22:5
    |
-21 | /     #[cfg(any())]
-22 | |     hidden: &'static str,
+22 | /     #[cfg(any())]
+23 | |     hidden: &'static str,
    | |________________________^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_machine_cfg_field.rs:23:2
+  --> tests/ui/invalid_machine_cfg_field.rs:24:2
    |
-23 | }
+24 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_cfg_field.rs`

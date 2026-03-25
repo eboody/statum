@@ -1,12 +1,12 @@
 error: Error: #[state] must be applied to an enum, but `NotAnEnum` is a struct.
        Fix: declare `enum NotAnEnum { ... }` with unit variants like `Draft` or single-payload variants like `InReview(ReviewData)`, or remove `#[state]`.
-  --> tests/ui/invalid_state_not_enum.rs:13:8
+  --> tests/ui/invalid_state_not_enum.rs:14:8
    |
-13 | struct NotAnEnum {
+14 | struct NotAnEnum {
    |        ^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_state_not_enum.rs:15:2
+  --> tests/ui/invalid_state_not_enum.rs:16:2
    |
-15 | }
+16 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_not_enum.rs`

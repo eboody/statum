@@ -2,12 +2,12 @@ error: Error: no resolved `#[machine]` named `DoesNotExist` was found in module 
        Statum only resolves `#[machine]` items that have already expanded before this `#[validators]` impl.
        No plain struct with that name was found in this module either.
        No same-named `#[machine]` items were found in other modules of this file.
-       Available `#[machine]` items in this module: `TaskMachine` in `invalid_validators_unknown_machine` (line 20).
+       Available `#[machine]` items in this module: `TaskMachine` in `invalid_validators_unknown_machine` (line 21).
        Help: point `#[validators(...)]` at the Statum machine type in this module and declare that `#[machine]` item before this validators impl.
        Correct shape: `#[validators(TaskMachine)] impl PersistedRow { ... }` where `TaskMachine` is declared with `#[machine]` in `invalid_validators_unknown_machine`.
-  --> tests/ui/invalid_validators_unknown_machine.rs:28:1
+  --> tests/ui/invalid_validators_unknown_machine.rs:29:1
    |
-28 | #[validators(DoesNotExist)]
+29 | #[validators(DoesNotExist)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)

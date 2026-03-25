@@ -1,11 +1,11 @@
 error: Error: #[transition] impl for `Machine<A>` must contain at least one method returning `Machine<NextState>` or the same machine path wrapped in a canonical `::core::option::Option<Machine<NextState>>`, `::core::result::Result<Machine<NextState>, E>`, or `::statum::Branch<Machine<NextState>, Machine<NextState>>`.
-  --> tests/ui/invalid_transition_no_methods.rs:24:6
+  --> tests/ui/invalid_transition_no_methods.rs:25:6
    |
-24 | impl Machine<A> {}
+25 | impl Machine<A> {}
    |      ^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_transition_no_methods.rs:24:19
+  --> tests/ui/invalid_transition_no_methods.rs:25:19
    |
-24 | impl Machine<A> {}
+25 | impl Machine<A> {}
    |                   ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_no_methods.rs`

@@ -1,696 +1,709 @@
+use std::collections::{HashMap, HashSet};
+
 use quote::{format_ident, quote};
-use syn::{GenericParam, Generics, Ident, ImplItem, ImplItemFn, Type};
+use syn::parse::{Parse, ParseStream};
+use syn::visit_mut::{self, VisitMut};
+use syn::Type;
 
-use crate::machine::{
-    builder_generics, extra_generics, extra_type_arguments_tokens, generic_argument_tokens,
-};
-use crate::validators::signatures::ValidatorReturnKind;
-use crate::to_snake_case;
+use crate::validators::{ValidatorMethodSpec, signatures::ValidatorReturnKind};
 
-pub(super) struct BatchBuilderContext<'a> {
-    pub(super) machine_ident: &'a Ident,
-    pub(super) machine_module_ident: &'a Ident,
-    pub(super) machine_generics: &'a Generics,
-    pub(super) struct_ident: &'a Type,
-    pub(super) machine_state_ty: &'a proc_macro2::TokenStream,
-    pub(super) field_names: &'a [Ident],
-    pub(super) field_types: &'a [Type],
-    pub(super) async_token: proc_macro2::TokenStream,
-    pub(super) machine_vis: syn::Visibility,
+pub(super) fn validator_support_macro_ident(machine_name: &str) -> syn::Ident {
+    format_ident!(
+        "__statum_expand_{}_validators",
+        crate::to_snake_case(machine_name)
+    )
 }
 
-pub(super) struct ValidatorCheckContext<'a> {
-    pub(super) machine_ident: &'a Ident,
-    pub(super) machine_module_ident: &'a Ident,
-    pub(super) machine_generics: &'a Generics,
-    pub(super) field_names: &'a [Ident],
-    pub(super) receiver: &'a proc_macro2::TokenStream,
+pub(super) fn emit_validator_methods_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let parsed = syn::parse_macro_input!(input as ValidatorMethodsInput);
+    generate_validator_methods_impl(parsed).into()
 }
 
-pub(super) fn generate_validator_check(
-    context: &ValidatorCheckContext<'_>,
-    variant_name: &str,
-    has_state_data: bool,
-    is_async: bool,
+pub(super) fn generate_validator_build_variant_macro(
+    machine_name: &str,
+    validator_methods: &[ValidatorMethodSpec],
 ) -> proc_macro2::TokenStream {
-    let machine_ident = context.machine_ident;
-    let machine_module_ident = context.machine_module_ident;
-    let machine_generics = context.machine_generics;
-    let field_names = context.field_names;
-    let receiver = context.receiver;
-    let variant_ident = format_ident!("{}", variant_name);
-    let validator_fn_ident = format_ident!("is_{}", to_snake_case(variant_name));
-    let await_token = if is_async { quote! { .await } } else { quote! {} };
-    let field_builder_chain = quote! { #(.#field_names(#field_names))* };
-    let machine_builder_path =
-        machine_builder_path_tokens(machine_ident, machine_generics, &variant_ident);
-    let machine_state_variant_path =
-        machine_state_variant_path_tokens(machine_module_ident, machine_generics, &variant_ident);
-
-    if has_state_data {
-        let builder_call = quote! {
-            #machine_builder_path::builder()
-                #field_builder_chain
-                .state_data(__statum_state_data)
-                .build()
-        };
-        quote! {
-            if let Ok(__statum_state_data) = #receiver.#validator_fn_ident(#(&#field_names),*)#await_token {
-                return Ok(#machine_state_variant_path(
-                    #builder_call
-                ));
-            }
-        }
-    } else {
-        let builder_call = quote! {
-            #machine_builder_path::builder()
-                #field_builder_chain
-                .build()
-        };
-        quote! {
-            if #receiver.#validator_fn_ident(#(&#field_names),*)#await_token.is_ok() {
-                return Ok(#machine_state_variant_path(
-                    #builder_call
-                ));
-            }
-        }
-    }
+    generate_validator_variant_macro(machine_name, validator_methods, ValidatorVariantMacro::Build)
 }
 
-pub(super) fn generate_validator_report_check(
-    context: &ValidatorCheckContext<'_>,
-    variant_name: &str,
-    has_state_data: bool,
-    return_kind: ValidatorReturnKind,
-    is_async: bool,
+pub(super) fn generate_validator_report_variant_macro(
+    machine_name: &str,
+    validator_methods: &[ValidatorMethodSpec],
 ) -> proc_macro2::TokenStream {
-    let machine_ident = context.machine_ident;
-    let machine_module_ident = context.machine_module_ident;
-    let machine_generics = context.machine_generics;
-    let field_names = context.field_names;
-    let receiver = context.receiver;
-    let variant_ident = format_ident!("{}", variant_name);
-    let validator_fn_ident = format_ident!("is_{}", to_snake_case(variant_name));
-    let await_token = if is_async { quote! { .await } } else { quote! {} };
-    let field_builder_chain = quote! { #(.#field_names(#field_names))* };
-    let matched_attempt = rebuild_attempt_tokens(&validator_fn_ident, &variant_ident, true);
-    let failed_attempt = rebuild_attempt_tokens(&validator_fn_ident, &variant_ident, false);
-    let failed_attempt_with_rejection = failed_rebuild_attempt_with_rejection_tokens(
-        &validator_fn_ident,
-        &variant_ident,
-    );
-    let machine_builder_path =
-        machine_builder_path_tokens(machine_ident, machine_generics, &variant_ident);
-    let machine_state_variant_path =
-        machine_state_variant_path_tokens(machine_module_ident, machine_generics, &variant_ident);
-
-    if has_state_data {
-        let builder_call = quote! {
-            #machine_builder_path::builder()
-                #field_builder_chain
-                .state_data(__statum_state_data)
-                .build()
-        };
-        match return_kind {
-            ValidatorReturnKind::Plain => quote! {
-                match #receiver.#validator_fn_ident(#(&#field_names),*)#await_token {
-                    Ok(__statum_state_data) => {
-                        __statum_attempts.push(#matched_attempt);
-                        return statum::RebuildReport {
-                            attempts: __statum_attempts,
-                            result: Ok(#machine_state_variant_path(#builder_call)),
-                        };
-                    }
-                    Err(_) => __statum_attempts.push(#failed_attempt),
-                }
-            },
-            ValidatorReturnKind::Diagnostic => quote! {
-                match #receiver.#validator_fn_ident(#(&#field_names),*)#await_token {
-                    Ok(__statum_state_data) => {
-                        __statum_attempts.push(#matched_attempt);
-                        return statum::RebuildReport {
-                            attempts: __statum_attempts,
-                            result: Ok(#machine_state_variant_path(#builder_call)),
-                        };
-                    }
-                    Err(__statum_rejection) => __statum_attempts.push(#failed_attempt_with_rejection),
-                }
-            }
-        }
-    } else {
-        let builder_call = quote! {
-            #machine_builder_path::builder()
-                #field_builder_chain
-                .build()
-        };
-        match return_kind {
-            ValidatorReturnKind::Plain => quote! {
-                if #receiver.#validator_fn_ident(#(&#field_names),*)#await_token.is_ok() {
-                    __statum_attempts.push(#matched_attempt);
-                    return statum::RebuildReport {
-                        attempts: __statum_attempts,
-                        result: Ok(#machine_state_variant_path(#builder_call)),
-                    };
-                }
-
-                __statum_attempts.push(#failed_attempt);
-            },
-            ValidatorReturnKind::Diagnostic => quote! {
-                match #receiver.#validator_fn_ident(#(&#field_names),*)#await_token {
-                    Ok(()) => {
-                        __statum_attempts.push(#matched_attempt);
-                        return statum::RebuildReport {
-                            attempts: __statum_attempts,
-                            result: Ok(#machine_state_variant_path(#builder_call)),
-                        };
-                    }
-                    Err(__statum_rejection) => {
-                        __statum_attempts.push(#failed_attempt_with_rejection);
-                    }
-                }
-            },
-        }
-    }
+    generate_validator_variant_macro(machine_name, validator_methods, ValidatorVariantMacro::Report)
 }
 
-pub(super) fn batch_builder_implementation(
-    context: BatchBuilderContext<'_>,
-) -> proc_macro2::TokenStream {
-    let builder_ident = format_ident!("__Statum{}IntoMachines", context.machine_ident);
-    let by_builder_ident = format_ident!("__Statum{}IntoMachinesBy", context.machine_ident);
-    let machine_module_ident = context.machine_module_ident;
-    let machine_generics = context.machine_generics;
-    let struct_ident = context.struct_ident;
-    let machine_state_ty = context.machine_state_ty;
-    let field_names = context.field_names;
-    let field_types = context.field_types;
-    let async_token = context.async_token;
-    let machine_vis = context.machine_vis;
-    let extra_machine_generics = extra_generics(machine_generics);
-    let extra_machine_ty_args = extra_type_arguments_tokens(machine_generics);
-    let fields_ty = quote! { #machine_module_ident::Fields #extra_machine_ty_args };
-    let extra_impl_params = extra_machine_generics
-        .params
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
-    let extra_trait_args = trait_extra_generic_argument_tokens(&extra_machine_generics);
-    let into_machines_impl_generics = if extra_impl_params.is_empty() {
-        quote! { <T> }
-    } else {
-        quote! { <T, #(#extra_impl_params),*> }
-    };
-    let into_machines_where_clause = merged_where_clause_tokens(
-        extra_machine_generics.where_clause.as_ref(),
-        vec![quote! { T: Into<Vec<#struct_ident>> }],
-    );
+enum ValidatorVariantMacro {
+    Build,
+    Report,
+}
 
-    let field_builder_chain = quote! { #(.#field_names(#field_names.clone()))* };
-    let per_item_builder_chain = quote! { #(.#field_names(__statum_fields.#field_names))* };
-    let await_token = if async_token.is_empty() {
-        quote! {}
-    } else {
-        quote! { .await }
-    };
+struct ValidatorMethodsInput {
+    persisted: Type,
+    extra_generics: ValidatorMethodExtraGenerics,
+    fields: Vec<ValidatorMethodField>,
+    validator_methods: Vec<syn::ImplItemFn>,
+}
 
-    let implementation = generate_finalization_logic(
-        &format_ident!("build"),
-        &field_builder_chain,
-        &async_token,
-    );
-    let report_implementation = generate_finalization_logic(
-        &format_ident!("build_report"),
-        &field_builder_chain,
-        &async_token,
-    );
-    let per_item_implementation =
-        generate_per_item_finalization_logic(
-            &format_ident!("build"),
-            &per_item_builder_chain,
-            &async_token,
-        );
-    let per_item_report_implementation =
-        generate_per_item_finalization_logic(
-            &format_ident!("build_report"),
-            &per_item_builder_chain,
-            &async_token,
-        );
-    let slot_state_idents = (0..field_names.len())
-        .map(|idx| format_ident!("__STATUM_SLOT_{}_SET", idx))
-        .collect::<Vec<_>>();
-    let builder_defaults = builder_generics(&extra_machine_generics, false, &slot_state_idents, true);
-    let builder_impl_generics_decl =
-        builder_generics(&extra_machine_generics, false, &slot_state_idents, false);
-    let (builder_impl_generics, builder_ty_generics, builder_where_clause) =
-        builder_impl_generics_decl.split_for_impl();
-    let initial_builder_slots = slot_state_idents
-        .iter()
-        .map(|_| quote! { false })
-        .collect::<Vec<_>>();
-    let initial_builder_ty_generics =
-        generic_argument_tokens(extra_machine_generics.params.iter(), None, &initial_builder_slots);
-    let complete_builder_slots = slot_state_idents
-        .iter()
-        .map(|_| quote! { true })
-        .collect::<Vec<_>>();
-    let complete_builder_ty_generics =
-        generic_argument_tokens(extra_machine_generics.params.iter(), None, &complete_builder_slots);
-    let complete_builder_impl_generics_decl =
-        builder_generics(&extra_machine_generics, false, &[], false);
-    let (complete_builder_impl_generics, _, complete_builder_where_clause) =
-        complete_builder_impl_generics_decl.split_for_impl();
-    let shared_builder_where_clause = merged_where_clause_tokens(
-        complete_builder_where_clause,
-        field_types
-            .iter()
-            .map(|field_type| quote! { #field_type: core::clone::Clone })
-            .collect(),
-    );
-    let by_builder_decl_generics = prefixed_generics_declaration_tokens("F", &extra_machine_generics);
-    let by_builder_ty_generics =
-        prefixed_generics_argument_tokens(quote! { F }, extra_machine_generics.params.iter());
-    let by_builder_where_clause = merged_where_clause_tokens(
-        extra_machine_generics.where_clause.as_ref(),
-        vec![quote! { F: Fn(&#struct_ident) -> #fields_ty }],
-    );
-    let by_builder_marker_field = if extra_machine_generics.params.is_empty() {
-        quote! {}
-    } else {
-        let marker_ty = generic_usage_marker_tokens(&extra_machine_generics);
-        quote! {
-            __statum_marker: core::marker::PhantomData<fn() -> #marker_ty>,
-        }
-    };
-    let by_builder_marker_init = if extra_machine_generics.params.is_empty() {
-        quote! {}
-    } else {
-        quote! {
-            __statum_marker: core::marker::PhantomData,
-        }
-    };
-    let field_storage = field_names.iter().zip(field_types.iter()).map(|(field_name, field_type)| {
-        quote! { #field_name: core::option::Option<#field_type> }
-    });
-    let builder_init = field_names.iter().map(|field_name| {
-        quote! { #field_name: core::option::Option::None }
-    });
-    let field_bindings = field_names
-        .iter()
-        .map(|field_name| {
-            let message = format!("statum internal error: `{field_name}` was not set before build");
-            quote! {
-                let #field_name = self.#field_name.expect(#message);
-            }
+struct ValidatorMethodExtraGenerics {
+    params: Vec<syn::GenericParam>,
+    where_predicates: Vec<syn::WherePredicate>,
+}
+
+struct ValidatorMethodField {
+    name: syn::Ident,
+    ty: syn::Type,
+}
+
+impl Parse for ValidatorMethodsInput {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let persisted = parse_named_value(input, "persisted")?;
+        let extra_generics = parse_named_value(input, "extra_generics")?;
+        let fields = parse_named_fields(input, "fields")?;
+        let validator_methods = parse_named_validator_methods(input, "validator_methods")?;
+        Ok(Self {
+            persisted,
+            extra_generics,
+            fields,
+            validator_methods,
         })
-        .collect::<Vec<_>>();
-    let setters = field_names
-        .iter()
-        .zip(field_types.iter())
-        .enumerate()
-        .map(|(slot_idx, (field_name, field_type))| {
-            let generics = slot_state_idents
-                .iter()
-                .enumerate()
-                .map(|(idx, ident)| {
-                    if idx == slot_idx {
-                        quote! { true }
-                    } else {
-                        quote! { #ident }
-                    }
-                })
-                .collect::<Vec<_>>();
-            let target_generics =
-                generic_argument_tokens(extra_machine_generics.params.iter(), None, &generics);
-            let assignments = field_names.iter().enumerate().map(|(idx, existing_field_name)| {
-                if idx == slot_idx {
-                    quote! { #existing_field_name: core::option::Option::Some(value) }
-                } else {
-                    quote! { #existing_field_name: self.#existing_field_name }
-                }
-            });
-
-            quote! {
-                #machine_vis fn #field_name(self, value: #field_type) -> #builder_ident #target_generics {
-                    #builder_ident {
-                        __statum_items: self.__statum_items,
-                        #(#assignments),*
-                    }
-                }
-            }
-        });
-
-    quote! {
-        impl #into_machines_impl_generics #machine_module_ident::IntoMachinesExt<#struct_ident #extra_trait_args> for T
-        #into_machines_where_clause
-        {
-            type Builder = #builder_ident #initial_builder_ty_generics;
-            type BuilderWithFields<F> = #by_builder_ident #by_builder_ty_generics;
-
-            fn into_machines(self) -> Self::Builder {
-                #builder_ident {
-                    __statum_items: self.into(),
-                    #(#builder_init),*
-                }
-            }
-
-            fn into_machines_by<F>(self, fields: F) -> Self::BuilderWithFields<F>
-            where
-                F: Fn(&#struct_ident) -> #fields_ty,
-            {
-                #by_builder_ident {
-                    __statum_items: self.into(),
-                    __statum_fields_fn: fields,
-                    #by_builder_marker_init
-                }
-            }
-        }
-
-        #[doc(hidden)]
-        #machine_vis struct #builder_ident #builder_defaults {
-            __statum_items: Vec<#struct_ident>,
-            #(#field_storage),*
-        }
-
-        impl #builder_impl_generics #builder_ident #builder_ty_generics #builder_where_clause {
-            #(#setters)*
-        }
-
-        impl #complete_builder_impl_generics #builder_ident #complete_builder_ty_generics #shared_builder_where_clause {
-            #[inline(always)]
-            #machine_vis #async_token fn build(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
-                let __statum_items = self.__statum_items;
-                #(#field_bindings)*
-                #implementation
-            }
-
-            #[inline(always)]
-            #machine_vis #async_token fn build_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
-                let __statum_items = self.__statum_items;
-                #(#field_bindings)*
-                #report_implementation
-            }
-        }
-
-        #[doc(hidden)]
-        #machine_vis struct #by_builder_ident #by_builder_decl_generics {
-            __statum_items: Vec<#struct_ident>,
-            __statum_fields_fn: F,
-            #by_builder_marker_field
-        }
-
-        impl #by_builder_decl_generics #by_builder_ident #by_builder_ty_generics
-        #by_builder_where_clause
-        {
-            #[inline(always)]
-            #machine_vis #async_token fn build(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
-                self.__private_finalize()#await_token
-            }
-
-            #[inline(always)]
-            #machine_vis #async_token fn build_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
-                self.__private_finalize_reports()#await_token
-            }
-
-            #async_token fn __private_finalize(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
-                #per_item_implementation
-            }
-
-            #async_token fn __private_finalize_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
-                #per_item_report_implementation
-            }
-        }
     }
 }
 
-fn generate_finalization_logic(
-    builder_method: &Ident,
-    field_builder_chain: &proc_macro2::TokenStream,
-    async_token: &proc_macro2::TokenStream,
-) -> proc_macro2::TokenStream {
-    if async_token.is_empty() {
-        quote! {
-            __statum_items
-                .into_iter()
-                .map(|__statum_item| {
-                    __statum_item.into_machine()
-                        #field_builder_chain
-                        .#builder_method()
-                })
-                .collect()
-        }
-    } else {
-        quote! {
-            statum::__private::futures::future::join_all(
-                __statum_items.iter().map(|__statum_item| {
-                    __statum_item.into_machine()
-                        #field_builder_chain
-                        .#builder_method()
-                })
-            ).await
-        }
-    }
-}
-
-fn generate_per_item_finalization_logic(
-    builder_method: &Ident,
-    field_builder_chain: &proc_macro2::TokenStream,
-    async_token: &proc_macro2::TokenStream,
-) -> proc_macro2::TokenStream {
-    if async_token.is_empty() {
-        quote! {
-            let __statum_field_fn = self.__statum_fields_fn;
-            self.__statum_items
-                .into_iter()
-                .map(|__statum_item| {
-                    let __statum_fields = __statum_field_fn(&__statum_item);
-                    __statum_item.into_machine()
-                        #field_builder_chain
-                        .#builder_method()
-                })
-                .collect()
-        }
-    } else {
-        quote! {
-            let __statum_field_fn = &self.__statum_fields_fn;
-            statum::__private::futures::future::join_all(
-                self.__statum_items.iter().map(|__statum_item| {
-                    let __statum_fields = __statum_field_fn(__statum_item);
-                    __statum_item.into_machine()
-                        #field_builder_chain
-                        .#builder_method()
-                })
-            ).await
-        }
-    }
-}
-
-fn rebuild_attempt_tokens(
-    validator_fn_ident: &Ident,
-    variant_ident: &Ident,
-    matched: bool,
-) -> proc_macro2::TokenStream {
-    quote! {
-        statum::RebuildAttempt {
-            validator: stringify!(#validator_fn_ident),
-            target_state: stringify!(#variant_ident),
-            matched: #matched,
-            reason_key: core::option::Option::None,
-            message: core::option::Option::None,
-        }
-    }
-}
-
-fn failed_rebuild_attempt_with_rejection_tokens(
-    validator_fn_ident: &Ident,
-    variant_ident: &Ident,
-) -> proc_macro2::TokenStream {
-    quote! {
-        statum::RebuildAttempt {
-            validator: stringify!(#validator_fn_ident),
-            target_state: stringify!(#variant_ident),
-            matched: false,
-            reason_key: core::option::Option::Some(__statum_rejection.reason_key),
-            message: __statum_rejection.message.clone(),
-        }
-    }
-}
-
-fn machine_builder_path_tokens(
-    machine_ident: &Ident,
-    machine_generics: &Generics,
-    variant_ident: &Ident,
-) -> proc_macro2::TokenStream {
-    let mut args = vec![quote! { #variant_ident }];
-    args.extend(machine_generics.params.iter().skip(1).map(generic_argument_token));
-    quote! { #machine_ident::<#(#args),*> }
-}
-
-fn machine_state_variant_path_tokens(
-    machine_module_ident: &Ident,
-    machine_generics: &Generics,
-    variant_ident: &Ident,
-) -> proc_macro2::TokenStream {
-    let extra_args = machine_generics
-        .params
-        .iter()
-        .skip(1)
-        .map(generic_argument_token)
-        .collect::<Vec<_>>();
-    if extra_args.is_empty() {
-        quote! { #machine_module_ident::SomeState::#variant_ident }
-    } else {
-        quote! { #machine_module_ident::SomeState::<#(#extra_args),*>::#variant_ident }
-    }
-}
-
-fn generic_usage_marker_tokens(generics: &Generics) -> proc_macro2::TokenStream {
-    let usages = generics
-        .params
-        .iter()
-        .map(|param| match param {
-            GenericParam::Lifetime(lifetime) => {
-                let lifetime = &lifetime.lifetime;
-                quote! { &#lifetime () }
-            }
-            GenericParam::Type(ty) => {
-                let ident = &ty.ident;
-                quote! { #ident }
-            }
-            GenericParam::Const(const_param) => {
-                let ident = &const_param.ident;
-                quote! { [(); #ident] }
-            }
+impl Parse for ValidatorMethodExtraGenerics {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let content;
+        syn::braced!(content in input);
+        let params = parse_named_generic_params(&content, "params")?;
+        let where_predicates = parse_named_where_predicates(&content, "where_predicates")?;
+        Ok(Self {
+            params,
+            where_predicates,
         })
-        .collect::<Vec<_>>();
-
-    if usages.len() == 1 {
-        usages.into_iter().next().unwrap()
-    } else {
-        quote! { (#(#usages),*) }
     }
 }
 
-fn trait_extra_generic_argument_tokens(extra_generics: &Generics) -> proc_macro2::TokenStream {
-    let extra_args = extra_generics
-        .params
-        .iter()
-        .map(generic_argument_token)
-        .collect::<Vec<_>>();
-    if extra_args.is_empty() {
-        quote! {}
-    } else {
-        quote! {, #(#extra_args),* }
+impl Parse for ValidatorMethodField {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let content;
+        syn::braced!(content in input);
+        let name = parse_named_value(&content, "name")?;
+        let ty = parse_named_value(&content, "ty")?;
+        Ok(Self { name, ty })
     }
 }
 
-fn prefixed_generics_declaration_tokens(
-    first_param: &str,
-    extra_generics: &Generics,
-) -> proc_macro2::TokenStream {
-    let first_ident = format_ident!("{}", first_param);
-    let extra_params = extra_generics.params.iter().cloned().collect::<Vec<_>>();
-    if extra_params.is_empty() {
-        quote! { <#first_ident> }
-    } else {
-        quote! { <#first_ident, #(#extra_params),*> }
+fn parse_braced_generic_param(input: ParseStream<'_>) -> syn::Result<syn::GenericParam> {
+    let content;
+    syn::braced!(content in input);
+    content.parse()
+}
+
+fn parse_braced_where_predicate(input: ParseStream<'_>) -> syn::Result<syn::WherePredicate> {
+    let content;
+    syn::braced!(content in input);
+    content.parse()
+}
+
+fn parse_named_value<T: Parse>(input: ParseStream<'_>, expected: &str) -> syn::Result<T> {
+    let ident: syn::Ident = input.parse()?;
+    if ident != expected {
+        return Err(syn::Error::new(
+            ident.span(),
+            format!("expected `{expected}`"),
+        ));
     }
+    input.parse::<syn::Token![=]>()?;
+    let value = input.parse()?;
+    if input.peek(syn::Token![,]) {
+        input.parse::<syn::Token![,]>()?;
+    }
+    Ok(value)
 }
 
-fn prefixed_generics_argument_tokens<'a>(
-    first_arg: proc_macro2::TokenStream,
-    extra_params: impl Iterator<Item = &'a GenericParam>,
-) -> proc_macro2::TokenStream {
-    let mut args = vec![first_arg];
-    args.extend(extra_params.map(generic_argument_token));
-    quote! { <#(#args),*> }
+fn parse_named_fields(
+    input: ParseStream<'_>,
+    expected: &str,
+) -> syn::Result<Vec<ValidatorMethodField>> {
+    parse_named_bracketed_list(input, expected, ValidatorMethodField::parse)
 }
 
-fn merged_where_clause_tokens(
-    extra_where_clause: Option<&syn::WhereClause>,
-    additional_predicates: Vec<proc_macro2::TokenStream>,
-) -> proc_macro2::TokenStream {
-    let mut predicates = extra_where_clause
+fn parse_named_validator_methods(
+    input: ParseStream<'_>,
+    expected: &str,
+) -> syn::Result<Vec<syn::ImplItemFn>> {
+    parse_named_bracketed_list(input, expected, syn::ImplItemFn::parse)
+}
+
+fn parse_named_generic_params(
+    input: ParseStream<'_>,
+    expected: &str,
+) -> syn::Result<Vec<syn::GenericParam>> {
+    parse_named_bracketed_list(input, expected, parse_braced_generic_param)
+}
+
+fn parse_named_where_predicates(
+    input: ParseStream<'_>,
+    expected: &str,
+) -> syn::Result<Vec<syn::WherePredicate>> {
+    parse_named_bracketed_list(input, expected, parse_braced_where_predicate)
+}
+
+fn parse_named_bracketed_list<T>(
+    input: ParseStream<'_>,
+    expected: &str,
+    parser: fn(ParseStream<'_>) -> syn::Result<T>,
+) -> syn::Result<Vec<T>> {
+    let ident: syn::Ident = input.parse()?;
+    if ident != expected {
+        return Err(syn::Error::new(
+            ident.span(),
+            format!("expected `{expected}`"),
+        ));
+    }
+    input.parse::<syn::Token![=]>()?;
+    let content;
+    syn::bracketed!(content in input);
+    let items = content.parse_terminated(parser, syn::Token![,])?;
+    if input.peek(syn::Token![,]) {
+        input.parse::<syn::Token![,]>()?;
+    }
+    Ok(items.into_iter().collect())
+}
+
+fn generate_validator_methods_impl(input: ValidatorMethodsInput) -> proc_macro2::TokenStream {
+    let ValidatorMethodsInput {
+        persisted,
+        extra_generics,
+        fields,
+        validator_methods,
+    } = input;
+    let rewritten_methods = validator_methods
         .into_iter()
-        .flat_map(|where_clause| where_clause.predicates.iter().map(|predicate| quote! { #predicate }))
+        .map(|method| rewrite_validator_method(method, &extra_generics, &fields))
         .collect::<Vec<_>>();
-    predicates.extend(additional_predicates);
 
-    if predicates.is_empty() {
-        quote! {}
-    } else {
-        quote! { where #(#predicates),* }
-    }
-}
-
-fn generic_argument_token(param: &GenericParam) -> proc_macro2::TokenStream {
-    match param {
-        GenericParam::Lifetime(lifetime) => {
-            let lifetime = &lifetime.lifetime;
-            quote! { #lifetime }
-        }
-        GenericParam::Type(ty) => {
-            let ident = &ty.ident;
-            quote! { #ident }
-        }
-        GenericParam::Const(const_param) => {
-            let ident = &const_param.ident;
-            quote! { #ident }
+    quote! {
+        impl #persisted {
+            #(#rewritten_methods)*
         }
     }
 }
 
-pub(super) fn inject_machine_fields(
-    methods: &[ImplItem],
-    parsed_fields: &[(Ident, Type)],
-    extra_machine_generics: &Generics,
-) -> Result<Vec<ImplItem>, proc_macro2::TokenStream> {
-    Ok(methods
+fn rewrite_validator_method(
+    mut method: syn::ImplItemFn,
+    extra_generics: &ValidatorMethodExtraGenerics,
+    fields: &[ValidatorMethodField],
+) -> syn::ImplItemFn {
+    method.attrs.push(syn::parse_quote!(#[allow(clippy::ptr_arg)]));
+    method.sig.generics.params.extend(extra_generics.params.clone());
+    if !extra_generics.where_predicates.is_empty() {
+        let where_clause = method.sig.generics.make_where_clause();
+        where_clause
+            .predicates
+            .extend(extra_generics.where_predicates.clone());
+    }
+    let field_bindings = fields
         .iter()
-        .map(|item| {
-            if let ImplItem::Fn(func) = item {
-                let fn_name = &func.sig.ident;
-
-                if super::signatures::validator_state_name_from_ident(fn_name).is_some() {
-                    let mut new_inputs = func.sig.inputs.clone();
-
-                    for (ident, ty) in parsed_fields.iter() {
-                        new_inputs.push(syn::FnArg::Typed(syn::parse_quote! { #ident: &#ty }));
-                    }
-
-                    let mut generics = func.sig.generics.clone();
-                    if !extra_machine_generics.params.is_empty() {
-                        if generics.lt_token.is_none() {
-                            generics.lt_token = Some(Default::default());
-                            generics.gt_token = Some(Default::default());
-                        }
-                        generics
-                            .params
-                            .extend(extra_machine_generics.params.iter().cloned());
-                    }
-                    if let Some(extra_where_clause) = &extra_machine_generics.where_clause {
-                        let where_clause = generics.make_where_clause();
-                        where_clause
-                            .predicates
-                            .extend(extra_where_clause.predicates.iter().cloned());
-                    }
-
-                    let mut attrs = func.attrs.clone();
-                    attrs.push(syn::parse_quote!(#[allow(clippy::ptr_arg)]));
-                    let body = &func.block;
-
-                    return ImplItem::Fn(ImplItemFn {
-                        attrs,
-                        sig: syn::Signature {
-                            inputs: new_inputs,
-                            generics,
-                            ..func.sig.clone()
-                        },
-                        block: body.clone(),
-                        ..func.clone()
-                    });
-                }
-            }
-            item.clone()
+        .map(|field| {
+            (
+                field.name.to_string(),
+                syn::Ident::new(
+                    &format!("__statum_machine_field_{}", field.name),
+                    proc_macro2::Span::call_site(),
+                ),
+            )
         })
-        .collect())
+        .collect::<HashMap<_, _>>();
+    rewrite_validator_body(&mut method.block, &field_bindings);
+    for field in fields {
+        let field_name = field_bindings
+            .get(&field.name.to_string())
+            .expect("field binding present");
+        let field_ty = &field.ty;
+        method
+            .sig
+            .inputs
+            .push(syn::parse_quote!(#field_name: &#field_ty));
+    }
+    method
+}
+
+fn rewrite_validator_body(
+    block: &mut syn::Block,
+    field_bindings: &HashMap<String, syn::Ident>,
+) {
+    let mut rewriter = ValidatorFieldRewriter::new(field_bindings);
+    rewriter.visit_block_mut(block);
+}
+
+struct ValidatorFieldRewriter<'a> {
+    field_bindings: &'a HashMap<String, syn::Ident>,
+    shadowed: Vec<HashSet<String>>,
+}
+
+impl<'a> ValidatorFieldRewriter<'a> {
+    fn new(field_bindings: &'a HashMap<String, syn::Ident>) -> Self {
+        Self {
+            field_bindings,
+            shadowed: vec![HashSet::new()],
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.shadowed.push(HashSet::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.shadowed.pop();
+    }
+
+    fn insert_bindings_from_pat(&mut self, pat: &syn::Pat) {
+        let mut bindings = Vec::new();
+        collect_pat_idents(pat, &mut bindings);
+        if let Some(scope) = self.shadowed.last_mut() {
+            for ident in bindings {
+                scope.insert(ident.to_string());
+            }
+        }
+    }
+
+    fn is_shadowed(&self, ident: &str) -> bool {
+        self.shadowed
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(ident))
+    }
+}
+
+impl VisitMut for ValidatorFieldRewriter<'_> {
+    fn visit_block_mut(&mut self, block: &mut syn::Block) {
+        self.push_scope();
+        for stmt in &mut block.stmts {
+            match stmt {
+                syn::Stmt::Local(local) => {
+                    if let Some(init) = &mut local.init {
+                        self.visit_expr_mut(&mut init.expr);
+                        if let Some((_, diverge)) = &mut init.diverge {
+                            self.visit_expr_mut(diverge);
+                        }
+                    }
+                    self.insert_bindings_from_pat(&local.pat);
+                }
+                _ => visit_mut::visit_stmt_mut(self, stmt),
+            }
+        }
+        self.pop_scope();
+    }
+
+    fn visit_expr_closure_mut(&mut self, closure: &mut syn::ExprClosure) {
+        self.push_scope();
+        for input in &closure.inputs {
+            self.insert_bindings_from_pat(input);
+        }
+        self.visit_expr_mut(&mut closure.body);
+        self.pop_scope();
+    }
+
+    fn visit_expr_for_loop_mut(&mut self, expr: &mut syn::ExprForLoop) {
+        self.visit_expr_mut(&mut expr.expr);
+        self.push_scope();
+        self.insert_bindings_from_pat(&expr.pat);
+        self.visit_block_mut(&mut expr.body);
+        self.pop_scope();
+    }
+
+    fn visit_arm_mut(&mut self, arm: &mut syn::Arm) {
+        self.push_scope();
+        self.insert_bindings_from_pat(&arm.pat);
+        if let Some((_, guard)) = &mut arm.guard {
+            self.visit_expr_mut(guard);
+        }
+        self.visit_expr_mut(&mut arm.body);
+        self.pop_scope();
+    }
+
+    fn visit_expr_if_mut(&mut self, expr: &mut syn::ExprIf) {
+        if let syn::Expr::Let(expr_let) = &mut *expr.cond {
+            self.visit_expr_mut(&mut expr_let.expr);
+            self.push_scope();
+            self.insert_bindings_from_pat(&expr_let.pat);
+            self.visit_block_mut(&mut expr.then_branch);
+            self.pop_scope();
+            if let Some((_, else_branch)) = &mut expr.else_branch {
+                self.visit_expr_mut(else_branch);
+            }
+            return;
+        }
+
+        visit_mut::visit_expr_if_mut(self, expr);
+    }
+
+    fn visit_expr_while_mut(&mut self, expr: &mut syn::ExprWhile) {
+        if let syn::Expr::Let(expr_let) = &mut *expr.cond {
+            self.visit_expr_mut(&mut expr_let.expr);
+            self.push_scope();
+            self.insert_bindings_from_pat(&expr_let.pat);
+            self.visit_block_mut(&mut expr.body);
+            self.pop_scope();
+            return;
+        }
+
+        visit_mut::visit_expr_while_mut(self, expr);
+    }
+
+    fn visit_expr_path_mut(&mut self, expr: &mut syn::ExprPath) {
+        if expr.qself.is_none() && expr.path.segments.len() == 1 {
+            let ident = &expr.path.segments[0].ident;
+            if !self.is_shadowed(&ident.to_string())
+                && let Some(replacement) = self.field_bindings.get(&ident.to_string())
+            {
+                expr.path = syn::parse_quote!(#replacement);
+                return;
+            }
+        }
+
+        visit_mut::visit_expr_path_mut(self, expr);
+    }
+}
+
+fn collect_pat_idents(pat: &syn::Pat, out: &mut Vec<syn::Ident>) {
+    match pat {
+        syn::Pat::Ident(pat_ident) => out.push(pat_ident.ident.clone()),
+        syn::Pat::Or(pat_or) => {
+            for case in &pat_or.cases {
+                collect_pat_idents(case, out);
+            }
+        }
+        syn::Pat::Paren(pat_paren) => collect_pat_idents(&pat_paren.pat, out),
+        syn::Pat::Reference(pat_reference) => collect_pat_idents(&pat_reference.pat, out),
+        syn::Pat::Slice(pat_slice) => {
+            for elem in &pat_slice.elems {
+                collect_pat_idents(elem, out);
+            }
+        }
+        syn::Pat::Struct(pat_struct) => {
+            for field in &pat_struct.fields {
+                collect_pat_idents(&field.pat, out);
+            }
+        }
+        syn::Pat::Tuple(pat_tuple) => {
+            for elem in &pat_tuple.elems {
+                collect_pat_idents(elem, out);
+            }
+        }
+        syn::Pat::TupleStruct(pat_tuple_struct) => {
+            for elem in &pat_tuple_struct.elems {
+                collect_pat_idents(elem, out);
+            }
+        }
+        syn::Pat::Type(pat_type) => collect_pat_idents(&pat_type.pat, out),
+        _ => {}
+    }
+}
+
+fn generate_validator_variant_macro(
+    machine_name: &str,
+    validator_methods: &[ValidatorMethodSpec],
+    kind: ValidatorVariantMacro,
+) -> proc_macro2::TokenStream {
+    let macro_ident = match kind {
+        ValidatorVariantMacro::Build => format_ident!(
+            "__statum_emit_{}_validator_build_variant",
+            crate::to_snake_case(machine_name)
+        ),
+        ValidatorVariantMacro::Report => format_ident!(
+            "__statum_emit_{}_validator_report_variant",
+            crate::to_snake_case(machine_name)
+        ),
+    };
+    let arms = validator_methods
+        .iter()
+        .map(|method| generate_validator_variant_arm(method, &kind))
+        .collect::<Vec<_>>();
+    let fallback_arm = match kind {
+        ValidatorVariantMacro::Build => quote! {
+            (
+                persisted = $persisted:ident,
+                machine = $machine:ident,
+                state_family = $state_family:ident,
+                machine_module = $machine_module:ident,
+                machine_builder = $machine_builder:path,
+                variant = $variant:ident,
+                state_variant = $state_variant:path,
+                validator = $validator:ident,
+                data = $data:ty,
+                has_data = $has_data:tt,
+                fields = [$( { name = $field:ident, ty = $field_ty:ty } ),* $(,)?],
+            ) => {};
+        },
+        ValidatorVariantMacro::Report => quote! {
+            (
+                persisted = $persisted:ident,
+                attempts = $attempts:ident,
+                machine = $machine:ident,
+                state_family = $state_family:ident,
+                machine_module = $machine_module:ident,
+                machine_builder = $machine_builder:path,
+                variant = $variant:ident,
+                state_variant = $state_variant:path,
+                validator = $validator:ident,
+                data = $data:ty,
+                has_data = $has_data:tt,
+                fields = [$( { name = $field:ident, ty = $field_ty:ty } ),* $(,)?],
+            ) => {};
+        },
+    };
+
+    quote! {
+        #[doc(hidden)]
+        macro_rules! #macro_ident {
+            #(#arms)*
+            #fallback_arm
+        }
+    }
+}
+
+fn generate_validator_variant_arm(
+    method: &ValidatorMethodSpec,
+    kind: &ValidatorVariantMacro,
+) -> proc_macro2::TokenStream {
+    let validator_ident = &method.validator_ident;
+    let actual_ok_type = &method.actual_ok_type;
+    let payload_check_fn_ident = format_ident!("__statum_payload_for_{}", validator_ident);
+    let await_token = if method.is_async {
+        quote! { .await }
+    } else {
+        quote! {}
+    };
+    let call = quote! { $persisted.#validator_ident($( &$field ),*)#await_token };
+
+    match kind {
+        ValidatorVariantMacro::Build => {
+            let with_data_body = quote! {
+                if let Ok(__statum_state_data) = #call {
+                    return Ok($state_variant(
+                        <$machine_builder>::builder()
+                            $( .$field($field) )*
+                            .state_data(__statum_state_data)
+                            .build()
+                    ));
+                }
+            };
+            let without_data_body = quote! {
+                if #call.is_ok() {
+                    return Ok($state_variant(
+                        <$machine_builder>::builder()
+                            $( .$field($field) )*
+                            .build()
+                    ));
+                }
+            };
+
+            quote! {
+                (
+                    persisted = $persisted:ident,
+                    machine = $machine:ident,
+                    state_family = $state_family:ident,
+                    machine_module = $machine_module:ident,
+                    machine_builder = $machine_builder:path,
+                    variant = $variant:ident,
+                    state_variant = $state_variant:path,
+                    validator = #validator_ident,
+                    data = $data:ty,
+                    has_data = true,
+                    fields = [$( { name = $field:ident, ty = $field_ty:ty } ),* $(,)?],
+                ) => {
+                    {
+                        fn #payload_check_fn_ident(_: core::option::Option<$data>) {}
+                        #payload_check_fn_ident(core::option::Option::<#actual_ok_type>::None);
+                        #with_data_body
+                    }
+                };
+                (
+                    persisted = $persisted:ident,
+                    machine = $machine:ident,
+                    state_family = $state_family:ident,
+                    machine_module = $machine_module:ident,
+                    machine_builder = $machine_builder:path,
+                    variant = $variant:ident,
+                    state_variant = $state_variant:path,
+                    validator = #validator_ident,
+                    data = $data:ty,
+                    has_data = false,
+                    fields = [$( { name = $field:ident, ty = $field_ty:ty } ),* $(,)?],
+                ) => {
+                    {
+                        fn #payload_check_fn_ident(_: core::option::Option<$data>) {}
+                        #payload_check_fn_ident(core::option::Option::<#actual_ok_type>::None);
+                        #without_data_body
+                    }
+                };
+            }
+        }
+        ValidatorVariantMacro::Report => {
+            let with_data_body = match method.return_kind {
+                ValidatorReturnKind::Plain => quote! {
+                    match #call {
+                        Ok(__statum_state_data) => {
+                            $attempts.push(statum::RebuildAttempt {
+                                validator: stringify!(#validator_ident),
+                                target_state: stringify!($variant),
+                                matched: true,
+                                reason_key: core::option::Option::None,
+                                message: core::option::Option::None,
+                            });
+                            return statum::RebuildReport {
+                                attempts: $attempts,
+                                result: Ok($state_variant(
+                                    <$machine_builder>::builder()
+                                        $( .$field($field) )*
+                                        .state_data(__statum_state_data)
+                                        .build()
+                                )),
+                            };
+                        }
+                        Err(_) => $attempts.push(statum::RebuildAttempt {
+                            validator: stringify!(#validator_ident),
+                            target_state: stringify!($variant),
+                            matched: false,
+                            reason_key: core::option::Option::None,
+                            message: core::option::Option::None,
+                        }),
+                    }
+                },
+                ValidatorReturnKind::Diagnostic => quote! {
+                    match #call {
+                        Ok(__statum_state_data) => {
+                            $attempts.push(statum::RebuildAttempt {
+                                validator: stringify!(#validator_ident),
+                                target_state: stringify!($variant),
+                                matched: true,
+                                reason_key: core::option::Option::None,
+                                message: core::option::Option::None,
+                            });
+                            return statum::RebuildReport {
+                                attempts: $attempts,
+                                result: Ok($state_variant(
+                                    <$machine_builder>::builder()
+                                        $( .$field($field) )*
+                                        .state_data(__statum_state_data)
+                                        .build()
+                                )),
+                            };
+                        }
+                        Err(__statum_rejection) => $attempts.push(statum::RebuildAttempt {
+                            validator: stringify!(#validator_ident),
+                            target_state: stringify!($variant),
+                            matched: false,
+                            reason_key: core::option::Option::Some(__statum_rejection.reason_key),
+                            message: __statum_rejection.message.clone(),
+                        }),
+                    }
+                },
+            };
+            let without_data_body = match method.return_kind {
+                ValidatorReturnKind::Plain => quote! {
+                    if #call.is_ok() {
+                        $attempts.push(statum::RebuildAttempt {
+                            validator: stringify!(#validator_ident),
+                            target_state: stringify!($variant),
+                            matched: true,
+                            reason_key: core::option::Option::None,
+                            message: core::option::Option::None,
+                        });
+                        return statum::RebuildReport {
+                            attempts: $attempts,
+                            result: Ok($state_variant(
+                                <$machine_builder>::builder()
+                                    $( .$field($field) )*
+                                    .build()
+                            )),
+                        };
+                    }
+
+                    $attempts.push(statum::RebuildAttempt {
+                        validator: stringify!(#validator_ident),
+                        target_state: stringify!($variant),
+                        matched: false,
+                        reason_key: core::option::Option::None,
+                        message: core::option::Option::None,
+                    });
+                },
+                ValidatorReturnKind::Diagnostic => quote! {
+                    match #call {
+                        Ok(()) => {
+                            $attempts.push(statum::RebuildAttempt {
+                                validator: stringify!(#validator_ident),
+                                target_state: stringify!($variant),
+                                matched: true,
+                                reason_key: core::option::Option::None,
+                                message: core::option::Option::None,
+                            });
+                            return statum::RebuildReport {
+                                attempts: $attempts,
+                                result: Ok($state_variant(
+                                    <$machine_builder>::builder()
+                                        $( .$field($field) )*
+                                        .build()
+                                )),
+                            };
+                        }
+                        Err(__statum_rejection) => {
+                            $attempts.push(statum::RebuildAttempt {
+                                validator: stringify!(#validator_ident),
+                                target_state: stringify!($variant),
+                                matched: false,
+                                reason_key: core::option::Option::Some(__statum_rejection.reason_key),
+                                message: __statum_rejection.message.clone(),
+                            });
+                        }
+                    }
+                },
+            };
+
+            quote! {
+                (
+                    persisted = $persisted:ident,
+                    attempts = $attempts:ident,
+                    machine = $machine:ident,
+                    state_family = $state_family:ident,
+                    machine_module = $machine_module:ident,
+                    machine_builder = $machine_builder:path,
+                    variant = $variant:ident,
+                    state_variant = $state_variant:path,
+                    validator = #validator_ident,
+                    data = $data:ty,
+                    has_data = true,
+                    fields = [$( { name = $field:ident, ty = $field_ty:ty } ),* $(,)?],
+                ) => {
+                    {
+                        fn #payload_check_fn_ident(_: core::option::Option<$data>) {}
+                        #payload_check_fn_ident(core::option::Option::<#actual_ok_type>::None);
+                        #with_data_body
+                    }
+                };
+                (
+                    persisted = $persisted:ident,
+                    attempts = $attempts:ident,
+                    machine = $machine:ident,
+                    state_family = $state_family:ident,
+                    machine_module = $machine_module:ident,
+                    machine_builder = $machine_builder:path,
+                    variant = $variant:ident,
+                    state_variant = $state_variant:path,
+                    validator = #validator_ident,
+                    data = $data:ty,
+                    has_data = false,
+                    fields = [$( { name = $field:ident, ty = $field_ty:ty } ),* $(,)?],
+                ) => {
+                    {
+                        fn #payload_check_fn_ident(_: core::option::Option<$data>) {}
+                        #payload_check_fn_ident(core::option::Option::<#actual_ok_type>::None);
+                        #without_data_body
+                    }
+                };
+            }
+        }
+    }
 }
