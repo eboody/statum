@@ -1,0 +1,26 @@
+[dependencies.statum]
+path = "../statum"
+version = "0.6.9"
+
+[dev-dependencies]
+insta = "1.43"
+
+[package]
+authors = ["Eran Boodnero <eran@eran.codes>"]
+categories = ["development-tools", "rust-patterns"]
+description = "Static graph export for Statum machine introspection"
+documentation = "https://docs.rs/statum-graph"
+edition = "2021"
+keywords = [
+    "typestate",
+    "graph",
+    "mermaid",
+    "workflow",
+    "state-machine",
+]
+license = "MIT"
+name = "statum-graph"
+readme = "README.md"
+repository = "https://github.com/eboody/statum"
+rust-version = "1.93"
+version = "0.6.9"

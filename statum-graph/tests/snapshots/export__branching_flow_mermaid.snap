@@ -1,0 +1,18 @@
+---
+source: statum-graph/tests/export.rs
+expression: render::mermaid(&doc)
+---
+graph TD
+    s0["Draft"]
+    s1["Review"]
+    s2["Accepted"]
+    s3["Rejected"]
+    s4["Archived"]
+
+    s0 -->|submit| s1
+    s1 -->|accept| s2
+    s1 -->|maybe_decide| s2
+    s1 -->|maybe_decide| s3
+    s1 -->|reject| s3
+    s2 -->|archive| s4
+    s3 -->|archive| s4

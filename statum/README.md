@@ -70,6 +70,8 @@ impl Light<On> {
   CLI explainers, graph exports, generated docs, branch-strip views, or runtime
   replay/debug tooling. Statum exposes exact transition sites instead of a
   coarse machine-wide state list.
+- `statum-graph` is the companion crate for exporting that static graph surface
+  as machine-local topology and Mermaid output.
 - API docs: <https://docs.rs/statum>
 - Repository README: <https://github.com/eboody/statum/blob/main/README.md>
 - Coding-agent kit: <https://github.com/eboody/statum/blob/main/docs/agents/README.md>

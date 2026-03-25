@@ -1,6 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["module_path_extractor", "macro_registry", "statum-core", "statum-macros", "statum", "statum-examples"]
+members = [
+    "module_path_extractor",
+    "macro_registry",
+    "statum-core",
+    "statum-macros",
+    "statum",
+    "statum-examples",
+    "statum-graph",
+]
 
 [patch.crates-io]
 module_path_extractor = { path = "module_path_extractor" }
@@ -10,5 +18,5 @@ statum = { path = "statum" }
 
 [workspace.metadata.scripts]
 version-bump = "cargo script scripts/update_version.rs -- 1.0.0"
-publish = "cargo publish -p module_path_extractor && cargo publish -p macro_registry && cargo publish -p statum-core && cargo publish -p statum-macros && cargo publish -p statum"
+publish = "cargo publish -p module_path_extractor && cargo publish -p macro_registry && cargo publish -p statum-core && cargo publish -p statum-macros && cargo publish -p statum && cargo publish -p statum-graph"
 publish-dry-run = "bash scripts/check_publish_dry_run.sh"
