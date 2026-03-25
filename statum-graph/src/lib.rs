@@ -4,8 +4,13 @@
 //! machine identity, states, transition sites, exact legal targets, and
 //! roots derivable from the static graph itself.
 //!
-//! It does not model orchestration order across machines, runtime-selected
-//! branches for one run, or any consumer-owned presentation metadata.
+//! Use [`MachineDoc::from_machine`] for Statum-generated machine families and
+//! [`MachineDoc::try_from_graph`] when you need to validate an externally
+//! supplied [`MachineGraph`] before rendering or traversal.
+//!
+//! This crate does not model orchestration order across machines,
+//! runtime-selected branches for one run, or any consumer-owned presentation
+//! metadata.
 
 use std::collections::{HashMap, HashSet};
 
@@ -184,6 +189,10 @@ where
     T: Copy + Eq + 'static,
 {
     /// Exports one machine family from a concrete `MachineIntrospection` type.
+    ///
+    /// This is the normal entry point when the graph comes from Statum itself.
+    /// It will panic only if Statum emitted an invalid
+    /// `MachineIntrospection::GRAPH`.
     pub fn from_machine<M>() -> Self
     where
         M: MachineIntrospection<StateId = S, TransitionId = T>,
@@ -193,6 +202,10 @@ where
     }
 
     /// Exports one externally supplied machine graph after validating it.
+    ///
+    /// Use this when the graph does not come from a concrete Statum machine
+    /// type and you want malformed external graphs to fail closed with
+    /// [`MachineDocError`] instead of being rendered best-effort.
     pub fn try_from_graph(graph: &'static MachineGraph<S, T>) -> Result<Self, MachineDocError> {
         let transitions = graph.transitions.as_slice();
         validate_graph(graph.machine, graph.states, transitions)?;
