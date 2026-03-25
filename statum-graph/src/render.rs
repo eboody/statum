@@ -2,7 +2,11 @@ use std::collections::HashMap;
 
 use crate::MachineDoc;
 
-/// Renders a machine-local topology as a Mermaid flow graph.
+/// Renders a validated machine-local topology as Mermaid flowchart text.
+///
+/// Output ordering is deterministic for one [`MachineDoc`]. State labels and
+/// edge labels are escaped for Mermaid so the returned string is suitable for
+/// snapshot tests, generated docs, and CLI output.
 pub fn mermaid<S, T>(doc: &MachineDoc<S, T>) -> String
 where
     S: Copy + Eq + std::hash::Hash + 'static,
