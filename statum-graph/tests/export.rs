@@ -1,6 +1,9 @@
 #![allow(dead_code)]
 
-use statum_graph::{render, MachineDoc};
+use statum::{
+    MachineDescriptor, MachineGraph, StateDescriptor, TransitionDescriptor, TransitionInventory,
+};
+use statum_graph::{render, MachineDoc, MachineDocError};
 
 mod linear {
     use statum::{machine, state, transition};
@@ -188,9 +191,9 @@ mod macro_generated {
 fn exports_linear_machine_topology_from_graph() {
     let doc = MachineDoc::from_machine::<linear::Flow<linear::Draft>>();
 
-    assert_eq!(doc.machine.rust_type_path, "export::linear::Flow");
+    assert_eq!(doc.machine().rust_type_path, "export::linear::Flow");
     assert_eq!(
-        doc.states
+        doc.states()
             .iter()
             .map(|state| (
                 state.descriptor.rust_name,
@@ -205,7 +208,7 @@ fn exports_linear_machine_topology_from_graph() {
         ]
     );
     assert_eq!(
-        doc.edges
+        doc.edges()
             .iter()
             .map(|edge| edge.descriptor.method_name)
             .collect::<Vec<_>>(),
@@ -218,7 +221,7 @@ fn preserves_exact_branch_targets_and_sorts_edges_stably() {
     let doc = MachineDoc::from_machine::<branching::Flow<branching::Review>>();
 
     assert_eq!(
-        doc.edges
+        doc.edges()
             .iter()
             .map(|edge| edge.descriptor.method_name)
             .collect::<Vec<_>>(),
@@ -233,7 +236,7 @@ fn preserves_exact_branch_targets_and_sorts_edges_stably() {
     );
 
     let maybe_decide = doc
-        .edges
+        .edges()
         .iter()
         .find(|edge| edge.descriptor.method_name == "maybe_decide")
         .expect("branching transition");
@@ -284,10 +287,103 @@ fn exports_macro_generated_transition_sites() {
     let doc = MachineDoc::from_machine::<macro_generated::Flow<macro_generated::Enabled>>();
 
     assert_eq!(
-        doc.edges
+        doc.edges()
             .iter()
             .map(|edge| edge.descriptor.method_name)
             .collect::<Vec<_>>(),
         vec!["enable", "via_macro"]
+    );
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+enum InvalidStateId {
+    Draft,
+    Published,
+    Missing,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+enum InvalidTransitionId {
+    Submit,
+}
+
+static VALID_STATE_DESCRIPTORS: [StateDescriptor<InvalidStateId>; 2] = [
+    StateDescriptor {
+        id: InvalidStateId::Draft,
+        rust_name: "Draft",
+        has_data: false,
+    },
+    StateDescriptor {
+        id: InvalidStateId::Published,
+        rust_name: "Published",
+        has_data: false,
+    },
+];
+
+static INVALID_TARGETS: [InvalidStateId; 1] = [InvalidStateId::Missing];
+
+static INVALID_SOURCE_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>; 1] =
+    [TransitionDescriptor {
+        id: InvalidTransitionId::Submit,
+        method_name: "submit",
+        from: InvalidStateId::Missing,
+        to: &INVALID_TARGETS,
+    }];
+
+static INVALID_TARGET_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>; 1] =
+    [TransitionDescriptor {
+        id: InvalidTransitionId::Submit,
+        method_name: "submit",
+        from: InvalidStateId::Draft,
+        to: &INVALID_TARGETS,
+    }];
+
+fn invalid_source_transitions(
+) -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
+    &INVALID_SOURCE_TRANSITIONS
+}
+
+fn invalid_target_transitions(
+) -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
+    &INVALID_TARGET_TRANSITIONS
+}
+
+static INVALID_SOURCE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
+    machine: MachineDescriptor {
+        module_path: "tests::invalid_source",
+        rust_type_path: "tests::invalid_source::Flow",
+    },
+    states: &VALID_STATE_DESCRIPTORS,
+    transitions: TransitionInventory::new(invalid_source_transitions),
+};
+
+static INVALID_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
+    machine: MachineDescriptor {
+        module_path: "tests::invalid_target",
+        rust_type_path: "tests::invalid_target::Flow",
+    },
+    states: &VALID_STATE_DESCRIPTORS,
+    transitions: TransitionInventory::new(invalid_target_transitions),
+};
+
+#[test]
+fn rejects_external_graph_with_missing_transition_source() {
+    assert_eq!(
+        MachineDoc::try_from_graph(&INVALID_SOURCE_GRAPH),
+        Err(MachineDocError::MissingSourceState {
+            machine: "tests::invalid_source::Flow",
+            transition: "submit",
+        })
+    );
+}
+
+#[test]
+fn rejects_external_graph_with_missing_transition_target() {
+    assert_eq!(
+        MachineDoc::try_from_graph(&INVALID_TARGET_GRAPH),
+        Err(MachineDocError::MissingTargetState {
+            machine: "tests::invalid_target::Flow",
+            transition: "submit",
+        })
     );
 }

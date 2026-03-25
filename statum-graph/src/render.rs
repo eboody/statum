@@ -9,14 +9,14 @@ where
     T: 'static,
 {
     let state_positions: HashMap<S, usize> = doc
-        .states
+        .states()
         .iter()
         .enumerate()
         .map(|(index, state)| (state.descriptor.id, index))
         .collect();
 
     let mut lines = vec!["graph TD".to_string()];
-    for (index, state) in doc.states.iter().enumerate() {
+    for (index, state) in doc.states().iter().enumerate() {
         lines.push(format!(
             "    {}[\"{}\"]",
             node_id(index),
@@ -27,11 +27,11 @@ where
         ));
     }
 
-    if !doc.edges.is_empty() {
+    if !doc.edges().is_empty() {
         lines.push(String::new());
     }
 
-    for edge in &doc.edges {
+    for edge in doc.edges() {
         let from = node_id(state_positions[&edge.descriptor.from]);
         for target in edge.descriptor.to {
             let to = node_id(state_positions[target]);
