@@ -306,6 +306,7 @@ enum InvalidStateId {
 enum InvalidTransitionId {
     Submit,
     Publish,
+    Archive,
 }
 
 static VALID_STATE_DESCRIPTORS: [StateDescriptor<InvalidStateId>; 2] = [
@@ -389,6 +390,24 @@ static DUPLICATE_TARGET_TRANSITIONS: [TransitionDescriptor<InvalidStateId, Inval
     to: &DUPLICATE_PUBLISHED_TARGETS,
 }];
 
+static DUPLICATE_TRANSITION_SITE_TRANSITIONS: [TransitionDescriptor<
+    InvalidStateId,
+    InvalidTransitionId,
+>; 2] = [
+    TransitionDescriptor {
+        id: InvalidTransitionId::Submit,
+        method_name: "review",
+        from: InvalidStateId::Draft,
+        to: &VALID_PUBLISHED_TARGET,
+    },
+    TransitionDescriptor {
+        id: InvalidTransitionId::Archive,
+        method_name: "review",
+        from: InvalidStateId::Draft,
+        to: &VALID_PUBLISHED_TARGET,
+    },
+];
+
 fn invalid_source_transitions(
 ) -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
     &INVALID_SOURCE_TRANSITIONS
@@ -412,6 +431,11 @@ fn duplicate_transition_id_transitions(
 fn duplicate_target_transitions(
 ) -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
     &DUPLICATE_TARGET_TRANSITIONS
+}
+
+fn duplicate_transition_site_transitions(
+) -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
+    &DUPLICATE_TRANSITION_SITE_TRANSITIONS
 }
 
 static INVALID_SOURCE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
@@ -468,6 +492,16 @@ static DUPLICATE_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId>
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(duplicate_target_transitions),
 };
+
+static DUPLICATE_TRANSITION_SITE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> =
+    MachineGraph {
+        machine: MachineDescriptor {
+            module_path: "tests::duplicate_transition_site",
+            rust_type_path: "tests::duplicate_transition_site::Flow",
+        },
+        states: &VALID_STATE_DESCRIPTORS,
+        transitions: TransitionInventory::new(duplicate_transition_site_transitions),
+    };
 
 #[test]
 fn rejects_external_graph_with_missing_transition_source() {
@@ -530,6 +564,18 @@ fn rejects_external_graph_with_duplicate_target_states() {
             machine: "tests::duplicate_target::Flow",
             transition: "branch",
             state: "Published",
+        })
+    );
+}
+
+#[test]
+fn rejects_external_graph_with_duplicate_transition_sites() {
+    assert_eq!(
+        MachineDoc::try_from_graph(&DUPLICATE_TRANSITION_SITE_GRAPH),
+        Err(MachineDocError::DuplicateTransitionSite {
+            machine: "tests::duplicate_transition_site::Flow",
+            state: "Draft",
+            transition: "review",
         })
     );
 }

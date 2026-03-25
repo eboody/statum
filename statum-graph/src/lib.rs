@@ -40,6 +40,12 @@ pub enum MachineDocError {
         machine: &'static str,
         transition: &'static str,
     },
+    /// One source state declares the same transition method name more than once.
+    DuplicateTransitionSite {
+        machine: &'static str,
+        state: &'static str,
+        transition: &'static str,
+    },
     /// One transition source state is not present in the graph's state list.
     MissingSourceState {
         machine: &'static str,
@@ -71,6 +77,14 @@ impl core::fmt::Display for MachineDocError {
             } => write!(
                 formatter,
                 "machine graph `{machine}` contains duplicate transition id for transition `{transition}`"
+            ),
+            Self::DuplicateTransitionSite {
+                machine,
+                state,
+                transition,
+            } => write!(
+                formatter,
+                "machine graph `{machine}` contains duplicate transition site `{state}::{transition}`"
             ),
             Self::MissingSourceState {
                 machine,
@@ -223,6 +237,7 @@ where
         }
     }
 
+    let mut transition_sites = HashSet::with_capacity(graph.transitions.len());
     let mut transition_ids = Vec::with_capacity(graph.transitions.len());
     for transition in graph.transitions.iter() {
         if transition_ids.contains(&transition.id) {
@@ -236,6 +251,15 @@ where
         if !state_names.contains_key(&transition.from) {
             return Err(MachineDocError::MissingSourceState {
                 machine: graph.machine.rust_type_path,
+                transition: transition.method_name,
+            });
+        }
+
+        let from_state_name = state_names[&transition.from];
+        if !transition_sites.insert((transition.from, transition.method_name)) {
+            return Err(MachineDocError::DuplicateTransitionSite {
+                machine: graph.machine.rust_type_path,
+                state: from_state_name,
                 transition: transition.method_name,
             });
         }
