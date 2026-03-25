@@ -22,7 +22,8 @@ pub mod projection;
 pub mod __private {
     pub use crate::{
         MachinePresentation, MachinePresentationDescriptor, RebuildAttempt, RebuildReport,
-        StatePresentation, TransitionPresentation, TransitionPresentationInventory,
+        StateFamily, StateFamilyMember, StatePresentation, TransitionPresentation,
+        TransitionPresentationInventory,
     };
     pub use futures;
     pub use linkme;
@@ -51,6 +52,26 @@ pub use introspection::{
     RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
     TransitionInventory, TransitionPresentation, TransitionPresentationInventory,
 };
+
+/// Hidden family-level metadata emitted by `#[state]`.
+#[doc(hidden)]
+pub trait StateFamily {
+    /// Rust-facing enum name for this family.
+    const NAME: &'static str;
+
+    /// Number of generated legal state markers in this family.
+    const VARIANT_COUNT: usize;
+}
+
+/// Hidden per-marker metadata emitted by `#[state]`.
+#[doc(hidden)]
+pub trait StateFamilyMember: StateMarker {
+    /// Rust-facing marker name for this state.
+    const RUST_NAME: &'static str;
+
+    /// Whether this state carries data.
+    const HAS_DATA: bool;
+}
 
 /// A generated state marker type.
 ///

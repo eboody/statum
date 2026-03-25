@@ -1,7 +1,75 @@
-error: Error: transition method `to_ghost` returns state `Ghost`, but `Ghost` is not a variant of `#[state]` enum `State`.
-       Valid next states for `Machine` are: A, B.
-       Help: return `Machine<ValidState>` using one of those variants, or call `self.transition()` / `self.transition_with(...)`.
+error: Error: transition target `Ghost` is not a variant of the machine's linked `#[state]` family.
+  --> tests/ui/invalid_transition_unknown_return_state.rs:14:1
+   |
+14 | #[state]
+   | ^^^^^^^^
+...
+25 | #[transition]
+   | ------------- in this attribute macro expansion
+   |
+   = note: this error originates in the macro `__statum_resolve_state_target` which comes from the expansion of the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `Ghost: StateTrait` is not satisfied
   --> tests/ui/invalid_transition_unknown_return_state.rs:27:26
    |
 27 |     fn to_ghost(self) -> Machine<Ghost> {
-   |                          ^^^^^^^
+   |                          ^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `StateTrait` is not implemented for `Ghost`
+  --> tests/ui/invalid_transition_unknown_return_state.rs:23:1
+   |
+23 | struct Ghost;
+   | ^^^^^^^^^^^^
+help: the following other types implement trait `StateTrait`
+  --> tests/ui/invalid_transition_unknown_return_state.rs:14:1
+   |
+14 | #[state]
+   | ^^^^^^^^
+   | |
+   | `A`
+   | `B`
+   | `UninitializedState`
+note: required by a bound in `Machine`
+  --> tests/ui/invalid_transition_unknown_return_state.rs:20:1
+   |
+20 | #[machine]
+   | ^^^^^^^^^^ required by this bound in `Machine`
+   = note: this error originates in the attribute macro `state` which comes from the expansion of the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0599]: no variant or associated item named `Ghost` found for enum `StateId` in the current scope
+  --> tests/ui/invalid_transition_unknown_return_state.rs:25:1
+   |
+20 | #[machine]
+   | ---------- variant or associated item `Ghost` not found for this enum
+...
+25 | #[transition]
+   | ^^^^^^^^^^^^^ variant or associated item not found in `StateId`
+   |
+   = note: this error originates in the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0599]: the method `transition` exists for struct `Machine<A>`, but its trait bounds were not satisfied
+  --> tests/ui/invalid_transition_unknown_return_state.rs:28:14
+   |
+20 | #[machine]
+   | ---------- method `transition` not found for this struct because it doesn't satisfy `Machine<A>: EdgeTo<_>` or `Machine<A>: TransitionTo<_>`
+...
+28 |         self.transition()
+   |              ^^^^^^^^^^
+   |
+note: trait bound `Machine<A>: EdgeTo<_>` was not satisfied
+  --> tests/ui/invalid_transition_unknown_return_state.rs:20:1
+   |
+20 | #[machine]
+   | ^^^^^^^^^^
+note: the trait `EdgeTo` must be implemented
+  --> tests/ui/invalid_transition_unknown_return_state.rs:20:1
+   |
+20 | #[machine]
+   | ^^^^^^^^^^
+   = help: items from traits can only be used if the trait is implemented and in scope
+note: `TransitionTo` defines an item `transition`, perhaps you need to implement it
+  --> tests/ui/invalid_transition_unknown_return_state.rs:20:1
+   |
+20 | #[machine]
+   | ^^^^^^^^^^
+   = note: this error originates in the macro `__statum_emit_machine_from_state_family` which comes from the expansion of the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

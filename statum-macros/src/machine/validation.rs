@@ -56,13 +56,6 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
         );
     };
 
-    let state_path: StateModulePath = machine_info.module_path.clone();
-    let matching_state_enum = machine_info
-        .state_generic_name
-        .as_deref()
-        .and_then(|state_name| lookup_loaded_state_enum_by_name(&state_path, state_name).ok())
-        .or_else(|| lookup_loaded_state_enum(&state_path).ok());
-
     let first_generic_param_display = first_generic_param.to_token_stream().to_string();
     let syn::GenericParam::Type(_) = first_generic_param else {
         return Some(
@@ -75,11 +68,32 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
             .to_compile_error(),
         );
     };
+    let syn::GenericParam::Type(first_type) = first_generic_param else {
+        unreachable!();
+    };
+    if !first_type.bounds.is_empty() || first_type.default.is_some() {
+        return Some(
+            syn::Error::new_spanned(
+                first_generic_param,
+                format!(
+                    "Error: machine `{machine_name}` must use a plain type parameter as its first generic so Statum can link it to the generated state-family contract.\nFix: declare `{machine_name}<State>` where `State` is your `#[state]` enum."
+                ),
+            )
+            .to_compile_error(),
+        );
+    }
+
+    let state_path: StateModulePath = machine_info.module_path.clone();
+    let matching_state_enum = machine_info
+        .state_generic_name
+        .as_deref()
+        .and_then(|state_name| lookup_loaded_state_enum_by_name(&state_path, state_name).ok())
+        .or_else(|| lookup_loaded_state_enum(&state_path).ok());
     let matching_state_enum = match matching_state_enum {
-        Some(enum_info) => enum_info,
+        Some(state_enum) => state_enum,
         None => match machine_info.get_matching_state_enum() {
-            Ok(enum_info) => enum_info,
-            Err(err) => return Some(err),
+        Ok(state_enum) => state_enum,
+        Err(err) => return Some(err),
         },
     };
 

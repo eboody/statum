@@ -1,4 +1,4 @@
-error[E0616]: field `secret` of struct `demo::LightSwitch` is private
+error[E0616]: field `secret` of struct `LightSwitch` is private
   --> tests/ui/invalid_machine_private_field_access.rs:36:19
    |
 36 |     let _ = light.secret;

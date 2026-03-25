@@ -86,14 +86,6 @@ pub fn lookup_loaded_machine_in_module(
     }))
 }
 
-pub fn lookup_unique_loaded_machine_by_name(
-    machine_name: &str,
-) -> Result<MachineInfo, LoadedMachineLookupFailure> {
-    lookup_loaded_machine_candidates(loaded_machine_candidates_matching(|machine| {
-        machine.name == machine_name
-    }))
-}
-
 pub fn format_loaded_machine_candidates(candidates: &[MachineInfo]) -> String {
     candidates
         .iter()

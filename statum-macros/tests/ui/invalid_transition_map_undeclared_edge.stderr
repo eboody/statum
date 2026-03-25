@@ -1,14 +1,41 @@
-error[E0277]: the trait bound `WorkflowMachine<Review>: CanTransitionMap<_>` is not satisfied
+error[E0277]: the trait bound `Published: DataState` is not satisfied
   --> tests/ui/invalid_transition_map_undeclared_edge.rs:59:20
    |
 59 |     let _ = review.transition_map(|data| data);
    |                    ^^^^^^^^^^^^^^ unsatisfied trait bound
    |
-help: the trait `CanTransitionMap<_>` is not implemented for `WorkflowMachine<Review>`
-      but trait `CanTransitionMap<Review>` is implemented for `WorkflowMachine<Draft>`
-  --> tests/ui/invalid_transition_map_undeclared_edge.rs:34:1
+help: the trait `DataState` is not implemented for `Published`
+  --> tests/ui/invalid_transition_map_undeclared_edge.rs:15:1
    |
-34 | #[transition]
-   | ^^^^^^^^^^^^^
-   = help: for that trait implementation, expected `Draft`, found `Review`
-   = note: this error originates in the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)
+15 | #[state]
+   | ^^^^^^^^
+help: the following other types implement trait `DataState`
+  --> tests/ui/invalid_transition_map_undeclared_edge.rs:15:1
+   |
+15 | #[state]
+   | ^^^^^^^^
+   | |
+   | `Draft`
+   | `Review`
+note: required for `WorkflowMachine<Review>` to implement `CanTransitionMap<Published>`
+  --> tests/ui/invalid_transition_map_undeclared_edge.rs:31:1
+   |
+31 | #[machine]
+   | ^^^^^^^^^^
+note: required by a bound in `WorkflowMachine::<WorkflowState>::transition_map`
+  --> tests/ui/invalid_transition_map_undeclared_edge.rs:31:1
+   |
+31 | #[machine]
+   | ^^^^^^^^^^ required by this bound in `WorkflowMachine::<WorkflowState>::transition_map`
+   = note: this error originates in the attribute macro `state` which comes from the expansion of the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+  --> tests/ui/invalid_transition_map_undeclared_edge.rs:59:42
+   |
+59 |     let _ = review.transition_map(|data| data);
+   |                                          ^^^^ expected `()`, found `ReviewData`
+   |
+help: consider ignoring the value
+   |
+59 |     let _ = review.transition_map(|data| _ = data);
+   |                                          +++

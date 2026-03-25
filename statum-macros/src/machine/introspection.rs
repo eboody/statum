@@ -32,7 +32,7 @@ pub(crate) fn transition_slice_ident(
         "{machine_name}::{}::{line_number}",
         file_path.unwrap_or_default()
     );
-    format_ident!("__statum_transitions_{:016x}", stable_hash(&key))
+    format_ident!("__STATUM_TRANSITIONS_{:016X}", stable_hash(&key))
 }
 
 pub(crate) fn transition_presentation_slice_ident(
@@ -45,7 +45,7 @@ pub(crate) fn transition_presentation_slice_ident(
         file_path.unwrap_or_default()
     );
     format_ident!(
-        "__statum_transition_presentation_{:016x}",
+        "__STATUM_TRANSITION_PRESENTATION_{:016X}",
         stable_hash(&key)
     )
 }
@@ -78,9 +78,9 @@ mod tests {
         let second = transition_slice_ident("ReviewFlow", Some("src/beta.rs"), 40).to_string();
         let third = transition_slice_ident("ReviewFlow", Some("src/alpha.rs"), 91).to_string();
 
-        assert!(first.starts_with("__statum_transitions_"));
-        assert!(second.starts_with("__statum_transitions_"));
-        assert!(third.starts_with("__statum_transitions_"));
+        assert!(first.starts_with("__STATUM_TRANSITIONS_"));
+        assert!(second.starts_with("__STATUM_TRANSITIONS_"));
+        assert!(third.starts_with("__STATUM_TRANSITIONS_"));
         assert_ne!(first, second);
         assert_ne!(first, third);
     }
@@ -94,9 +94,9 @@ mod tests {
         let third =
             transition_presentation_slice_ident("ReviewFlow", Some("src/alpha.rs"), 91).to_string();
 
-        assert!(first.starts_with("__statum_transition_presentation_"));
-        assert!(second.starts_with("__statum_transition_presentation_"));
-        assert!(third.starts_with("__statum_transition_presentation_"));
+        assert!(first.starts_with("__STATUM_TRANSITION_PRESENTATION_"));
+        assert!(second.starts_with("__STATUM_TRANSITION_PRESENTATION_"));
+        assert!(third.starts_with("__STATUM_TRANSITION_PRESENTATION_"));
         assert_ne!(first, second);
         assert_ne!(first, third);
     }
