@@ -108,6 +108,8 @@ fn generate_machine_family_callback(
         state_family_target_resolver_macro_ident(&state_family_name);
     let machine_target_resolver_macro_ident =
         machine_transition_target_resolver_macro_ident(machine_info);
+    let machine_validator_contract_macro_ident =
+        machine_validator_contract_macro_ident(machine_info);
     let transition_support = transition_support(machine_info);
     let transition_support_module_ident = transition_support_module_ident(machine_info);
     let struct_definition = generate_machine_struct_definition(
@@ -125,6 +127,38 @@ fn generate_machine_family_callback(
         machine_ident,
         state_generic_ident,
     );
+    let machine_module_ident = machine_state_module_ident(machine_info);
+    let machine_vis = parsed_machine.vis.clone();
+    let extra_machine_generics = extra_generics(&parsed_machine.generics);
+    let extra_generic_param_entries = extra_machine_generics
+        .params
+        .iter()
+        .map(|param| quote! { { #param } })
+        .collect::<Vec<_>>();
+    let extra_generic_arg_entries = extra_machine_generics
+        .params
+        .iter()
+        .map(|param| {
+            let arg = generic_argument_tokens_for_machine_contract(param);
+            quote! { { #arg } }
+        })
+        .collect::<Vec<_>>();
+    let extra_where_predicate_entries = extra_machine_generics
+        .where_clause
+        .iter()
+        .flat_map(|where_clause| where_clause.predicates.iter())
+        .map(|predicate| quote! { { #predicate } })
+        .collect::<Vec<_>>();
+    let validator_field_entries = parsed_machine.fields.iter().map(|field| {
+        let field_ident = &field.ident;
+        let field_ty = &field.field_type;
+        quote! {
+            {
+                name = #field_ident,
+                ty = #field_ty
+            }
+        }
+    });
 
     Ok(quote! {
         #[doc(hidden)]
@@ -174,6 +208,42 @@ fn generate_machine_family_callback(
                         #state_target_resolver_macro_ident!($callback, $target);
                     };
                 }
+                #[doc(hidden)]
+                macro_rules! #machine_validator_contract_macro_ident {
+                    ($callback:ident) => {
+                        $callback! {
+                            machine = #machine_ident,
+                            state_family = $family,
+                            state_trait = $state_trait,
+                            machine_module = #machine_module_ident,
+                            machine_vis = #machine_vis,
+                            extra_generics = {
+                                params = [
+                                    #(#extra_generic_param_entries),*
+                                ],
+                                args = [
+                                    #(#extra_generic_arg_entries),*
+                                ],
+                                where_predicates = [
+                                    #(#extra_where_predicate_entries),*
+                                ],
+                            },
+                            fields = [
+                                #(#validator_field_entries),*
+                            ],
+                            variants = [
+                                $(
+                                    {
+                                        marker = $variant,
+                                        validator = $is_fn,
+                                        data = $data,
+                                        has_data = $has_data
+                                    }
+                                ),*
+                            ],
+                        }
+                    };
+                }
                 #struct_definition
                 #builder_support
                 #machine_state_surface
@@ -200,6 +270,13 @@ fn machine_visitor_macro_ident(machine_info: &MachineInfo) -> Ident {
 fn machine_transition_target_resolver_macro_ident(machine_info: &MachineInfo) -> Ident {
     format_ident!(
         "__statum_resolve_{}_transition_target",
+        to_snake_case(&machine_info.name)
+    )
+}
+
+fn machine_validator_contract_macro_ident(machine_info: &MachineInfo) -> Ident {
+    format_ident!(
+        "__statum_visit_{}_validators",
         to_snake_case(&machine_info.name)
     )
 }
@@ -1102,6 +1179,23 @@ fn builder_type_arguments_tokens(
     args.extend(slot_values.iter().cloned());
 
     quote! { <#(#args),*> }
+}
+
+fn generic_argument_tokens_for_machine_contract(param: &GenericParam) -> TokenStream {
+    match param {
+        GenericParam::Lifetime(lifetime) => {
+            let lifetime = &lifetime.lifetime;
+            quote! { #lifetime }
+        }
+        GenericParam::Type(ty) => {
+            let ident = &ty.ident;
+            quote! { #ident }
+        }
+        GenericParam::Const(const_param) => {
+            let ident = &const_param.ident;
+            quote! { #ident }
+        }
+    }
 }
 
 fn with_appended_where_clause(

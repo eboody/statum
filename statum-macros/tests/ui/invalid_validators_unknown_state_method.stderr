@@ -5,7 +5,16 @@ error: Error: `#[validators(TaskMachine)]` on `impl DbRow` defines methods that 
 29 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the macro `__statum_assert_task_machine_known_validator` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: Error: `#[validators(TaskMachine)]` on `impl DbRow` is missing validator method `is_done` for `TaskState::Done`.
+       Fix: add one validator per state variant (snake_case), e.g. `fn is_draft(&self) -> Result<()>`.
+  --> tests/ui/invalid_validators_unknown_state_method.rs:29:1
+   |
+29 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `__statum_assert_task_machine_validator_present` which comes from the expansion of the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_validators_unknown_state_method.rs:48:2

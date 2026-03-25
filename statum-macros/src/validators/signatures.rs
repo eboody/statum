@@ -2,21 +2,23 @@ use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{FnArg, GenericArgument, Ident, Pat, PathArguments, ReturnType, Type};
 
-use super::type_equivalence::types_equivalent;
-
 pub(super) struct ValidatorDiagnosticContext<'a> {
     pub(super) persisted_type_display: &'a str,
     pub(super) machine_name: &'a str,
     pub(super) state_enum_name: &'a str,
     pub(super) variant_name: &'a str,
     pub(super) machine_fields: &'a [Ident],
-    pub(super) expected_ok_type: &'a Type,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ValidatorReturnKind {
     Plain,
     Diagnostic,
+}
+
+pub(super) struct AnalyzedValidatorReturn {
+    pub(super) ok_type: Type,
+    pub(super) return_kind: ValidatorReturnKind,
 }
 
 pub(super) fn validator_state_name_from_ident(ident: &Ident) -> Option<String> {
@@ -32,7 +34,7 @@ pub(super) fn validate_validator_signature(
 ) -> Result<(), proc_macro2::TokenStream> {
     if func.sig.inputs.len() != 1 {
         let collision_line = explicit_param_collision_line(&func.sig.inputs, context.machine_fields);
-        let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
+        let expected_signature = expected_validator_signature(&func.sig.ident);
         let message = format!(
             "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must declare only `&self`.\nFound parameters: `({})`.\n{}\n{}\nCorrect shapes: {expected_signature}.",
             func.sig.ident,
@@ -63,7 +65,7 @@ pub(super) fn validate_validator_signature(
         FnArg::Receiver(receiver) => {
             if receiver.reference.is_none() || receiver.mutability.is_some() {
                 let receiver_display = receiver.to_token_stream().to_string();
-                let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
+                let expected_signature = expected_validator_signature(&func.sig.ident);
                 let message = format!(
                     "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self`, not `{}`.\n{}\nCorrect shapes: {expected_signature}.",
                     func.sig.ident,
@@ -78,7 +80,7 @@ pub(super) fn validate_validator_signature(
             }
         }
         FnArg::Typed(_) => {
-            let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
+            let expected_signature = expected_validator_signature(&func.sig.ident);
             let message = format!(
                 "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self` as its receiver.\n{}\nCorrect shapes: {expected_signature}.",
                 func.sig.ident,
@@ -94,23 +96,20 @@ pub(super) fn validate_validator_signature(
     Ok(())
 }
 
-pub(super) fn validate_validator_return_type(
+pub(super) fn analyze_validator_return_type(
     func: &syn::ImplItemFn,
-    expected_ok_type: &Type,
     context: &ValidatorDiagnosticContext<'_>,
-) -> Result<ValidatorReturnKind, TokenStream> {
+) -> Result<AnalyzedValidatorReturn, TokenStream> {
     let ReturnType::Type(_, return_ty) = &func.sig.output else {
-        let expected_ok_display = expected_ok_type.to_token_stream().to_string();
         let message = format!(
-            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` or `Validation<{}>`.\n{}.",
+            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return a supported validator result.\nSupported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, aliases like `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`.\nThe payload `T` must match the authoritative state data for `{}::{}`.",
             func.sig.ident,
             context.persisted_type_display,
             context.machine_name,
             context.state_enum_name,
             context.variant_name,
-            expected_ok_display,
-            expected_ok_display,
-            expected_state_shape(context.state_enum_name, context.variant_name, &expected_ok_display),
+            context.state_enum_name,
+            context.variant_name,
         );
         return Err(syn::Error::new_spanned(&func.sig.output, message).to_compile_error());
     };
@@ -118,41 +117,25 @@ pub(super) fn validate_validator_return_type(
     let (actual_ok_ty, return_kind) = match extract_supported_validator_ok_type(return_ty) {
         Some(info) => info,
         None => {
-            let expected_ok_display = expected_ok_type.to_token_stream().to_string();
             let message = format!(
-                "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return a supported validator result whose payload is `{}`.\nFound return type `{}`.\nSupported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, aliases like `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`.",
+                "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return a supported validator result.\nFound return type `{}`.\nSupported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, aliases like `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`.\nThe payload `T` must match the authoritative state data for `{}::{}`.",
                 func.sig.ident,
                 context.persisted_type_display,
                 context.machine_name,
                 context.state_enum_name,
                 context.variant_name,
-                expected_ok_display,
                 return_ty.to_token_stream(),
+                context.state_enum_name,
+                context.variant_name,
             );
             return Err(syn::Error::new_spanned(return_ty, message).to_compile_error());
         }
     };
 
-    if !types_equivalent(&actual_ok_ty, expected_ok_type) {
-        let expected_ok_display = expected_ok_type.to_token_stream().to_string();
-        let actual_return_type = return_ty.to_token_stream().to_string();
-        let actual_ok_display = actual_ok_ty.to_token_stream().to_string();
-        let message = format!(
-            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` or `Validation<{}>` (or an equivalent supported alias), but found `{}` with payload `{}`.",
-            func.sig.ident,
-            context.persisted_type_display,
-            context.machine_name,
-            context.state_enum_name,
-            context.variant_name,
-            expected_ok_display,
-            expected_ok_display,
-            actual_return_type,
-            actual_ok_display,
-        );
-        return Err(syn::Error::new_spanned(return_ty, message).to_compile_error());
-    }
-
-    Ok(return_kind)
+    Ok(AnalyzedValidatorReturn {
+        ok_type: actual_ok_ty,
+        return_kind,
+    })
 }
 
 fn injected_machine_fields_line(machine_name: &str, machine_fields: &[Ident]) -> String {
@@ -172,11 +155,9 @@ fn injected_machine_fields_line(machine_name: &str, machine_fields: &[Ident]) ->
     }
 }
 
-fn expected_validator_signature(func_ident: &Ident, expected_ok_type: &Type) -> String {
+fn expected_validator_signature(func_ident: &Ident) -> String {
     format!(
-        "`fn {func_ident}(&self) -> Result<{}, _>` or `fn {func_ident}(&self) -> Validation<{}>`",
-        expected_ok_type.to_token_stream(),
-        expected_ok_type.to_token_stream()
+        "`fn {func_ident}(&self) -> Result<T, _>` or `fn {func_ident}(&self) -> Validation<T>`"
     )
 }
 
@@ -211,14 +192,6 @@ fn explicit_param_collision_line(
             if collisions.len() == 1 { "collides" } else { "collide" },
             if collisions.len() == 1 { "binding" } else { "bindings" }
         ))
-    }
-}
-
-fn expected_state_shape(state_enum_name: &str, variant_name: &str, expected_ok_display: &str) -> String {
-    if expected_ok_display == "()" {
-        format!("`{state_enum_name}::{variant_name}` is a unit state")
-    } else {
-        format!("`{state_enum_name}::{variant_name}` carries `{expected_ok_display}`")
     }
 }
 

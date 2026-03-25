@@ -5,7 +5,7 @@ error: Error: `#[validators(TaskMachine)]` on `impl DbRow` must define at least 
 28 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: this error originates in the macro `__statum_emit_task_machine_validator_no_methods` which comes from the expansion of the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_validators_no_methods.rs:29:14

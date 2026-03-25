@@ -1,11 +1,83 @@
-error: Error: validator `is_in_progress` for `impl DbRow` rebuilding `TaskMachine` state `TaskState::InProgress` must return `Result<Progress, _>` or `Validation<Progress>` (or an equivalent supported alias), but found `statum :: Result < () >` with payload `()`.
-  --> tests/ui/invalid_validators_alias_wrong_payload.rs:46:33
-   |
-46 |     fn is_in_progress(&self) -> statum::Result<()> {
-   |                                 ^^^^^^^^^^^^^^^^^^
-
 error[E0601]: `main` function not found in crate `$CRATE`
   --> tests/ui/invalid_validators_alias_wrong_payload.rs:54:2
    |
 54 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_alias_wrong_payload.rs`
+
+error[E0308]: mismatched types
+  --> tests/ui/invalid_validators_alias_wrong_payload.rs:35:1
+   |
+35 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<Progress>`, found `Option<()>`
+...
+46 |     fn is_in_progress(&self) -> statum::Result<()> {
+   |        -------------- arguments to this function are incorrect
+   |
+   = note: expected enum `Option<Progress>`
+              found enum `Option<()>`
+note: function defined here
+  --> tests/ui/invalid_validators_alias_wrong_payload.rs:46:8
+   |
+35 | #[validators(TaskMachine)]
+   | --------------------------
+   | |
+   | in this attribute macro expansion
+...
+46 |     fn is_in_progress(&self) -> statum::Result<()> {
+   |        ^^^^^^^^^^^^^^
+   = note: this error originates in the macro `__statum_emit_task_machine_validator_build_variant` which comes from the expansion of the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+  --> tests/ui/invalid_validators_alias_wrong_payload.rs:35:1
+   |
+35 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | |
+   | expected `Progress`, found `()`
+   | arguments to this method are incorrect
+   |
+note: method defined here
+  --> tests/ui/invalid_validators_alias_wrong_payload.rs:26:1
+   |
+26 | #[machine]
+   | ^^^^^^^^^^
+   = note: this error originates in the macro `__statum_emit_task_machine_validator_build_variant` which comes from the expansion of the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+  --> tests/ui/invalid_validators_alias_wrong_payload.rs:35:1
+   |
+35 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<Progress>`, found `Option<()>`
+...
+46 |     fn is_in_progress(&self) -> statum::Result<()> {
+   |        -------------- arguments to this function are incorrect
+   |
+   = note: expected enum `Option<Progress>`
+              found enum `Option<()>`
+note: function defined here
+  --> tests/ui/invalid_validators_alias_wrong_payload.rs:46:8
+   |
+35 | #[validators(TaskMachine)]
+   | --------------------------
+   | |
+   | in this attribute macro expansion
+...
+46 |     fn is_in_progress(&self) -> statum::Result<()> {
+   |        ^^^^^^^^^^^^^^
+   = note: this error originates in the macro `__statum_emit_task_machine_validator_report_variant` which comes from the expansion of the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+  --> tests/ui/invalid_validators_alias_wrong_payload.rs:35:1
+   |
+35 | #[validators(TaskMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | |
+   | expected `Progress`, found `()`
+   | arguments to this method are incorrect
+   |
+note: method defined here
+  --> tests/ui/invalid_validators_alias_wrong_payload.rs:26:1
+   |
+26 | #[machine]
+   | ^^^^^^^^^^
+   = note: this error originates in the macro `__statum_emit_task_machine_validator_report_variant` which comes from the expansion of the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

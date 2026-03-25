@@ -5,7 +5,6 @@ use crate::machine::{
     builder_generics, extra_generics, extra_type_arguments_tokens, generic_argument_tokens,
 };
 use crate::validators::signatures::ValidatorReturnKind;
-use crate::to_snake_case;
 
 pub(super) struct BatchBuilderContext<'a> {
     pub(super) machine_ident: &'a Ident,
@@ -27,25 +26,26 @@ pub(super) struct ValidatorCheckContext<'a> {
     pub(super) receiver: &'a proc_macro2::TokenStream,
 }
 
-pub(super) fn generate_validator_check(
+pub(super) fn generate_validator_check_template(
     context: &ValidatorCheckContext<'_>,
-    variant_name: &str,
+    validator_fn_ident: &Ident,
     has_state_data: bool,
     is_async: bool,
 ) -> proc_macro2::TokenStream {
-    let machine_ident = context.machine_ident;
-    let machine_module_ident = context.machine_module_ident;
-    let machine_generics = context.machine_generics;
-    let field_names = context.field_names;
     let receiver = context.receiver;
-    let variant_ident = format_ident!("{}", variant_name);
-    let validator_fn_ident = format_ident!("is_{}", to_snake_case(variant_name));
-    let await_token = if is_async { quote! { .await } } else { quote! {} };
+    let field_names = context.field_names;
+    let await_token = if is_async {
+        quote! { .await }
+    } else {
+        quote! {}
+    };
     let field_builder_chain = quote! { #(.#field_names(#field_names))* };
     let machine_builder_path =
-        machine_builder_path_tokens(machine_ident, machine_generics, &variant_ident);
-    let machine_state_variant_path =
-        machine_state_variant_path_tokens(machine_module_ident, machine_generics, &variant_ident);
+        machine_builder_path_template_tokens(context.machine_ident, context.machine_generics);
+    let machine_state_variant_path = machine_state_variant_path_template_tokens(
+        context.machine_module_ident,
+        context.machine_generics,
+    );
 
     if has_state_data {
         let builder_call = quote! {
@@ -77,32 +77,31 @@ pub(super) fn generate_validator_check(
     }
 }
 
-pub(super) fn generate_validator_report_check(
+pub(super) fn generate_validator_report_check_template(
     context: &ValidatorCheckContext<'_>,
-    variant_name: &str,
+    validator_fn_ident: &Ident,
     has_state_data: bool,
     return_kind: ValidatorReturnKind,
     is_async: bool,
 ) -> proc_macro2::TokenStream {
-    let machine_ident = context.machine_ident;
-    let machine_module_ident = context.machine_module_ident;
-    let machine_generics = context.machine_generics;
-    let field_names = context.field_names;
     let receiver = context.receiver;
-    let variant_ident = format_ident!("{}", variant_name);
-    let validator_fn_ident = format_ident!("is_{}", to_snake_case(variant_name));
-    let await_token = if is_async { quote! { .await } } else { quote! {} };
+    let field_names = context.field_names;
+    let await_token = if is_async {
+        quote! { .await }
+    } else {
+        quote! {}
+    };
     let field_builder_chain = quote! { #(.#field_names(#field_names))* };
-    let matched_attempt = rebuild_attempt_tokens(&validator_fn_ident, &variant_ident, true);
-    let failed_attempt = rebuild_attempt_tokens(&validator_fn_ident, &variant_ident, false);
-    let failed_attempt_with_rejection = failed_rebuild_attempt_with_rejection_tokens(
-        &validator_fn_ident,
-        &variant_ident,
-    );
+    let matched_attempt = rebuild_attempt_template_tokens(validator_fn_ident, true);
+    let failed_attempt = rebuild_attempt_template_tokens(validator_fn_ident, false);
+    let failed_attempt_with_rejection =
+        failed_rebuild_attempt_with_rejection_template_tokens(validator_fn_ident);
     let machine_builder_path =
-        machine_builder_path_tokens(machine_ident, machine_generics, &variant_ident);
-    let machine_state_variant_path =
-        machine_state_variant_path_tokens(machine_module_ident, machine_generics, &variant_ident);
+        machine_builder_path_template_tokens(context.machine_ident, context.machine_generics);
+    let machine_state_variant_path = machine_state_variant_path_template_tokens(
+        context.machine_module_ident,
+        context.machine_generics,
+    );
 
     if has_state_data {
         let builder_call = quote! {
@@ -135,7 +134,7 @@ pub(super) fn generate_validator_report_check(
                     }
                     Err(__statum_rejection) => __statum_attempts.push(#failed_attempt_with_rejection),
                 }
-            }
+            },
         }
     } else {
         let builder_call = quote! {
@@ -484,15 +483,14 @@ fn generate_per_item_finalization_logic(
     }
 }
 
-fn rebuild_attempt_tokens(
+fn rebuild_attempt_template_tokens(
     validator_fn_ident: &Ident,
-    variant_ident: &Ident,
     matched: bool,
 ) -> proc_macro2::TokenStream {
     quote! {
         statum::RebuildAttempt {
             validator: stringify!(#validator_fn_ident),
-            target_state: stringify!(#variant_ident),
+            target_state: stringify!($variant),
             matched: #matched,
             reason_key: core::option::Option::None,
             message: core::option::Option::None,
@@ -500,14 +498,13 @@ fn rebuild_attempt_tokens(
     }
 }
 
-fn failed_rebuild_attempt_with_rejection_tokens(
+fn failed_rebuild_attempt_with_rejection_template_tokens(
     validator_fn_ident: &Ident,
-    variant_ident: &Ident,
 ) -> proc_macro2::TokenStream {
     quote! {
         statum::RebuildAttempt {
             validator: stringify!(#validator_fn_ident),
-            target_state: stringify!(#variant_ident),
+            target_state: stringify!($variant),
             matched: false,
             reason_key: core::option::Option::Some(__statum_rejection.reason_key),
             message: __statum_rejection.message.clone(),
@@ -515,20 +512,9 @@ fn failed_rebuild_attempt_with_rejection_tokens(
     }
 }
 
-fn machine_builder_path_tokens(
+fn machine_builder_path_template_tokens(
     machine_ident: &Ident,
     machine_generics: &Generics,
-    variant_ident: &Ident,
-) -> proc_macro2::TokenStream {
-    let mut args = vec![quote! { #variant_ident }];
-    args.extend(machine_generics.params.iter().skip(1).map(generic_argument_token));
-    quote! { #machine_ident::<#(#args),*> }
-}
-
-fn machine_state_variant_path_tokens(
-    machine_module_ident: &Ident,
-    machine_generics: &Generics,
-    variant_ident: &Ident,
 ) -> proc_macro2::TokenStream {
     let extra_args = machine_generics
         .params
@@ -537,9 +523,26 @@ fn machine_state_variant_path_tokens(
         .map(generic_argument_token)
         .collect::<Vec<_>>();
     if extra_args.is_empty() {
-        quote! { #machine_module_ident::SomeState::#variant_ident }
+        quote! { #machine_ident::<$variant> }
     } else {
-        quote! { #machine_module_ident::SomeState::<#(#extra_args),*>::#variant_ident }
+        quote! { #machine_ident::<$variant, #(#extra_args),*> }
+    }
+}
+
+fn machine_state_variant_path_template_tokens(
+    machine_module_ident: &Ident,
+    machine_generics: &Generics,
+) -> proc_macro2::TokenStream {
+    let extra_args = machine_generics
+        .params
+        .iter()
+        .skip(1)
+        .map(generic_argument_token)
+        .collect::<Vec<_>>();
+    if extra_args.is_empty() {
+        quote! { #machine_module_ident::SomeState::$variant }
+    } else {
+        quote! { #machine_module_ident::SomeState::<#(#extra_args),*>::$variant }
     }
 }
 

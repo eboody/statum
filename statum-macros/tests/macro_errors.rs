@@ -83,8 +83,10 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_machine_extra_generics.rs");
     t.pass("tests/ui/valid_machine_no_fields.rs");
     t.pass("tests/ui/valid_machine_supported_derives.rs");
+    t.pass("tests/ui/valid_machine_validator_contract.rs");
     t.pass("tests/ui/valid_machine_state_surface.rs");
     t.pass("tests/ui/valid_validators_sync.rs");
+    t.pass("tests/ui/valid_validators_via_macro_state.rs");
     t.pass("tests/ui/valid_validators_result_aliases.rs");
     t.pass("tests/ui/valid_validators_diagnostic_returns.rs");
     t.pass("tests/ui/valid_validators_generic_payload.rs");
