@@ -30,6 +30,8 @@ pub struct MachineDoc<S: 'static, T: 'static> {
 /// Error returned when a `MachineGraph` cannot be exported into a `MachineDoc`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MachineDocError {
+    /// The graph's state list is empty.
+    EmptyStateList { machine: &'static str },
     /// One state id appears more than once in the graph's state list.
     DuplicateStateId {
         machine: &'static str,
@@ -56,6 +58,11 @@ pub enum MachineDocError {
         machine: &'static str,
         transition: &'static str,
     },
+    /// One transition site declares no legal target states.
+    EmptyTargetSet {
+        machine: &'static str,
+        transition: &'static str,
+    },
     /// One transition lists the same target state more than once.
     DuplicateTargetState {
         machine: &'static str,
@@ -67,6 +74,10 @@ pub enum MachineDocError {
 impl core::fmt::Display for MachineDocError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::EmptyStateList { machine } => write!(
+                formatter,
+                "machine graph `{machine}` contains no states"
+            ),
             Self::DuplicateStateId { machine, state } => write!(
                 formatter,
                 "machine graph `{machine}` contains duplicate state id for state `{state}`"
@@ -99,6 +110,13 @@ impl core::fmt::Display for MachineDocError {
             } => write!(
                 formatter,
                 "machine graph `{machine}` contains transition `{transition}` whose target state is missing from the state list"
+            ),
+            Self::EmptyTargetSet {
+                machine,
+                transition,
+            } => write!(
+                formatter,
+                "machine graph `{machine}` contains transition `{transition}` with no target states"
             ),
             Self::DuplicateTargetState {
                 machine,
@@ -231,6 +249,12 @@ where
     S: Copy + Eq + std::hash::Hash + 'static,
     T: Copy + Eq + 'static,
 {
+    if states.is_empty() {
+        return Err(MachineDocError::EmptyStateList {
+            machine: machine.rust_type_path,
+        });
+    }
+
     let mut state_names = HashMap::with_capacity(states.len());
     for state in states.iter() {
         if state_names.insert(state.id, state.rust_name).is_some() {
@@ -264,6 +288,13 @@ where
             return Err(MachineDocError::DuplicateTransitionSite {
                 machine: machine.rust_type_path,
                 state: from_state_name,
+                transition: transition.method_name,
+            });
+        }
+
+        if transition.to.is_empty() {
+            return Err(MachineDocError::EmptyTargetSet {
+                machine: machine.rust_type_path,
                 transition: transition.method_name,
             });
         }

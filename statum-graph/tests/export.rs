@@ -325,6 +325,9 @@ static VALID_STATE_DESCRIPTORS: [StateDescriptor<InvalidStateId>; 2] = [
     },
 ];
 
+static EMPTY_STATE_DESCRIPTORS: [StateDescriptor<InvalidStateId>; 0] = [];
+static EMPTY_TARGET_IDS: [InvalidStateId; 0] = [];
+
 static DUPLICATE_STATE_DESCRIPTORS: [StateDescriptor<InvalidStateId>; 2] = [
     StateDescriptor {
         id: InvalidStateId::Draft,
@@ -518,6 +521,13 @@ static FLAKY_VALID_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTra
     }];
 
 static EMPTY_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>; 0] = [];
+static EMPTY_TARGET_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>; 1] =
+    [TransitionDescriptor {
+        id: InvalidTransitionId::Submit,
+        method_name: "submit",
+        from: InvalidStateId::Draft,
+        to: &EMPTY_TARGET_IDS,
+    }];
 
 fn flaky_transitions() -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
     let call = FLAKY_TRANSITION_CALLS.fetch_add(1, Ordering::SeqCst);
@@ -526,6 +536,11 @@ fn flaky_transitions() -> &'static [TransitionDescriptor<InvalidStateId, Invalid
     } else {
         &EMPTY_TRANSITIONS
     }
+}
+
+fn empty_target_transitions() -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>]
+{
+    &EMPTY_TARGET_TRANSITIONS
 }
 
 static FLAKY_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
@@ -537,6 +552,24 @@ static FLAKY_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineG
     transitions: TransitionInventory::new(flaky_transitions),
 };
 
+static EMPTY_STATE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
+    machine: MachineDescriptor {
+        module_path: "tests::empty_state_list",
+        rust_type_path: "tests::empty_state_list::Flow",
+    },
+    states: &EMPTY_STATE_DESCRIPTORS,
+    transitions: TransitionInventory::new(|| &EMPTY_TRANSITIONS),
+};
+
+static EMPTY_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
+    machine: MachineDescriptor {
+        module_path: "tests::empty_target_set",
+        rust_type_path: "tests::empty_target_set::Flow",
+    },
+    states: &VALID_STATE_DESCRIPTORS,
+    transitions: TransitionInventory::new(empty_target_transitions),
+};
+
 #[test]
 fn rejects_external_graph_with_missing_transition_source() {
     assert_eq!(
@@ -544,6 +577,16 @@ fn rejects_external_graph_with_missing_transition_source() {
         Err(MachineDocError::MissingSourceState {
             machine: "tests::invalid_source::Flow",
             transition: "submit",
+        })
+    );
+}
+
+#[test]
+fn rejects_external_graph_with_empty_state_list() {
+    assert_eq!(
+        MachineDoc::try_from_graph(&EMPTY_STATE_GRAPH),
+        Err(MachineDocError::EmptyStateList {
+            machine: "tests::empty_state_list::Flow",
         })
     );
 }
@@ -566,6 +609,17 @@ fn rejects_external_graph_with_duplicate_state_ids() {
         Err(MachineDocError::DuplicateStateId {
             machine: "tests::duplicate_state::Flow",
             state: "DraftDuplicate",
+        })
+    );
+}
+
+#[test]
+fn rejects_external_graph_with_empty_target_set() {
+    assert_eq!(
+        MachineDoc::try_from_graph(&EMPTY_TARGET_GRAPH),
+        Err(MachineDocError::EmptyTargetSet {
+            machine: "tests::empty_target_set::Flow",
+            transition: "submit",
         })
     );
 }
