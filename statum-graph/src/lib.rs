@@ -35,6 +35,11 @@ pub enum MachineDocError {
         machine: &'static str,
         state: &'static str,
     },
+    /// One transition id appears more than once in the graph's transition list.
+    DuplicateTransitionId {
+        machine: &'static str,
+        transition: &'static str,
+    },
     /// One transition source state is not present in the graph's state list.
     MissingSourceState {
         machine: &'static str,
@@ -45,6 +50,12 @@ pub enum MachineDocError {
         machine: &'static str,
         transition: &'static str,
     },
+    /// One transition lists the same target state more than once.
+    DuplicateTargetState {
+        machine: &'static str,
+        transition: &'static str,
+        state: &'static str,
+    },
 }
 
 impl core::fmt::Display for MachineDocError {
@@ -53,6 +64,13 @@ impl core::fmt::Display for MachineDocError {
             Self::DuplicateStateId { machine, state } => write!(
                 formatter,
                 "machine graph `{machine}` contains duplicate state id for state `{state}`"
+            ),
+            Self::DuplicateTransitionId {
+                machine,
+                transition,
+            } => write!(
+                formatter,
+                "machine graph `{machine}` contains duplicate transition id for transition `{transition}`"
             ),
             Self::MissingSourceState {
                 machine,
@@ -67,6 +85,14 @@ impl core::fmt::Display for MachineDocError {
             } => write!(
                 formatter,
                 "machine graph `{machine}` contains transition `{transition}` whose target state is missing from the state list"
+            ),
+            Self::DuplicateTargetState {
+                machine,
+                transition,
+                state,
+            } => write!(
+                formatter,
+                "machine graph `{machine}` contains transition `{transition}` with duplicate target state `{state}`"
             ),
         }
     }
@@ -187,9 +213,9 @@ where
     S: Copy + Eq + std::hash::Hash + 'static,
     T: Copy + Eq + 'static,
 {
-    let mut state_ids = HashSet::with_capacity(graph.states.len());
+    let mut state_names = HashMap::with_capacity(graph.states.len());
     for state in graph.states.iter() {
-        if !state_ids.insert(state.id) {
+        if state_names.insert(state.id, state.rust_name).is_some() {
             return Err(MachineDocError::DuplicateStateId {
                 machine: graph.machine.rust_type_path,
                 state: state.rust_name,
@@ -197,24 +223,39 @@ where
         }
     }
 
+    let mut transition_ids = Vec::with_capacity(graph.transitions.len());
     for transition in graph.transitions.iter() {
-        if !state_ids.contains(&transition.from) {
+        if transition_ids.contains(&transition.id) {
+            return Err(MachineDocError::DuplicateTransitionId {
+                machine: graph.machine.rust_type_path,
+                transition: transition.method_name,
+            });
+        }
+        transition_ids.push(transition.id);
+
+        if !state_names.contains_key(&transition.from) {
             return Err(MachineDocError::MissingSourceState {
                 machine: graph.machine.rust_type_path,
                 transition: transition.method_name,
             });
         }
 
-        if transition
-            .to
-            .iter()
-            .copied()
-            .any(|target| !state_ids.contains(&target))
-        {
-            return Err(MachineDocError::MissingTargetState {
-                machine: graph.machine.rust_type_path,
-                transition: transition.method_name,
-            });
+        let mut seen_targets = HashSet::with_capacity(transition.to.len());
+        for target in transition.to.iter().copied() {
+            let Some(state_name) = state_names.get(&target).copied() else {
+                return Err(MachineDocError::MissingTargetState {
+                    machine: graph.machine.rust_type_path,
+                    transition: transition.method_name,
+                });
+            };
+
+            if !seen_targets.insert(target) {
+                return Err(MachineDocError::DuplicateTargetState {
+                    machine: graph.machine.rust_type_path,
+                    transition: transition.method_name,
+                    state: state_name,
+                });
+            }
         }
     }
 

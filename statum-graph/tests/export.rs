@@ -305,6 +305,7 @@ enum InvalidStateId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 enum InvalidTransitionId {
     Submit,
+    Publish,
 }
 
 static VALID_STATE_DESCRIPTORS: [StateDescriptor<InvalidStateId>; 2] = [
@@ -335,6 +336,8 @@ static DUPLICATE_STATE_DESCRIPTORS: [StateDescriptor<InvalidStateId>; 2] = [
 
 static INVALID_TARGETS: [InvalidStateId; 1] = [InvalidStateId::Missing];
 static VALID_PUBLISHED_TARGET: [InvalidStateId; 1] = [InvalidStateId::Published];
+static DUPLICATE_PUBLISHED_TARGETS: [InvalidStateId; 2] =
+    [InvalidStateId::Published, InvalidStateId::Published];
 
 static INVALID_SOURCE_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>; 1] =
     [TransitionDescriptor {
@@ -360,6 +363,32 @@ static PIPE_LABEL_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTran
         to: &VALID_PUBLISHED_TARGET,
     }];
 
+static DUPLICATE_TRANSITION_ID_TRANSITIONS: [TransitionDescriptor<
+    InvalidStateId,
+    InvalidTransitionId,
+>; 2] = [
+    TransitionDescriptor {
+        id: InvalidTransitionId::Submit,
+        method_name: "submit",
+        from: InvalidStateId::Draft,
+        to: &VALID_PUBLISHED_TARGET,
+    },
+    TransitionDescriptor {
+        id: InvalidTransitionId::Submit,
+        method_name: "publish",
+        from: InvalidStateId::Published,
+        to: &VALID_PUBLISHED_TARGET,
+    },
+];
+
+static DUPLICATE_TARGET_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>;
+    1] = [TransitionDescriptor {
+    id: InvalidTransitionId::Publish,
+    method_name: "branch",
+    from: InvalidStateId::Draft,
+    to: &DUPLICATE_PUBLISHED_TARGETS,
+}];
+
 fn invalid_source_transitions(
 ) -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
     &INVALID_SOURCE_TRANSITIONS
@@ -373,6 +402,16 @@ fn invalid_target_transitions(
 fn pipe_label_transitions() -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>]
 {
     &PIPE_LABEL_TRANSITIONS
+}
+
+fn duplicate_transition_id_transitions(
+) -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
+    &DUPLICATE_TRANSITION_ID_TRANSITIONS
+}
+
+fn duplicate_target_transitions(
+) -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
+    &DUPLICATE_TARGET_TRANSITIONS
 }
 
 static INVALID_SOURCE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
@@ -409,6 +448,25 @@ static PIPE_LABEL_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = Mac
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(pipe_label_transitions),
+};
+
+static DUPLICATE_TRANSITION_ID_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> =
+    MachineGraph {
+        machine: MachineDescriptor {
+            module_path: "tests::duplicate_transition_id",
+            rust_type_path: "tests::duplicate_transition_id::Flow",
+        },
+        states: &VALID_STATE_DESCRIPTORS,
+        transitions: TransitionInventory::new(duplicate_transition_id_transitions),
+    };
+
+static DUPLICATE_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
+    machine: MachineDescriptor {
+        module_path: "tests::duplicate_target",
+        rust_type_path: "tests::duplicate_target::Flow",
+    },
+    states: &VALID_STATE_DESCRIPTORS,
+    transitions: TransitionInventory::new(duplicate_target_transitions),
 };
 
 #[test]
@@ -451,4 +509,27 @@ fn mermaid_escapes_external_edge_labels() {
     let mermaid = render::mermaid(&doc);
 
     assert!(mermaid.contains("-->|submit&#124;review|"));
+}
+
+#[test]
+fn rejects_external_graph_with_duplicate_transition_ids() {
+    assert_eq!(
+        MachineDoc::try_from_graph(&DUPLICATE_TRANSITION_ID_GRAPH),
+        Err(MachineDocError::DuplicateTransitionId {
+            machine: "tests::duplicate_transition_id::Flow",
+            transition: "publish",
+        })
+    );
+}
+
+#[test]
+fn rejects_external_graph_with_duplicate_target_states() {
+    assert_eq!(
+        MachineDoc::try_from_graph(&DUPLICATE_TARGET_GRAPH),
+        Err(MachineDocError::DuplicateTargetState {
+            machine: "tests::duplicate_target::Flow",
+            transition: "branch",
+            state: "Published",
+        })
+    );
 }
