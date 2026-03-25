@@ -10,7 +10,8 @@
 //! emitted by compiled `#[validators]` impls. Validator node labels use the
 //! impl self type as written in source, so they are display syntax rather than
 //! canonical Rust type identity. Method-level `#[cfg]` and `#[cfg_attr]` on
-//! validator methods are rejected at the macro layer.
+//! validator methods are rejected at the macro layer. `include!()`-generated
+//! validator impls are also rejected.
 //!
 //! Use [`MachineDoc::from_machine`] for Statum-generated machine families and
 //! [`MachineDoc::try_from_graph`] when you need to validate an externally

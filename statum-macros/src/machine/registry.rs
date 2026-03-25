@@ -86,6 +86,15 @@ pub fn lookup_loaded_machine_in_module(
     }))
 }
 
+pub fn same_named_loaded_machines_elsewhere(
+    machine_path: &MachinePath,
+    machine_name: &str,
+) -> Vec<MachineInfo> {
+    loaded_machine_candidates_matching(|machine| {
+        machine.name == machine_name && machine.module_path.as_ref() != machine_path.as_ref()
+    })
+}
+
 pub fn format_loaded_machine_candidates(candidates: &[MachineInfo]) -> String {
     candidates
         .iter()

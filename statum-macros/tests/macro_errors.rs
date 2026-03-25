@@ -1,3 +1,42 @@
+use std::process::Command;
+use std::sync::OnceLock;
+
+fn uses_rust_1_93_trybuild_fixtures() -> bool {
+    static USES_RUST_1_93_FIXTURES: OnceLock<bool> = OnceLock::new();
+
+    *USES_RUST_1_93_FIXTURES.get_or_init(|| {
+        let output = match Command::new("rustc").arg("--version").output() {
+            Ok(output) => output,
+            Err(_) => return false,
+        };
+        let stdout = match String::from_utf8(output.stdout) {
+            Ok(stdout) => stdout,
+            Err(_) => return false,
+        };
+        let mut parts = stdout.split_whitespace();
+        let _binary = parts.next();
+        let version = match parts.next() {
+            Some(version) => version,
+            None => return false,
+        };
+        let mut semver = version.split('.');
+        let _major = semver.next();
+        matches!(semver.next(), Some("93"))
+    })
+}
+
+fn compile_fail_with_rust_1_93_fixture(
+    t: &trybuild::TestCases,
+    default_fixture: &str,
+    rust_1_93_fixture: &str,
+) {
+    if uses_rust_1_93_trybuild_fixtures() {
+        t.compile_fail(rust_1_93_fixture);
+    } else {
+        t.compile_fail(default_fixture);
+    }
+}
+
 #[test]
 fn test_invalid_state_usage() {
     let t = trybuild::TestCases::new();
@@ -34,8 +73,16 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_transition_not_method.rs");
     t.compile_fail("tests/ui/invalid_transition_wrong_return.rs");
     t.compile_fail("tests/ui/invalid_transition_conditional.rs");
-    t.compile_fail("tests/ui/invalid_transition_unknown_machine.rs");
-    t.compile_fail("tests/ui/invalid_transition_plain_struct_machine_name.rs");
+    compile_fail_with_rust_1_93_fixture(
+        &t,
+        "tests/ui/invalid_transition_unknown_machine.rs",
+        "tests/ui/invalid_transition_unknown_machine_rust_1_93.rs",
+    );
+    compile_fail_with_rust_1_93_fixture(
+        &t,
+        "tests/ui/invalid_transition_plain_struct_machine_name.rs",
+        "tests/ui/invalid_transition_plain_struct_machine_name_rust_1_93.rs",
+    );
     t.compile_fail("tests/ui/invalid_transition_unknown_source_state.rs");
     t.compile_fail("tests/ui/invalid_transition_unknown_return_state.rs");
     t.compile_fail("tests/ui/invalid_transition_unknown_secondary_return_state.rs");
@@ -64,6 +111,7 @@ fn test_invalid_validators_usage() {
     t.compile_fail("tests/ui/invalid_validators_plain_struct_machine_name.rs");
     t.compile_fail("tests/ui/invalid_validators_parameter_name_collision.rs");
     t.compile_fail("tests/ui/invalid_validators_declared_before_machine.rs");
+    t.compile_fail("tests/ui/invalid_validators_include_impl.rs");
     t.compile_fail("tests/ui/invalid_validators_cfg_method.rs");
     t.compile_fail("tests/ui/invalid_validators_cfg_attr_method.rs");
     t.compile_fail("tests/ui/invalid_legacy_superstate.rs");

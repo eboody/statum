@@ -421,7 +421,8 @@ pub use statum_macros::__statum_emit_validator_methods_impl;
 /// Machine fields are available by name inside validator bodies through
 /// generated bindings. Persisted-row fields still live on `self`. Put `#[cfg]`
 /// or `#[cfg_attr]` on the whole `#[validators]` impl, not on individual
-/// `is_{state}` methods.
+/// `is_{state}` methods. Validator impls inside `include!()` files are
+/// rejected; keep them inline or in the module source file.
 ///
 /// ```rust
 /// use statum::{machine, state, validators, Error};

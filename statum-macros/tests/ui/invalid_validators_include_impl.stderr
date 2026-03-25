@@ -1,0 +1,21 @@
+error: Error: no resolved `#[machine]` named `TaskMachine` was found in module `invalid_validators_include_impl_item`.
+       Statum only resolves `#[machine]` items that have already expanded before this `#[validators]` impl.
+       No plain struct with that name was found in this module either.
+       No same-named `#[machine]` items were found in other modules of this file.
+       Loaded same-named `#[machine]` items elsewhere in this crate: `TaskMachine` in `invalid_validators_include_impl::alpha` ($DIR/tests/ui/invalid_validators_include_impl.rs:25).
+       If this `#[validators]` impl comes from an `include!()` file, Statum does not currently resolve enclosing-module `#[machine]` items from that file. Move the impl inline or into the module source file.
+       No `#[machine]` items were found in this module.
+       Help: point `#[validators(...)]` at the Statum machine type in this module and declare that `#[machine]` item before this validators impl.
+       Correct shape: `#[validators(TaskMachine)] impl PersistedRow { ... }` where `TaskMachine` is declared with `#[machine]` in `invalid_validators_include_impl_item`.
+ --> tests/ui/support/invalid_validators_include_impl_item.rs
+  |
+  | #[validators(TaskMachine)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_validators_include_impl.rs:28:2
+   |
+28 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_include_impl.rs`

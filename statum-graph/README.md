@@ -19,6 +19,7 @@ model runtime-selected branches or orchestration order across machines.
 Validator node labels come from the impl self type as written in source and are
 display-only, not canonical Rust type identity. Method-level `#[cfg]` and
 `#[cfg_attr]` on validator methods are rejected at the macro layer.
+`include!()`-generated validator impls are also rejected.
 
 ## Install
 
