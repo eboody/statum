@@ -10,6 +10,7 @@ use crate::{PresentationAttr, PresentationTypesAttr, to_snake_case};
 use super::metadata::{ParsedMachineInfo, field_type_alias_name};
 use super::{
     MachineInfo, builder_generics, extra_generics, extra_type_arguments_tokens,
+    generic_argument_tokens,
     machine_type_with_state, transition_presentation_slice_ident, transition_slice_ident,
 };
 
@@ -129,6 +130,13 @@ fn generate_machine_family_callback(
     );
     let machine_module_ident = machine_state_module_ident(machine_info);
     let machine_vis = parsed_machine.vis.clone();
+    let validator_support = generate_validator_support_macro(
+        machine_info,
+        parsed_machine,
+        machine_ident,
+        &machine_module_ident,
+        &machine_vis,
+    );
     let extra_machine_generics = extra_generics(&parsed_machine.generics);
     let extra_generic_param_entries = extra_machine_generics
         .params
@@ -244,6 +252,7 @@ fn generate_machine_family_callback(
                         }
                     };
                 }
+                #validator_support
                 #struct_definition
                 #builder_support
                 #machine_state_surface
@@ -277,6 +286,13 @@ fn machine_transition_target_resolver_macro_ident(machine_info: &MachineInfo) ->
 fn machine_validator_contract_macro_ident(machine_info: &MachineInfo) -> Ident {
     format_ident!(
         "__statum_visit_{}_validators",
+        to_snake_case(&machine_info.name)
+    )
+}
+
+fn machine_validator_support_macro_ident(machine_info: &MachineInfo) -> Ident {
+    format_ident!(
+        "__statum_expand_{}_validators",
         to_snake_case(&machine_info.name)
     )
 }
@@ -1194,6 +1210,797 @@ fn generic_argument_tokens_for_machine_contract(param: &GenericParam) -> TokenSt
         GenericParam::Const(const_param) => {
             let ident = &const_param.ident;
             quote! { #ident }
+        }
+    }
+}
+
+fn generate_validator_support_macro(
+    machine_info: &MachineInfo,
+    parsed_machine: &ParsedMachineInfo,
+    machine_ident: &Ident,
+    machine_module_ident: &Ident,
+    machine_vis: &syn::Visibility,
+) -> TokenStream {
+    let support_macro_ident = machine_validator_support_macro_ident(machine_info);
+    let persisted_ty = quote! { $persisted };
+    let machine_extra_ty_args = extra_type_arguments_tokens(&parsed_machine.generics);
+    let machine_state_ty = quote! { #machine_module_ident::SomeState #machine_extra_ty_args };
+    let field_pairs = parsed_machine.field_idents_and_types();
+    let field_names = field_pairs
+        .iter()
+        .map(|(field_name, _)| field_name.clone())
+        .collect::<Vec<_>>();
+    let field_types = field_pairs
+        .iter()
+        .map(|(_, field_ty)| field_ty.clone())
+        .collect::<Vec<_>>();
+    let single_builder_support = generate_validator_single_builder_support(
+        &persisted_ty,
+        machine_ident,
+        machine_module_ident,
+        machine_vis,
+        parsed_machine,
+        &machine_state_ty,
+        &field_names,
+        &field_types,
+        false,
+    );
+    let single_builder_support_async = generate_validator_single_builder_support(
+        &persisted_ty,
+        machine_ident,
+        machine_module_ident,
+        machine_vis,
+        parsed_machine,
+        &machine_state_ty,
+        &field_names,
+        &field_types,
+        true,
+    );
+    let batch_builder_support = generate_validator_batch_builder_support(
+        &persisted_ty,
+        machine_ident,
+        machine_module_ident,
+        machine_vis,
+        parsed_machine,
+        &machine_state_ty,
+        &field_names,
+        &field_types,
+        false,
+    );
+    let batch_builder_support_async = generate_validator_batch_builder_support(
+        &persisted_ty,
+        machine_ident,
+        machine_module_ident,
+        machine_vis,
+        parsed_machine,
+        &machine_state_ty,
+        &field_names,
+        &field_types,
+        true,
+    );
+    let extra_machine_generics = extra_generics(&parsed_machine.generics);
+    let extra_generic_param_entries = extra_machine_generics
+        .params
+        .iter()
+        .map(|param| quote! { { #param } })
+        .collect::<Vec<_>>();
+    let extra_where_predicate_entries = extra_machine_generics
+        .where_clause
+        .iter()
+        .flat_map(|where_clause| where_clause.predicates.iter())
+        .map(|predicate| quote! { { #predicate } })
+        .collect::<Vec<_>>();
+    let (into_machine_method_generics, _, into_machine_method_where_clause) =
+        extra_machine_generics.split_for_impl();
+    let into_machine_builder_ident = format_ident!("__Statum{}IntoMachine", machine_ident);
+    let into_machine_slot_defaults = (0..field_names.len())
+        .map(|_| quote! { false })
+        .collect::<Vec<_>>();
+    let into_machine_builder_ty_generics = generic_argument_tokens(
+        extra_machine_generics.params.iter(),
+        Some(quote! { '_ }),
+        &into_machine_slot_defaults,
+    );
+    let builder_init = field_names
+        .iter()
+        .map(|field_name| quote! { #field_name: core::option::Option::None })
+        .collect::<Vec<_>>();
+
+    quote! {
+        #[doc(hidden)]
+        macro_rules! #support_macro_ident {
+            (
+                persisted = $persisted:ty,
+                build_variant = $build_variant_macro:ident,
+                report_variant = $report_variant_macro:ident,
+                validator_count = $validator_count:expr,
+                async = false,
+                validator_methods = $validator_methods:tt,
+            ) => {
+                statum::__statum_emit_validator_methods_impl! {
+                    persisted = $persisted,
+                    extra_generics = {
+                        params = [
+                            #(#extra_generic_param_entries),*
+                        ],
+                        where_predicates = [
+                            #(#extra_where_predicate_entries),*
+                        ],
+                    },
+                    fields = [
+                        #(
+                            {
+                                name = #field_names,
+                                ty = #field_types
+                            }
+                        ),*
+                    ],
+                    validator_methods = $validator_methods,
+                }
+
+                #[allow(unused_imports)]
+                use #machine_module_ident::IntoMachinesExt as _;
+
+                #[allow(clippy::wrong_self_convention)]
+                impl $persisted {
+                    #machine_vis fn into_machine #into_machine_method_generics (&self) -> #into_machine_builder_ident #into_machine_builder_ty_generics #into_machine_method_where_clause {
+                        #into_machine_builder_ident {
+                            __statum_item: self,
+                            #(#builder_init),*
+                        }
+                    }
+                }
+
+                #single_builder_support
+                #batch_builder_support
+            };
+            (
+                persisted = $persisted:ty,
+                build_variant = $build_variant_macro:ident,
+                report_variant = $report_variant_macro:ident,
+                validator_count = $validator_count:expr,
+                async = true,
+                validator_methods = $validator_methods:tt,
+            ) => {
+                statum::__statum_emit_validator_methods_impl! {
+                    persisted = $persisted,
+                    extra_generics = {
+                        params = [
+                            #(#extra_generic_param_entries),*
+                        ],
+                        where_predicates = [
+                            #(#extra_where_predicate_entries),*
+                        ],
+                    },
+                    fields = [
+                        #(
+                            {
+                                name = #field_names,
+                                ty = #field_types
+                            }
+                        ),*
+                    ],
+                    validator_methods = $validator_methods,
+                }
+
+                #[allow(unused_imports)]
+                use #machine_module_ident::IntoMachinesExt as _;
+
+                #[allow(clippy::wrong_self_convention)]
+                impl $persisted {
+                    #machine_vis fn into_machine #into_machine_method_generics (&self) -> #into_machine_builder_ident #into_machine_builder_ty_generics #into_machine_method_where_clause {
+                        #into_machine_builder_ident {
+                            __statum_item: self,
+                            #(#builder_init),*
+                        }
+                    }
+                }
+
+                #single_builder_support_async
+                #batch_builder_support_async
+            };
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_validator_single_builder_support(
+    persisted_ty: &TokenStream,
+    machine_ident: &Ident,
+    machine_module_ident: &Ident,
+    machine_vis: &syn::Visibility,
+    parsed_machine: &ParsedMachineInfo,
+    machine_state_ty: &TokenStream,
+    field_names: &[Ident],
+    field_types: &[syn::Type],
+    async_mode: bool,
+) -> TokenStream {
+    let builder_ident = format_ident!("__Statum{}IntoMachine", machine_ident);
+    let extra_machine_generics = extra_generics(&parsed_machine.generics);
+    let slot_state_idents = (0..field_names.len())
+        .map(|idx| format_ident!("__STATUM_SLOT_{}_SET", idx))
+        .collect::<Vec<_>>();
+    let builder_defaults = builder_generics(&extra_machine_generics, true, &slot_state_idents, true);
+    let builder_impl_generics_decl =
+        builder_generics(&extra_machine_generics, true, &slot_state_idents, false);
+    let (builder_impl_generics, builder_ty_generics, builder_where_clause) =
+        builder_impl_generics_decl.split_for_impl();
+    let complete_slots = slot_state_idents
+        .iter()
+        .map(|_| quote! { true })
+        .collect::<Vec<_>>();
+    let complete_builder_ty_generics = generic_argument_tokens(
+        extra_machine_generics.params.iter(),
+        Some(quote! { '__statum_row }),
+        &complete_slots,
+    );
+    let complete_builder_impl_generics_decl =
+        builder_generics(&extra_machine_generics, true, &[], false);
+    let (complete_builder_impl_generics, _, complete_builder_where_clause) =
+        complete_builder_impl_generics_decl.split_for_impl();
+
+    let struct_fields = field_names
+        .iter()
+        .zip(field_types.iter())
+        .map(|(field_name, field_type)| {
+            quote! { #field_name: core::option::Option<#field_type> }
+        })
+        .collect::<Vec<_>>();
+    let field_bindings = field_names
+        .iter()
+        .map(|field_name| {
+            let message = format!("statum internal error: `{field_name}` was not set before build");
+            quote! {
+                let #field_name = self.#field_name.expect(#message);
+            }
+        })
+        .collect::<Vec<_>>();
+    let setters = field_names
+        .iter()
+        .zip(field_types.iter())
+        .enumerate()
+        .map(|(slot_idx, (field_name, field_type))| {
+            let generics = slot_state_idents
+                .iter()
+                .enumerate()
+                .map(|(idx, ident)| {
+                    if idx == slot_idx {
+                        quote! { true }
+                    } else {
+                        quote! { #ident }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let target_generics = generic_argument_tokens(
+                extra_machine_generics.params.iter(),
+                Some(quote! { '__statum_row }),
+                &generics,
+            );
+            let assignments = field_names.iter().enumerate().map(|(idx, existing_field_name)| {
+                if idx == slot_idx {
+                    quote! { #existing_field_name: core::option::Option::Some(value) }
+                } else {
+                    quote! { #existing_field_name: self.#existing_field_name }
+                }
+            });
+
+            quote! {
+                #machine_vis fn #field_name(self, value: #field_type) -> #builder_ident #target_generics {
+                    #builder_ident {
+                        __statum_item: self.__statum_item,
+                        #(#assignments),*
+                    }
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let field_entries = field_names
+        .iter()
+        .zip(field_types.iter())
+        .map(|(field_name, field_type)| {
+            quote! {
+                {
+                    name = #field_name,
+                    ty = #field_type
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    let variant_builder_ty = machine_type_with_state(
+        quote! { #machine_ident },
+        &parsed_machine.generics,
+        quote! { $variant },
+    );
+    let variant_state_path = quote! { #machine_module_ident::SomeState::$variant };
+    let async_token = if async_mode {
+        quote! { async }
+    } else {
+        quote! {}
+    };
+    let report_result = quote! {
+        let mut __statum_attempts = ::std::vec::Vec::with_capacity($validator_count);
+        #(#field_bindings)*
+            $(
+                $report_variant_macro!(
+                    persisted = __statum_persisted,
+                    attempts = __statum_attempts,
+                    machine = #machine_ident,
+                    state_family = $family,
+                    machine_module = #machine_module_ident,
+                    machine_builder = #variant_builder_ty,
+                variant = $variant,
+                state_variant = #variant_state_path,
+                validator = $is_fn,
+                data = $data,
+                has_data = $has_data,
+                fields = [#(#field_entries),*],
+            );
+        )*
+        statum::RebuildReport {
+            attempts: __statum_attempts,
+            result: Err(statum::Error::InvalidState),
+        }
+    };
+
+    quote! {
+        #[doc(hidden)]
+        #[allow(dead_code, private_bounds, private_interfaces)]
+        #machine_vis struct #builder_ident #builder_defaults {
+            __statum_item: &'__statum_row #persisted_ty,
+            #(#struct_fields),*
+        }
+
+        #[allow(dead_code, private_bounds, private_interfaces)]
+        impl #builder_impl_generics #builder_ident #builder_ty_generics #builder_where_clause {
+            #(#setters)*
+        }
+
+        #[allow(dead_code, private_bounds, private_interfaces)]
+        impl #complete_builder_impl_generics #builder_ident #complete_builder_ty_generics #complete_builder_where_clause {
+            #machine_vis #async_token fn build(self) -> core::result::Result<#machine_state_ty, statum::Error> {
+                let __statum_persisted = self.__statum_item;
+                #(#field_bindings)*
+                $(
+                    $build_variant_macro!(
+                        persisted = __statum_persisted,
+                        machine = #machine_ident,
+                        state_family = $family,
+                        machine_module = #machine_module_ident,
+                        machine_builder = #variant_builder_ty,
+                        variant = $variant,
+                        state_variant = #variant_state_path,
+                        validator = $is_fn,
+                        data = $data,
+                        has_data = $has_data,
+                        fields = [#(#field_entries),*],
+                    );
+                )*
+
+                Err(statum::Error::InvalidState)
+            }
+
+            #machine_vis #async_token fn build_report(self) -> statum::RebuildReport<#machine_state_ty> {
+                let __statum_persisted = self.__statum_item;
+                #report_result
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_validator_batch_builder_support(
+    persisted_ty: &TokenStream,
+    machine_ident: &Ident,
+    machine_module_ident: &Ident,
+    machine_vis: &syn::Visibility,
+    parsed_machine: &ParsedMachineInfo,
+    machine_state_ty: &TokenStream,
+    field_names: &[Ident],
+    field_types: &[syn::Type],
+    async_mode: bool,
+) -> TokenStream {
+    let builder_ident = format_ident!("__Statum{}IntoMachines", machine_ident);
+    let by_builder_ident = format_ident!("__Statum{}IntoMachinesBy", machine_ident);
+    let machine_generics = &parsed_machine.generics;
+    let extra_machine_generics = extra_generics(machine_generics);
+    let extra_machine_ty_args = extra_type_arguments_tokens(machine_generics);
+    let fields_ty = quote! { #machine_module_ident::Fields #extra_machine_ty_args };
+    let extra_impl_params = extra_machine_generics
+        .params
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let into_machines_trait_args = validator_support_prefixed_generics_argument_tokens(
+        quote! { #persisted_ty },
+        extra_machine_generics.params.iter(),
+    );
+    let into_machines_impl_generics = if extra_impl_params.is_empty() {
+        quote! { <T> }
+    } else {
+        quote! { <T, #(#extra_impl_params),*> }
+    };
+    let into_machines_where_clause = validator_support_merged_where_clause_tokens(
+        extra_machine_generics.where_clause.as_ref(),
+        vec![quote! { T: Into<Vec<#persisted_ty>> }],
+    );
+
+    let field_builder_chain = quote! { #(.#field_names(#field_names.clone()))* };
+    let per_item_builder_chain = quote! { #(.#field_names(__statum_fields.#field_names))* };
+    let await_token = if async_mode {
+        quote! { .await }
+    } else {
+        quote! {}
+    };
+    let async_token = if async_mode {
+        quote! { async }
+    } else {
+        quote! {}
+    };
+
+    let implementation =
+        generate_validator_batch_finalization_logic(&format_ident!("build"), &field_builder_chain, async_mode);
+    let report_implementation = generate_validator_batch_finalization_logic(
+        &format_ident!("build_report"),
+        &field_builder_chain,
+        async_mode,
+    );
+    let per_item_implementation = generate_validator_batch_per_item_finalization_logic(
+        &format_ident!("build"),
+        &per_item_builder_chain,
+        async_mode,
+    );
+    let per_item_report_implementation = generate_validator_batch_per_item_finalization_logic(
+        &format_ident!("build_report"),
+        &per_item_builder_chain,
+        async_mode,
+    );
+    let slot_state_idents = (0..field_names.len())
+        .map(|idx| format_ident!("__STATUM_SLOT_{}_SET", idx))
+        .collect::<Vec<_>>();
+    let builder_defaults =
+        builder_generics(&extra_machine_generics, false, &slot_state_idents, true);
+    let builder_impl_generics_decl =
+        builder_generics(&extra_machine_generics, false, &slot_state_idents, false);
+    let (builder_impl_generics, builder_ty_generics, builder_where_clause) =
+        builder_impl_generics_decl.split_for_impl();
+    let initial_builder_slots = slot_state_idents
+        .iter()
+        .map(|_| quote! { false })
+        .collect::<Vec<_>>();
+    let initial_builder_ty_generics =
+        generic_argument_tokens(extra_machine_generics.params.iter(), None, &initial_builder_slots);
+    let complete_builder_slots = slot_state_idents
+        .iter()
+        .map(|_| quote! { true })
+        .collect::<Vec<_>>();
+    let complete_builder_ty_generics =
+        generic_argument_tokens(extra_machine_generics.params.iter(), None, &complete_builder_slots);
+    let complete_builder_impl_generics_decl =
+        builder_generics(&extra_machine_generics, false, &[], false);
+    let (complete_builder_impl_generics, _, complete_builder_where_clause) =
+        complete_builder_impl_generics_decl.split_for_impl();
+    let shared_builder_where_clause = validator_support_merged_where_clause_tokens(
+        complete_builder_where_clause,
+        field_types
+            .iter()
+            .map(|field_type| quote! { #field_type: core::clone::Clone })
+            .collect(),
+    );
+    let by_builder_decl_generics =
+        validator_support_prefixed_generics_declaration_tokens("F", &extra_machine_generics);
+    let by_builder_ty_generics = validator_support_prefixed_generics_argument_tokens(
+        quote! { F },
+        extra_machine_generics.params.iter(),
+    );
+    let by_builder_where_clause = validator_support_merged_where_clause_tokens(
+        extra_machine_generics.where_clause.as_ref(),
+        vec![quote! { F: Fn(&#persisted_ty) -> #fields_ty }],
+    );
+    let by_builder_marker_field = if extra_machine_generics.params.is_empty() {
+        quote! {}
+    } else {
+        let marker_ty = validator_support_generic_usage_marker_tokens(&extra_machine_generics);
+        quote! {
+            __statum_marker: core::marker::PhantomData<fn() -> #marker_ty>,
+        }
+    };
+    let by_builder_marker_init = if extra_machine_generics.params.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            __statum_marker: core::marker::PhantomData,
+        }
+    };
+    let field_storage = field_names.iter().zip(field_types.iter()).map(|(field_name, field_type)| {
+        quote! { #field_name: core::option::Option<#field_type> }
+    });
+    let builder_init = field_names.iter().map(|field_name| {
+        quote! { #field_name: core::option::Option::None }
+    });
+    let field_bindings = field_names
+        .iter()
+        .map(|field_name| {
+            let message = format!("statum internal error: `{field_name}` was not set before build");
+            quote! {
+                let #field_name = self.#field_name.expect(#message);
+            }
+        })
+        .collect::<Vec<_>>();
+    let setters = field_names
+        .iter()
+        .zip(field_types.iter())
+        .enumerate()
+        .map(|(slot_idx, (field_name, field_type))| {
+            let generics = slot_state_idents
+                .iter()
+                .enumerate()
+                .map(|(idx, ident)| {
+                    if idx == slot_idx {
+                        quote! { true }
+                    } else {
+                        quote! { #ident }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let target_generics =
+                generic_argument_tokens(extra_machine_generics.params.iter(), None, &generics);
+            let assignments = field_names.iter().enumerate().map(|(idx, existing_field_name)| {
+                if idx == slot_idx {
+                    quote! { #existing_field_name: core::option::Option::Some(value) }
+                } else {
+                    quote! { #existing_field_name: self.#existing_field_name }
+                }
+            });
+
+            quote! {
+                #machine_vis fn #field_name(self, value: #field_type) -> #builder_ident #target_generics {
+                    #builder_ident {
+                        __statum_items: self.__statum_items,
+                        #(#assignments),*
+                    }
+                }
+            }
+        });
+
+    quote! {
+        impl #into_machines_impl_generics #machine_module_ident::IntoMachinesExt #into_machines_trait_args for T
+        #into_machines_where_clause
+        {
+            type Builder = #builder_ident #initial_builder_ty_generics;
+            type BuilderWithFields<F> = #by_builder_ident #by_builder_ty_generics;
+
+            fn into_machines(self) -> Self::Builder {
+                #builder_ident {
+                    __statum_items: self.into(),
+                    #(#builder_init),*
+                }
+            }
+
+            fn into_machines_by<F>(self, fields: F) -> Self::BuilderWithFields<F>
+            where
+                F: Fn(&#persisted_ty) -> #fields_ty,
+            {
+                #by_builder_ident {
+                    __statum_items: self.into(),
+                    __statum_fields_fn: fields,
+                    #by_builder_marker_init
+                }
+            }
+        }
+
+        #[doc(hidden)]
+        #[allow(dead_code, private_bounds, private_interfaces)]
+        #machine_vis struct #builder_ident #builder_defaults {
+            __statum_items: Vec<#persisted_ty>,
+            #(#field_storage),*
+        }
+
+        #[allow(dead_code, private_bounds, private_interfaces)]
+        impl #builder_impl_generics #builder_ident #builder_ty_generics #builder_where_clause {
+            #(#setters)*
+        }
+
+        #[allow(dead_code, private_bounds, private_interfaces)]
+        impl #complete_builder_impl_generics #builder_ident #complete_builder_ty_generics #shared_builder_where_clause {
+            #[inline(always)]
+            #machine_vis #async_token fn build(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
+                let __statum_items = self.__statum_items;
+                #(#field_bindings)*
+                #implementation
+            }
+
+            #[inline(always)]
+            #machine_vis #async_token fn build_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
+                let __statum_items = self.__statum_items;
+                #(#field_bindings)*
+                #report_implementation
+            }
+        }
+
+        #[doc(hidden)]
+        #[allow(dead_code, private_bounds, private_interfaces)]
+        #machine_vis struct #by_builder_ident #by_builder_decl_generics {
+            __statum_items: Vec<#persisted_ty>,
+            __statum_fields_fn: F,
+            #by_builder_marker_field
+        }
+
+        #[allow(dead_code, private_bounds, private_interfaces)]
+        impl #by_builder_decl_generics #by_builder_ident #by_builder_ty_generics
+        #by_builder_where_clause
+        {
+            #[inline(always)]
+            #machine_vis #async_token fn build(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
+                self.__private_finalize()#await_token
+            }
+
+            #[inline(always)]
+            #machine_vis #async_token fn build_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
+                self.__private_finalize_reports()#await_token
+            }
+
+            #async_token fn __private_finalize(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
+                #per_item_implementation
+            }
+
+            #async_token fn __private_finalize_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
+                #per_item_report_implementation
+            }
+        }
+    }
+}
+
+fn generate_validator_batch_finalization_logic(
+    builder_method: &Ident,
+    field_builder_chain: &TokenStream,
+    async_mode: bool,
+) -> TokenStream {
+    if async_mode {
+        quote! {
+            statum::__private::futures::future::join_all(
+                __statum_items.iter().map(|__statum_item| {
+                    __statum_item.into_machine()
+                        #field_builder_chain
+                        .#builder_method()
+                })
+            ).await
+        }
+    } else {
+        quote! {
+            __statum_items
+                .into_iter()
+                .map(|__statum_item| {
+                    __statum_item.into_machine()
+                        #field_builder_chain
+                        .#builder_method()
+                })
+                .collect()
+        }
+    }
+}
+
+fn generate_validator_batch_per_item_finalization_logic(
+    builder_method: &Ident,
+    field_builder_chain: &TokenStream,
+    async_mode: bool,
+) -> TokenStream {
+    if async_mode {
+        quote! {
+            let __statum_field_fn = &self.__statum_fields_fn;
+            statum::__private::futures::future::join_all(
+                self.__statum_items.iter().map(|__statum_item| {
+                    let __statum_fields = __statum_field_fn(__statum_item);
+                    __statum_item.into_machine()
+                        #field_builder_chain
+                        .#builder_method()
+                })
+            ).await
+        }
+    } else {
+        quote! {
+            let __statum_field_fn = self.__statum_fields_fn;
+            self.__statum_items
+                .into_iter()
+                .map(|__statum_item| {
+                    let __statum_fields = __statum_field_fn(&__statum_item);
+                    __statum_item.into_machine()
+                        #field_builder_chain
+                        .#builder_method()
+                })
+                .collect()
+        }
+    }
+}
+
+fn validator_support_generic_usage_marker_tokens(generics: &Generics) -> TokenStream {
+    let args = generics
+        .params
+        .iter()
+        .map(validator_support_generic_marker_type_token)
+        .collect::<Vec<_>>();
+    match args.as_slice() {
+        [] => quote! { () },
+        [arg] => quote! { #arg },
+        _ => quote! { (#(#args),*) },
+    }
+}
+
+fn validator_support_prefixed_generics_declaration_tokens(
+    prefix_ident: &str,
+    generics: &Generics,
+) -> TokenStream {
+    let prefix_ident = format_ident!("{prefix_ident}");
+    if generics.params.is_empty() {
+        quote! { <#prefix_ident> }
+    } else {
+        let params = generics.params.iter();
+        quote! { <#prefix_ident, #(#params),*> }
+    }
+}
+
+fn validator_support_prefixed_generics_argument_tokens<'a>(
+    prefix: TokenStream,
+    params: impl Iterator<Item = &'a GenericParam>,
+) -> TokenStream {
+    let args = params
+        .map(validator_support_generic_argument_token)
+        .collect::<Vec<_>>();
+    if args.is_empty() {
+        quote! { <#prefix> }
+    } else {
+        quote! { <#prefix, #(#args),*> }
+    }
+}
+
+fn validator_support_merged_where_clause_tokens(
+    where_clause: Option<&syn::WhereClause>,
+    extra_predicates: Vec<TokenStream>,
+) -> TokenStream {
+    let predicates = where_clause
+        .iter()
+        .flat_map(|clause| clause.predicates.iter())
+        .map(|predicate| quote! { #predicate })
+        .chain(extra_predicates)
+        .collect::<Vec<_>>();
+
+    if predicates.is_empty() {
+        quote! {}
+    } else {
+        quote! { where #(#predicates),* }
+    }
+}
+
+fn validator_support_generic_argument_token(param: &GenericParam) -> TokenStream {
+    match param {
+        GenericParam::Lifetime(lifetime) => {
+            let lifetime = &lifetime.lifetime;
+            quote! { #lifetime }
+        }
+        GenericParam::Type(ty) => {
+            let ident = &ty.ident;
+            quote! { #ident }
+        }
+        GenericParam::Const(const_param) => {
+            let ident = &const_param.ident;
+            quote! { #ident }
+        }
+    }
+}
+
+fn validator_support_generic_marker_type_token(param: &GenericParam) -> TokenStream {
+    match param {
+        GenericParam::Lifetime(lifetime) => {
+            let lifetime = &lifetime.lifetime;
+            quote! { &#lifetime () }
+        }
+        GenericParam::Type(ty) => {
+            let ident = &ty.ident;
+            quote! { #ident }
+        }
+        GenericParam::Const(const_param) => {
+            let ident = &const_param.ident;
+            quote! { [(); #ident] }
         }
     }
 }

@@ -7,11 +7,11 @@ pub(super) struct ValidatorDiagnosticContext<'a> {
     pub(super) machine_name: &'a str,
     pub(super) state_enum_name: &'a str,
     pub(super) variant_name: &'a str,
-    pub(super) machine_fields: &'a [Ident],
+    pub(super) machine_fields: Option<&'a [Ident]>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ValidatorReturnKind {
+pub(crate) enum ValidatorReturnKind {
     Plain,
     Diagnostic,
 }
@@ -35,6 +35,7 @@ pub(super) fn validate_validator_signature(
     if func.sig.inputs.len() != 1 {
         let collision_line = explicit_param_collision_line(&func.sig.inputs, context.machine_fields);
         let expected_signature = expected_validator_signature(&func.sig.ident);
+        let injected_fields_line = injected_machine_fields_line(context.machine_name, context.machine_fields);
         let message = format!(
             "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must declare only `&self`.\nFound parameters: `({})`.\n{}\n{}\nCorrect shapes: {expected_signature}.",
             func.sig.ident,
@@ -52,7 +53,7 @@ pub(super) fn validate_validator_signature(
             collision_line.unwrap_or_else(|| {
                 "Validator methods do not accept explicit machine-field parameters.".to_string()
             }),
-            injected_machine_fields_line(context.machine_name, context.machine_fields),
+            injected_fields_line,
         );
         let error = if let Some(extra_input) = func.sig.inputs.iter().nth(1) {
             syn::Error::new_spanned(extra_input, message)
@@ -66,6 +67,8 @@ pub(super) fn validate_validator_signature(
             if receiver.reference.is_none() || receiver.mutability.is_some() {
                 let receiver_display = receiver.to_token_stream().to_string();
                 let expected_signature = expected_validator_signature(&func.sig.ident);
+                let injected_fields_line =
+                    injected_machine_fields_line(context.machine_name, context.machine_fields);
                 let message = format!(
                     "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self`, not `{}`.\n{}\nCorrect shapes: {expected_signature}.",
                     func.sig.ident,
@@ -74,13 +77,15 @@ pub(super) fn validate_validator_signature(
                     context.state_enum_name,
                     context.variant_name,
                     receiver_display,
-                    injected_machine_fields_line(context.machine_name, context.machine_fields),
+                    injected_fields_line,
                 );
                 return Err(syn::Error::new_spanned(receiver, message).to_compile_error());
             }
         }
         FnArg::Typed(_) => {
             let expected_signature = expected_validator_signature(&func.sig.ident);
+            let injected_fields_line =
+                injected_machine_fields_line(context.machine_name, context.machine_fields);
             let message = format!(
                 "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self` as its receiver.\n{}\nCorrect shapes: {expected_signature}.",
                 func.sig.ident,
@@ -88,7 +93,7 @@ pub(super) fn validate_validator_signature(
                 context.machine_name,
                 context.state_enum_name,
                 context.variant_name,
-                injected_machine_fields_line(context.machine_name, context.machine_fields),
+                injected_fields_line,
             );
             return Err(syn::Error::new_spanned(&func.sig.inputs[0], message).to_compile_error());
         }
@@ -138,7 +143,13 @@ pub(super) fn analyze_validator_return_type(
     })
 }
 
-fn injected_machine_fields_line(machine_name: &str, machine_fields: &[Ident]) -> String {
+fn injected_machine_fields_line(machine_name: &str, machine_fields: Option<&[Ident]>) -> String {
+    let Some(machine_fields) = machine_fields else {
+        return format!(
+            "Machine `{machine_name}` injects its fields by bare name inside validator bodies. Remove explicit parameters and use those bindings directly."
+        );
+    };
+
     if machine_fields.is_empty() {
         format!(
             "Machine `{machine_name}` has no user-defined fields to inject, so validator methods should not take any extra parameters."
@@ -163,8 +174,9 @@ fn expected_validator_signature(func_ident: &Ident) -> String {
 
 fn explicit_param_collision_line(
     inputs: &syn::punctuated::Punctuated<FnArg, syn::Token![,]>,
-    machine_fields: &[Ident],
+    machine_fields: Option<&[Ident]>,
 ) -> Option<String> {
+    let machine_fields = machine_fields?;
     let collisions = inputs
         .iter()
         .skip(1)

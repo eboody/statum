@@ -1,6 +1,6 @@
 error: Error: unknown `#[present(...)]` key `title`.
        Supported keys: `label`, `description`, `metadata`.
-  --> tests/ui/invalid_presentation_unknown_key.rs:24:15
+  --> tests/ui/invalid_presentation_unknown_key.rs:25:15
    |
-24 |     #[present(title = "Submit")]
+25 |     #[present(title = "Submit")]
    |               ^^^^^

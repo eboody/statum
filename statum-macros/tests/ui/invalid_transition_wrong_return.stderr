@@ -9,13 +9,13 @@ error: Invalid transition return type for `Machine<A>::to_b`: expected the impl 
        Help:
          return `Machine<NextState>` directly using the same machine path as the impl target, or wrap that same machine path in `::core::option::Option<...>`, `::core::result::Result<..., E>`, or `::statum::Branch<..., ...>` and build the next state with `self.transition()` or `self.transition_with(...)`.
          Bare, aliased, or differently-qualified wrapper and machine paths are rejected because transition introspection only accepts exact syntactic return shapes.
-  --> tests/ui/invalid_transition_wrong_return.rs:25:22
+  --> tests/ui/invalid_transition_wrong_return.rs:26:22
    |
-25 |     fn to_b(self) -> u64 {
+26 |     fn to_b(self) -> u64 {
    |                      ^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_transition_wrong_return.rs:28:2
+  --> tests/ui/invalid_transition_wrong_return.rs:29:2
    |
-28 | }
+29 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_wrong_return.rs`

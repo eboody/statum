@@ -162,6 +162,12 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     parse_validators(attr, item, &module_path)
 }
 
+#[doc(hidden)]
+#[proc_macro]
+pub fn __statum_emit_validator_methods_impl(input: TokenStream) -> TokenStream {
+    validators::emit_validator_methods_impl(input)
+}
+
 fn resolved_current_module_path(span: Span, macro_name: &str) -> Result<String, TokenStream> {
     let line_number = span.start().line;
     let resolved = if line_number == 0 {

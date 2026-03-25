@@ -36,7 +36,8 @@ impl Article {
     }
 
     pub fn is_in_review(&self) -> Result<(), statum::Error> {
-        println!("Machines client: {}", client);
+        let current_client = client;
+        println!("Machines client: {}", current_client);
         if self.status == Status::InReview {
             Ok(())
         } else {

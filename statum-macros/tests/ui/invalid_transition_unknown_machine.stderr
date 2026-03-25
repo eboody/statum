@@ -1,31 +1,31 @@
 error[E0433]: failed to resolve: use of unresolved module or unlinked crate `does_not_exist`
-  --> tests/ui/invalid_transition_unknown_machine.rs:25:1
+  --> tests/ui/invalid_transition_unknown_machine.rs:26:1
    |
-25 | #[transition]
+26 | #[transition]
    | ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `does_not_exist`
    |
    = note: this error originates in the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error: cannot find macro `__statum_resolve_does_not_exist_transition_target` in this scope
-  --> tests/ui/invalid_transition_unknown_machine.rs:25:1
+  --> tests/ui/invalid_transition_unknown_machine.rs:26:1
    |
-20 | #[machine]
+21 | #[machine]
    | ---------- similarly named macro `__statum_resolve_machine_transition_target` defined here
 ...
-25 | #[transition]
+26 | #[transition]
    | ^^^^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)
 help: a macro with a similar name exists
    |
-25 - #[transition]
-25 + __statum_resolve_machine_transition_target
+26 - #[transition]
+26 + __statum_resolve_machine_transition_target
    |
 
 error[E0433]: failed to resolve: use of unresolved module or unlinked crate `does_not_exist`
-  --> tests/ui/invalid_transition_unknown_machine.rs:25:1
+  --> tests/ui/invalid_transition_unknown_machine.rs:26:1
    |
-25 | #[transition]
+26 | #[transition]
    | ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `does_not_exist`
    |
    = help: if you wanted to use a crate named `does_not_exist`, use `cargo add does_not_exist` to add it to your `Cargo.toml`
@@ -36,9 +36,9 @@ help: consider importing this enum
    |
 
 error[E0433]: failed to resolve: use of unresolved module or unlinked crate `does_not_exist`
-  --> tests/ui/invalid_transition_unknown_machine.rs:25:1
+  --> tests/ui/invalid_transition_unknown_machine.rs:26:1
    |
-25 | #[transition]
+26 | #[transition]
    | ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `does_not_exist`
    |
    = help: if you wanted to use a crate named `does_not_exist`, use `cargo add does_not_exist` to add it to your `Cargo.toml`
@@ -49,9 +49,9 @@ help: consider importing this struct
    |
 
 error[E0433]: failed to resolve: use of unresolved module or unlinked crate `does_not_exist`
-  --> tests/ui/invalid_transition_unknown_machine.rs:25:1
+  --> tests/ui/invalid_transition_unknown_machine.rs:26:1
    |
-25 | #[transition]
+26 | #[transition]
    | ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `does_not_exist`
    |
    = help: if you wanted to use a crate named `does_not_exist`, use `cargo add does_not_exist` to add it to your `Cargo.toml`

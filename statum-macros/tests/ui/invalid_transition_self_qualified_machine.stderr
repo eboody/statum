@@ -9,7 +9,7 @@ error: Invalid transition return type for `Machine<Draft>::finish`: expected the
        Help:
          return `Machine<NextState>` directly using the same machine path as the impl target, or wrap that same machine path in `::core::option::Option<...>`, `::core::result::Result<..., E>`, or `::statum::Branch<..., ...>` and build the next state with `self.transition()` or `self.transition_with(...)`.
          Bare, aliased, or differently-qualified wrapper and machine paths are rejected because transition introspection only accepts exact syntactic return shapes.
-  --> tests/ui/invalid_transition_self_qualified_machine.rs:27:28
+  --> tests/ui/invalid_transition_self_qualified_machine.rs:28:28
    |
-27 |         fn finish(self) -> self::Machine<Accepted> {
+28 |         fn finish(self) -> self::Machine<Accepted> {
    |                            ^^^^

@@ -1,12 +1,12 @@
 error: Error: machine `Machine` is missing its `#[state]` generic.
        Fix: declare `Machine<State>` where `State` is the `#[state]` enum in this module.
-  --> tests/ui/invalid_machine_no_state_generic.rs:15:8
+  --> tests/ui/invalid_machine_no_state_generic.rs:16:8
    |
-15 | struct Machine {
+16 | struct Machine {
    |        ^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_machine_no_state_generic.rs:17:2
+  --> tests/ui/invalid_machine_no_state_generic.rs:18:2
    |
-17 | }
+18 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_no_state_generic.rs`

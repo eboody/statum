@@ -80,8 +80,9 @@ impl DbRow {
 
     fn is_in_review(&self) -> statum::Result<ReviewData> {
         if matches!(self.status, Status::InReview) {
+            let current_client = client;
             Ok(ReviewData {
-                reviewer: format!("reviewer-for-{client}"),
+                reviewer: format!("reviewer-for-{current_client}"),
             })
         } else {
             Err(statum::Error::InvalidState)
@@ -139,6 +140,7 @@ struct TaskMachine<TaskState> {
 ```
 
 then `client` and `name` are available inside `is_draft`, `is_in_review`, and `is_published`.
+If you pass them into nested macros like `format!`, bind them to a local first.
 
 That is how typed rehydration can fetch extra data or use shared context without manual parameter threading. Persisted-row fields are not rebound: keep reading them from `self.status`, `self.id`, and so on.
 

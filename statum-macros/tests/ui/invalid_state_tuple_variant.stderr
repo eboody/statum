@@ -1,12 +1,12 @@
 error: Error: #[state] enum `BadState` variant `Draft` carries 2 fields, but Statum supports at most one payload type per state.
        Fix: wrap those fields in a separate payload type and use `Draft(DraftData)`.
-  --> tests/ui/invalid_state_tuple_variant.rs:14:5
+  --> tests/ui/invalid_state_tuple_variant.rs:15:5
    |
-14 |     Draft(u32, u32),
+15 |     Draft(u32, u32),
    |     ^^^^^^^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_state_tuple_variant.rs:15:2
+  --> tests/ui/invalid_state_tuple_variant.rs:16:2
    |
-15 | }
+16 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_tuple_variant.rs`

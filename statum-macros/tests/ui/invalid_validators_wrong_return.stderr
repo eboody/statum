@@ -1,83 +1,83 @@
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_validators_wrong_return.rs:52:2
+  --> tests/ui/invalid_validators_wrong_return.rs:53:2
    |
-52 | }
+53 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_wrong_return.rs`
 
 error[E0308]: mismatched types
-  --> tests/ui/invalid_validators_wrong_return.rs:33:1
+  --> tests/ui/invalid_validators_wrong_return.rs:34:1
    |
-33 | #[validators(TaskMachine)]
+34 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<Progress>`, found `Option<()>`
 ...
-44 |     fn is_in_progress(&self) -> Result<(), statum_core::Error> {
+45 |     fn is_in_progress(&self) -> Result<(), statum_core::Error> {
    |        -------------- arguments to this function are incorrect
    |
    = note: expected enum `Option<Progress>`
               found enum `Option<()>`
 note: function defined here
-  --> tests/ui/invalid_validators_wrong_return.rs:44:8
+  --> tests/ui/invalid_validators_wrong_return.rs:45:8
    |
-33 | #[validators(TaskMachine)]
+34 | #[validators(TaskMachine)]
    | --------------------------
    | |
    | in this attribute macro expansion
 ...
-44 |     fn is_in_progress(&self) -> Result<(), statum_core::Error> {
+45 |     fn is_in_progress(&self) -> Result<(), statum_core::Error> {
    |        ^^^^^^^^^^^^^^
    = note: this error originates in the macro `__statum_emit_task_machine_validator_build_variant` which comes from the expansion of the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0308]: mismatched types
-  --> tests/ui/invalid_validators_wrong_return.rs:33:1
+  --> tests/ui/invalid_validators_wrong_return.rs:34:1
    |
-33 | #[validators(TaskMachine)]
+34 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
    | |
    | expected `Progress`, found `()`
    | arguments to this method are incorrect
    |
 note: method defined here
-  --> tests/ui/invalid_validators_wrong_return.rs:24:1
+  --> tests/ui/invalid_validators_wrong_return.rs:25:1
    |
-24 | #[machine]
+25 | #[machine]
    | ^^^^^^^^^^
    = note: this error originates in the macro `__statum_emit_task_machine_validator_build_variant` which comes from the expansion of the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0308]: mismatched types
-  --> tests/ui/invalid_validators_wrong_return.rs:33:1
+  --> tests/ui/invalid_validators_wrong_return.rs:34:1
    |
-33 | #[validators(TaskMachine)]
+34 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<Progress>`, found `Option<()>`
 ...
-44 |     fn is_in_progress(&self) -> Result<(), statum_core::Error> {
+45 |     fn is_in_progress(&self) -> Result<(), statum_core::Error> {
    |        -------------- arguments to this function are incorrect
    |
    = note: expected enum `Option<Progress>`
               found enum `Option<()>`
 note: function defined here
-  --> tests/ui/invalid_validators_wrong_return.rs:44:8
+  --> tests/ui/invalid_validators_wrong_return.rs:45:8
    |
-33 | #[validators(TaskMachine)]
+34 | #[validators(TaskMachine)]
    | --------------------------
    | |
    | in this attribute macro expansion
 ...
-44 |     fn is_in_progress(&self) -> Result<(), statum_core::Error> {
+45 |     fn is_in_progress(&self) -> Result<(), statum_core::Error> {
    |        ^^^^^^^^^^^^^^
    = note: this error originates in the macro `__statum_emit_task_machine_validator_report_variant` which comes from the expansion of the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0308]: mismatched types
-  --> tests/ui/invalid_validators_wrong_return.rs:33:1
+  --> tests/ui/invalid_validators_wrong_return.rs:34:1
    |
-33 | #[validators(TaskMachine)]
+34 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
    | |
    | expected `Progress`, found `()`
    | arguments to this method are incorrect
    |
 note: method defined here
-  --> tests/ui/invalid_validators_wrong_return.rs:24:1
+  --> tests/ui/invalid_validators_wrong_return.rs:25:1
    |
-24 | #[machine]
+25 | #[machine]
    | ^^^^^^^^^^
    = note: this error originates in the macro `__statum_emit_task_machine_validator_report_variant` which comes from the expansion of the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

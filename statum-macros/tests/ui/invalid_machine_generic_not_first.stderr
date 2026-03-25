@@ -1,13 +1,13 @@
 error: Error: machine `BadMachine` uses `T` as its state generic, but the `#[state]` enum in this module is `FooState`.
        Fix: declare `BadMachine<FooState>`.
        Found: `struct BadMachine< T, FooState > { ... }`.
-  --> tests/ui/invalid_machine_generic_not_first.rs:20:19
+  --> tests/ui/invalid_machine_generic_not_first.rs:21:19
    |
-20 | struct BadMachine<T, FooState> {
+21 | struct BadMachine<T, FooState> {
    |                   ^
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_machine_generic_not_first.rs:22:2
+  --> tests/ui/invalid_machine_generic_not_first.rs:23:2
    |
-22 | }
+23 | }
    |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_machine_generic_not_first.rs`
