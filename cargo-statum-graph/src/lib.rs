@@ -416,7 +416,10 @@ fn push_patch_tables(manifest: &mut String, root: &Path) {
 fn build_runner_main(selections: &[SelectedPackage<'_>], out_dir: &Path, stem: &str) -> String {
     let mut source = String::from("#[allow(unused_imports)]\n");
     for (index, selection) in selections.iter().enumerate() {
-        source.push_str(&format!("use {} as _;\n", selection.dependency_alias(index)));
+        source.push_str(&format!(
+            "use {} as _;\n",
+            selection.dependency_alias(index)
+        ));
     }
     source.push_str("\nfn main() -> std::process::ExitCode {\n");
     source.push_str("    match run() {\n");

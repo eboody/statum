@@ -78,8 +78,7 @@ fn write_fixture(dir: &Path) {
     fs::write(dir.join("crates/domain/Cargo.toml"), domain_manifest)
         .expect("fixture domain cargo manifest");
     fs::write(dir.join("crates/domain/src/lib.rs"), domain_lib).expect("fixture domain lib");
-    fs::write(dir.join("crates/app/Cargo.toml"), app_manifest)
-        .expect("fixture app cargo manifest");
+    fs::write(dir.join("crates/app/Cargo.toml"), app_manifest).expect("fixture app cargo manifest");
     fs::write(dir.join("crates/app/src/lib.rs"), app_lib).expect("fixture app lib");
 }
 
