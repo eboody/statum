@@ -91,6 +91,10 @@ From there, a consumer can ask for:
 - a transition by source state and method name
 - the exact legal targets for a transition site
 
+If you want a ready-made static graph export instead of writing your own
+renderer, `statum-graph` builds `MachineDoc` values and Mermaid output directly
+from this graph surface.
+
 ## Transition Identity
 
 State ids are generated as a machine-scoped enum like `flow::StateId`.

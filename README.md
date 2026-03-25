@@ -170,6 +170,10 @@ See [docs/introspection.md](docs/introspection.md) for the full guide and
 [statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)
 for a runnable example.
 
+If you want a ready-made renderer for that graph surface, the workspace also
+ships [statum-graph](statum-graph/README.md), which exports machine-local
+topology and Mermaid output directly from `MachineIntrospection::GRAPH`.
+
 For source-local labels and descriptions, use `#[present(...)]` on the machine,
 state variants, and transition methods. If you also want typed metadata in the
 generated `machine::PRESENTATION` constant, declare
