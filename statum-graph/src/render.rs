@@ -37,7 +37,7 @@ where
             let to = node_id(state_positions[target]);
             lines.push(format!(
                 "    {from} -->|{}| {to}",
-                escape_label(edge.descriptor.method_name)
+                escape_edge_label(edge.descriptor.method_name)
             ));
         }
     }
@@ -62,4 +62,15 @@ fn escape_label(label: &str) -> String {
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
+}
+
+fn escape_edge_label(label: &str) -> String {
+    label
+        .replace('&', "&amp;")
+        .replace('|', "&#124;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+        .replace('\n', "<br/>")
 }

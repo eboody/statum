@@ -334,6 +334,7 @@ static DUPLICATE_STATE_DESCRIPTORS: [StateDescriptor<InvalidStateId>; 2] = [
 ];
 
 static INVALID_TARGETS: [InvalidStateId; 1] = [InvalidStateId::Missing];
+static VALID_PUBLISHED_TARGET: [InvalidStateId; 1] = [InvalidStateId::Published];
 
 static INVALID_SOURCE_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>; 1] =
     [TransitionDescriptor {
@@ -351,6 +352,14 @@ static INVALID_TARGET_TRANSITIONS: [TransitionDescriptor<InvalidStateId, Invalid
         to: &INVALID_TARGETS,
     }];
 
+static PIPE_LABEL_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>; 1] =
+    [TransitionDescriptor {
+        id: InvalidTransitionId::Submit,
+        method_name: "submit|review",
+        from: InvalidStateId::Draft,
+        to: &VALID_PUBLISHED_TARGET,
+    }];
+
 fn invalid_source_transitions(
 ) -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
     &INVALID_SOURCE_TRANSITIONS
@@ -359,6 +368,11 @@ fn invalid_source_transitions(
 fn invalid_target_transitions(
 ) -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
     &INVALID_TARGET_TRANSITIONS
+}
+
+fn pipe_label_transitions() -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>]
+{
+    &PIPE_LABEL_TRANSITIONS
 }
 
 static INVALID_SOURCE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
@@ -386,6 +400,15 @@ static DUPLICATE_STATE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> 
     },
     states: &DUPLICATE_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(invalid_target_transitions),
+};
+
+static PIPE_LABEL_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
+    machine: MachineDescriptor {
+        module_path: "tests::pipe_label",
+        rust_type_path: "tests::pipe_label::Flow",
+    },
+    states: &VALID_STATE_DESCRIPTORS,
+    transitions: TransitionInventory::new(pipe_label_transitions),
 };
 
 #[test]
@@ -419,4 +442,13 @@ fn rejects_external_graph_with_duplicate_state_ids() {
             state: "DraftDuplicate",
         })
     );
+}
+
+#[test]
+fn mermaid_escapes_external_edge_labels() {
+    let doc = MachineDoc::try_from_graph(&PIPE_LABEL_GRAPH)
+        .expect("external graph with valid topology should export");
+    let mermaid = render::mermaid(&doc);
+
+    assert!(mermaid.contains("-->|submit&#124;review|"));
 }
