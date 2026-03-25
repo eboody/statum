@@ -176,8 +176,9 @@ where
 
     /// Exports one externally supplied machine graph after validating it.
     pub fn try_from_graph(graph: &'static MachineGraph<S, T>) -> Result<Self, MachineDocError> {
-        validate_graph(graph)?;
-        let incoming = incoming_states(graph);
+        let transitions = graph.transitions.as_slice();
+        validate_graph(graph.machine, graph.states, transitions)?;
+        let incoming = incoming_states(transitions);
         let state_positions = state_positions(graph.states);
 
         let states = graph
@@ -190,8 +191,7 @@ where
             })
             .collect();
 
-        let mut edges = graph
-            .transitions
+        let mut edges = transitions
             .iter()
             .copied()
             .map(|descriptor| EdgeDoc { descriptor })
@@ -222,27 +222,31 @@ pub struct EdgeDoc<S: 'static, T: 'static> {
     pub descriptor: TransitionDescriptor<S, T>,
 }
 
-fn validate_graph<S, T>(graph: &MachineGraph<S, T>) -> Result<(), MachineDocError>
+fn validate_graph<S, T>(
+    machine: MachineDescriptor,
+    states: &[StateDescriptor<S>],
+    transitions: &[TransitionDescriptor<S, T>],
+) -> Result<(), MachineDocError>
 where
     S: Copy + Eq + std::hash::Hash + 'static,
     T: Copy + Eq + 'static,
 {
-    let mut state_names = HashMap::with_capacity(graph.states.len());
-    for state in graph.states.iter() {
+    let mut state_names = HashMap::with_capacity(states.len());
+    for state in states.iter() {
         if state_names.insert(state.id, state.rust_name).is_some() {
             return Err(MachineDocError::DuplicateStateId {
-                machine: graph.machine.rust_type_path,
+                machine: machine.rust_type_path,
                 state: state.rust_name,
             });
         }
     }
 
-    let mut transition_sites = HashSet::with_capacity(graph.transitions.len());
-    let mut transition_ids = Vec::with_capacity(graph.transitions.len());
-    for transition in graph.transitions.iter() {
+    let mut transition_sites = HashSet::with_capacity(transitions.len());
+    let mut transition_ids = Vec::with_capacity(transitions.len());
+    for transition in transitions.iter() {
         if transition_ids.contains(&transition.id) {
             return Err(MachineDocError::DuplicateTransitionId {
-                machine: graph.machine.rust_type_path,
+                machine: machine.rust_type_path,
                 transition: transition.method_name,
             });
         }
@@ -250,7 +254,7 @@ where
 
         if !state_names.contains_key(&transition.from) {
             return Err(MachineDocError::MissingSourceState {
-                machine: graph.machine.rust_type_path,
+                machine: machine.rust_type_path,
                 transition: transition.method_name,
             });
         }
@@ -258,7 +262,7 @@ where
         let from_state_name = state_names[&transition.from];
         if !transition_sites.insert((transition.from, transition.method_name)) {
             return Err(MachineDocError::DuplicateTransitionSite {
-                machine: graph.machine.rust_type_path,
+                machine: machine.rust_type_path,
                 state: from_state_name,
                 transition: transition.method_name,
             });
@@ -268,14 +272,14 @@ where
         for target in transition.to.iter().copied() {
             let Some(state_name) = state_names.get(&target).copied() else {
                 return Err(MachineDocError::MissingTargetState {
-                    machine: graph.machine.rust_type_path,
+                    machine: machine.rust_type_path,
                     transition: transition.method_name,
                 });
             };
 
             if !seen_targets.insert(target) {
                 return Err(MachineDocError::DuplicateTargetState {
-                    machine: graph.machine.rust_type_path,
+                    machine: machine.rust_type_path,
                     transition: transition.method_name,
                     state: state_name,
                 });
@@ -286,13 +290,13 @@ where
     Ok(())
 }
 
-fn incoming_states<S, T>(graph: &MachineGraph<S, T>) -> HashSet<S>
+fn incoming_states<S, T>(transitions: &[TransitionDescriptor<S, T>]) -> HashSet<S>
 where
     S: Copy + Eq + std::hash::Hash + 'static,
     T: Copy + Eq + 'static,
 {
     let mut incoming = HashSet::new();
-    for transition in graph.transitions.iter() {
+    for transition in transitions.iter() {
         for target in transition.to.iter().copied() {
             incoming.insert(target);
         }

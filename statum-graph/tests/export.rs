@@ -1,5 +1,8 @@
 #![allow(dead_code)]
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+
 use statum::{
     MachineDescriptor, MachineGraph, StateDescriptor, TransitionDescriptor, TransitionInventory,
 };
@@ -503,6 +506,37 @@ static DUPLICATE_TRANSITION_SITE_GRAPH: MachineGraph<InvalidStateId, InvalidTran
         transitions: TransitionInventory::new(duplicate_transition_site_transitions),
     };
 
+static FLAKY_INVENTORY_LOCK: Mutex<()> = Mutex::new(());
+static FLAKY_TRANSITION_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+static FLAKY_VALID_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>; 1] =
+    [TransitionDescriptor {
+        id: InvalidTransitionId::Submit,
+        method_name: "submit",
+        from: InvalidStateId::Draft,
+        to: &VALID_PUBLISHED_TARGET,
+    }];
+
+static EMPTY_TRANSITIONS: [TransitionDescriptor<InvalidStateId, InvalidTransitionId>; 0] = [];
+
+fn flaky_transitions() -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
+    let call = FLAKY_TRANSITION_CALLS.fetch_add(1, Ordering::SeqCst);
+    if call.is_multiple_of(2) {
+        &FLAKY_VALID_TRANSITIONS
+    } else {
+        &EMPTY_TRANSITIONS
+    }
+}
+
+static FLAKY_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
+    machine: MachineDescriptor {
+        module_path: "tests::flaky_inventory",
+        rust_type_path: "tests::flaky_inventory::Flow",
+    },
+    states: &VALID_STATE_DESCRIPTORS,
+    transitions: TransitionInventory::new(flaky_transitions),
+};
+
 #[test]
 fn rejects_external_graph_with_missing_transition_source() {
     assert_eq!(
@@ -577,5 +611,28 @@ fn rejects_external_graph_with_duplicate_transition_sites() {
             state: "Draft",
             transition: "review",
         })
+    );
+}
+
+#[test]
+fn snapshots_external_transition_inventory_once_per_export() {
+    let _guard = FLAKY_INVENTORY_LOCK.lock().expect("flaky inventory lock");
+    FLAKY_TRANSITION_CALLS.store(0, Ordering::SeqCst);
+
+    let doc = MachineDoc::try_from_graph(&FLAKY_GRAPH)
+        .expect("flaky inventory should still export from one consistent snapshot");
+
+    assert_eq!(
+        doc.roots()
+            .map(|state| state.descriptor.rust_name)
+            .collect::<Vec<_>>(),
+        vec!["Draft"]
+    );
+    assert_eq!(
+        doc.edges()
+            .iter()
+            .map(|edge| edge.descriptor.method_name)
+            .collect::<Vec<_>>(),
+        vec!["submit"]
     );
 }
