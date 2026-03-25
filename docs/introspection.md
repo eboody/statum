@@ -92,8 +92,14 @@ From there, a consumer can ask for:
 - the exact legal targets for a transition site
 
 If you want a ready-made static graph export instead of writing your own
-renderer, `statum-graph` builds `MachineDoc` values and Mermaid output directly
-from this graph surface.
+renderer, `statum-graph` builds validated `MachineDoc` values from this graph
+surface, joins optional presentation labels and descriptions, and renders
+Mermaid, DOT, PlantUML, or stable JSON output.
+
+For a linked-build codebase view, `statum-graph::CodebaseDoc::linked()` also
+collects every linked compiled machine family and resolves direct machine-like
+payload links written in state data. That combined view is still static. It is
+not a whole-workspace source scan and it does not model runtime orchestration.
 
 ## Transition Identity
 
@@ -187,6 +193,17 @@ macro-expanded, cfg-pruned items and supported attribute shapes. If a category
 declares `#[presentation_types(...)]`, each annotated item in that category
 must supply `metadata = ...`; otherwise the macro rejects it instead of
 guessing a default value.
+
+`statum-graph` can join those labels and descriptions onto its stable
+`ExportDoc` surface. The built-in JSON renderer keeps arbitrary typed
+`metadata` out of the default output so the exported format stays deterministic
+without requiring every metadata type to be serializable.
+
+For the codebase surface, the same linked compiled observation point applies.
+Machine-local topology comes from the generated machine graph and transition
+inventory. Static cross-machine links come only from direct machine-like
+payload types written in state data. Resolution uses normalized path suffixes
+plus target state names and fails closed on ambiguity instead of guessing.
 
 ## Example
 

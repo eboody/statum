@@ -277,11 +277,13 @@ pub use statum_core::__private;
 pub use statum_core::projection;
 #[doc(inline)]
 pub use statum_core::{
-    Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error,
-    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder, RebuildAttempt,
-    RebuildReport, RecordedTransition, Rejection, Result, StateDescriptor, StateMarker,
-    StatePresentation, TransitionDescriptor, TransitionInventory, TransitionPresentation,
+    linked_machines, Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState,
+    Error, LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
+    LinkedTransitionInventory, MachineDescriptor, MachineGraph, MachineIntrospection,
+    MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
+    MachineTransitionRecorder, RebuildAttempt, RebuildReport, RecordedTransition, Rejection,
+    Result, StateDescriptor, StateMarker, StatePresentation, StaticMachineLinkDescriptor,
+    TransitionDescriptor, TransitionInventory, TransitionPresentation,
     TransitionPresentationInventory, UnitState, Validation,
 };
 

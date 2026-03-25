@@ -100,6 +100,50 @@ impl<T, M> core::cmp::PartialEq for TransitionPresentationInventory<T, M> {
 
 impl<T, M> core::cmp::Eq for TransitionPresentationInventory<T, M> {}
 
+/// Runtime accessor for erased transition descriptors supplied by a
+/// distributed machine inventory.
+#[derive(Clone, Copy)]
+pub struct LinkedTransitionInventory {
+    get: fn() -> &'static [LinkedTransitionDescriptor],
+}
+
+impl LinkedTransitionInventory {
+    /// Creates a linked transition inventory from a `'static` getter.
+    pub const fn new(get: fn() -> &'static [LinkedTransitionDescriptor]) -> Self {
+        Self { get }
+    }
+
+    /// Returns the linked transition descriptors as a slice.
+    pub fn as_slice(&self) -> &'static [LinkedTransitionDescriptor] {
+        (self.get)()
+    }
+}
+
+impl core::ops::Deref for LinkedTransitionInventory {
+    type Target = [LinkedTransitionDescriptor];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl core::fmt::Debug for LinkedTransitionInventory {
+    fn fmt(
+        &self,
+        formatter: &mut core::fmt::Formatter<'_>,
+    ) -> core::result::Result<(), core::fmt::Error> {
+        formatter.debug_tuple("LinkedTransitionInventory").finish()
+    }
+}
+
+impl core::cmp::PartialEq for LinkedTransitionInventory {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self.as_slice(), other.as_slice())
+    }
+}
+
+impl core::cmp::Eq for LinkedTransitionInventory {}
+
 /// Identity for one concrete machine state.
 pub trait MachineStateIdentity: MachineIntrospection {
     /// The state id for this concrete machine instantiation.
@@ -286,6 +330,16 @@ pub trait MachineTransitionRecorder: MachineStateIdentity {
 
 impl<M> MachineTransitionRecorder for M where M: MachineStateIdentity {}
 
+/// Linked compiled machine families visible to the current build.
+#[doc(hidden)]
+#[linkme::distributed_slice]
+pub static __STATUM_LINKED_MACHINES: [LinkedMachineGraph];
+
+/// Returns every linked compiled machine family visible to the current build.
+pub fn linked_machines() -> &'static [LinkedMachineGraph] {
+    &__STATUM_LINKED_MACHINES
+}
+
 /// Structural machine graph emitted from macro-generated metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MachineGraph<S: 'static, T: 'static> {
@@ -351,6 +405,54 @@ where
     }
 }
 
+/// Erased machine graph emitted for codebase-level export over the linked
+/// build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LinkedMachineGraph {
+    /// Rust-facing identity of the machine family.
+    pub machine: MachineDescriptor,
+    /// Optional human-facing machine label.
+    pub label: Option<&'static str>,
+    /// Optional human-facing machine description.
+    pub description: Option<&'static str>,
+    /// All states known to the machine.
+    pub states: &'static [LinkedStateDescriptor],
+    /// All transition sites known to the machine.
+    pub transitions: LinkedTransitionInventory,
+    /// Direct machine-like payload references written in state data.
+    pub static_links: &'static [StaticMachineLinkDescriptor],
+}
+
+impl LinkedMachineGraph {
+    /// Finds a state descriptor by Rust state name.
+    pub fn state(&self, rust_name: &str) -> Option<&LinkedStateDescriptor> {
+        self.states
+            .iter()
+            .find(|state| state.rust_name == rust_name)
+    }
+
+    /// Yields all transition sites originating from `state`.
+    pub fn transitions_from(
+        &self,
+        state: &'static str,
+    ) -> impl Iterator<Item = &LinkedTransitionDescriptor> + '_ {
+        self.transitions
+            .iter()
+            .filter(move |transition| transition.from == state)
+    }
+
+    /// Finds the transition site for `method_name` on `state`.
+    pub fn transition_from_method(
+        &self,
+        state: &'static str,
+        method_name: &str,
+    ) -> Option<&LinkedTransitionDescriptor> {
+        self.transitions
+            .iter()
+            .find(|transition| transition.from == state && transition.method_name == method_name)
+    }
+}
+
 /// Rust-facing identity for a machine family.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MachineDescriptor {
@@ -371,6 +473,19 @@ pub struct StateDescriptor<S: 'static> {
     pub has_data: bool,
 }
 
+/// Erased state descriptor carried by the linked machine inventory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LinkedStateDescriptor {
+    /// Rust variant name of the state marker.
+    pub rust_name: &'static str,
+    /// Optional human-facing state label.
+    pub label: Option<&'static str>,
+    /// Optional human-facing state description.
+    pub description: Option<&'static str>,
+    /// Whether the state carries `state_data`.
+    pub has_data: bool,
+}
+
 /// Static descriptor for one transition site.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TransitionDescriptor<S: 'static, T: 'static> {
@@ -384,13 +499,43 @@ pub struct TransitionDescriptor<S: 'static, T: 'static> {
     pub to: &'static [S],
 }
 
+/// Erased transition descriptor carried by the linked machine inventory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LinkedTransitionDescriptor {
+    /// Rust method name for the transition site.
+    pub method_name: &'static str,
+    /// Optional human-facing transition label.
+    pub label: Option<&'static str>,
+    /// Optional human-facing transition description.
+    pub description: Option<&'static str>,
+    /// Exact source state for the transition site.
+    pub from: &'static str,
+    /// Exact legal target states for the transition site.
+    pub to: &'static [&'static str],
+}
+
+/// One direct machine-like payload reference written in state data.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StaticMachineLinkDescriptor {
+    /// Source state that carries the nested machine payload.
+    pub from_state: &'static str,
+    /// Field name for named payloads; `None` for tuple payloads.
+    pub field_name: Option<&'static str>,
+    /// Normalized machine-path suffix segments written in the payload type.
+    pub to_machine_path: &'static [&'static str],
+    /// Target state marker name taken from the payload type's first generic.
+    pub to_state: &'static str,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
-        MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
-        RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
-        TransitionInventory, TransitionPresentation, TransitionPresentationInventory,
+        LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
+        LinkedTransitionInventory, MachineDescriptor, MachineGraph, MachineIntrospection,
+        MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
+        MachineTransitionRecorder, RecordedTransition, StateDescriptor, StatePresentation,
+        StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
+        TransitionPresentation, TransitionPresentationInventory,
     };
     use core::marker::PhantomData;
 
@@ -721,5 +866,60 @@ mod tests {
                 },
             })
         );
+    }
+
+    fn linked_transitions() -> &'static [LinkedTransitionDescriptor] {
+        static TRANSITIONS: [LinkedTransitionDescriptor; 1] = [LinkedTransitionDescriptor {
+            method_name: "submit",
+            label: Some("Submit"),
+            description: None,
+            from: "Draft",
+            to: &["Review"],
+        }];
+        &TRANSITIONS
+    }
+
+    #[test]
+    fn linked_machine_graph_helpers_work() {
+        static STATES: [LinkedStateDescriptor; 2] = [
+            LinkedStateDescriptor {
+                rust_name: "Draft",
+                label: None,
+                description: None,
+                has_data: false,
+            },
+            LinkedStateDescriptor {
+                rust_name: "Review",
+                label: Some("Review"),
+                description: None,
+                has_data: true,
+            },
+        ];
+        static LINKS: [StaticMachineLinkDescriptor; 1] = [StaticMachineLinkDescriptor {
+            from_state: "Review",
+            field_name: None,
+            to_machine_path: &["task", "Machine"],
+            to_state: "Running",
+        }];
+
+        let linked = LinkedMachineGraph {
+            machine: MachineDescriptor {
+                module_path: "workflow",
+                rust_type_path: "workflow::Machine",
+            },
+            label: Some("Workflow"),
+            description: None,
+            states: &STATES,
+            transitions: LinkedTransitionInventory::new(linked_transitions),
+            static_links: &LINKS,
+        };
+
+        assert_eq!(linked.state("Review"), Some(&STATES[1]));
+        assert_eq!(
+            linked.transition_from_method("Draft", "submit"),
+            Some(&linked_transitions()[0])
+        );
+        assert_eq!(linked.transitions_from("Draft").count(), 1);
+        assert_eq!(linked.static_links, &LINKS);
     }
 }

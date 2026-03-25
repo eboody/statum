@@ -11,7 +11,8 @@ pub(crate) use generics::{
     machine_type_with_state,
 };
 pub(crate) use introspection::{
-    to_shouty_snake_identifier, transition_presentation_slice_ident, transition_slice_ident,
+    linked_transition_slice_ident, to_shouty_snake_identifier,
+    transition_presentation_slice_ident, transition_slice_ident,
 };
 pub use metadata::{MachineInfo, MachinePath};
 pub use registry::{

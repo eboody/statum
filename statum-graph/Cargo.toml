@@ -2,8 +2,16 @@
 path = "../statum"
 version = "0.6.9"
 
+[dependencies.serde]
+features = ["derive"]
+version = "1"
+
+[dependencies.serde_json]
+version = "1"
+
 [dev-dependencies]
 insta = "1.43"
+tempfile = "3"
 
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]

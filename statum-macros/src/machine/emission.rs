@@ -1,6 +1,9 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
-use syn::{GenericParam, Generics, Ident, ItemStruct, LitStr};
+use syn::{
+    GenericArgument, GenericParam, Generics, Ident, ItemStruct, LitStr, PathArguments, Type,
+    TypePath,
+};
 
 use crate::state::{
     state_family_target_resolver_macro_ident, state_family_visitor_macro_ident,
@@ -11,7 +14,8 @@ use super::metadata::{ParsedMachineInfo, field_type_alias_name};
 use super::{
     MachineInfo, builder_generics, extra_generics, extra_type_arguments_tokens,
     generic_argument_tokens,
-    machine_type_with_state, transition_presentation_slice_ident, transition_slice_ident,
+    linked_transition_slice_ident, machine_type_with_state,
+    transition_presentation_slice_ident, transition_slice_ident,
 };
 
 pub fn generate_machine_impls(
@@ -2108,6 +2112,8 @@ fn generate_machine_state_surface(
 
 fn generate_machine_module_introspection(machine_info: &MachineInfo) -> Result<TokenStream, TokenStream> {
     let presentation_types = resolve_presentation_types(machine_info)?;
+    let linked_state_entries = linked_state_entries(machine_info)?;
+    let static_machine_link_entries = static_machine_link_entries(machine_info)?;
     let state_presentation_entry_macro_ident =
         machine_state_presentation_entry_macro_ident(machine_info);
     let transition_slice_ident = transition_slice_ident(
@@ -2116,6 +2122,11 @@ fn generate_machine_module_introspection(machine_info: &MachineInfo) -> Result<T
         machine_info.line_number,
     );
     let transition_presentation_slice_ident = transition_presentation_slice_ident(
+        &machine_info.name,
+        machine_info.file_path.as_deref(),
+        machine_info.line_number,
+    );
+    let linked_transition_slice_ident = linked_transition_slice_ident(
         &machine_info.name,
         machine_info.file_path.as_deref(),
         machine_info.line_number,
@@ -2130,6 +2141,14 @@ fn generate_machine_module_introspection(machine_info: &MachineInfo) -> Result<T
         &machine_info.name,
         presentation_types.machine.as_ref(),
     )?;
+    let machine_presentation_label =
+        optional_lit_str_tokens(machine_info.presentation.as_ref().and_then(|value| value.label.as_deref()));
+    let machine_presentation_description = optional_lit_str_tokens(
+        machine_info
+            .presentation
+            .as_ref()
+            .and_then(|value| value.description.as_deref()),
+    );
     let machine_meta_ty = presentation_type_tokens(presentation_types.machine.as_ref());
     let state_meta_ty = presentation_type_tokens(presentation_types.state.as_ref());
     let transition_meta_ty = presentation_type_tokens(presentation_types.transition.as_ref());
@@ -2200,6 +2219,14 @@ fn generate_machine_module_introspection(machine_info: &MachineInfo) -> Result<T
                 )*
             };
 
+        static __STATUM_LINKED_STATES: &[statum::__private::LinkedStateDescriptor] = &[
+            #(#linked_state_entries),*
+        ];
+
+        static __STATUM_STATIC_MACHINE_LINKS: &[statum::__private::StaticMachineLinkDescriptor] = &[
+            #(#static_machine_link_entries),*
+        ];
+
         #[doc(hidden)]
         #[statum::__private::linkme::distributed_slice]
         #[linkme(crate = statum::__private::linkme)]
@@ -2212,12 +2239,21 @@ fn generate_machine_module_introspection(machine_info: &MachineInfo) -> Result<T
             [statum::__private::TransitionPresentation<TransitionId, #transition_meta_ty>];
 
         #[doc(hidden)]
+        #[statum::__private::linkme::distributed_slice]
+        #[linkme(crate = statum::__private::linkme)]
+        pub static #linked_transition_slice_ident: [statum::__private::LinkedTransitionDescriptor];
+
+        #[doc(hidden)]
         #[allow(unused_imports)]
         pub use self::#transition_slice_ident as __STATUM_TRANSITIONS;
 
         #[doc(hidden)]
         #[allow(unused_imports)]
         pub use self::#transition_presentation_slice_ident as __STATUM_TRANSITION_PRESENTATIONS;
+
+        #[doc(hidden)]
+        #[allow(unused_imports)]
+        pub use self::#linked_transition_slice_ident as __STATUM_LINKED_TRANSITIONS;
 
         #[doc(hidden)]
         pub type __StatumTransitionPresentationMetadata = #transition_meta_ty;
@@ -2240,6 +2276,10 @@ fn generate_machine_module_introspection(machine_info: &MachineInfo) -> Result<T
             &#transition_presentation_slice_ident
         }
 
+        fn __statum_linked_transitions() -> &'static [statum::__private::LinkedTransitionDescriptor] {
+            &#linked_transition_slice_ident
+        }
+
         pub static PRESENTATION: statum::__private::MachinePresentation<
             StateId,
             TransitionId,
@@ -2253,7 +2293,156 @@ fn generate_machine_module_introspection(machine_info: &MachineInfo) -> Result<T
                 __statum_transition_presentations,
             ),
         };
+
+        #[doc(hidden)]
+        #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_MACHINES)]
+        #[linkme(crate = statum::__private::linkme)]
+        static __STATUM_LINKED_MACHINE: statum::__private::LinkedMachineGraph =
+            statum::__private::LinkedMachineGraph {
+                machine: statum::MachineDescriptor {
+                    module_path: #module_path,
+                    rust_type_path: #rust_type_path,
+                },
+                label: #machine_presentation_label,
+                description: #machine_presentation_description,
+                states: __STATUM_LINKED_STATES,
+                transitions: statum::__private::LinkedTransitionInventory::new(__statum_linked_transitions),
+                static_links: __STATUM_STATIC_MACHINE_LINKS,
+            };
     })
+}
+
+fn linked_state_entries(machine_info: &MachineInfo) -> Result<Vec<TokenStream>, TokenStream> {
+    let state_enum = machine_info.get_matching_state_enum()?;
+    state_enum
+        .variants
+        .iter()
+        .map(|variant| {
+            let rust_name = LitStr::new(&variant.name, Span::call_site());
+            let label = optional_lit_str_tokens(
+                variant
+                    .presentation
+                    .as_ref()
+                    .and_then(|value| value.label.as_deref()),
+            );
+            let description = optional_lit_str_tokens(
+                variant
+                    .presentation
+                    .as_ref()
+                    .and_then(|value| value.description.as_deref()),
+            );
+            let has_data = !matches!(variant.shape, crate::state::VariantShape::Unit);
+
+            Ok(quote! {
+                statum::__private::LinkedStateDescriptor {
+                    rust_name: #rust_name,
+                    label: #label,
+                    description: #description,
+                    has_data: #has_data,
+                }
+            })
+        })
+        .collect()
+}
+
+fn static_machine_link_entries(machine_info: &MachineInfo) -> Result<Vec<TokenStream>, TokenStream> {
+    let state_enum = machine_info.get_matching_state_enum()?;
+    let mut entries = Vec::new();
+
+    for variant in &state_enum.variants {
+        let from_state = LitStr::new(&variant.name, Span::call_site());
+        match variant.parse_shape()? {
+            crate::state::ParsedVariantShape::Unit => {}
+            crate::state::ParsedVariantShape::Tuple { data_type } => {
+                if let Some(candidate) = machine_link_candidate(data_type.as_ref()) {
+                    let machine_path = candidate.machine_path.iter().map(|segment| {
+                        let segment = LitStr::new(segment, Span::call_site());
+                        quote! { #segment }
+                    });
+                    let to_state = LitStr::new(&candidate.state_name, Span::call_site());
+                    entries.push(quote! {
+                        statum::__private::StaticMachineLinkDescriptor {
+                            from_state: #from_state,
+                            field_name: None,
+                            to_machine_path: &[#(#machine_path),*],
+                            to_state: #to_state,
+                        }
+                    });
+                }
+            }
+            crate::state::ParsedVariantShape::Named { fields, .. } => {
+                for field in fields {
+                    if let Some(candidate) = machine_link_candidate(&field.field_type) {
+                        let field_name = LitStr::new(&field.ident.to_string(), Span::call_site());
+                        let machine_path = candidate.machine_path.iter().map(|segment| {
+                            let segment = LitStr::new(segment, Span::call_site());
+                            quote! { #segment }
+                        });
+                        let to_state = LitStr::new(&candidate.state_name, Span::call_site());
+                        entries.push(quote! {
+                            statum::__private::StaticMachineLinkDescriptor {
+                                from_state: #from_state,
+                                field_name: Some(#field_name),
+                                to_machine_path: &[#(#machine_path),*],
+                                to_state: #to_state,
+                            }
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(entries)
+}
+
+struct MachineLinkCandidate {
+    machine_path: Vec<String>,
+    state_name: String,
+}
+
+fn machine_link_candidate(ty: &Type) -> Option<MachineLinkCandidate> {
+    let Type::Path(TypePath { qself: None, path }) = ty else {
+        return None;
+    };
+    let segment = path.segments.last()?;
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+    let target_state = arguments.args.iter().find_map(|argument| match argument {
+        GenericArgument::Type(ty) => machine_link_state_name(ty),
+        _ => None,
+    })?;
+    let machine_path = normalized_machine_path(path);
+    if machine_path.is_empty() {
+        return None;
+    }
+
+    Some(MachineLinkCandidate {
+        machine_path,
+        state_name: target_state,
+    })
+}
+
+fn machine_link_state_name(ty: &Type) -> Option<String> {
+    let Type::Path(TypePath { qself: None, path }) = ty else {
+        return None;
+    };
+    let segment = path.segments.last()?;
+    matches!(segment.arguments, PathArguments::None).then(|| segment.ident.to_string())
+}
+
+fn normalized_machine_path(path: &syn::Path) -> Vec<String> {
+    path.segments
+        .iter()
+        .skip_while(|segment| {
+            matches!(
+                segment.ident.to_string().as_str(),
+                "crate" | "self" | "super"
+            )
+        })
+        .map(|segment| segment.ident.to_string())
+        .collect()
 }
 
 fn generate_state_presentation_entry_macro(

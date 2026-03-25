@@ -19,11 +19,16 @@ mod introspection;
 pub mod projection;
 
 #[doc(hidden)]
+pub use introspection::__STATUM_LINKED_MACHINES;
+
+#[doc(hidden)]
 pub mod __private {
     pub use crate::{
-        MachinePresentation, MachinePresentationDescriptor, RebuildAttempt, RebuildReport,
-        StateFamily, StateFamilyMember, StatePresentation, TransitionPresentation,
-        TransitionPresentationInventory,
+        LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
+        LinkedTransitionInventory, MachinePresentation, MachinePresentationDescriptor,
+        RebuildAttempt, RebuildReport, StateFamily, StateFamilyMember, StatePresentation,
+        StaticMachineLinkDescriptor, TransitionPresentation, TransitionPresentationInventory,
+        __STATUM_LINKED_MACHINES,
     };
     pub use futures;
     pub use linkme;
@@ -47,10 +52,12 @@ pub mod __private {
 }
 
 pub use introspection::{
-    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
-    RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
-    TransitionInventory, TransitionPresentation, TransitionPresentationInventory,
+    linked_machines, LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
+    LinkedTransitionInventory, MachineDescriptor, MachineGraph, MachineIntrospection,
+    MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
+    MachineTransitionRecorder, RecordedTransition, StateDescriptor, StatePresentation,
+    StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory, TransitionPresentation,
+    TransitionPresentationInventory,
 };
 
 /// Hidden family-level metadata emitted by `#[state]`.

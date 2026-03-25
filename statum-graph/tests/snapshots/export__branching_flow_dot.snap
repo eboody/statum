@@ -1,0 +1,21 @@
+---
+source: statum-graph/tests/export.rs
+assertion_line: 384
+expression: "render::dot(&doc)"
+---
+digraph "export::branching::Flow" {
+    rankdir=TB;
+    s0 [label="Draft"]
+    s1 [label="Review"]
+    s2 [label="Accepted"]
+    s3 [label="Rejected"]
+    s4 [label="Archived"]
+
+    s0 -> s1 [label="submit"]
+    s1 -> s2 [label="accept"]
+    s1 -> s2 [label="maybe_decide"]
+    s1 -> s3 [label="maybe_decide"]
+    s1 -> s3 [label="reject"]
+    s2 -> s4 [label="archive"]
+    s3 -> s4 [label="archive"]
+}
