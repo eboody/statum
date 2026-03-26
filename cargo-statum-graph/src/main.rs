@@ -4,14 +4,18 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser};
 
-use cargo_statum_graph::{run, Options};
+use cargo_statum_graph::{inspect, run, InspectOptions, Options};
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo-statum-graph")]
-#[command(about = "Generate static Statum graph bundles for existing crates")]
+#[command(
+    about = "Generate static Statum graph bundles and launch the exact inspector for existing crates"
+)]
 enum Cli {
     #[command(name = "codebase")]
     Codebase(CodebaseArgs),
+    #[command(name = "inspect")]
+    Inspect(InspectArgs),
 }
 
 #[derive(Debug, Args)]
@@ -26,6 +30,18 @@ struct CodebaseArgs {
     out_dir: Option<PathBuf>,
     #[arg(long, default_value = "codebase")]
     stem: String,
+    #[arg(long)]
+    patch_statum_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct InspectArgs {
+    #[arg(value_name = "PATH", default_value = ".")]
+    path: PathBuf,
+    #[arg(long)]
+    manifest_path: Option<PathBuf>,
+    #[arg(long)]
+    package: Option<String>,
     #[arg(long)]
     patch_statum_root: Option<PathBuf>,
 }
@@ -50,6 +66,14 @@ fn run_main() -> Result<(), cargo_statum_graph::Error> {
             stem: args.stem,
             patch_statum_root: args.patch_statum_root,
         })?,
+        Cli::Inspect(args) => {
+            inspect(InspectOptions {
+                input_path: args.manifest_path.unwrap_or(args.path),
+                package: args.package,
+                patch_statum_root: args.patch_statum_root,
+            })?;
+            Vec::new()
+        }
     };
 
     for path in written {
@@ -80,7 +104,9 @@ mod tests {
     fn parse_cli_from_accepts_direct_binary_shape() {
         let cli = parse_cli_from(["cargo-statum-graph", "codebase", "/tmp/workspace"]);
 
-        let Cli::Codebase(args) = cli;
+        let Cli::Codebase(args) = cli else {
+            panic!("expected codebase subcommand");
+        };
         assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
     }
 
@@ -93,7 +119,19 @@ mod tests {
             "/tmp/workspace",
         ]);
 
-        let Cli::Codebase(args) = cli;
+        let Cli::Codebase(args) = cli else {
+            panic!("expected codebase subcommand");
+        };
+        assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
+    }
+
+    #[test]
+    fn parse_cli_from_accepts_inspect_subcommand() {
+        let cli = parse_cli_from(["cargo-statum-graph", "inspect", "/tmp/workspace"]);
+
+        let Cli::Inspect(args) = cli else {
+            panic!("expected inspect subcommand");
+        };
         assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
     }
 }

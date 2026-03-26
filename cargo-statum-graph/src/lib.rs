@@ -8,10 +8,17 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
 use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
+use statum_graph::CodebaseDoc;
 use tempfile::TempDir;
 
+mod inspect;
+
 const GRAPH_EXTENSIONS: [&str; 4] = ["mmd", "dot", "puml", "json"];
+const GRAPH_PACKAGE_NAME: &str = "statum-graph";
+const HELPER_PACKAGE_NAME: &str = "cargo-statum-graph";
 const NO_LINKED_MACHINES_MESSAGE: &str = "statum-graph: no linked state machines were found in the target workspace. This can mean the workspace has no Statum machines, or that it depends on incompatible `statum`, `statum-core`, or `statum-graph` versions so linked inventories do not unify. If you expected machines here, ensure those crates use compatible versions.";
+const NO_TTY_INSPECT_MESSAGE: &str =
+    "statum-graph inspect requires an interactive terminal on stdin and stdout.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Options {
@@ -19,6 +26,13 @@ pub struct Options {
     pub package: Option<String>,
     pub out_dir: Option<PathBuf>,
     pub stem: String,
+    pub patch_statum_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InspectOptions {
+    pub input_path: PathBuf,
+    pub package: Option<String>,
     pub patch_statum_root: Option<PathBuf>,
 }
 
@@ -51,6 +65,7 @@ pub enum Error {
         source: io::Error,
     },
     RunnerFailed {
+        operation: &'static str,
         manifest_path: PathBuf,
         status: ExitStatus,
         details: Option<String>,
@@ -118,18 +133,19 @@ impl fmt::Display for Error {
                 path.display()
             ),
             Self::RunnerFailed {
+                operation,
                 manifest_path,
                 status,
                 details,
             } => match details {
                 Some(details) => write!(
                     formatter,
-                    "codebase export for `{}` failed:\n{details}",
+                    "{operation} for `{}` failed:\n{details}",
                     manifest_path.display()
                 ),
                 None => write!(
                     formatter,
-                    "codebase export for `{}` failed with status {status}",
+                    "{operation} for `{}` failed with status {status}",
                     manifest_path.display()
                 ),
             },
@@ -155,31 +171,56 @@ impl std::error::Error for Error {
 
 pub fn run(options: Options) -> Result<Vec<PathBuf>, Error> {
     validate_output_stem(&options.stem)?;
-    let input_path = absolutize(&options.input_path).map_err(Error::CurrentDir)?;
-    let input = resolve_input(&input_path);
-    let metadata = load_metadata(&input.manifest_path)?;
-    let selections = select_packages(&metadata, &input, options.package.as_deref())?;
-    let out_dir = resolve_out_dir(&input, options.out_dir.as_deref())?;
-    let patch_root = match options.patch_statum_root {
-        Some(path) => Some(absolutize(&path).map_err(Error::CurrentDir)?),
-        None => detect_patch_root(),
-    };
-
-    let temp_dir = TempDir::new().map_err(|source| Error::Io {
-        action: "create temporary runner directory",
-        path: env::temp_dir(),
-        source,
-    })?;
+    let prepared = prepare_run(
+        &options.input_path,
+        options.package.as_deref(),
+        options.patch_statum_root.as_deref(),
+    )?;
+    let out_dir = resolve_out_dir(&prepared.input, options.out_dir.as_deref())?;
+    let temp_dir = new_temp_runner_dir()?;
     write_runner_project(
         temp_dir.path(),
-        &selections,
-        &out_dir,
-        &options.stem,
-        patch_root.as_deref(),
+        &prepared.selections,
+        RunnerMode::Export {
+            out_dir: &out_dir,
+            stem: &options.stem,
+        },
+        prepared.patch_root.as_deref(),
     )?;
-    run_runner(temp_dir.path().join("Cargo.toml"), &input.manifest_path)?;
+    run_runner(
+        temp_dir.path().join("Cargo.toml"),
+        &prepared.input.manifest_path,
+        "codebase export",
+    )?;
 
     Ok(bundle_paths(&out_dir, &options.stem))
+}
+
+pub fn inspect(options: InspectOptions) -> Result<(), Error> {
+    let prepared = prepare_run(
+        &options.input_path,
+        options.package.as_deref(),
+        options.patch_statum_root.as_deref(),
+    )?;
+    let temp_dir = new_temp_runner_dir()?;
+    let workspace_label = prepared.input.manifest_path.display().to_string();
+    write_runner_project(
+        temp_dir.path(),
+        &prepared.selections,
+        RunnerMode::Inspect {
+            workspace_label: &workspace_label,
+        },
+        prepared.patch_root.as_deref(),
+    )?;
+    run_runner(
+        temp_dir.path().join("Cargo.toml"),
+        &prepared.input.manifest_path,
+        "inspect session",
+    )
+}
+
+pub fn run_inspector(doc: CodebaseDoc, workspace_label: String) -> io::Result<()> {
+    inspect::run(doc, workspace_label)
 }
 
 fn load_metadata(manifest_path: &Path) -> Result<Metadata, Error> {
@@ -190,11 +231,11 @@ fn load_metadata(manifest_path: &Path) -> Result<Metadata, Error> {
         .map_err(Error::Metadata)
 }
 
-fn select_packages<'a>(
-    metadata: &'a Metadata,
+fn select_packages(
+    metadata: &Metadata,
     input: &ResolvedInput,
     requested: Option<&str>,
-) -> Result<Vec<SelectedPackage<'a>>, Error> {
+) -> Result<Vec<SelectedPackage>, Error> {
     let manifest_path = input.manifest_path.as_path();
     if let Some(package) = requested {
         let selected = metadata
@@ -301,6 +342,27 @@ fn resolve_out_dir(input: &ResolvedInput, out_dir: Option<&Path>) -> Result<Path
     }
 }
 
+fn prepare_run(
+    input_path: &Path,
+    requested_package: Option<&str>,
+    patch_statum_root: Option<&Path>,
+) -> Result<PreparedRun, Error> {
+    let input_path = absolutize(input_path).map_err(Error::CurrentDir)?;
+    let input = resolve_input(&input_path);
+    let metadata = load_metadata(&input.manifest_path)?;
+    let selections = select_packages(&metadata, &input, requested_package)?;
+    let patch_root = match patch_statum_root {
+        Some(path) => Some(absolutize(path).map_err(Error::CurrentDir)?),
+        None => detect_patch_root(),
+    };
+
+    Ok(PreparedRun {
+        input,
+        selections,
+        patch_root,
+    })
+}
+
 fn detect_patch_root() -> Option<PathBuf> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let candidate = manifest_dir.parent()?;
@@ -342,9 +404,8 @@ fn resolve_input(path: &Path) -> ResolvedInput {
 
 fn write_runner_project(
     runner_dir: &Path,
-    selections: &[SelectedPackage<'_>],
-    out_dir: &Path,
-    stem: &str,
+    selections: &[SelectedPackage],
+    mode: RunnerMode<'_>,
     patch_root: Option<&Path>,
 ) -> Result<(), Error> {
     let src_dir = runner_dir.join("src");
@@ -363,7 +424,7 @@ fn write_runner_project(
     })?;
 
     let main_path = src_dir.join("main.rs");
-    let main = build_runner_main(selections, out_dir, stem)?;
+    let main = build_runner_main(selections, mode)?;
     fs::write(&main_path, main).map_err(|source| Error::Io {
         action: "write generated runner source",
         path: main_path.clone(),
@@ -374,7 +435,7 @@ fn write_runner_project(
 }
 
 fn build_runner_manifest(
-    selections: &[SelectedPackage<'_>],
+    selections: &[SelectedPackage],
     patch_root: Option<&Path>,
 ) -> Result<String, Error> {
     let mut manifest = String::from(
@@ -384,32 +445,55 @@ fn build_runner_manifest(
         manifest.push_str(&format!(
             "{} = {{ package = {}, path = {} }}\n",
             selection.dependency_alias(index),
-            toml_str(selection.package.name.as_ref()),
-            toml_path(
-                selection
-                    .package
-                    .manifest_path
-                    .as_std_path()
-                    .parent()
-                    .expect("package manifest should have a parent"),
-                "dependency package path",
-            )?,
+            toml_str(&selection.package_name),
+            toml_path(&selection.manifest_dir, "dependency package path")?,
         ));
     }
 
     match patch_root {
         Some(root) => {
-            manifest.push_str(&format!(
-                "statum-graph = {{ path = {} }}\n",
-                toml_path(root.join("statum-graph"), "patched statum-graph path")?
-            ));
+            if !selections
+                .iter()
+                .any(|selection| selection.package_name == GRAPH_PACKAGE_NAME)
+            {
+                manifest.push_str(&format!(
+                    "statum-graph = {{ path = {} }}\n",
+                    toml_path(root.join(GRAPH_PACKAGE_NAME), "patched statum-graph path")?
+                ));
+            }
+            if !selections
+                .iter()
+                .any(|selection| selection.package_name == HELPER_PACKAGE_NAME)
+            {
+                manifest.push_str(&format!(
+                    "cargo-statum-graph = {{ path = {} }}\n",
+                    toml_path(
+                        root.join(HELPER_PACKAGE_NAME),
+                        "patched cargo-statum-graph path",
+                    )?
+                ));
+            }
             push_patch_tables(&mut manifest, root)?;
         }
         None => {
-            manifest.push_str(&format!(
-                "statum-graph = {{ version = {} }}\n",
-                toml_str(&format!("={}", env!("CARGO_PKG_VERSION")))
-            ));
+            if !selections
+                .iter()
+                .any(|selection| selection.package_name == GRAPH_PACKAGE_NAME)
+            {
+                manifest.push_str(&format!(
+                    "statum-graph = {{ version = {} }}\n",
+                    toml_str(&format!("={}", env!("CARGO_PKG_VERSION")))
+                ));
+            }
+            if !selections
+                .iter()
+                .any(|selection| selection.package_name == HELPER_PACKAGE_NAME)
+            {
+                manifest.push_str(&format!(
+                    "cargo-statum-graph = {{ version = {} }}\n",
+                    toml_str(&format!("={}", env!("CARGO_PKG_VERSION")))
+                ));
+            }
         }
     }
 
@@ -442,11 +526,11 @@ fn push_patch_tables(manifest: &mut String, root: &Path) -> Result<(), Error> {
 }
 
 fn build_runner_main(
-    selections: &[SelectedPackage<'_>],
-    out_dir: &Path,
-    stem: &str,
+    selections: &[SelectedPackage],
+    mode: RunnerMode<'_>,
 ) -> Result<String, Error> {
     let mut source = String::from("#[allow(unused_imports)]\n");
+    source.push_str("use std::io::IsTerminal as _;\n");
     for (index, selection) in selections.iter().enumerate() {
         source.push_str(&format!(
             "use {} as _;\n",
@@ -469,20 +553,44 @@ fn build_runner_main(
     source.push_str(&rust_str(NO_LINKED_MACHINES_MESSAGE));
     source.push_str(").into());\n");
     source.push_str("    }\n");
-    source.push_str("    statum_graph::codebase::render::write_all_to_dir(\n");
-    source.push_str("        &doc,\n");
-    source.push_str(&format!(
-        "        {},\n",
-        rust_path(out_dir, "output directory")?
-    ));
-    source.push_str(&format!("        {},\n", rust_str(stem)));
-    source.push_str("    )?;\n");
+    match mode {
+        RunnerMode::Export { out_dir, stem } => {
+            source.push_str("    statum_graph::codebase::render::write_all_to_dir(\n");
+            source.push_str("        &doc,\n");
+            source.push_str(&format!(
+                "        {},\n",
+                rust_path(out_dir, "output directory")?
+            ));
+            source.push_str(&format!("        {},\n", rust_str(stem)));
+            source.push_str("    )?;\n");
+        }
+        RunnerMode::Inspect { workspace_label } => {
+            source.push_str(
+                "    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {\n",
+            );
+            source.push_str("        return Err(std::io::Error::other(");
+            source.push_str(&rust_str(NO_TTY_INSPECT_MESSAGE));
+            source.push_str(").into());\n");
+            source.push_str("    }\n");
+            source.push_str("    cargo_statum_graph::run_inspector(\n");
+            source.push_str("        doc,\n");
+            source.push_str(&format!(
+                "        {}.to_owned(),\n",
+                rust_str(workspace_label)
+            ));
+            source.push_str("    )?;\n");
+        }
+    }
     source.push_str("    Ok(())\n");
     source.push_str("}\n");
     Ok(source)
 }
 
-fn run_runner(runner_manifest_path: PathBuf, target_manifest_path: &Path) -> Result<(), Error> {
+fn run_runner(
+    runner_manifest_path: PathBuf,
+    target_manifest_path: &Path,
+    operation: &'static str,
+) -> Result<(), Error> {
     let output = Command::new("cargo")
         .arg("run")
         .arg("--quiet")
@@ -499,6 +607,7 @@ fn run_runner(runner_manifest_path: PathBuf, target_manifest_path: &Path) -> Res
         Ok(())
     } else {
         Err(Error::RunnerFailed {
+            operation,
             manifest_path: target_manifest_path.to_path_buf(),
             status: output.status,
             details: normalize_runner_failure_details(&output.stderr, &output.stdout),
@@ -625,30 +734,73 @@ fn normalize_absolute_path(path: &Path) -> PathBuf {
     normalized
 }
 
-struct SelectedPackage<'a> {
-    package: &'a Package,
+struct SelectedPackage {
+    package_name: String,
+    manifest_dir: PathBuf,
 }
 
-impl<'a> SelectedPackage<'a> {
-    fn new(package: &'a Package, manifest_path: &Path) -> Result<Self, Error> {
-        if has_library_target(package) {
-            Ok(Self { package })
-        } else {
-            Err(Error::PackageHasNoLibrary {
+impl SelectedPackage {
+    fn new(package: &Package, manifest_path: &Path) -> Result<Self, Error> {
+        if !has_library_target(package) {
+            return Err(Error::PackageHasNoLibrary {
                 manifest_path: manifest_path.to_path_buf(),
                 package: package.name.to_string(),
-            })
+            });
         }
+
+        Ok(Self {
+            package_name: package.name.to_string(),
+            manifest_dir: package
+                .manifest_path
+                .as_std_path()
+                .parent()
+                .expect("package manifest should have a parent")
+                .to_path_buf(),
+        })
     }
 
     fn dependency_alias(&self, index: usize) -> String {
-        format!("graph_target_{index}")
+        if self.package_name == GRAPH_PACKAGE_NAME {
+            Self::graph_dependency_alias().to_owned()
+        } else if self.package_name == HELPER_PACKAGE_NAME {
+            Self::helper_dependency_alias().to_owned()
+        } else {
+            format!("graph_target_{index}")
+        }
     }
+
+    fn graph_dependency_alias() -> &'static str {
+        "statum_graph"
+    }
+
+    fn helper_dependency_alias() -> &'static str {
+        "cargo_statum_graph"
+    }
+}
+
+struct PreparedRun {
+    input: ResolvedInput,
+    selections: Vec<SelectedPackage>,
+    patch_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy)]
+enum RunnerMode<'a> {
+    Export { out_dir: &'a Path, stem: &'a str },
+    Inspect { workspace_label: &'a str },
 }
 
 struct ResolvedInput {
     manifest_path: PathBuf,
     default_output_dir: PathBuf,
+}
+
+fn new_temp_runner_dir() -> Result<TempDir, Error> {
+    TempDir::new().map_err(|source| Error::Io {
+        action: "create temporary runner directory",
+        path: env::temp_dir(),
+        source,
+    })
 }
 
 #[cfg(test)]
@@ -716,5 +868,50 @@ mod tests {
         let normalized = absolutize(Path::new(".").join("Cargo.toml").as_path()).expect("path");
 
         assert_eq!(normalized, current_dir.join("Cargo.toml"));
+    }
+
+    #[test]
+    fn build_runner_main_supports_inspect_mode() {
+        let selections = vec![SelectedPackage {
+            package_name: "app".to_owned(),
+            manifest_dir: PathBuf::from("/tmp/app"),
+        }];
+
+        let source = build_runner_main(
+            &selections,
+            RunnerMode::Inspect {
+                workspace_label: "/tmp/workspace/Cargo.toml",
+            },
+        )
+        .expect("runner source");
+
+        assert!(source.contains("cargo_statum_graph::run_inspector"));
+        assert!(source.contains("is_terminal()"));
+        assert!(source.contains("/tmp/workspace/Cargo.toml"));
+        assert!(!source.contains("write_all_to_dir("));
+    }
+
+    #[test]
+    fn build_runner_manifest_reuses_selected_helper_dependency() {
+        let selections = vec![
+            SelectedPackage {
+                package_name: GRAPH_PACKAGE_NAME.to_owned(),
+                manifest_dir: PathBuf::from("/tmp/graph"),
+            },
+            SelectedPackage {
+                package_name: HELPER_PACKAGE_NAME.to_owned(),
+                manifest_dir: PathBuf::from("/tmp/helper"),
+            },
+        ];
+
+        let manifest = build_runner_manifest(&selections, None).expect("runner manifest");
+
+        assert_eq!(manifest.matches("package = \"statum-graph\"").count(), 1);
+        assert_eq!(
+            manifest.matches("package = \"cargo-statum-graph\"").count(),
+            1
+        );
+        assert!(manifest.contains("statum_graph = { package = \"statum-graph\""));
+        assert!(manifest.contains("cargo_statum_graph = { package = \"cargo-statum-graph\""));
     }
 }

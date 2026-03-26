@@ -26,6 +26,13 @@ Later phases add:
 - snapshots and diffs
 - parent and child composition trees
 
+Current shipping surface:
+
+- `cargo statum-graph inspect /path/to/workspace`
+- exact-lane workspace overview
+- exact machine, relation, and detail panes
+- keyboard navigation over linked compiled `CodebaseDoc`
+
 ## Dependency
 
 The exact static substrate is tracked separately in
@@ -220,6 +227,12 @@ Success criteria:
 
 - graph-only mode answers what machines exist and how they statically connect
 
+Status:
+
+- done through `cargo statum-graph inspect`
+- the current center pane is a structured exact view, not a dedicated graph
+  widget
+
 ### Phase 2: Exact Relation Navigation
 
 Deliverables:
@@ -233,6 +246,11 @@ Success criteria:
 
 - the user can answer what points at this and why
 
+Status:
+
+- relation pane, inbound and outbound navigation, and provenance detail are in
+- exact-lane search and filtering are still open
+
 ### Phase 3: Heuristic Overlay Lane
 
 Deliverables:
@@ -245,6 +263,11 @@ Deliverables:
 Success criteria:
 
 - users can opt into broader discovery without weakening the exact lane
+
+Next milestone:
+
+- add exact-lane search and filtering before heuristic discovery so the exact
+  inspector remains usable at larger workspace scale
 
 ### Phase 4: Replay MVP
 
@@ -349,10 +372,10 @@ Adversarial tests:
 - [x] Make the inspector plan depend on that substrate
 - [x] Render builder markers in the exact graph backends
 - [x] Derive and render exact machine summary edges
-- [ ] Add workspace overview to the TUI
-- [ ] Add machine view with validators and builder markers
-- [ ] Add relation pane with inbound and outbound navigation
-- [ ] Add provenance detail pane
+- [x] Add workspace overview to the TUI
+- [x] Add machine view with validators and builder markers
+- [x] Add relation pane with inbound and outbound navigation
+- [x] Add provenance detail pane
 - [ ] Add exact-lane search and filters
 - [ ] Add separate heuristic overlay lane
 - [ ] Add replay session model

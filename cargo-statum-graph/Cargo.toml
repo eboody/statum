@@ -1,10 +1,13 @@
 [dependencies]
 cargo_metadata = "0.21"
 clap = { version = "4.5.39", features = ["derive"] }
+crossterm = "0.29"
+ratatui = "0.29"
 statum-graph = { path = "../statum-graph", version = "0.6.9" }
 tempfile = "3"
 
 [dev-dependencies]
+statum = { workspace = true }
 tempfile = "3"
 
 [package]

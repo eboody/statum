@@ -133,6 +133,32 @@ fn codebase_command_fails_closed_when_no_linked_machines_are_found() {
     assert!(!fixture_dir.path().join("codebase.json").exists());
 }
 
+#[test]
+fn inspect_command_fails_closed_without_an_interactive_terminal() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_fixture(fixture_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("inspect")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("cargo-statum-graph should run");
+    assert!(
+        !output.status.success(),
+        "inspect should fail without a terminal"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("inspect session"),
+        "stderr should identify the inspect path, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("requires an interactive terminal on stdin and stdout"),
+        "stderr should explain the interactive terminal requirement, got: {stderr}"
+    );
+}
+
 fn write_fixture(dir: &Path) {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

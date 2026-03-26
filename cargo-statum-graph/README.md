@@ -1,11 +1,13 @@
 # cargo-statum-graph
 
 `cargo-statum-graph` is the zero-touch CLI for codebase-level Statum graph
-export.
+export and exact-lane inspection.
 
 It builds a temporary runner internally, links the selected crate, and writes
 the combined static codebase graph as Mermaid, DOT, PlantUML, and JSON,
 including declared validator-entry nodes from compiled `#[validators]` impls.
+It can also launch an exact inspector TUI over that same linked compiled
+`CodebaseDoc` surface.
 
 ## Install
 
@@ -46,3 +48,32 @@ cargo statum-graph codebase \
 
 For local development against an unreleased Statum checkout, add
 `--patch-statum-root /path/to/statum`.
+
+## Inspect
+
+```text
+cargo statum-graph inspect \
+  /path/to/workspace
+```
+
+That launches the exact inspector TUI for the selected workspace. The current
+MVP shows:
+
+- workspace overview with machine count and disconnected groups
+- machine view with states, transitions, validator entries, and summary edges
+- relation pane with inbound and outbound exact relations for the current
+  machine, state, or transition
+- detail pane explaining the current selection
+
+`inspect` requires an interactive terminal on stdin and stdout.
+
+Keybindings:
+
+- `tab` / `shift-tab`: move focus between panes
+- `h` / `l`: switch machine tabs or toggle relation direction
+- `j` / `k`: move within the focused list
+- `q`: quit
+
+The inspector is exact-lane only today. It consumes the linked compiled
+`CodebaseDoc` surface directly; it does not do heuristic body analysis,
+runtime replay, or snapshot inspection yet.
