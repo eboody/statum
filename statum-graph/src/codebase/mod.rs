@@ -562,19 +562,18 @@ fn compare_transitions(
     left: &statum::LinkedTransitionDescriptor,
     right: &statum::LinkedTransitionDescriptor,
 ) -> core::cmp::Ordering {
-    let left_from = state_positions
-        .get(left.from)
-        .copied()
-        .expect("linked transition source should exist");
-    let right_from = state_positions
-        .get(right.from)
-        .copied()
-        .expect("linked transition source should exist");
+    transition_sort_key(state_positions, left).cmp(&transition_sort_key(state_positions, right))
+}
 
-    left_from
-        .cmp(&right_from)
-        .then_with(|| left.method_name.cmp(right.method_name))
-        .then_with(|| left.to.cmp(right.to))
+fn transition_sort_key(
+    state_positions: &HashMap<&'static str, usize>,
+    transition: &statum::LinkedTransitionDescriptor,
+) -> (Option<usize>, &'static str, &'static [&'static str]) {
+    (
+        state_positions.get(transition.from).copied(),
+        transition.method_name,
+        transition.to,
+    )
 }
 
 fn resolve_static_links(

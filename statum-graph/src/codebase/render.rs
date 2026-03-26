@@ -3,6 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::codebase::CodebaseDoc;
+use crate::render::{bundle_output_path, validate_output_stem};
 
 /// One built-in renderer output format for codebase documents.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,11 +57,15 @@ where
     P: AsRef<Path>,
 {
     let dir = dir.as_ref();
+    validate_output_stem(stem)?;
     fs::create_dir_all(dir)?;
 
     Format::ALL
         .into_iter()
-        .map(|format| format.write_to(doc, dir.join(format!("{stem}.{}", format.extension()))))
+        .map(|format| {
+            bundle_output_path(dir, stem, format.extension())
+                .and_then(|path| format.write_to(doc, path))
+        })
         .collect()
 }
 

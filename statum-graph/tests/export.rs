@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -455,6 +457,22 @@ fn write_all_to_dir_writes_every_format_with_stable_extensions() {
         fs::read_to_string(&paths[3]).expect("json file should exist"),
         render::json(&doc)
     );
+}
+
+#[test]
+fn write_all_to_dir_rejects_path_like_stem() {
+    let doc = MachineDoc::from_machine::<branching::Flow<branching::Draft>>();
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = tempdir.path().join("bundle");
+    let outside = tempdir.path().join("escape.mmd");
+    let stem = Path::new("..").join("escape");
+
+    let error = render::write_all_to_dir(&doc, &bundle_dir, stem.to_str().expect("utf-8 stem"))
+        .expect_err("path-like stem should be rejected");
+
+    assert_eq!(error.kind(), ErrorKind::InvalidInput);
+    assert!(!bundle_dir.exists());
+    assert!(!outside.exists());
 }
 
 #[test]

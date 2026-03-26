@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
 
 use statum::{
     LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
@@ -270,6 +272,78 @@ fn linked_codebase_writes_all_formats() {
     let mermaid = fs::read_to_string(mermaid_path).expect("mermaid file");
     assert!(mermaid.contains("Workflow Machine"));
     assert!(mermaid.contains("Task Machine"));
+}
+
+#[test]
+fn linked_codebase_write_all_rejects_path_like_stem() {
+    let doc = CodebaseDoc::linked().expect("linked codebase doc");
+    let dir = tempfile::tempdir().expect("temp dir");
+    let bundle_dir = dir.path().join("nested");
+    let outside = dir.path().join("escape.mmd");
+    let stem = Path::new("..").join("escape");
+
+    let error = render::write_all_to_dir(&doc, &bundle_dir, stem.to_str().expect("utf-8 stem"))
+        .expect_err("path-like stem should be rejected");
+
+    assert_eq!(error.kind(), ErrorKind::InvalidInput);
+    assert!(!bundle_dir.exists());
+    assert!(!outside.exists());
+}
+
+#[test]
+fn malformed_inventory_rejects_missing_transition_source_before_sort() {
+    fn transitions() -> &'static [LinkedTransitionDescriptor] {
+        &TRANSITIONS
+    }
+
+    static STATES: [LinkedStateDescriptor; 2] = [
+        LinkedStateDescriptor {
+            rust_name: "Draft",
+            label: None,
+            description: None,
+            has_data: false,
+        },
+        LinkedStateDescriptor {
+            rust_name: "Review",
+            label: None,
+            description: None,
+            has_data: false,
+        },
+    ];
+    static TRANSITIONS: [LinkedTransitionDescriptor; 2] = [
+        LinkedTransitionDescriptor {
+            method_name: "submit",
+            from: "Draft",
+            to: &["Review"],
+            label: None,
+            description: None,
+        },
+        LinkedTransitionDescriptor {
+            method_name: "ghost",
+            from: "Missing",
+            to: &["Review"],
+            label: None,
+            description: None,
+        },
+    ];
+    static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
+        machine: MachineDescriptor {
+            module_path: "broken",
+            rust_type_path: "broken::Machine",
+        },
+        label: None,
+        description: None,
+        states: &STATES,
+        transitions: LinkedTransitionInventory::new(transitions),
+        static_links: &[],
+    }];
+
+    assert_eq!(
+        CodebaseDoc::try_from_linked(&LINKED)
+            .unwrap_err()
+            .to_string(),
+        "linked machine `broken::Machine` contains transition `ghost` whose source state is missing from the state list"
+    );
 }
 
 #[test]

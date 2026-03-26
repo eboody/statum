@@ -63,11 +63,15 @@ where
     P: AsRef<Path>,
 {
     let dir = dir.as_ref();
+    validate_output_stem(stem)?;
     fs::create_dir_all(dir)?;
 
     Format::ALL
         .into_iter()
-        .map(|format| format.write_to(doc, dir.join(format!("{stem}.{}", format.extension()))))
+        .map(|format| {
+            bundle_output_path(dir, stem, format.extension())
+                .and_then(|path| format.write_to(doc, path))
+        })
         .collect()
 }
 
@@ -227,6 +231,24 @@ fn ensure_parent_dir(path: &Path) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+pub(crate) fn bundle_output_path(dir: &Path, stem: &str, extension: &str) -> io::Result<PathBuf> {
+    validate_output_stem(stem)?;
+    Ok(dir.join(format!("{stem}.{extension}")))
+}
+
+pub(crate) fn validate_output_stem(stem: &str) -> io::Result<()> {
+    let mut components = Path::new(stem).components();
+    match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Ok(()),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "invalid output stem `{stem}`: expected a simple file name without path separators"
+            ),
+        )),
+    }
 }
 
 fn push_comment_lines(lines: &mut Vec<String>, prefix: &str, doc: &ExportDoc) {
