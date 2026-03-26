@@ -101,6 +101,36 @@ fn codebase_command_rejects_invalid_output_stem_before_runner_build() {
     assert!(!fixture_dir.path().join("..").join("escape.mmd").exists());
 }
 
+#[test]
+fn codebase_command_fails_closed_when_no_linked_machines_are_found() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_no_machine_fixture(fixture_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("codebase")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("cargo-statum-graph should run");
+    assert!(
+        !output.status.success(),
+        "missing linked machines should fail closed"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no linked state machines were found in the target workspace"),
+        "stderr should explain the empty linked inventory, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("compatible versions"),
+        "stderr should explain the likely version-mismatch fix, got: {stderr}"
+    );
+    assert!(!fixture_dir.path().join("codebase.mmd").exists());
+    assert!(!fixture_dir.path().join("codebase.dot").exists());
+    assert!(!fixture_dir.path().join("codebase.puml").exists());
+    assert!(!fixture_dir.path().join("codebase.json").exists());
+}
+
 fn write_fixture(dir: &Path) {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -152,4 +182,17 @@ fn write_duplicate_machine_path_fixture(dir: &Path) {
     .expect("fixture b cargo manifest");
     fs::write(dir.join("crates/a/src/lib.rs"), lib_rs).expect("fixture a lib");
     fs::write(dir.join("crates/b/src/lib.rs"), lib_rs).expect("fixture b lib");
+}
+
+fn write_no_machine_fixture(dir: &Path) {
+    let root_manifest = "[workspace]\nresolver = \"2\"\nmembers = [\"crates/app\"]\n".to_owned();
+    let app_manifest =
+        "[package]\nname = \"fixture-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n";
+    let app_lib =
+        "pub struct PlainData {\n    pub id: u32,\n}\n\npub fn answer() -> u32 {\n    42\n}\n";
+
+    fs::create_dir_all(dir.join("crates/app/src")).expect("fixture app src dir");
+    fs::write(dir.join("Cargo.toml"), root_manifest).expect("fixture root cargo manifest");
+    fs::write(dir.join("crates/app/Cargo.toml"), app_manifest).expect("fixture app cargo manifest");
+    fs::write(dir.join("crates/app/src/lib.rs"), app_lib).expect("fixture app lib");
 }

@@ -11,6 +11,7 @@ use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
 use tempfile::TempDir;
 
 const GRAPH_EXTENSIONS: [&str; 4] = ["mmd", "dot", "puml", "json"];
+const NO_LINKED_MACHINES_MESSAGE: &str = "statum-graph: no linked state machines were found in the target workspace. This can mean the workspace has no Statum machines, or that it depends on incompatible `statum`, `statum-core`, or `statum-graph` versions so linked inventories do not unify. If you expected machines here, ensure those crates use compatible versions.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Options {
@@ -463,6 +464,11 @@ fn build_runner_main(
     source.push_str("}\n\n");
     source.push_str("fn run() -> Result<(), Box<dyn std::error::Error>> {\n");
     source.push_str("    let doc = statum_graph::CodebaseDoc::linked()?;\n");
+    source.push_str("    if doc.machines().is_empty() {\n");
+    source.push_str("        return Err(std::io::Error::other(");
+    source.push_str(&rust_str(NO_LINKED_MACHINES_MESSAGE));
+    source.push_str(").into());\n");
+    source.push_str("    }\n");
     source.push_str("    statum_graph::codebase::render::write_all_to_dir(\n");
     source.push_str("        &doc,\n");
     source.push_str(&format!(
