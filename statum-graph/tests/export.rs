@@ -794,6 +794,20 @@ static DUPLICATE_STATE_PRESENTATIONS: [StatePresentation<InvalidStateId>; 2] = [
         metadata: (),
     },
 ];
+static DUPLICATE_EMPTY_STATE_PRESENTATIONS: [StatePresentation<InvalidStateId>; 2] = [
+    StatePresentation {
+        id: InvalidStateId::Draft,
+        label: None,
+        description: None,
+        metadata: (),
+    },
+    StatePresentation {
+        id: InvalidStateId::Draft,
+        label: None,
+        description: None,
+        metadata: (),
+    },
+];
 
 static EMPTY_TRANSITION_PRESENTATIONS: [TransitionPresentation<InvalidTransitionId>; 0] = [];
 static UNKNOWN_TRANSITION_PRESENTATIONS: [TransitionPresentation<InvalidTransitionId>; 1] =
@@ -817,6 +831,20 @@ static DUPLICATE_TRANSITION_PRESENTATIONS: [TransitionPresentation<InvalidTransi
         metadata: (),
     },
 ];
+static DUPLICATE_EMPTY_TRANSITION_PRESENTATIONS: [TransitionPresentation<InvalidTransitionId>; 2] = [
+    TransitionPresentation {
+        id: InvalidTransitionId::Submit,
+        label: None,
+        description: None,
+        metadata: (),
+    },
+    TransitionPresentation {
+        id: InvalidTransitionId::Submit,
+        label: None,
+        description: None,
+        metadata: (),
+    },
+];
 
 static UNKNOWN_STATE_PRESENTATION: MachinePresentation<InvalidStateId, InvalidTransitionId> =
     MachinePresentation {
@@ -836,6 +864,15 @@ static DUPLICATE_STATE_PRESENTATION: MachinePresentation<InvalidStateId, Invalid
         transitions: TransitionPresentationInventory::new(|| &EMPTY_TRANSITION_PRESENTATIONS),
     };
 
+static DUPLICATE_EMPTY_STATE_PRESENTATION: MachinePresentation<
+    InvalidStateId,
+    InvalidTransitionId,
+> = MachinePresentation {
+    machine: None,
+    states: &DUPLICATE_EMPTY_STATE_PRESENTATIONS,
+    transitions: TransitionPresentationInventory::new(|| &EMPTY_TRANSITION_PRESENTATIONS),
+};
+
 static UNKNOWN_TRANSITION_PRESENTATION: MachinePresentation<InvalidStateId, InvalidTransitionId> =
     MachinePresentation {
         machine: None,
@@ -849,6 +886,15 @@ static DUPLICATE_TRANSITION_PRESENTATION: MachinePresentation<InvalidStateId, In
         states: &EMPTY_STATE_PRESENTATIONS,
         transitions: TransitionPresentationInventory::new(|| &DUPLICATE_TRANSITION_PRESENTATIONS),
     };
+
+static DUPLICATE_EMPTY_TRANSITION_PRESENTATION: MachinePresentation<
+    InvalidStateId,
+    InvalidTransitionId,
+> = MachinePresentation {
+    machine: None,
+    states: &EMPTY_STATE_PRESENTATIONS,
+    transitions: TransitionPresentationInventory::new(|| &DUPLICATE_EMPTY_TRANSITION_PRESENTATIONS),
+};
 
 #[test]
 fn rejects_external_graph_with_missing_transition_source() {
@@ -998,6 +1044,19 @@ fn rejects_presentation_with_duplicate_state_id() {
 }
 
 #[test]
+fn rejects_presentation_with_duplicate_state_id_when_first_entry_is_empty() {
+    let doc = MachineDoc::try_from_graph(&VALID_GRAPH).expect("valid external graph should export");
+
+    assert_eq!(
+        doc.export_with_presentation(&DUPLICATE_EMPTY_STATE_PRESENTATION),
+        Err(ExportDocError::DuplicateStatePresentation {
+            machine: "tests::valid_presentation::Flow",
+            entry: 1,
+        })
+    );
+}
+
+#[test]
 fn rejects_presentation_with_unknown_transition_id() {
     let doc = MachineDoc::try_from_graph(&VALID_GRAPH).expect("valid external graph should export");
 
@@ -1016,6 +1075,19 @@ fn rejects_presentation_with_duplicate_transition_id() {
 
     assert_eq!(
         doc.export_with_presentation(&DUPLICATE_TRANSITION_PRESENTATION),
+        Err(ExportDocError::DuplicateTransitionPresentation {
+            machine: "tests::valid_presentation::Flow",
+            entry: 1,
+        })
+    );
+}
+
+#[test]
+fn rejects_presentation_with_duplicate_transition_id_when_first_entry_is_empty() {
+    let doc = MachineDoc::try_from_graph(&VALID_GRAPH).expect("valid external graph should export");
+
+    assert_eq!(
+        doc.export_with_presentation(&DUPLICATE_EMPTY_TRANSITION_PRESENTATION),
         Err(ExportDocError::DuplicateTransitionPresentation {
             machine: "tests::valid_presentation::Flow",
             entry: 1,

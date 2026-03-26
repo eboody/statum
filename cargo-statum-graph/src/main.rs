@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -40,7 +41,7 @@ fn main() -> ExitCode {
 }
 
 fn run_main() -> Result<(), cargo_statum_graph::Error> {
-    let cli = Cli::parse();
+    let cli = parse_cli_from(std::env::args_os());
     let written = match cli {
         Cli::Codebase(args) => run(Options {
             input_path: args.manifest_path.unwrap_or(args.path),
@@ -56,4 +57,43 @@ fn run_main() -> Result<(), cargo_statum_graph::Error> {
     }
 
     Ok(())
+}
+
+fn parse_cli_from<I, T>(args: I) -> Cli
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString>,
+{
+    let mut args = args.into_iter().map(Into::into).collect::<Vec<_>>();
+    if args.get(1).is_some_and(|arg| arg == "statum-graph") {
+        args.remove(1);
+    }
+
+    Cli::parse_from(args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_cli_from_accepts_direct_binary_shape() {
+        let cli = parse_cli_from(["cargo-statum-graph", "codebase", "/tmp/workspace"]);
+
+        let Cli::Codebase(args) = cli;
+        assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
+    }
+
+    #[test]
+    fn parse_cli_from_accepts_cargo_injected_subcommand_name() {
+        let cli = parse_cli_from([
+            "cargo-statum-graph",
+            "statum-graph",
+            "codebase",
+            "/tmp/workspace",
+        ]);
+
+        let Cli::Codebase(args) = cli;
+        assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
+    }
 }

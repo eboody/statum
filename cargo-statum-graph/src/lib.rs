@@ -1,7 +1,9 @@
 use std::env;
 use std::fmt;
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
+use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
@@ -34,6 +36,13 @@ pub enum Error {
     PackageHasNoLibrary {
         manifest_path: PathBuf,
         package: String,
+    },
+    InvalidStem {
+        stem: String,
+    },
+    NonUtf8Path {
+        role: &'static str,
+        path: PathBuf,
     },
     Io {
         action: &'static str,
@@ -89,6 +98,15 @@ impl fmt::Display for Error {
                 "package `{package}` from manifest `{}` does not expose a library target",
                 manifest_path.display()
             ),
+            Self::InvalidStem { stem } => write!(
+                formatter,
+                "invalid output stem `{stem}`: expected a simple file name without path separators"
+            ),
+            Self::NonUtf8Path { role, path } => write!(
+                formatter,
+                "cannot generate runner {role} from non-UTF-8 path `{}`",
+                path.display()
+            ),
             Self::Io {
                 action,
                 path,
@@ -127,12 +145,15 @@ impl std::error::Error for Error {
             Self::PackageNotFound { .. }
             | Self::AmbiguousPackage { .. }
             | Self::PackageHasNoLibrary { .. }
+            | Self::InvalidStem { .. }
+            | Self::NonUtf8Path { .. }
             | Self::RunnerFailed { .. } => None,
         }
     }
 }
 
 pub fn run(options: Options) -> Result<Vec<PathBuf>, Error> {
+    validate_output_stem(&options.stem)?;
     let input_path = absolutize(&options.input_path).map_err(Error::CurrentDir)?;
     let input = resolve_input(&input_path);
     let metadata = load_metadata(&input.manifest_path)?;
@@ -250,7 +271,7 @@ fn select_packages<'a>(
 }
 
 fn workspace_root_manifest(metadata: &Metadata) -> PathBuf {
-    metadata.workspace_root.as_std_path().join("Cargo.toml")
+    normalize_absolute_path(&metadata.workspace_root.as_std_path().join("Cargo.toml"))
 }
 
 fn workspace_packages<'a>(metadata: &'a Metadata, ids: &[PackageId]) -> Vec<&'a Package> {
@@ -333,7 +354,7 @@ fn write_runner_project(
     })?;
 
     let manifest_path = runner_dir.join("Cargo.toml");
-    let manifest = build_runner_manifest(selections, patch_root);
+    let manifest = build_runner_manifest(selections, patch_root)?;
     fs::write(&manifest_path, manifest).map_err(|source| Error::Io {
         action: "write generated runner manifest",
         path: manifest_path.clone(),
@@ -341,7 +362,7 @@ fn write_runner_project(
     })?;
 
     let main_path = src_dir.join("main.rs");
-    let main = build_runner_main(selections, out_dir, stem);
+    let main = build_runner_main(selections, out_dir, stem)?;
     fs::write(&main_path, main).map_err(|source| Error::Io {
         action: "write generated runner source",
         path: main_path.clone(),
@@ -351,7 +372,10 @@ fn write_runner_project(
     Ok(())
 }
 
-fn build_runner_manifest(selections: &[SelectedPackage<'_>], patch_root: Option<&Path>) -> String {
+fn build_runner_manifest(
+    selections: &[SelectedPackage<'_>],
+    patch_root: Option<&Path>,
+) -> Result<String, Error> {
     let mut manifest = String::from(
         "[package]\nname = \"statum-graph-runner\"\nversion = \"0.0.0\"\nedition = \"2021\"\npublish = false\n\n[dependencies]\n",
     );
@@ -366,8 +390,9 @@ fn build_runner_manifest(selections: &[SelectedPackage<'_>], patch_root: Option<
                     .manifest_path
                     .as_std_path()
                     .parent()
-                    .expect("package manifest should have a parent")
-            )
+                    .expect("package manifest should have a parent"),
+                "dependency package path",
+            )?,
         ));
     }
 
@@ -375,9 +400,9 @@ fn build_runner_manifest(selections: &[SelectedPackage<'_>], patch_root: Option<
         Some(root) => {
             manifest.push_str(&format!(
                 "statum-graph = {{ path = {} }}\n",
-                toml_path(root.join("statum-graph"))
+                toml_path(root.join("statum-graph"), "patched statum-graph path")?
             ));
-            push_patch_tables(&mut manifest, root);
+            push_patch_tables(&mut manifest, root)?;
         }
         None => {
             manifest.push_str(&format!(
@@ -387,10 +412,10 @@ fn build_runner_manifest(selections: &[SelectedPackage<'_>], patch_root: Option<
         }
     }
 
-    manifest
+    Ok(manifest)
 }
 
-fn push_patch_tables(manifest: &mut String, root: &Path) {
+fn push_patch_tables(manifest: &mut String, root: &Path) -> Result<(), Error> {
     for source in ["crates-io", "https://github.com/eboody/statum"] {
         if source == "crates-io" {
             manifest.push_str("\n[patch.crates-io]\n");
@@ -407,13 +432,19 @@ fn push_patch_tables(manifest: &mut String, root: &Path) {
         ] {
             manifest.push_str(&format!(
                 "{package} = {{ path = {} }}\n",
-                toml_path(root.join(package))
+                toml_path(root.join(package), "patched workspace package path")?
             ));
         }
     }
+
+    Ok(())
 }
 
-fn build_runner_main(selections: &[SelectedPackage<'_>], out_dir: &Path, stem: &str) -> String {
+fn build_runner_main(
+    selections: &[SelectedPackage<'_>],
+    out_dir: &Path,
+    stem: &str,
+) -> Result<String, Error> {
     let mut source = String::from("#[allow(unused_imports)]\n");
     for (index, selection) in selections.iter().enumerate() {
         source.push_str(&format!(
@@ -436,13 +467,13 @@ fn build_runner_main(selections: &[SelectedPackage<'_>], out_dir: &Path, stem: &
     source.push_str("        &doc,\n");
     source.push_str(&format!(
         "        {},\n",
-        rust_str(&out_dir.to_string_lossy())
+        rust_path(out_dir, "output directory")?
     ));
     source.push_str(&format!("        {},\n", rust_str(stem)));
     source.push_str("    )?;\n");
     source.push_str("    Ok(())\n");
     source.push_str("}\n");
-    source
+    Ok(source)
 }
 
 fn run_runner(runner_manifest_path: PathBuf, target_manifest_path: &Path) -> Result<(), Error> {
@@ -496,24 +527,96 @@ fn bundle_paths(out_dir: &Path, stem: &str) -> Vec<PathBuf> {
 }
 
 fn absolutize(path: &Path) -> io::Result<PathBuf> {
-    if path.is_absolute() {
-        Ok(path.to_path_buf())
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        Ok(env::current_dir()?.join(path))
-    }
+        env::current_dir()?.join(path)
+    };
+    Ok(normalize_absolute_path(&absolute))
 }
 
-fn toml_path(value: impl AsRef<Path>) -> String {
-    let value = value.as_ref().to_string_lossy();
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+fn rust_path(value: &Path, role: &'static str) -> Result<String, Error> {
+    Ok(rust_str(path_utf8(value, role)?))
+}
+
+fn toml_path(value: impl AsRef<Path>, role: &'static str) -> Result<String, Error> {
+    Ok(toml_str(path_utf8(value.as_ref(), role)?))
 }
 
 fn rust_str(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    let escaped: String = value.chars().flat_map(char::escape_default).collect();
+    format!("\"{escaped}\"")
 }
 
 fn toml_str(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\u{08}' => escaped.push_str("\\b"),
+            '\t' => escaped.push_str("\\t"),
+            '\n' => escaped.push_str("\\n"),
+            '\u{0C}' => escaped.push_str("\\f"),
+            '\r' => escaped.push_str("\\r"),
+            control if control.is_control() => {
+                let code = control as u32;
+                if code <= 0xFFFF {
+                    write!(&mut escaped, "\\u{code:04X}")
+                        .expect("writing to a String should not fail");
+                } else {
+                    write!(&mut escaped, "\\U{code:08X}")
+                        .expect("writing to a String should not fail");
+                }
+            }
+            other => escaped.push(other),
+        }
+    }
+
+    format!("\"{escaped}\"")
+}
+
+fn validate_output_stem(stem: &str) -> Result<(), Error> {
+    let mut components = Path::new(stem).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => Err(Error::InvalidStem {
+            stem: stem.to_owned(),
+        }),
+    }
+}
+
+fn path_utf8<'a>(path: &'a Path, role: &'static str) -> Result<&'a str, Error> {
+    path.to_str().ok_or_else(|| Error::NonUtf8Path {
+        role,
+        path: path.to_path_buf(),
+    })
+}
+
+fn normalize_absolute_path(path: &Path) -> PathBuf {
+    debug_assert!(
+        path.is_absolute(),
+        "path should be absolute before normalization"
+    );
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => {
+                normalized.push(std::path::MAIN_SEPARATOR.to_string());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if normalized.file_name().is_some() {
+                    normalized.pop();
+                }
+            }
+            Component::Normal(segment) => normalized.push(segment),
+        }
+    }
+
+    normalized
 }
 
 struct SelectedPackage<'a> {
@@ -540,4 +643,72 @@ impl<'a> SelectedPackage<'a> {
 struct ResolvedInput {
     manifest_path: PathBuf,
     default_output_dir: PathBuf,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rust_str_escapes_control_characters() {
+        assert_eq!(
+            rust_str("line 1\n\"quoted\"\t\\tail"),
+            "\"line 1\\n\\\"quoted\\\"\\t\\\\tail\""
+        );
+    }
+
+    #[test]
+    fn toml_str_escapes_control_characters() {
+        assert_eq!(
+            toml_str("line 1\n\"quoted\"\t\\tail\u{1F}"),
+            "\"line 1\\n\\\"quoted\\\"\\t\\\\tail\\u001F\""
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rust_path_rejects_non_utf8_path() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(OsString::from_vec(vec![0x66, 0x80, 0x6F]));
+
+        let error = rust_path(&path, "output directory").expect_err("non-UTF-8 path should fail");
+
+        assert!(matches!(
+            error,
+            Error::NonUtf8Path {
+                role: "output directory",
+                ..
+            }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn toml_path_rejects_non_utf8_path() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(OsString::from_vec(vec![0x66, 0x80, 0x6F]));
+
+        let error =
+            toml_path(&path, "dependency package path").expect_err("non-UTF-8 path should fail");
+
+        assert!(matches!(
+            error,
+            Error::NonUtf8Path {
+                role: "dependency package path",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn absolutize_normalizes_cur_dir_components() {
+        let current_dir = env::current_dir().expect("current dir");
+        let normalized = absolutize(Path::new(".").join("Cargo.toml").as_path()).expect("path");
+
+        assert_eq!(normalized, current_dir.join("Cargo.toml"));
+    }
 }

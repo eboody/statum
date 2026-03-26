@@ -35,6 +35,25 @@ fn codebase_command_accepts_workspace_dir_and_writes_bundle_into_workspace_root(
 }
 
 #[test]
+fn codebase_command_accepts_cargo_style_invocation_from_workspace_root() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_fixture(fixture_dir.path());
+
+    let status = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .current_dir(fixture_dir.path())
+        .arg("statum-graph")
+        .arg("codebase")
+        .status()
+        .expect("cargo-style invocation should run");
+    assert!(status.success(), "cargo-style invocation should succeed");
+
+    assert!(fixture_dir.path().join("codebase.mmd").is_file());
+    assert!(fixture_dir.path().join("codebase.dot").is_file());
+    assert!(fixture_dir.path().join("codebase.puml").is_file());
+    assert!(fixture_dir.path().join("codebase.json").is_file());
+}
+
+#[test]
 fn codebase_command_fails_closed_for_duplicate_machine_paths_across_workspace_members() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_duplicate_machine_path_fixture(fixture_dir.path());
@@ -58,6 +77,28 @@ fn codebase_command_fails_closed_for_duplicate_machine_paths_across_workspace_me
         stderr.contains("--package") && stderr.contains("distinct module path"),
         "stderr should report duplicate machine path, got: {stderr}"
     );
+}
+
+#[test]
+fn codebase_command_rejects_invalid_output_stem_before_runner_build() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_fixture(fixture_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("codebase")
+        .arg(fixture_dir.path())
+        .arg("--stem")
+        .arg("../escape")
+        .output()
+        .expect("cargo-statum-graph should run");
+    assert!(!output.status.success(), "invalid stem should fail");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid output stem `../escape`"),
+        "stderr should report the invalid stem, got: {stderr}"
+    );
+    assert!(!fixture_dir.path().join("..").join("escape.mmd").exists());
 }
 
 fn write_fixture(dir: &Path) {

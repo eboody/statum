@@ -271,6 +271,7 @@ where
             export.machine.description = machine.description;
         }
 
+        let mut seen_states = vec![false; export.states.len()];
         for (entry, presented_state) in presentation.states.iter().enumerate() {
             let Some(index) = self
                 .states()
@@ -283,18 +284,19 @@ where
                 });
             };
 
-            let export_state = &mut export.states[index];
-            if export_state.label.is_some() || export_state.description.is_some() {
+            if std::mem::replace(&mut seen_states[index], true) {
                 return Err(ExportDocError::DuplicateStatePresentation {
                     machine: self.machine().rust_type_path,
                     entry,
                 });
             }
 
+            let export_state = &mut export.states[index];
             export_state.label = presented_state.label;
             export_state.description = presented_state.description;
         }
 
+        let mut seen_transitions = vec![false; export.transitions.len()];
         for (entry, presented_transition) in presentation.transitions.iter().enumerate() {
             let Some(index) = self
                 .edges()
@@ -307,14 +309,14 @@ where
                 });
             };
 
-            let export_transition = &mut export.transitions[index];
-            if export_transition.label.is_some() || export_transition.description.is_some() {
+            if std::mem::replace(&mut seen_transitions[index], true) {
                 return Err(ExportDocError::DuplicateTransitionPresentation {
                     machine: self.machine().rust_type_path,
                     entry,
                 });
             }
 
+            let export_transition = &mut export.transitions[index];
             export_transition.label = presented_transition.label;
             export_transition.description = presented_transition.description;
         }
