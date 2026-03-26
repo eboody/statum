@@ -1,0 +1,28 @@
+[dependencies]
+cargo_metadata = "0.21"
+clap = { version = "4.5.39", features = ["derive"] }
+statum-graph = { path = "../statum-graph", version = "0.6.9" }
+tempfile = "3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[package]
+authors = ["Eran Boodnero <eran@eran.codes>"]
+categories = ["development-tools", "command-line-utilities"]
+description = "Cargo subcommand for zero-touch Statum graph export"
+documentation = "https://docs.rs/cargo-statum-graph"
+edition = "2021"
+keywords = [
+    "cargo",
+    "graph",
+    "mermaid",
+    "workflow",
+    "state-machine",
+]
+license = "MIT"
+name = "cargo-statum-graph"
+readme = "README.md"
+repository = "https://github.com/eboody/statum"
+rust-version = "1.93"
+version = "0.6.9"

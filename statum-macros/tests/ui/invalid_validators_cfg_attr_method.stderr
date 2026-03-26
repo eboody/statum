@@ -1,0 +1,17 @@
+error: Error: `#[validators(TaskMachine)]` on `impl DbRow` method `is_published` uses `#[cfg_attr]`, but Statum does not support conditionally compiled validator methods.
+       Fix: move the cfg gate to the whole `#[validators(TaskMachine)]` impl or split cfg-specific rebuild surfaces into separate impls.
+  --> tests/ui/invalid_validators_cfg_attr_method.rs:37:5
+   |
+37 | /     #[cfg_attr(any(), cfg(any()))]
+38 | |     fn is_published(&self) -> statum::Result<()> {
+39 | |         if self.status == "published" {
+40 | |             Ok(())
+...  |
+44 | |     }
+   | |_____^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_validators_cfg_attr_method.rs:45:2
+   |
+45 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_cfg_attr_method.rs`

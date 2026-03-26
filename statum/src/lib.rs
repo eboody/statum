@@ -277,12 +277,14 @@ pub use statum_core::__private;
 pub use statum_core::projection;
 #[doc(inline)]
 pub use statum_core::{
-    Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error,
+    linked_machines, linked_validator_entries, Branch, CanTransitionMap, CanTransitionTo,
+    CanTransitionWith, DataState, Error, LinkedMachineGraph, LinkedStateDescriptor,
+    LinkedTransitionDescriptor, LinkedTransitionInventory, LinkedValidatorEntryDescriptor,
     MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
     MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder, RebuildAttempt,
     RebuildReport, RecordedTransition, Rejection, Result, StateDescriptor, StateMarker,
-    StatePresentation, TransitionDescriptor, TransitionInventory, TransitionPresentation,
-    TransitionPresentationInventory, UnitState, Validation,
+    StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
+    TransitionPresentation, TransitionPresentationInventory, UnitState, Validation,
 };
 
 /// Define the legal lifecycle phases for a machine.
@@ -417,7 +419,10 @@ pub use statum_macros::__statum_emit_validator_methods_impl;
 ///   stable rejection details alongside the normal result
 ///
 /// Machine fields are available by name inside validator bodies through
-/// generated bindings. Persisted-row fields still live on `self`.
+/// generated bindings. Persisted-row fields still live on `self`. Put `#[cfg]`
+/// or `#[cfg_attr]` on the whole `#[validators]` impl, not on individual
+/// `is_{state}` methods. Validator impls inside `include!()` files are
+/// rejected; keep them inline or in the module source file.
 ///
 /// ```rust
 /// use statum::{machine, state, validators, Error};

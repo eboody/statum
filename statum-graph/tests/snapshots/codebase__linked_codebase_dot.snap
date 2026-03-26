@@ -1,0 +1,47 @@
+---
+source: statum-graph/tests/codebase.rs
+expression: "render::dot(&doc)"
+---
+digraph "statum_codebase" {
+    rankdir=TB;
+    subgraph "cluster_m0" {
+        label="codebase::detached::Machine";
+        m0_s0 [label="Alone"]
+    }
+    subgraph "cluster_m1" {
+        label="codebase::named_holder::Machine";
+        m1_s0 [label="Pending (data)"]
+        m1_s1 [label="Settled"]
+    }
+    subgraph "cluster_m2" {
+        label="Task Machine";
+        m2_s0 [label="Idle"]
+        m2_s1 [label="Running"]
+        m2_s2 [label="Done"]
+    }
+    subgraph "cluster_m3" {
+        label="Workflow Machine";
+        m3_s0 [label="Draft"]
+        m3_s1 [label="In Progress"]
+        m3_s2 [label="Complete"]
+    }
+
+    m2_v0 [label="TaskRow::into_machine()", shape=ellipse, style="rounded,dashed", color="#4b5563"]
+    m3_v0 [label="WorkflowRow::into_machine()", shape=ellipse, style="rounded,dashed", color="#4b5563"]
+
+    m1_s0 -> m1_s1 [label="settle"]
+    m2_s0 -> m2_s1 [label="Start Task"]
+    m2_s1 -> m2_s2 [label="finish"]
+    m3_s0 -> m3_s1 [label="Start Workflow"]
+    m3_s1 -> m3_s2 [label="finish"]
+
+    m1_s0 -> m2_s2 [style=dashed, label="child"]
+    m3_s1 -> m2_s1 [style=dashed, label="state_data"]
+
+    m2_v0 -> m2_s0 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+    m2_v0 -> m2_s1 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+    m2_v0 -> m2_s2 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+    m3_v0 -> m3_s0 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+    m3_v0 -> m3_s1 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+    m3_v0 -> m3_s2 [style=dashed, color="#4b5563", penwidth=2, constraint=false]
+}

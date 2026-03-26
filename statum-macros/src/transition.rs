@@ -298,15 +298,36 @@ pub fn generate_transition_impl(
         let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
         let targets_ident = format_ident!("__STATUM_TRANSITION_TARGETS_{}", unique_suffix);
         let registration_ident = format_ident!("__STATUM_TRANSITION_SITE_{}", unique_suffix);
+        let linked_registration_ident =
+            format_ident!("__STATUM_LINKED_TRANSITION_SITE_{}", unique_suffix);
         let id_const_ident = format_ident!(
             "{}",
             to_shouty_snake_identifier(&function.name.to_string())
         );
         let method_name = LitStr::new(&function.name.to_string(), function.name.span());
         let source_state_ident = format_ident!("{}", tr_impl.source_state);
+        let source_state_name = LitStr::new(&tr_impl.source_state, function.name.span());
+        let linked_label = optional_lit_str_tokens(
+            function
+                .presentation
+                .as_ref()
+                .and_then(|value| value.label.as_deref()),
+            function.name.span(),
+        );
+        let linked_description = optional_lit_str_tokens(
+            function
+                .presentation
+                .as_ref()
+                .and_then(|value| value.description.as_deref()),
+            function.name.span(),
+        );
         let target_state_idents = return_states.iter().map(|state| {
             let state_ident = format_ident!("{}", state);
             quote! { #machine_module_path::StateId::#state_ident }
+        });
+        let target_state_names = return_states.iter().map(|state| {
+            let state = LitStr::new(state, function.name.span());
+            quote! { #state }
         });
         let target_state_count = return_states.len();
         let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
@@ -331,6 +352,18 @@ pub fn generate_transition_impl(
                     method_name: #method_name,
                     from: #machine_module_path::StateId::#source_state_ident,
                     to: &#targets_ident,
+                };
+
+            #(#cfg_attrs)*
+            #[statum::__private::linkme::distributed_slice(#machine_module_path::__STATUM_LINKED_TRANSITIONS)]
+            #[linkme(crate = statum::__private::linkme)]
+            static #linked_registration_ident: statum::__private::LinkedTransitionDescriptor =
+                statum::__private::LinkedTransitionDescriptor {
+                    method_name: #method_name,
+                    label: #linked_label,
+                    description: #linked_description,
+                    from: #source_state_name,
+                    to: &[#(#target_state_names),*],
                 };
 
             #(#cfg_attrs)*

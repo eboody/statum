@@ -9,10 +9,17 @@ It is authoritative only for machine-local structure:
 - states
 - transition sites
 - exact legal targets
-- roots derivable from the static graph itself
+- graph roots derivable from the static graph itself
 
-It does not model runtime-selected branches, orchestration across multiple
-machines, or consumer-owned explanation metadata.
+For linked-build codebase export, `statum-graph` can also combine every linked
+compiled machine family plus direct machine-like payload links written in state
+data and declared validator-entry surfaces emitted by compiled
+`#[validators]` impls. That codebase view is still static only. It does not
+model runtime-selected branches or orchestration order across machines.
+Validator node labels come from the impl self type as written in source and are
+display-only, not canonical Rust type identity. Method-level `#[cfg]` and
+`#[cfg_attr]` on validator methods are rejected at the macro layer.
+`include!()`-generated validator impls are also rejected.
 
 ## Install
 
@@ -95,6 +102,247 @@ graph TD
 
 The output is deterministic for one validated `MachineDoc`, so it works well
 for snapshot tests, generated docs, and CLI output.
+
+## Canonical Export Model
+
+`MachineDoc` is the validated typed graph surface. `ExportDoc` is the stable
+renderer-facing model built from that graph:
+
+```rust
+# use statum::{machine, state, transition};
+# use statum_graph::MachineDoc;
+# #[state]
+# enum FlowState {
+#     Draft,
+#     Review,
+#     Accepted,
+# }
+# #[machine]
+# struct Flow<FlowState> {}
+# #[transition]
+# impl Flow<Draft> {
+#     fn submit(self) -> Flow<Review> {
+#         self.transition()
+#     }
+# }
+# #[transition]
+# impl Flow<Review> {
+#     fn accept(self) -> Flow<Accepted> {
+#         self.transition()
+#     }
+# }
+let doc = MachineDoc::from_machine::<Flow<Draft>>();
+let export = doc.export();
+
+assert_eq!(export.states()[0].index, 0);
+assert_eq!(export.transitions()[0].method_name, "submit");
+```
+
+If you have matching `MachinePresentation` metadata, join it onto the export
+surface before rendering:
+
+```rust
+# use statum::{machine, state, transition};
+# use statum_graph::{render, MachineDoc};
+# #[state]
+# enum PresentedState {
+#     #[present(label = "Queued")]
+#     Queued,
+#     Done,
+# }
+# #[machine]
+# #[present(label = "Presented Flow")]
+# struct PresentedFlow<PresentedState> {}
+# #[transition]
+# impl PresentedFlow<Queued> {
+#     #[present(label = "Finish")]
+#     fn finish(self) -> PresentedFlow<Done> {
+#         self.transition()
+#     }
+# }
+let doc = MachineDoc::from_machine::<PresentedFlow<Queued>>();
+let export = doc.export_with_presentation(&presented_flow::PRESENTATION)?;
+
+assert_eq!(export.machine().label, Some("Presented Flow"));
+assert_eq!(render::mermaid(&export).contains("Finish"), true);
+# Ok::<(), statum_graph::ExportDocError>(())
+```
+
+Presentation metadata can change labels and descriptions, but the structure
+still comes from `MachineIntrospection::GRAPH`.
+
+## Other Renderers
+
+The same `ExportDoc` drives every built-in renderer:
+
+```rust
+# use statum::{machine, state, transition};
+# use statum_graph::{render, MachineDoc};
+# #[state]
+# enum FlowState {
+#     Draft,
+#     Done,
+# }
+# #[machine]
+# struct Flow<FlowState> {}
+# #[transition]
+# impl Flow<Draft> {
+#     fn finish(self) -> Flow<Done> {
+#         self.transition()
+#     }
+# }
+let doc = MachineDoc::from_machine::<Flow<Draft>>();
+let export = doc.export();
+
+let mermaid = render::mermaid(&export);
+let dot = render::dot(&export);
+let plantuml = render::plantuml(&export);
+let json = render::json(&export);
+
+assert!(mermaid.contains("graph TD"));
+assert!(dot.contains("digraph"));
+assert!(plantuml.contains("@startuml"));
+assert!(json.contains("\"transitions\""));
+```
+
+The JSON renderer is stable and pretty-printed. It exports machine identity,
+states, transition sites, exact legal targets, roots, and optional labels and
+descriptions. It does not serialize arbitrary typed `metadata` payloads from
+`MachinePresentation`; those stay application-owned unless you define a
+separate serialization contract.
+
+## Codebase Export
+
+If you want one combined graph for the linked build instead of one machine at a
+time, use `CodebaseDoc`:
+
+```rust
+# use statum::{machine, state, transition};
+# use statum_graph::CodebaseDoc;
+# mod task {
+#     use statum::{machine, state, transition};
+#     #[state]
+#     pub enum State {
+#         Idle,
+#         Running,
+#     }
+#     #[machine]
+#     pub struct Machine<State> {}
+#     #[transition]
+#     impl Machine<Idle> {
+#         fn start(self) -> Machine<Running> {
+#             self.transition()
+#         }
+#     }
+# }
+# mod workflow {
+#     use super::task;
+#     use statum::{machine, state, transition};
+#     #[state]
+#     pub enum State {
+#         Draft,
+#         InProgress(task::Machine<task::Running>),
+#     }
+#     #[machine]
+#     pub struct Machine<State> {}
+#     #[transition]
+#     impl Machine<Draft> {
+#         fn start(self, task: task::Machine<task::Running>) -> Machine<InProgress> {
+#             self.transition_with(task)
+#         }
+#     }
+# }
+let codebase = CodebaseDoc::linked()?;
+
+assert!(codebase.machines().len() >= 2);
+assert!(!codebase.links().is_empty());
+# Ok::<(), statum_graph::CodebaseDocError>(())
+```
+
+Render or write the combined document through `statum_graph::codebase::render`:
+
+```rust
+# use statum_graph::{CodebaseDoc, codebase::render};
+# let doc = CodebaseDoc::linked()?;
+let mermaid = render::mermaid(&doc);
+let paths = render::write_all_to_dir(&doc, "out", "codebase")?;
+
+assert!(mermaid.contains("graph TD"));
+assert_eq!(paths.len(), 4);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The codebase view is based on the linked compiled build, not a source scan.
+Static cross-machine links come only from direct machine-like payload types
+written in state data, including named fields. Validator-entry nodes come only
+from compiled `#[validators]` impls and represent declared rebuild surfaces
+such as `DbRow::into_machine()`, not runtime match outcomes. Both surfaces fail
+closed on malformed or ambiguous linked metadata. Wrapper aliases, runtime
+composition, builder overlays, and terminal-state semantics are intentionally
+out of scope.
+
+If you do not want to hand-write a runner crate, install
+`cargo-statum-graph` and point it at an existing library package:
+
+```text
+cargo statum-graph codebase \
+  /path/to/workspace
+```
+
+That command synthesizes the runner internally and writes the same four-file
+bundle into the workspace root without requiring exporter code in the target
+crate. Use `--out-dir` to override the destination or `--package` to narrow a
+multi-package workspace to one library crate.
+
+## Writing Files
+
+You can also write one file directly:
+
+```rust
+# use statum::{machine, state, transition};
+# use statum_graph::{render, MachineDoc};
+# #[state]
+# enum FlowState {
+#     Draft,
+#     Done,
+# }
+# #[machine]
+# struct Flow<FlowState> {}
+# #[transition]
+# impl Flow<Draft> {
+#     fn finish(self) -> Flow<Done> {
+#         self.transition()
+#     }
+# }
+let doc = MachineDoc::from_machine::<Flow<Draft>>();
+render::Format::Mermaid.write_to(&doc, "out/flow.mmd")?;
+# Ok::<(), std::io::Error>(())
+```
+
+Or write the whole built-in bundle with standard extensions:
+
+```rust
+# use statum::{machine, state, transition};
+# use statum_graph::{render, MachineDoc};
+# #[state]
+# enum FlowState {
+#     Draft,
+#     Done,
+# }
+# #[machine]
+# struct Flow<FlowState> {}
+# #[transition]
+# impl Flow<Draft> {
+#     fn finish(self) -> Flow<Done> {
+#         self.transition()
+#     }
+# }
+let doc = MachineDoc::from_machine::<Flow<Draft>>();
+let paths = render::write_all_to_dir(&doc, "out", "flow")?;
+
+assert_eq!(paths.len(), 4);
+# Ok::<(), std::io::Error>(())
+```
 
 ## Traversing A Graph
 
@@ -179,6 +427,10 @@ adapters.
 - duplicate target states within one transition
 
 The error surface is `MachineDocError`.
+
+If you join presentation metadata onto a validated machine graph, malformed
+presentation overlays fail closed with `ExportDocError` instead of picking a
+best-effort winner.
 
 ## Scope
 

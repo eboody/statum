@@ -50,6 +50,18 @@ pub(crate) fn transition_presentation_slice_ident(
     )
 }
 
+pub(crate) fn linked_transition_slice_ident(
+    machine_name: &str,
+    file_path: Option<&str>,
+    line_number: usize,
+) -> Ident {
+    let key = format!(
+        "{machine_name}::linked::{}::{line_number}",
+        file_path.unwrap_or_default()
+    );
+    format_ident!("__STATUM_LINKED_TRANSITIONS_{:016X}", stable_hash(&key))
+}
+
 fn stable_hash(input: &str) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in input.as_bytes() {
@@ -62,7 +74,8 @@ fn stable_hash(input: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        to_shouty_snake_identifier, transition_presentation_slice_ident, transition_slice_ident,
+        linked_transition_slice_ident, to_shouty_snake_identifier,
+        transition_presentation_slice_ident, transition_slice_ident,
     };
 
     #[test]
@@ -97,6 +110,22 @@ mod tests {
         assert!(first.starts_with("__STATUM_TRANSITION_PRESENTATION_"));
         assert!(second.starts_with("__STATUM_TRANSITION_PRESENTATION_"));
         assert!(third.starts_with("__STATUM_TRANSITION_PRESENTATION_"));
+        assert_ne!(first, second);
+        assert_ne!(first, third);
+    }
+
+    #[test]
+    fn linked_transition_slice_ident_tracks_machine_source() {
+        let first = linked_transition_slice_ident("ReviewFlow", Some("src/alpha.rs"), 40)
+            .to_string();
+        let second = linked_transition_slice_ident("ReviewFlow", Some("src/beta.rs"), 40)
+            .to_string();
+        let third = linked_transition_slice_ident("ReviewFlow", Some("src/alpha.rs"), 91)
+            .to_string();
+
+        assert!(first.starts_with("__STATUM_LINKED_TRANSITIONS_"));
+        assert!(second.starts_with("__STATUM_LINKED_TRANSITIONS_"));
+        assert!(third.starts_with("__STATUM_LINKED_TRANSITIONS_"));
         assert_ne!(first, second);
         assert_ne!(first, third);
     }

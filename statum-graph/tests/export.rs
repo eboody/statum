@@ -1,12 +1,17 @@
 #![allow(dead_code)]
 
+use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use statum::{
-    MachineDescriptor, MachineGraph, StateDescriptor, TransitionDescriptor, TransitionInventory,
+    MachineDescriptor, MachineGraph, MachinePresentation, MachinePresentationDescriptor,
+    StateDescriptor, StatePresentation, TransitionDescriptor, TransitionInventory,
+    TransitionPresentation, TransitionPresentationInventory,
 };
-use statum_graph::{render, MachineDoc, MachineDocError};
+use statum_graph::{render, ExportDocError, MachineDoc, MachineDocError};
 
 mod linear {
     use statum::{machine, state, transition};
@@ -190,6 +195,42 @@ mod macro_generated {
     generated_transitions!();
 }
 
+mod presented {
+    use statum::{machine, state, transition};
+
+    #[state]
+    pub enum State {
+        #[present(label = "Queued", description = "Waiting for work.")]
+        Queued,
+        #[present(label = "Running")]
+        Running,
+        Done,
+    }
+
+    #[machine]
+    #[present(
+        label = "Presented Flow",
+        description = "Presentation metadata for renderer output."
+    )]
+    pub struct Flow<State> {}
+
+    #[transition]
+    impl Flow<Queued> {
+        #[present(label = "Start", description = "Begin running queued work.")]
+        fn start(self) -> Flow<Running> {
+            self.transition()
+        }
+    }
+
+    #[transition]
+    impl Flow<Running> {
+        #[present(label = "Finish")]
+        fn finish(self) -> Flow<Done> {
+            self.transition()
+        }
+    }
+}
+
 #[test]
 fn exports_linear_machine_topology_from_graph() {
     let doc = MachineDoc::from_machine::<linear::Flow<linear::Draft>>();
@@ -283,6 +324,155 @@ fn mermaid_renders_one_edge_per_legal_target() {
     assert_eq!(mermaid.matches("-->|maybe_decide|").count(), 2);
     assert!(mermaid.contains("s1 -->|maybe_decide| s2"));
     assert!(mermaid.contains("s1 -->|maybe_decide| s3"));
+}
+
+#[test]
+fn export_doc_joins_generated_presentation_labels_and_descriptions() {
+    let doc = MachineDoc::from_machine::<presented::Flow<presented::Queued>>();
+    let export = doc
+        .export_with_presentation(&presented::flow::PRESENTATION)
+        .expect("generated presentation should join cleanly");
+
+    assert_eq!(
+        export.machine(),
+        statum_graph::ExportMachine {
+            module_path: "export::presented",
+            rust_type_path: "export::presented::Flow",
+            label: Some("Presented Flow"),
+            description: Some("Presentation metadata for renderer output."),
+        }
+    );
+    assert_eq!(
+        export
+            .states()
+            .iter()
+            .map(|state| (state.rust_name, state.label, state.description))
+            .collect::<Vec<_>>(),
+        vec![
+            ("Queued", Some("Queued"), Some("Waiting for work.")),
+            ("Running", Some("Running"), None),
+            ("Done", None, None),
+        ]
+    );
+    assert_eq!(
+        export
+            .transitions()
+            .iter()
+            .map(|transition| {
+                (
+                    transition.method_name,
+                    transition.label,
+                    transition.description,
+                    transition.from,
+                    transition.to.clone(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "start",
+                Some("Start"),
+                Some("Begin running queued work."),
+                0,
+                vec![1]
+            ),
+            ("finish", Some("Finish"), None, 1, vec![2]),
+        ]
+    );
+}
+
+#[test]
+fn dot_snapshot_is_stable_for_reconverging_graphs() {
+    let doc = MachineDoc::from_machine::<branching::Flow<branching::Draft>>();
+    insta::assert_snapshot!("branching_flow_dot", render::dot(&doc));
+}
+
+#[test]
+fn plantuml_snapshot_is_stable_for_reconverging_graphs() {
+    let doc = MachineDoc::from_machine::<branching::Flow<branching::Draft>>();
+    insta::assert_snapshot!("branching_flow_plantuml", render::plantuml(&doc));
+}
+
+#[test]
+fn json_snapshot_is_stable_for_presentation_overlay() {
+    let doc = MachineDoc::from_machine::<presented::Flow<presented::Queued>>();
+    let export = doc
+        .export_with_presentation(&presented::flow::PRESENTATION)
+        .expect("generated presentation should join cleanly");
+
+    insta::assert_snapshot!("presented_flow_json", render::json(&export));
+}
+
+#[test]
+fn format_write_to_creates_parent_dirs_and_writes_requested_format() {
+    let doc = MachineDoc::from_machine::<presented::Flow<presented::Queued>>();
+    let export = doc
+        .export_with_presentation(&presented::flow::PRESENTATION)
+        .expect("generated presentation should join cleanly");
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let path = tempdir.path().join("nested/graph.json");
+
+    let written = render::Format::Json
+        .write_to(&export, &path)
+        .expect("json output should write");
+
+    assert_eq!(written, path);
+    assert_eq!(
+        fs::read_to_string(&path).expect("json file should exist"),
+        render::json(&export)
+    );
+}
+
+#[test]
+fn write_all_to_dir_writes_every_format_with_stable_extensions() {
+    let doc = MachineDoc::from_machine::<branching::Flow<branching::Draft>>();
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = tempdir.path().join("bundle");
+
+    let paths =
+        render::write_all_to_dir(&doc, &bundle_dir, "flow").expect("bundle output should write");
+
+    assert_eq!(
+        paths,
+        vec![
+            bundle_dir.join("flow.mmd"),
+            bundle_dir.join("flow.dot"),
+            bundle_dir.join("flow.puml"),
+            bundle_dir.join("flow.json"),
+        ]
+    );
+    assert_eq!(
+        fs::read_to_string(&paths[0]).expect("mermaid file should exist"),
+        render::mermaid(&doc)
+    );
+    assert_eq!(
+        fs::read_to_string(&paths[1]).expect("dot file should exist"),
+        render::dot(&doc)
+    );
+    assert_eq!(
+        fs::read_to_string(&paths[2]).expect("plantuml file should exist"),
+        render::plantuml(&doc)
+    );
+    assert_eq!(
+        fs::read_to_string(&paths[3]).expect("json file should exist"),
+        render::json(&doc)
+    );
+}
+
+#[test]
+fn write_all_to_dir_rejects_path_like_stem() {
+    let doc = MachineDoc::from_machine::<branching::Flow<branching::Draft>>();
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let bundle_dir = tempdir.path().join("bundle");
+    let outside = tempdir.path().join("escape.mmd");
+    let stem = Path::new("..").join("escape");
+
+    let error = render::write_all_to_dir(&doc, &bundle_dir, stem.to_str().expect("utf-8 stem"))
+        .expect_err("path-like stem should be rejected");
+
+    assert_eq!(error.kind(), ErrorKind::InvalidInput);
+    assert!(!bundle_dir.exists());
+    assert!(!outside.exists());
 }
 
 #[test]
@@ -543,6 +733,10 @@ fn empty_target_transitions() -> &'static [TransitionDescriptor<InvalidStateId, 
     &EMPTY_TARGET_TRANSITIONS
 }
 
+fn valid_transitions() -> &'static [TransitionDescriptor<InvalidStateId, InvalidTransitionId>] {
+    &FLAKY_VALID_TRANSITIONS
+}
+
 static FLAKY_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
     machine: MachineDescriptor {
         module_path: "tests::flaky_inventory",
@@ -568,6 +762,138 @@ static EMPTY_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = M
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(empty_target_transitions),
+};
+
+static VALID_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineGraph {
+    machine: MachineDescriptor {
+        module_path: "tests::valid_presentation",
+        rust_type_path: "tests::valid_presentation::Flow",
+    },
+    states: &VALID_STATE_DESCRIPTORS,
+    transitions: TransitionInventory::new(valid_transitions),
+};
+
+static EMPTY_STATE_PRESENTATIONS: [StatePresentation<InvalidStateId>; 0] = [];
+static UNKNOWN_STATE_PRESENTATIONS: [StatePresentation<InvalidStateId>; 1] = [StatePresentation {
+    id: InvalidStateId::Missing,
+    label: Some("Missing"),
+    description: None,
+    metadata: (),
+}];
+static DUPLICATE_STATE_PRESENTATIONS: [StatePresentation<InvalidStateId>; 2] = [
+    StatePresentation {
+        id: InvalidStateId::Draft,
+        label: Some("Draft"),
+        description: None,
+        metadata: (),
+    },
+    StatePresentation {
+        id: InvalidStateId::Draft,
+        label: Some("Draft Again"),
+        description: None,
+        metadata: (),
+    },
+];
+static DUPLICATE_EMPTY_STATE_PRESENTATIONS: [StatePresentation<InvalidStateId>; 2] = [
+    StatePresentation {
+        id: InvalidStateId::Draft,
+        label: None,
+        description: None,
+        metadata: (),
+    },
+    StatePresentation {
+        id: InvalidStateId::Draft,
+        label: None,
+        description: None,
+        metadata: (),
+    },
+];
+
+static EMPTY_TRANSITION_PRESENTATIONS: [TransitionPresentation<InvalidTransitionId>; 0] = [];
+static UNKNOWN_TRANSITION_PRESENTATIONS: [TransitionPresentation<InvalidTransitionId>; 1] =
+    [TransitionPresentation {
+        id: InvalidTransitionId::Archive,
+        label: Some("Archive"),
+        description: None,
+        metadata: (),
+    }];
+static DUPLICATE_TRANSITION_PRESENTATIONS: [TransitionPresentation<InvalidTransitionId>; 2] = [
+    TransitionPresentation {
+        id: InvalidTransitionId::Submit,
+        label: Some("Submit"),
+        description: None,
+        metadata: (),
+    },
+    TransitionPresentation {
+        id: InvalidTransitionId::Submit,
+        label: Some("Submit Again"),
+        description: None,
+        metadata: (),
+    },
+];
+static DUPLICATE_EMPTY_TRANSITION_PRESENTATIONS: [TransitionPresentation<InvalidTransitionId>; 2] = [
+    TransitionPresentation {
+        id: InvalidTransitionId::Submit,
+        label: None,
+        description: None,
+        metadata: (),
+    },
+    TransitionPresentation {
+        id: InvalidTransitionId::Submit,
+        label: None,
+        description: None,
+        metadata: (),
+    },
+];
+
+static UNKNOWN_STATE_PRESENTATION: MachinePresentation<InvalidStateId, InvalidTransitionId> =
+    MachinePresentation {
+        machine: Some(MachinePresentationDescriptor {
+            label: Some("Invalid"),
+            description: None,
+            metadata: (),
+        }),
+        states: &UNKNOWN_STATE_PRESENTATIONS,
+        transitions: TransitionPresentationInventory::new(|| &EMPTY_TRANSITION_PRESENTATIONS),
+    };
+
+static DUPLICATE_STATE_PRESENTATION: MachinePresentation<InvalidStateId, InvalidTransitionId> =
+    MachinePresentation {
+        machine: None,
+        states: &DUPLICATE_STATE_PRESENTATIONS,
+        transitions: TransitionPresentationInventory::new(|| &EMPTY_TRANSITION_PRESENTATIONS),
+    };
+
+static DUPLICATE_EMPTY_STATE_PRESENTATION: MachinePresentation<
+    InvalidStateId,
+    InvalidTransitionId,
+> = MachinePresentation {
+    machine: None,
+    states: &DUPLICATE_EMPTY_STATE_PRESENTATIONS,
+    transitions: TransitionPresentationInventory::new(|| &EMPTY_TRANSITION_PRESENTATIONS),
+};
+
+static UNKNOWN_TRANSITION_PRESENTATION: MachinePresentation<InvalidStateId, InvalidTransitionId> =
+    MachinePresentation {
+        machine: None,
+        states: &EMPTY_STATE_PRESENTATIONS,
+        transitions: TransitionPresentationInventory::new(|| &UNKNOWN_TRANSITION_PRESENTATIONS),
+    };
+
+static DUPLICATE_TRANSITION_PRESENTATION: MachinePresentation<InvalidStateId, InvalidTransitionId> =
+    MachinePresentation {
+        machine: None,
+        states: &EMPTY_STATE_PRESENTATIONS,
+        transitions: TransitionPresentationInventory::new(|| &DUPLICATE_TRANSITION_PRESENTATIONS),
+    };
+
+static DUPLICATE_EMPTY_TRANSITION_PRESENTATION: MachinePresentation<
+    InvalidStateId,
+    InvalidTransitionId,
+> = MachinePresentation {
+    machine: None,
+    states: &EMPTY_STATE_PRESENTATIONS,
+    transitions: TransitionPresentationInventory::new(|| &DUPLICATE_EMPTY_TRANSITION_PRESENTATIONS),
 };
 
 #[test]
@@ -688,5 +1014,83 @@ fn snapshots_external_transition_inventory_once_per_export() {
             .map(|edge| edge.descriptor.method_name)
             .collect::<Vec<_>>(),
         vec!["submit"]
+    );
+}
+
+#[test]
+fn rejects_presentation_with_unknown_state_id() {
+    let doc = MachineDoc::try_from_graph(&VALID_GRAPH).expect("valid external graph should export");
+
+    assert_eq!(
+        doc.export_with_presentation(&UNKNOWN_STATE_PRESENTATION),
+        Err(ExportDocError::UnknownStatePresentation {
+            machine: "tests::valid_presentation::Flow",
+            entry: 0,
+        })
+    );
+}
+
+#[test]
+fn rejects_presentation_with_duplicate_state_id() {
+    let doc = MachineDoc::try_from_graph(&VALID_GRAPH).expect("valid external graph should export");
+
+    assert_eq!(
+        doc.export_with_presentation(&DUPLICATE_STATE_PRESENTATION),
+        Err(ExportDocError::DuplicateStatePresentation {
+            machine: "tests::valid_presentation::Flow",
+            entry: 1,
+        })
+    );
+}
+
+#[test]
+fn rejects_presentation_with_duplicate_state_id_when_first_entry_is_empty() {
+    let doc = MachineDoc::try_from_graph(&VALID_GRAPH).expect("valid external graph should export");
+
+    assert_eq!(
+        doc.export_with_presentation(&DUPLICATE_EMPTY_STATE_PRESENTATION),
+        Err(ExportDocError::DuplicateStatePresentation {
+            machine: "tests::valid_presentation::Flow",
+            entry: 1,
+        })
+    );
+}
+
+#[test]
+fn rejects_presentation_with_unknown_transition_id() {
+    let doc = MachineDoc::try_from_graph(&VALID_GRAPH).expect("valid external graph should export");
+
+    assert_eq!(
+        doc.export_with_presentation(&UNKNOWN_TRANSITION_PRESENTATION),
+        Err(ExportDocError::UnknownTransitionPresentation {
+            machine: "tests::valid_presentation::Flow",
+            entry: 0,
+        })
+    );
+}
+
+#[test]
+fn rejects_presentation_with_duplicate_transition_id() {
+    let doc = MachineDoc::try_from_graph(&VALID_GRAPH).expect("valid external graph should export");
+
+    assert_eq!(
+        doc.export_with_presentation(&DUPLICATE_TRANSITION_PRESENTATION),
+        Err(ExportDocError::DuplicateTransitionPresentation {
+            machine: "tests::valid_presentation::Flow",
+            entry: 1,
+        })
+    );
+}
+
+#[test]
+fn rejects_presentation_with_duplicate_transition_id_when_first_entry_is_empty() {
+    let doc = MachineDoc::try_from_graph(&VALID_GRAPH).expect("valid external graph should export");
+
+    assert_eq!(
+        doc.export_with_presentation(&DUPLICATE_EMPTY_TRANSITION_PRESENTATION),
+        Err(ExportDocError::DuplicateTransitionPresentation {
+            machine: "tests::valid_presentation::Flow",
+            entry: 1,
+        })
     );
 }

@@ -27,6 +27,11 @@ The important part is what Statum does not generate: it does not treat stored
 data as already trustworthy. Validators decide whether the persisted value
 actually represents `Draft`, `InReview`, `Published`, or nothing legal at all.
 
+Put `#[cfg]` or `#[cfg_attr]` on the whole `#[validators]` impl when you need
+build-specific rebuild surfaces. Statum rejects method-level cfg on
+individual `is_{state}` validators. Validator impls inside `include!()` files
+are rejected; keep them inline or in the module source file.
+
 ## Pick The Right Entry Point
 
 Use:

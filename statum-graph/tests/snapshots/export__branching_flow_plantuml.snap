@@ -1,0 +1,20 @@
+---
+source: statum-graph/tests/export.rs
+assertion_line: 390
+expression: "render::plantuml(&doc)"
+---
+@startuml
+state "Draft" as s0
+state "Review" as s1
+state "Accepted" as s2
+state "Rejected" as s3
+state "Archived" as s4
+
+s0 --> s1 : submit
+s1 --> s2 : accept
+s1 --> s2 : maybe_decide
+s1 --> s3 : maybe_decide
+s1 --> s3 : reject
+s2 --> s4 : archive
+s3 --> s4 : archive
+@enduml

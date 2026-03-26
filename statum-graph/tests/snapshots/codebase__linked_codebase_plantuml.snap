@@ -1,0 +1,43 @@
+---
+source: statum-graph/tests/codebase.rs
+expression: "render::plantuml(&doc)"
+---
+@startuml
+' linked machines: 4
+state "codebase::detached::Machine" as m0 {
+    state "Alone" as m0_s0
+}
+state "codebase::named_holder::Machine" as m1 {
+    state "Pending (data)" as m1_s0
+    state "Settled" as m1_s1
+}
+state "Task Machine" as m2 {
+    state "Idle" as m2_s0
+    state "Running" as m2_s1
+    state "Done" as m2_s2
+}
+state "Workflow Machine" as m3 {
+    state "Draft" as m3_s0
+    state "In Progress" as m3_s1
+    state "Complete" as m3_s2
+}
+
+state "TaskRow::into_machine()" as m2_v0 <<validator-entry>>
+state "WorkflowRow::into_machine()" as m3_v0 <<validator-entry>>
+
+m1_s0 --> m1_s1 : settle
+m2_s0 --> m2_s1 : Start Task
+m2_s1 --> m2_s2 : finish
+m3_s0 --> m3_s1 : Start Workflow
+m3_s1 --> m3_s2 : finish
+
+m1_s0 ..> m2_s2 : child
+m3_s1 ..> m2_s1 : state_data
+
+m2_v0 ..> m2_s0 : validator entry
+m2_v0 ..> m2_s1 : validator entry
+m2_v0 ..> m2_s2 : validator entry
+m3_v0 ..> m3_s0 : validator entry
+m3_v0 ..> m3_s1 : validator entry
+m3_v0 ..> m3_s2 : validator entry
+@enduml

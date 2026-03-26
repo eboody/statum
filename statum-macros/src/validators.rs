@@ -19,6 +19,7 @@ use signatures::{
 
 pub(super) struct ValidatorMethodSpec {
     pub(super) validator_ident: Ident,
+    pub(super) variant_name: String,
     pub(super) actual_ok_type: Type,
     pub(super) return_kind: ValidatorReturnKind,
     pub(super) is_async: bool,
@@ -31,7 +32,12 @@ struct CollectValidatorContext<'a> {
     machine_fields: Option<&'a [Ident]>,
 }
 
-pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str) -> TokenStream {
+pub fn parse_validators(
+    attr: TokenStream,
+    item: TokenStream,
+    module_path: &str,
+    line_number: usize,
+) -> TokenStream {
     let machine_ident = parse_macro_input!(attr as Ident);
     let item_impl = parse_macro_input!(item as ItemImpl);
     let struct_ident = &item_impl.self_ty;
@@ -117,6 +123,51 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         "__statum_emit_{}_validator_report_variant",
         crate::to_snake_case(&machine_name)
     );
+    let machine_module_path = syn::LitStr::new(
+        diagnostic_machine.module_path.as_ref(),
+        proc_macro2::Span::call_site(),
+    );
+    let machine_rust_type_path = syn::LitStr::new(
+        &format!("{}::{}", diagnostic_machine.module_path, machine_name),
+        proc_macro2::Span::call_site(),
+    );
+    let linked_validator_registration_ident = linked_validator_registration_ident(
+        &machine_name,
+        module_path,
+        &persisted_type_display,
+        line_number,
+    );
+    let linked_validator_targets_ident = linked_validator_targets_ident(
+        &machine_name,
+        module_path,
+        &persisted_type_display,
+        line_number,
+    );
+    let source_module_path = syn::LitStr::new(module_path, proc_macro2::Span::call_site());
+    let source_type_display =
+        syn::LitStr::new(&persisted_type_display, proc_macro2::Span::call_site());
+    let validator_target_states = validator_methods
+        .iter()
+        .map(|method| syn::LitStr::new(&method.variant_name, proc_macro2::Span::call_site()))
+        .collect::<Vec<_>>();
+    let linked_validator_registration = quote! {
+        #[doc(hidden)]
+        static #linked_validator_targets_ident: &[&str] = &[#(#validator_target_states),*];
+
+        #[doc(hidden)]
+        #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_VALIDATOR_ENTRIES)]
+        #[linkme(crate = statum::__private::linkme)]
+        static #linked_validator_registration_ident: statum::__private::LinkedValidatorEntryDescriptor =
+            statum::__private::LinkedValidatorEntryDescriptor {
+                machine: statum::MachineDescriptor {
+                    module_path: #machine_module_path,
+                    rust_type_path: #machine_rust_type_path,
+                },
+                source_module_path: #source_module_path,
+                source_type_display: #source_type_display,
+                target_states: #linked_validator_targets_ident,
+            };
+    };
     let async_mode = if validator_methods.iter().any(|method| method.is_async) {
         quote! { true }
     } else {
@@ -138,6 +189,7 @@ pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str)
         #passthrough_impl
         #build_variant_macro
         #report_variant_macro
+        #linked_validator_registration
         #validator_support_macro_ident! {
             persisted = #struct_ident,
             build_variant = #build_variant_macro_ident,
@@ -169,6 +221,17 @@ fn collect_validator_methods(
         let Some(state_name) = validator_state_name_from_ident(&func.sig.ident) else {
             continue;
         };
+        if let Some(attr_name) = cfg_like_attr_name(&func.attrs) {
+            let message = format!(
+                "Error: `#[validators({})]` on `impl {}` method `{}` uses `#[{}]`, but Statum does not support conditionally compiled validator methods.\nFix: move the cfg gate to the whole `#[validators({})]` impl or split cfg-specific rebuild surfaces into separate impls.",
+                context.machine_name,
+                context.persisted_type_display,
+                func.sig.ident,
+                attr_name,
+                context.machine_name,
+            );
+            return Err(syn::Error::new_spanned(func, message).to_compile_error());
+        }
         let diagnostic_context = ValidatorDiagnosticContext {
             persisted_type_display: context.persisted_type_display,
             machine_name: context.machine_name,
@@ -181,8 +244,10 @@ fn collect_validator_methods(
             ok_type,
             return_kind,
         } = analyze_validator_return_type(func, &diagnostic_context)?;
+        let variant_name = state_name_to_variant_name(&state_name);
         methods.push(ValidatorMethodSpec {
             validator_ident: func.sig.ident.clone(),
+            variant_name,
             actual_ok_type: ok_type,
             return_kind,
             is_async: func.sig.asyncness.is_some(),
@@ -202,6 +267,54 @@ fn state_name_to_variant_name(state_name: &str) -> String {
         }
     }
     result
+}
+
+fn cfg_like_attr_name(attrs: &[syn::Attribute]) -> Option<&'static str> {
+    attrs.iter().find_map(|attr| {
+        if attr.path().is_ident("cfg") {
+            Some("cfg")
+        } else if attr.path().is_ident("cfg_attr") {
+            Some("cfg_attr")
+        } else {
+            None
+        }
+    })
+}
+
+fn linked_validator_registration_ident(
+    machine_name: &str,
+    module_path: &str,
+    persisted_type_display: &str,
+    line_number: usize,
+) -> Ident {
+    let key = format!(
+        "{machine_name}::validator-entry::{module_path}::{persisted_type_display}::{line_number}"
+    );
+    format_ident!("__STATUM_LINKED_VALIDATOR_ENTRY_{:016X}", stable_hash(&key))
+}
+
+fn linked_validator_targets_ident(
+    machine_name: &str,
+    module_path: &str,
+    persisted_type_display: &str,
+    line_number: usize,
+) -> Ident {
+    let key = format!(
+        "{machine_name}::validator-targets::{module_path}::{persisted_type_display}::{line_number}"
+    );
+    format_ident!(
+        "__STATUM_LINKED_VALIDATOR_TARGETS_{:016X}",
+        stable_hash(&key)
+    )
+}
+
+fn stable_hash(input: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn generate_empty_validator_methods_error(

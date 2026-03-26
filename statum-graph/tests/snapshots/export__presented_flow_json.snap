@@ -1,0 +1,61 @@
+---
+source: statum-graph/tests/export.rs
+assertion_line: 400
+expression: "render::json(&export)"
+---
+{
+  "machine": {
+    "module_path": "export::presented",
+    "rust_type_path": "export::presented::Flow",
+    "label": "Presented Flow",
+    "description": "Presentation metadata for renderer output."
+  },
+  "states": [
+    {
+      "index": 0,
+      "rust_name": "Queued",
+      "label": "Queued",
+      "description": "Waiting for work.",
+      "has_data": false,
+      "is_root": true
+    },
+    {
+      "index": 1,
+      "rust_name": "Running",
+      "label": "Running",
+      "description": null,
+      "has_data": false,
+      "is_root": false
+    },
+    {
+      "index": 2,
+      "rust_name": "Done",
+      "label": null,
+      "description": null,
+      "has_data": false,
+      "is_root": false
+    }
+  ],
+  "transitions": [
+    {
+      "index": 0,
+      "method_name": "start",
+      "label": "Start",
+      "description": "Begin running queued work.",
+      "from": 0,
+      "to": [
+        1
+      ]
+    },
+    {
+      "index": 1,
+      "method_name": "finish",
+      "label": "Finish",
+      "description": null,
+      "from": 1,
+      "to": [
+        2
+      ]
+    }
+  ]
+}

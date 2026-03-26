@@ -1,0 +1,217 @@
+---
+source: statum-graph/tests/codebase.rs
+expression: "render::json(&doc)"
+---
+{
+  "machines": [
+    {
+      "index": 0,
+      "module_path": "codebase::detached",
+      "rust_type_path": "codebase::detached::Machine",
+      "label": null,
+      "description": null,
+      "states": [
+        {
+          "index": 0,
+          "rust_name": "Alone",
+          "label": null,
+          "description": null,
+          "has_data": false,
+          "is_graph_root": true
+        }
+      ],
+      "transitions": [],
+      "validator_entries": []
+    },
+    {
+      "index": 1,
+      "module_path": "codebase::named_holder",
+      "rust_type_path": "codebase::named_holder::Machine",
+      "label": null,
+      "description": null,
+      "states": [
+        {
+          "index": 0,
+          "rust_name": "Pending",
+          "label": null,
+          "description": null,
+          "has_data": true,
+          "is_graph_root": true
+        },
+        {
+          "index": 1,
+          "rust_name": "Settled",
+          "label": null,
+          "description": null,
+          "has_data": false,
+          "is_graph_root": false
+        }
+      ],
+      "transitions": [
+        {
+          "index": 0,
+          "method_name": "settle",
+          "label": null,
+          "description": null,
+          "from": 0,
+          "to": [
+            1
+          ]
+        }
+      ],
+      "validator_entries": []
+    },
+    {
+      "index": 2,
+      "module_path": "codebase::task",
+      "rust_type_path": "codebase::task::Machine",
+      "label": "Task Machine",
+      "description": null,
+      "states": [
+        {
+          "index": 0,
+          "rust_name": "Idle",
+          "label": null,
+          "description": null,
+          "has_data": false,
+          "is_graph_root": true
+        },
+        {
+          "index": 1,
+          "rust_name": "Running",
+          "label": "Running",
+          "description": null,
+          "has_data": false,
+          "is_graph_root": false
+        },
+        {
+          "index": 2,
+          "rust_name": "Done",
+          "label": null,
+          "description": null,
+          "has_data": false,
+          "is_graph_root": false
+        }
+      ],
+      "transitions": [
+        {
+          "index": 0,
+          "method_name": "start",
+          "label": "Start Task",
+          "description": null,
+          "from": 0,
+          "to": [
+            1
+          ]
+        },
+        {
+          "index": 1,
+          "method_name": "finish",
+          "label": null,
+          "description": null,
+          "from": 1,
+          "to": [
+            2
+          ]
+        }
+      ],
+      "validator_entries": [
+        {
+          "index": 0,
+          "source_module_path": "codebase::task",
+          "source_type_display": "TaskRow",
+          "target_states": [
+            0,
+            1,
+            2
+          ]
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "module_path": "codebase::workflow",
+      "rust_type_path": "codebase::workflow::Machine",
+      "label": "Workflow Machine",
+      "description": null,
+      "states": [
+        {
+          "index": 0,
+          "rust_name": "Draft",
+          "label": null,
+          "description": null,
+          "has_data": false,
+          "is_graph_root": true
+        },
+        {
+          "index": 1,
+          "rust_name": "InProgress",
+          "label": "In Progress",
+          "description": null,
+          "has_data": true,
+          "is_graph_root": false
+        },
+        {
+          "index": 2,
+          "rust_name": "Complete",
+          "label": null,
+          "description": null,
+          "has_data": false,
+          "is_graph_root": false
+        }
+      ],
+      "transitions": [
+        {
+          "index": 0,
+          "method_name": "start",
+          "label": "Start Workflow",
+          "description": null,
+          "from": 0,
+          "to": [
+            1
+          ]
+        },
+        {
+          "index": 1,
+          "method_name": "finish",
+          "label": null,
+          "description": null,
+          "from": 1,
+          "to": [
+            2
+          ]
+        }
+      ],
+      "validator_entries": [
+        {
+          "index": 0,
+          "source_module_path": "codebase::workflow",
+          "source_type_display": "WorkflowRow",
+          "target_states": [
+            0,
+            1,
+            2
+          ]
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "index": 0,
+      "from_machine": 1,
+      "from_state": 0,
+      "field_name": "child",
+      "to_machine": 2,
+      "to_state": 2
+    },
+    {
+      "index": 1,
+      "from_machine": 3,
+      "from_state": 1,
+      "field_name": null,
+      "to_machine": 2,
+      "to_state": 1
+    }
+  ]
+}

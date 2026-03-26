@@ -155,11 +155,12 @@ pub fn transition(
 /// `.build_reports()`.
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let line_number = Span::call_site().start().line;
     let module_path = match resolved_current_module_path(Span::call_site(), "#[validators]") {
         Ok(path) => path,
         Err(err) => return err,
     };
-    parse_validators(attr, item, &module_path)
+    parse_validators(attr, item, &module_path, line_number)
 }
 
 #[doc(hidden)]
