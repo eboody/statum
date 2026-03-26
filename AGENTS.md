@@ -12,6 +12,11 @@
 - Happy-path tests are not sufficient for authority features. Add adversarial cases for constructs that differ across observation stages, including `#[cfg]`, macro-generated items, `include!`, and duplicate-id pressure where relevant.
 - Closeout for authority features must state: claimed authority surface, actual observation point, unsupported cases rejected or still open, and adversarial tests added.
 
+## Bug Hunt Rule
+- Treat pre-validation helpers as boundary surfaces when they can observe malformed input before the intended validator. Common examples: sort comparators, sort-key builders, dedup keys, display helpers, and path builders.
+- For APIs that promise writes under a directory but accept a file name or stem, reject separators, `..`, and absolute paths before creating directories or writing files.
+- Add adversarial tests for one malformed reference that reaches sort or key extraction before validation and one path-like file stem or name for directory-anchored writers when those surfaces exist.
+
 ## Project Structure & Module Organization
 This is a Rust workspace with four crates:
 - `statum/` public API crate.
