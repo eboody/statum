@@ -12,14 +12,19 @@ It is authoritative only for machine-local structure:
 - graph roots derivable from the static graph itself
 
 For linked-build codebase export, `statum-graph` can also combine every linked
-compiled machine family plus direct machine-like payload links written in state
-data and declared validator-entry surfaces emitted by compiled
-`#[validators]` impls. That codebase view is still static only. It does not
-model runtime-selected branches or orchestration order across machines.
-Validator node labels come from the impl self type as written in source and are
-display-only, not canonical Rust type identity. Method-level `#[cfg]` and
-`#[cfg_attr]` on validator methods are rejected at the macro layer.
-`include!()`-generated validator impls are also rejected.
+compiled machine family, legacy direct payload links, declared validator-entry
+surfaces, direct-construction availability per state, and exact relation
+records inferred from supported type syntax plus nominal
+`#[machine_ref(...)]` declarations. That codebase view is still static only. It
+does not model runtime-selected branches or orchestration order across
+machines. Validator node labels come from the impl self type as written in
+source and are display-only, not canonical Rust type identity. Method-level
+`#[cfg]` and `#[cfg_attr]` on validator methods are rejected at the macro
+layer. `include!()`-generated validator impls are also rejected. In v1, exact
+direct-type relations recurse only through canonical absolute carrier paths
+such as `::core::option::Option<...>` and `::core::result::Result<..., E>`,
+and direct machine targets must use explicit `crate::`, `self::`, `super::`,
+or absolute paths instead of imported aliases or bare names.
 
 ## Install
 
@@ -241,13 +246,16 @@ time, use `CodebaseDoc`:
 #     #[state]
 #     pub enum State {
 #         Draft,
-#         InProgress(task::Machine<task::Running>),
+#         InProgress(super::task::Machine<super::task::Running>),
 #     }
 #     #[machine]
 #     pub struct Machine<State> {}
 #     #[transition]
 #     impl Machine<Draft> {
-#         fn start(self, task: task::Machine<task::Running>) -> Machine<InProgress> {
+#         fn start(
+#             self,
+#             task: super::task::Machine<super::task::Running>,
+#         ) -> Machine<InProgress> {
 #             self.transition_with(task)
 #         }
 #     }
@@ -256,6 +264,7 @@ let codebase = CodebaseDoc::linked()?;
 
 assert!(codebase.machines().len() >= 2);
 assert!(!codebase.links().is_empty());
+assert!(!codebase.relations().is_empty());
 # Ok::<(), statum_graph::CodebaseDocError>(())
 ```
 
@@ -273,13 +282,20 @@ assert_eq!(paths.len(), 4);
 ```
 
 The codebase view is based on the linked compiled build, not a source scan.
-Static cross-machine links come only from direct machine-like payload types
-written in state data, including named fields. Validator-entry nodes come only
-from compiled `#[validators]` impls and represent declared rebuild surfaces
-such as `DbRow::into_machine()`, not runtime match outcomes. Both surfaces fail
-closed on malformed or ambiguous linked metadata. Wrapper aliases, runtime
-composition, builder overlays, and terminal-state semantics are intentionally
-out of scope.
+Legacy `links()` come only from direct machine-like payload types written in
+state data, including named fields. The richer exact `relations()` surface also
+covers machine fields, transition parameters, and nominal opaque reference
+types declared once with `#[machine_ref(...)]`. In v1, `#[machine_ref(...)]`
+supports nominal structs and tuple structs only; plain type aliases are
+rejected. Exact direct-type relations recurse only through canonical absolute
+carrier paths such as `::core::option::Option<...>` and
+`::core::result::Result<..., E>`, and direct machine targets must use explicit
+`crate::`, `self::`, `super::`, or absolute paths. Validator-entry nodes come
+only from compiled `#[validators]` impls and represent declared rebuild
+surfaces such as `DbRow::into_machine()`, not runtime match outcomes. All
+exact surfaces fail closed on malformed or ambiguous linked metadata.
+Transition-body orchestration, runtime composition, primitive ids with no
+typed wrapper, and terminal-state semantics are intentionally out of scope.
 
 If you do not want to hand-write a runner crate, install
 `cargo-statum-graph` and point it at an existing library package:

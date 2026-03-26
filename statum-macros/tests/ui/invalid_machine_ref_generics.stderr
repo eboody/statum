@@ -1,0 +1,6 @@
+error: Error: `#[machine_ref(...)]` on `TaskId` does not support generics in v1.
+       Fix: declare a concrete nominal wrapper type and attach `#[machine_ref(...)]` there.
+  --> tests/ui/invalid_machine_ref_generics.rs:21:14
+   |
+21 | struct TaskId<T>(T);
+   |              ^^^

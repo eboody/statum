@@ -351,6 +351,27 @@ pub fn linked_validator_entries() -> &'static [LinkedValidatorEntryDescriptor] {
     &__STATUM_LINKED_VALIDATOR_ENTRIES
 }
 
+/// Linked exact relation records visible to the current build.
+#[doc(hidden)]
+#[linkme::distributed_slice]
+pub static __STATUM_LINKED_RELATIONS: [LinkedRelationDescriptor];
+
+/// Returns every linked exact relation record visible to the current build.
+pub fn linked_relations() -> &'static [LinkedRelationDescriptor] {
+    &__STATUM_LINKED_RELATIONS
+}
+
+/// Linked reference-type declarations visible to the current build.
+#[doc(hidden)]
+#[linkme::distributed_slice]
+pub static __STATUM_LINKED_REFERENCE_TYPES: [LinkedReferenceTypeDescriptor];
+
+/// Returns every linked reference-type declaration visible to the current
+/// build.
+pub fn linked_reference_types() -> &'static [LinkedReferenceTypeDescriptor] {
+    &__STATUM_LINKED_REFERENCE_TYPES
+}
+
 /// Structural machine graph emitted from macro-generated metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MachineGraph<S: 'static, T: 'static> {
@@ -495,6 +516,8 @@ pub struct LinkedStateDescriptor {
     pub description: Option<&'static str>,
     /// Whether the state carries `state_data`.
     pub has_data: bool,
+    /// Whether the machine exposes direct construction for this state.
+    pub direct_construction_available: bool,
 }
 
 /// Static descriptor for one transition site.
@@ -532,11 +555,145 @@ pub struct StaticMachineLinkDescriptor {
     pub from_state: &'static str,
     /// Field name for named payloads; `None` for tuple payloads.
     pub field_name: Option<&'static str>,
-    /// Normalized machine-path suffix segments written in the payload type.
+    /// Machine-path suffix segments written in the payload type.
     pub to_machine_path: &'static [&'static str],
     /// Target state marker name taken from the payload type's first generic.
     pub to_state: &'static str,
 }
+
+/// Exact relation kinds exported by the linked build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LinkedRelationKind {
+    /// A state payload type points at another machine state.
+    StatePayload,
+    /// A machine struct field type points at another machine state.
+    MachineField,
+    /// A transition parameter type points at another machine state.
+    TransitionParam,
+}
+
+/// Why one exact relation was inferred.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LinkedRelationBasis {
+    /// The target was visible directly in the scanned type syntax.
+    DirectTypeSyntax,
+    /// The scanned type resolved through one declared reference type.
+    DeclaredReferenceType,
+}
+
+/// Exact target written into one linked relation record.
+#[derive(Clone, Copy, Debug)]
+pub enum LinkedRelationTarget {
+    /// A directly visible machine target written in the scanned type syntax.
+    DirectMachine {
+        /// Exact machine path segments resolved from the source type.
+        machine_path: &'static [&'static str],
+        /// Target state marker name.
+        state: &'static str,
+    },
+    /// A nominal reference type that must resolve through one declaration.
+    DeclaredReferenceType {
+        /// Compiler-resolved type identity getter for the named reference type.
+        resolved_type_name: fn() -> &'static str,
+    },
+}
+
+impl PartialEq for LinkedRelationTarget {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::DirectMachine {
+                    machine_path: left_machine_path,
+                    state: left_state,
+                },
+                Self::DirectMachine {
+                    machine_path: right_machine_path,
+                    state: right_state,
+                },
+            ) => left_machine_path == right_machine_path && left_state == right_state,
+            (
+                Self::DeclaredReferenceType {
+                    resolved_type_name: left_name,
+                },
+                Self::DeclaredReferenceType {
+                    resolved_type_name: right_name,
+                },
+            ) => left_name() == right_name(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for LinkedRelationTarget {}
+
+/// One exact relation source exported by the linked build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LinkedRelationSource {
+    /// A state payload type produced the relation.
+    StatePayload {
+        /// Source state that carries the relation.
+        state: &'static str,
+        /// Named field for named payloads; `None` for tuple payloads.
+        field_name: Option<&'static str>,
+    },
+    /// A machine struct field produced the relation.
+    MachineField {
+        /// Named field for named structs; `None` for tuple structs.
+        field_name: Option<&'static str>,
+        /// Stable field position within the machine struct.
+        field_index: usize,
+    },
+    /// One transition parameter produced the relation.
+    TransitionParam {
+        /// Source state where the transition is defined.
+        state: &'static str,
+        /// Transition method name.
+        transition: &'static str,
+        /// Stable non-receiver parameter index.
+        param_index: usize,
+        /// Simple identifier name when available.
+        param_name: Option<&'static str>,
+    },
+}
+
+/// One exact machine relation carried by the linked build inventory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LinkedRelationDescriptor {
+    /// Rust-facing identity of the source machine family.
+    pub machine: MachineDescriptor,
+    /// Exact relation kind.
+    pub kind: LinkedRelationKind,
+    /// Exact relation source.
+    pub source: LinkedRelationSource,
+    /// Why Statum considered this relation exact.
+    pub basis: LinkedRelationBasis,
+    /// Exact relation target.
+    pub target: LinkedRelationTarget,
+}
+
+/// One declared reference type carried by the linked build inventory.
+#[derive(Clone, Copy, Debug)]
+pub struct LinkedReferenceTypeDescriptor {
+    /// Human-facing Rust path of the declared reference type.
+    pub rust_type_path: &'static str,
+    /// Compiler-resolved type identity getter for the declared reference type.
+    pub resolved_type_name: fn() -> &'static str,
+    /// Exact machine path segments resolved from the declaration target.
+    pub to_machine_path: &'static [&'static str],
+    /// Target state marker name written in the declaration.
+    pub to_state: &'static str,
+}
+
+impl PartialEq for LinkedReferenceTypeDescriptor {
+    fn eq(&self, other: &Self) -> bool {
+        self.rust_type_path == other.rust_type_path
+            && (self.resolved_type_name)() == (other.resolved_type_name)()
+            && self.to_machine_path == other.to_machine_path
+            && self.to_state == other.to_state
+    }
+}
+
+impl Eq for LinkedReferenceTypeDescriptor {}
 
 /// One declared validator-entry surface carried by the linked build inventory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -911,12 +1068,14 @@ mod tests {
                 label: None,
                 description: None,
                 has_data: false,
+                direct_construction_available: true,
             },
             LinkedStateDescriptor {
                 rust_name: "Review",
                 label: Some("Review"),
                 description: None,
                 has_data: true,
+                direct_construction_available: true,
             },
         ];
         static LINKS: [StaticMachineLinkDescriptor; 1] = [StaticMachineLinkDescriptor {

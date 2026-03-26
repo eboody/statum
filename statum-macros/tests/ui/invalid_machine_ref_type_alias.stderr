@@ -1,0 +1,8 @@
+error: Error: `#[machine_ref(...)]` must be applied to a nominal struct or tuple struct, but this item is a type alias `TaskId`.
+       Fix: apply `#[machine_ref(...)]` to a nominal wrapper struct like `struct TaskId(Uuid);`.
+  --> tests/ui/invalid_machine_ref_type_alias.rs:20:1
+   |
+20 | #[machine_ref(crate::Task<crate::Running>)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `machine_ref` (in Nightly builds, run with -Z macro-backtrace for more info)

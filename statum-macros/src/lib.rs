@@ -9,6 +9,7 @@
 //!
 //! - [`state`] for declaring legal lifecycle phases
 //! - [`machine`] for declaring the typed machine and durable context
+//! - [`machine_ref`] for declaring one nominal opaque machine reference type
 //! - [`transition`] for validating legal transition impls
 //! - [`validators`] for rebuilding typed machines from persisted data
 
@@ -22,6 +23,8 @@ moddef::moddef!(
     flat (pub) mod {
     },
     flat (pub(crate)) mod {
+        machine_ref,
+        relation,
         presentation,
         state,
         machine,
@@ -112,6 +115,16 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+/// Declare one nominal opaque type that points at a concrete machine state.
+///
+/// Apply `#[machine_ref(crate::Machine<crate::State>)]` to a nominal struct or
+/// tuple struct when a field or transition parameter should carry an exact
+/// machine relation without repeating that relation at every use site.
+#[proc_macro_attribute]
+pub fn machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
+    machine_ref::parse_machine_ref(attr, item)
+}
+
 /// Validate and generate legal transitions for one source state.
 ///
 /// Apply `#[transition]` to an `impl Machine<CurrentState>` block. Each method
@@ -125,9 +138,13 @@ pub fn transition(
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     let input = parse_macro_input!(item as ItemImpl);
+    let module_path = match resolved_current_module_path(Span::call_site(), "#[transition]") {
+        Ok(path) => path,
+        Err(err) => return err,
+    };
 
     // -- Step 1: Parse
-    let tr_impl = match parse_transition_impl(&input) {
+    let tr_impl = match parse_transition_impl(&input, &module_path) {
         Ok(parsed) => parsed,
         Err(err) => return err.into(),
     };
@@ -169,7 +186,10 @@ pub fn __statum_emit_validator_methods_impl(input: TokenStream) -> TokenStream {
     validators::emit_validator_methods_impl(input)
 }
 
-fn resolved_current_module_path(span: Span, macro_name: &str) -> Result<String, TokenStream> {
+pub(crate) fn resolved_current_module_path(
+    span: Span,
+    macro_name: &str,
+) -> Result<String, TokenStream> {
     let line_number = span.start().line;
     let resolved = if line_number == 0 {
         current_module_path_opt()

@@ -5,13 +5,15 @@
 //! graph roots derivable from the static graph itself.
 //!
 //! For linked-build codebase export, use [`codebase::CodebaseDoc`]. That
-//! surface combines every linked compiled machine family, statically written
-//! direct machine-like payload links, and declared validator-entry surfaces
-//! emitted by compiled `#[validators]` impls. Validator node labels use the
-//! impl self type as written in source, so they are display syntax rather than
-//! canonical Rust type identity. Method-level `#[cfg]` and `#[cfg_attr]` on
-//! validator methods are rejected at the macro layer. `include!()`-generated
-//! validator impls are also rejected.
+//! surface combines every linked compiled machine family, declared
+//! validator-entry surfaces emitted by compiled `#[validators]` impls, direct
+//! construction availability per state, legacy direct payload links, and exact
+//! cross-machine relations inferred from supported type syntax plus nominal
+//! `#[machine_ref(...)]` declarations. Validator node labels use the impl self
+//! type as written in source, so they are display syntax rather than canonical
+//! Rust type identity. Method-level `#[cfg]` and `#[cfg_attr]` on validator
+//! methods are rejected at the macro layer. `include!()`-generated validator
+//! impls are also rejected.
 //!
 //! Use [`MachineDoc::from_machine`] for Statum-generated machine families and
 //! [`MachineDoc::try_from_graph`] when you need to validate an externally
@@ -33,7 +35,8 @@ mod export;
 pub mod render;
 
 pub use codebase::{
-    CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine, CodebaseState,
+    CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine, CodebaseRelation,
+    CodebaseRelationBasis, CodebaseRelationKind, CodebaseRelationSource, CodebaseState,
     CodebaseTransition, CodebaseValidatorEntry,
 };
 pub use export::{

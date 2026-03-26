@@ -1,79 +1,86 @@
 # Statum Inspector Plan
 
-This plan describes a reusable inspector for Statum machines: a terminal UI in
-the spirit of `lazygit` that can inspect static machine topology, replay
-recorded runtime transitions, step into sub-machine composition, and show data
-changes when an application provides explicit snapshot inputs.
+This plan describes the shared inspector TUI for Statum.
+
+The inspector is now codebase-first.
+
+The first job is not replay. The first job is to make Statum's exact static
+protocol surface navigable at workspace scale, then layer heuristic discovery
+and runtime replay on top without mixing their authority levels.
 
 ## Goal
 
-Build a shared inspector stack that lets Statum do as much as possible by
-default while keeping the remaining gaps explicit and app-owned.
+Build a reusable inspector in the spirit of `lazygit` that lets a developer:
 
-Statum should own:
+- see what machines exist in a workspace
+- inspect each machine's states and legal transitions
+- inspect declared validator entry surfaces
+- see which states are directly constructible
+- see what points at a selected machine, state, or transition
+- see why a relation exists
 
-- static graph inspection
-- replay and navigation over recorded traces
-- the generic inspector protocol
-- the generic TUI shell
-- generic filtering, selection, stepping, and tree navigation
+Later phases add:
 
-Applications should own:
+- heuristic relation overlays
+- replay of recorded runtime transitions
+- snapshots and diffs
+- parent and child composition trees
 
-- machine instance identity
-- runtime transition events
-- parent and child machine composition events
-- before and after snapshots
-- domain projections, redaction, and custom diffs
+## Dependency
+
+The exact static substrate is tracked separately in
+[exact-static-relations-plan.md](/home/eran/code/statum/docs/exact-static-relations-plan.md).
+
+That plan is the protocol-truth dependency for this one.
+
+The inspector should consume that substrate. It should not re-derive exact
+static relations for itself.
 
 ## Non-Goals
 
 This plan does not try to:
 
-- infer runtime values from type information alone
-- infer parent and child machine composition from module layout or naming
-- promise exact data diffs for arbitrary domain types without explicit
-  projection or snapshot hooks
-- replace existing introspection graph APIs
-
-## Recommendation
-
-Implement this as a capability-based inspector, not as a best-effort analyzer.
-
-The shared Statum side should provide a stable protocol and a generic
-navigation model. Each codebase should opt into richer inspection by
-implementing small explicit adapters.
-
-That keeps the authority boundary clear:
-
-- Statum owns topology and generic replay behavior.
-- Applications own runtime facts and domain views.
+- infer runtime values from static type information alone
+- export heuristic relations as if they were exact
+- infer parent and child runtime composition from module layout or naming
+- promise exact data diffs without explicit snapshot or projection input
+- replace the exact codebase export model with a TUI-only interpretation
 
 ## Authority Contract
 
-Claimed authority surface:
+Claimed authority surface in the exact lane:
 
-- exact machine-local topology from Statum graph data
-- exact executed transition path from explicit runtime events
+- exact linked compiled machine topology
+- exact declared validator-entry surfaces
+- exact direct-construction availability per state
+- exact cross-machine relations from the codebase export substrate
+
+Actual observation point for the exact lane:
+
+- `MachineIntrospection::GRAPH`
+- linked compiled machine, validator-entry, relation, and reference-type
+  inventories
+- macro-expanded, cfg-pruned `#[machine]`, `#[transition]`, `#[validators]`,
+  and `#[machine_ref]` items
+
+Claimed authority surface in the heuristic lane:
+
+- none
+
+The heuristic lane is useful but non-authoritative. It may use broader source
+or body analysis later, but it must stay visually and semantically separate
+from exact relations.
+
+Claimed authority surface in the runtime lane:
+
+- exact executed transition paths from explicit runtime events
 - exact displayed data only for snapshots or projections an application
   explicitly provides
 
-Actual observation points:
-
-- static topology: `statum::MachineIntrospection::GRAPH`
-- executed path: recorded runtime transition and composition events
-- data views: recorded snapshots or app-provided projection hooks
-
-Unsupported unless provided explicitly:
-
-- runtime-selected branch choice without runtime events
-- sub-machine composition without composition events
-- exact before and after data diffs without snapshots or a projection surface
-
 Fail-closed rule:
 
-If the inspector does not have the required runtime input, it must show that
-the information is unavailable. It must not guess.
+If the inspector does not have the required exact, heuristic, or runtime
+inputs, it must show that the information is unavailable. It must not guess.
 
 ## Layering
 
@@ -83,313 +90,176 @@ Narrative layer:
 
 Stage layer:
 
-- replay session model
-- selection state
-- machine tree state
-- timeline cursor
+- one workspace session model
+- exact static selection state
+- optional heuristic overlay state
+- later replay and composition state
 
 Protocol-truth layer:
 
-- static graph export
-- runtime transition events
-- runtime composition events
-- runtime snapshots or projections
+- exact `CodebaseDoc` export
+- later runtime transition events
+- later runtime composition events
+- later snapshot or projection inputs
 
 Plain-function leaves:
 
-- diff formatting
-- tree expansion
-- keyboard bindings
-- filtering
-- search
 - rendering helpers
+- keybindings
+- search and filtering
+- layout and focus management
+- label formatting
 
 Duplication risks:
 
-- separate graph models for static export and inspector replay
-- separate composition models in app code and inspector code
-- custom per-app event formats with no shared protocol
+- separate graph models for exact export and the inspector
+- separate relation semantics in renderers and the TUI
+- mixing heuristic relations into the exact export contract
 
 Locality risks:
 
-- spreading replay state across TUI widgets instead of one session model
-- letting rendering code decide semantics that belong in the replay model
+- spreading selection and relation semantics across panes instead of one
+  session model
+- making the graph widget decide semantics that belong in the session or
+  export model
 
 Invariant-placement risks:
 
-- trying to compute executed path from topology
-- trying to compute data change from type metadata
-- trying to compute nested composition from static naming conventions
+- computing exact relations from heuristic scans
+- inferring executed paths from topology
+- inferring data changes from type metadata alone
 
 ## Product Shape
 
 The default TUI should use a stable multi-pane layout:
 
-- left: machine tree and sub-machine tree
-- center: graph view or timeline view
-- right: state, transition, and data details for the current selection
-- bottom: event log, search results, and filter status
+- left: workspace overview, machine list, and disconnected groups
+- center: exact graph view or later timeline view
+- right: machine, state, transition, and relation details for the current
+  selection
+- bottom: search results, filter status, and later runtime event logs
 
-Core interactions:
+Core exact-lane views:
 
-- select machine instance
-- step forward and backward through transitions
-- jump to parent or child machine
-- switch between graph and timeline
-- inspect legal next transitions for the selected point
-- inspect before and after snapshots when available
+- workspace overview
+- machine view
+- relation view
+- detail pane
 
-## Capability Model
+Workspace overview should show:
 
-### Level 0: Graph Only
+- machine count
+- disconnected groups
+- exact machine summary edges
+- filters for relation kind and provenance
 
-Inputs:
-
-- static graph data
-
-Supports:
+Machine view should show:
 
 - states
-- edges
-- roots
-- legal next transitions
+- transitions
+- validator-entry nodes
+- builder markers
 
-### Level 1: Trace Replay
+Relation view should show:
 
-Inputs:
+- inbound exact relations for the current machine, state, or transition
+- outbound exact relations for the current machine, state, or transition
+- relation kind
+- relation basis
 
-- graph data
-- runtime transition events with machine instance ids
+Detail pane should show why a relation exists, for example:
 
-Supports:
+- `state_payload`
+- `machine_field`
+- `transition_param`
+- `validator_entry`
+- `direct_construction_available`
 
-- exact executed path replay
-- timeline stepping
-- per-instance navigation
+## Exact And Heuristic Lanes
 
-### Level 2: Snapshot Inspection
+The inspector should expose two different static lanes.
 
-Inputs:
+Exact lane:
 
-- graph data
-- transition events
-- before and after snapshots or inspectable projections
+- backed by `CodebaseDoc`
+- exported through Mermaid, DOT, PlantUML, and JSON
+- default view when the inspector opens
 
-Supports:
+Heuristic lane:
 
-- per-step data inspection
-- before and after diff views
-
-### Level 3: Composition Tree
-
-Inputs:
-
-- graph data
-- transition events
-- composition events
-- optional snapshots
-
-Supports:
-
-- parent and child machine tree
-- step into and out of sub-machine timelines
-- correlated replay across nested machines
-
-### Level 4: Rich Domain Adapters
-
-Inputs:
-
-- all of the above
-- app labels, redaction, custom diff formatting, and external ids
-
-Supports:
-
-- human-friendly labels
-- redacted views
-- richer diffs
-- links to domain objects and external traces
-
-## Crate Shape
-
-Recommended crates:
-
-- `statum-inspect-core`
-- `statum-inspect-tui`
-- `statum-inspect-json`
-
-Optional integration in `statum`:
-
-- feature-gated helpers for transition event emission
-- feature-gated helpers for graph export
-- optional helpers for snapshot hooks
-
-### statum-inspect-core
-
-Owns:
-
-- protocol types
-- replay engine
-- machine tree model
-- snapshot and diff model
-- filtering and selection logic
-
-### statum-inspect-tui
-
-Owns:
-
-- `ratatui` app
-- panes and layouts
-- keybindings
-- search UX
-- tree expansion and focus management
-
-### statum-inspect-json
-
-Owns:
-
-- file format
-- import and export helpers
-- fixture generation for tests
-
-## Protocol Model
-
-The protocol should stay small and explicit.
-
-Core types:
-
-- `MachineInstanceId`
-- `TransitionEvent`
-- `CompositionEvent`
-- `SnapshotEvent`
-- `InspectorValue`
-
-Recommended shape:
-
-```rust
-pub struct TransitionEvent {
-    pub sequence: u64,
-    pub machine_instance: MachineInstanceId,
-    pub machine_type: &'static str,
-    pub from_state: String,
-    pub transition: String,
-    pub to_state: String,
-    pub parent_machine: Option<MachineInstanceId>,
-    pub timestamp: Option<SystemTime>,
-}
-
-pub enum CompositionEvent {
-    AttachChild {
-        parent: MachineInstanceId,
-        child: MachineInstanceId,
-        role: String,
-    },
-    DetachChild {
-        parent: MachineInstanceId,
-        child: MachineInstanceId,
-    },
-}
-
-pub struct SnapshotEvent {
-    pub sequence: u64,
-    pub machine_instance: MachineInstanceId,
-    pub kind: SnapshotKind,
-    pub machine_fields: Option<InspectorValue>,
-    pub state_data: Option<InspectorValue>,
-}
-
-pub enum InspectorValue {
-    Null,
-    Bool(bool),
-    Number(String),
-    String(String),
-    List(Vec<InspectorValue>),
-    Map(Vec<(String, InspectorValue)>),
-    Opaque(String),
-    Redacted,
-}
-```
-
-The protocol should prefer generic structural data over stringly ad hoc blobs.
-
-## Integration Surface
-
-Each application should implement a small adapter surface.
-
-Minimum adapter:
-
-- stable machine instance ids
-- transition event emission
-
-Recommended adapter:
-
-- snapshot projection for machine fields
-- snapshot projection for state data
-- composition events for parent and child machines
-
-Nice-to-have adapter:
-
-- redaction rules
-- custom labels
-- custom diff formatting
-- external correlation ids
-
-Possible traits:
-
-```rust
-pub trait InspectMachine {
-    fn machine_instance_id(&self) -> MachineInstanceId;
-    fn machine_fields_value(&self) -> InspectorValue;
-    fn state_data_value(&self) -> Option<InspectorValue>;
-}
-
-pub trait InspectLabel {
-    fn inspector_label(&self) -> Option<String> {
-        None
-    }
-}
-```
+- optional and TUI-only
+- separate filters and styling
+- visible provenance for why each heuristic relation exists
+- never merged into the exact export model
 
 ## Phases
 
-### Phase 0: Pin the Protocol
+### Phase 0: Exact Static Substrate
+
+Source of truth:
+
+- [exact-static-relations-plan.md](/home/eran/code/statum/docs/exact-static-relations-plan.md)
+
+Status:
+
+- foundation done
+- builder rendering and relation projection still open
+
+### Phase 1: Exact Codebase Viewer MVP
 
 Deliverables:
 
-- protocol types in `statum-inspect-core`
-- JSON schema or file format contract
-- authority docs for static graph, runtime replay, and snapshots
+- load one `CodebaseDoc`
+- workspace overview
+- machine view
+- validator-entry display
+- visible builder markers
+- exact machine summary edges
 
 Success criteria:
 
-- no UI code decides semantics
-- protocol makes missing capabilities explicit
+- graph-only mode answers what machines exist and how they statically connect
 
-### Phase 1: Graph Viewer MVP
+### Phase 2: Exact Relation Navigation
 
 Deliverables:
 
-- load one static graph
-- render graph and state list
-- inspect roots and legal next transitions
+- relation pane
+- inbound and outbound navigation
+- provenance detail pane
+- exact-lane search and filtering
 
 Success criteria:
 
-- graph-only mode is useful without runtime integration
+- the user can answer what points at this and why
 
-### Phase 2: Replay MVP
+### Phase 3: Heuristic Overlay Lane
 
 Deliverables:
 
-- load runtime transition events
-- build per-instance timelines
-- step forward and backward
-- show selected transition and resulting state
+- optional heuristic relation collector
+- separate styling from the exact lane
+- provenance display for heuristic relations
+- explicit unavailable state when heuristic analysis cannot run
 
 Success criteria:
 
-- exact executed path is replayable without snapshots
+- users can opt into broader discovery without weakening the exact lane
 
-### Phase 3: Snapshot Support
+### Phase 4: Replay MVP
+
+Deliverables:
+
+- runtime transition event protocol
+- per-instance replay timelines
+- timeline stepping
+- graph and timeline selection sync
+
+Success criteria:
+
+- exact executed paths are replayable without snapshots
+
+### Phase 5: Snapshot Support
 
 Deliverables:
 
@@ -400,56 +270,51 @@ Deliverables:
 
 Success criteria:
 
-- data changes are inspectable when provided
-- missing data is shown as missing, not guessed
+- data changes are inspectable when provided and visibly unavailable when not
 
-### Phase 4: Composition Tree
+### Phase 6: Composition Tree
 
 Deliverables:
 
 - parent and child machine tree
 - attach and detach events
-- nested timeline stepping
+- nested replay stepping
 
 Success criteria:
 
-- user can step into and out of sub-machines without losing replay context
+- the user can step into and out of sub-machines without losing context
 
-### Phase 5: App Adapter Ergonomics
+### Phase 7: Adapter Ergonomics And Polish
 
 Deliverables:
 
 - helper traits
-- helper macros or derive support if justified
+- helper macros only if justified
 - redaction hooks
 - custom labels
+- saved filters and layouts
 
 Success criteria:
 
-- a new app can integrate without hand-rolling the whole protocol
-
-### Phase 6: Polish
-
-Deliverables:
-
-- search
-- filters
-- saved layouts
-- export helpers
-- snapshot fixtures for tests
-
-Success criteria:
-
-- day-to-day inspector usage feels fast and predictable
+- one application can integrate without rebuilding the whole protocol
 
 ## Testing Plan
 
-Static graph tests:
+Exact-lane tests:
 
-- graph-only load
-- exact branch targets
-- multiple roots
-- zero-root cycles
+- workspace with multiple machines
+- disconnected groups
+- exact machine summary edges
+- builder markers
+- relation-pane lookup for inbound and outbound edges
+- provenance details for each exact relation kind
+
+Heuristic-lane tests:
+
+- heuristic relations are visually distinct
+- heuristic provenance is visible
+- heuristic results never appear in exact export output
+- unavailable heuristic state is explicit
 
 Runtime tests:
 
@@ -471,40 +336,47 @@ Snapshot tests:
 
 Adversarial tests:
 
-- graph-only mode with no runtime trace
-- runtime trace with no snapshots
+- exact lane with no heuristic overlay
+- heuristic lane with no runtime replay
+- runtime replay with no snapshots
 - composition events with unknown machine ids
 - duplicate machine instance ids
-- stale graph and runtime protocol version mismatch
-
-## Open Questions
-
-- should transition event emission live in `statum` itself or in a sidecar
-  crate?
-- should snapshot projection be trait-based, macro-based, or both?
-- should the first renderer be graph-first, timeline-first, or split-view by
-  default?
-- how much redaction should live in app code versus inspector config?
+- stale export and runtime protocol version mismatch
 
 ## Checklist
 
-- [ ] Create `statum-inspect-core`
-- [ ] Define protocol types for graph replay, composition, and snapshots
-- [ ] Define the JSON import and export contract
-- [ ] Add graph-only inspector mode
+- [x] Create the exact static substrate plan
+- [x] Make the inspector plan depend on that substrate
+- [ ] Render builder markers in the exact graph backends
+- [ ] Derive and render exact machine summary edges
+- [ ] Add workspace overview to the TUI
+- [ ] Add machine view with validators and builder markers
+- [ ] Add relation pane with inbound and outbound navigation
+- [ ] Add provenance detail pane
+- [ ] Add exact-lane search and filters
+- [ ] Add separate heuristic overlay lane
 - [ ] Add replay session model
 - [ ] Add timeline stepping
-- [ ] Add per-instance selection
-- [ ] Add snapshot events and generic structural diffing
-- [ ] Add explicit unavailable states for missing snapshot data
-- [ ] Add composition events and machine tree navigation
-- [ ] Add opt-in helper hooks on the Statum side
-- [ ] Add one sample application adapter
-- [ ] Add TUI panes and keybindings
-- [ ] Add graph-only tests
-- [ ] Add replay tests
-- [ ] Add composition tests
-- [ ] Add snapshot and diff tests
-- [ ] Add adversarial protocol and mismatch tests
-- [ ] Document the authority boundary in crate docs
-- [ ] Decide whether redaction lives in adapters, config, or both
+- [ ] Add snapshot protocol and generic structural diffing
+- [ ] Add composition tree and nested replay navigation
+- [ ] Add helper hooks and one sample application adapter
+- [ ] Add exact-lane tests for builder markers, summary edges, and relation
+      provenance
+- [ ] Add heuristic-lane separation tests
+- [ ] Add replay, snapshot, and composition protocol tests
+
+## Acceptance Criteria
+
+This plan is working when the inspector can answer:
+
+- what machines exist in this workspace
+- where can this machine be entered through validators
+- which states are directly constructible
+- what points at this machine, state, or transition
+- why that relation exists
+
+Later phases extend that to:
+
+- what executed at runtime
+- what data changed
+- where this machine sits in a parent and child runtime tree

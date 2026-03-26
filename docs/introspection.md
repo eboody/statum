@@ -97,17 +97,28 @@ surface, joins optional presentation labels and descriptions, and renders
 Mermaid, DOT, PlantUML, or stable JSON output.
 
 For a linked-build codebase view, `statum-graph::CodebaseDoc::linked()` also
-collects every linked compiled machine family and resolves direct machine-like
-payload links written in state data plus declared validator-entry surfaces from
-compiled `#[validators]` impls. That combined view is still static. It is not a
-whole-workspace source scan, it does not model runtime orchestration, and
-validator entries describe declared rebuild surfaces rather than runtime match
-outcomes. Validator node labels use the impl self type as written in source, so
-they are human-facing display syntax rather than canonical Rust type identity.
-Method-level `#[cfg]` and `#[cfg_attr]` on validator methods are rejected at
-the macro layer, so the linked validator inventory covers only supported
-compiled validator impl shapes. Validator impls inside `include!()` files are
-also rejected at the macro layer.
+collects every linked compiled machine family and exports:
+
+- legacy direct payload links from state data
+- declared validator-entry surfaces from compiled `#[validators]` impls
+- direct-construction availability per state
+- exact relation records from state payloads, machine fields, transition
+  parameters, and nominal `#[machine_ref(...)]` declarations
+
+That combined view is still static. It is not a whole-workspace source scan, it
+does not model runtime orchestration, and validator entries describe declared
+rebuild surfaces rather than runtime match outcomes. Validator node labels use
+the impl self type as written in source, so they are human-facing display
+syntax rather than canonical Rust type identity. Method-level `#[cfg]` and
+`#[cfg_attr]` on validator methods are rejected at the macro layer, so the
+linked validator inventory covers only supported compiled validator impl
+shapes. Validator impls inside `include!()` files are also rejected at the
+macro layer. In v1, exact direct-type relations recurse only through canonical
+absolute carrier paths such as `::core::option::Option<...>` and
+`::core::result::Result<..., E>`, and direct machine targets must use explicit
+`crate::`, `self::`, `super::`, or absolute paths rather than imported aliases
+or bare prelude names. `#[machine_ref(...)]` is trait-backed and supports
+nominal structs and tuple structs only; plain type aliases are rejected.
 
 ## Transition Identity
 

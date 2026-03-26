@@ -67,6 +67,13 @@ fn test_invalid_machine_usage() {
 }
 
 #[test]
+fn test_invalid_machine_ref_usage() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/invalid_machine_ref_type_alias.rs");
+    t.compile_fail("tests/ui/invalid_machine_ref_generics.rs");
+}
+
+#[test]
 fn test_invalid_transition_usage() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_transition_no_methods.rs");
@@ -164,4 +171,5 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_builder_overwrite.rs");
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
+    t.pass("tests/ui/valid_machine_ref.rs");
 }

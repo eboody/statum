@@ -74,14 +74,14 @@ mod task {
 }
 
 mod workflow {
-    use super::*;
+    use super::task;
     use statum::{machine, state, transition, validators, Error};
 
     #[state]
     pub enum State {
         Draft,
         #[present(label = "In Progress")]
-        InProgress(task::Machine<task::Running>),
+        InProgress(super::task::Machine<super::task::Running>),
         Complete,
     }
 
@@ -92,7 +92,10 @@ mod workflow {
     #[transition]
     impl Machine<Draft> {
         #[present(label = "Start Workflow")]
-        fn start(self, running_task: task::Machine<task::Running>) -> Machine<InProgress> {
+        fn start(
+            self,
+            running_task: super::task::Machine<super::task::Running>,
+        ) -> Machine<InProgress> {
             self.transition_with(running_task)
         }
     }
@@ -137,13 +140,12 @@ mod workflow {
 }
 
 mod named_holder {
-    use super::*;
     use statum::{machine, state, transition};
 
     #[state]
     pub enum State {
         Pending {
-            child: task::Machine<task::Done>,
+            child: super::task::Machine<super::task::Done>,
             note: &'static str,
         },
         Settled,
@@ -302,12 +304,14 @@ fn malformed_inventory_rejects_missing_transition_source_before_sort() {
             label: None,
             description: None,
             has_data: false,
+            direct_construction_available: true,
         },
         LinkedStateDescriptor {
             rust_name: "Review",
             label: None,
             description: None,
             has_data: false,
+            direct_construction_available: true,
         },
     ];
     static TRANSITIONS: [LinkedTransitionDescriptor; 2] = [
@@ -357,6 +361,7 @@ fn malformed_inventory_rejects_missing_static_link_source_state() {
         label: None,
         description: None,
         has_data: false,
+        direct_construction_available: true,
     }];
     static LINKS: [StaticMachineLinkDescriptor; 1] = [StaticMachineLinkDescriptor {
         from_state: "Missing",
@@ -415,6 +420,7 @@ fn malformed_inventory_rejects_missing_validator_target_state() {
         label: None,
         description: None,
         has_data: false,
+        direct_construction_available: true,
     }];
     static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
         machine: MachineDescriptor {
@@ -456,6 +462,7 @@ fn malformed_inventory_rejects_empty_validator_target_set() {
         label: None,
         description: None,
         has_data: false,
+        direct_construction_available: true,
     }];
     static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
         machine: MachineDescriptor {
@@ -497,6 +504,7 @@ fn malformed_inventory_rejects_duplicate_validator_target_state() {
         label: None,
         description: None,
         has_data: false,
+        direct_construction_available: true,
     }];
     static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
         machine: MachineDescriptor {
@@ -538,6 +546,7 @@ fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
         label: None,
         description: None,
         has_data: false,
+        direct_construction_available: true,
     }];
     static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
         machine: MachineDescriptor {

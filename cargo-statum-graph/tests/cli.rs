@@ -29,6 +29,8 @@ fn codebase_command_accepts_workspace_dir_and_writes_bundle_into_workspace_root(
     assert!(dot.contains("style=dashed"));
     assert!(plantuml.contains("@startuml"));
     assert!(json.contains("\"links\""));
+    assert!(json.contains("\"relations\""));
+    assert!(json.contains("\"direct_construction_available\""));
     assert!(json.contains("\"validator_entries\""));
     assert!(json.contains("workflow::Machine"));
     assert!(json.contains("task::Machine"));

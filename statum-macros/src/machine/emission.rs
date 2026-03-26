@@ -1,10 +1,13 @@
+use std::collections::HashSet;
+
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote};
+use quote::{ToTokens, format_ident, quote};
 use syn::{
     GenericArgument, GenericParam, Generics, Ident, ItemStruct, LitStr, PathArguments, Type,
     TypePath,
 };
 
+use crate::relation::{RelationTargetCandidate, collect_relation_targets, leading_type_ident};
 use crate::state::{
     state_family_target_resolver_macro_ident, state_family_visitor_macro_ident,
 };
@@ -54,6 +57,7 @@ pub fn generate_machine_impls(
     let field_type_aliases = generate_field_type_aliases(machine_info, item);
     let callback = match generate_machine_family_callback(
         machine_info,
+        item,
         &parsed_machine,
         &machine_ident,
         &state_generic_ident,
@@ -99,6 +103,7 @@ fn extract_state_generic_ident(generics: &Generics) -> Result<Ident, TokenStream
 
 fn generate_machine_family_callback(
     machine_info: &MachineInfo,
+    item: &ItemStruct,
     parsed_machine: &ParsedMachineInfo,
     machine_ident: &Ident,
     state_generic_ident: &Ident,
@@ -125,7 +130,7 @@ fn generate_machine_family_callback(
     );
     let builder_support = generate_builder_support(machine_info, parsed_machine, machine_ident);
     let machine_state_surface =
-        generate_machine_state_surface(machine_info, parsed_machine, machine_ident)?;
+        generate_machine_state_surface(machine_info, item, parsed_machine, machine_ident)?;
     let introspection_impls = generate_machine_introspection_impls(
         machine_info,
         parsed_machine,
@@ -2021,6 +2026,7 @@ fn with_appended_where_clause(
 
 fn generate_machine_state_surface(
     machine_info: &MachineInfo,
+    item: &ItemStruct,
     parsed_machine: &ParsedMachineInfo,
     machine_ident: &Ident,
 ) -> Result<TokenStream, TokenStream> {
@@ -2040,7 +2046,7 @@ fn generate_machine_state_surface(
     });
     let vis = parsed_machine.vis.clone();
     let module_ident = machine_state_module_ident(machine_info);
-    let introspection_surface = generate_machine_module_introspection(machine_info)?;
+    let introspection_surface = generate_machine_module_introspection(machine_info, item)?;
     let extra_params = extra_machine_generics.params.iter();
     let extra_where_clause = extra_machine_generics.where_clause.clone();
     let into_machines_trait = if extra_machine_generics.params.is_empty() {
@@ -2110,7 +2116,10 @@ fn generate_machine_state_surface(
     })
 }
 
-fn generate_machine_module_introspection(machine_info: &MachineInfo) -> Result<TokenStream, TokenStream> {
+fn generate_machine_module_introspection(
+    machine_info: &MachineInfo,
+    item: &ItemStruct,
+) -> Result<TokenStream, TokenStream> {
     let presentation_types = resolve_presentation_types(machine_info)?;
     let linked_state_entries = linked_state_entries(machine_info)?;
     let static_machine_link_entries = static_machine_link_entries(machine_info)?;
@@ -2152,6 +2161,7 @@ fn generate_machine_module_introspection(machine_info: &MachineInfo) -> Result<T
     let machine_meta_ty = presentation_type_tokens(presentation_types.machine.as_ref());
     let state_meta_ty = presentation_type_tokens(presentation_types.state.as_ref());
     let transition_meta_ty = presentation_type_tokens(presentation_types.transition.as_ref());
+    let linked_relation_registrations = linked_relation_registrations(machine_info, item)?;
 
     Ok(quote! {
         #[allow(clippy::enum_variant_names)]
@@ -2309,6 +2319,8 @@ fn generate_machine_module_introspection(machine_info: &MachineInfo) -> Result<T
                 transitions: statum::__private::LinkedTransitionInventory::new(__statum_linked_transitions),
                 static_links: __STATUM_STATIC_MACHINE_LINKS,
             };
+
+        #(#linked_relation_registrations)*
     })
 }
 
@@ -2339,10 +2351,215 @@ fn linked_state_entries(machine_info: &MachineInfo) -> Result<Vec<TokenStream>, 
                     label: #label,
                     description: #description,
                     has_data: #has_data,
+                    direct_construction_available: true,
                 }
             })
         })
         .collect()
+}
+
+fn linked_relation_registrations(
+    machine_info: &MachineInfo,
+    item: &ItemStruct,
+) -> Result<Vec<TokenStream>, TokenStream> {
+    let state_enum = machine_info.get_matching_state_enum()?;
+    let generic_param_names = item
+        .generics
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let mut registrations = Vec::new();
+
+    for variant in &state_enum.variants {
+        let source_state = variant.name.as_str();
+        match variant.parse_shape()? {
+            crate::state::ParsedVariantShape::Unit => {}
+            crate::state::ParsedVariantShape::Tuple { data_type } => {
+                let targets =
+                    collect_relation_targets(data_type.as_ref(), machine_info.module_path.as_ref());
+                registrations.extend(relation_registrations_for_targets(
+                    machine_info,
+                    statum_relation_kind_tokens("StatePayload"),
+                    quote! {
+                        statum::__private::LinkedRelationSource::StatePayload {
+                            state: #source_state,
+                            field_name: None,
+                        }
+                    },
+                    targets,
+                    &format!(
+                        "{}::state_payload::{}::tuple",
+                        machine_info.name, source_state
+                    ),
+                    &generic_param_names,
+                ));
+            }
+            crate::state::ParsedVariantShape::Named { fields, .. } => {
+                for field in fields {
+                    let targets =
+                        collect_relation_targets(&field.field_type, machine_info.module_path.as_ref());
+                    let field_name = field.ident.to_string();
+                    registrations.extend(relation_registrations_for_targets(
+                        machine_info,
+                        statum_relation_kind_tokens("StatePayload"),
+                        quote! {
+                            statum::__private::LinkedRelationSource::StatePayload {
+                                state: #source_state,
+                                field_name: Some(#field_name),
+                            }
+                        },
+                        targets,
+                        &format!(
+                            "{}::state_payload::{}::{}",
+                            machine_info.name, source_state, field_name
+                        ),
+                        &generic_param_names,
+                    ));
+                }
+            }
+        }
+    }
+
+    for (field_index, field) in item.fields.iter().enumerate() {
+        let targets = collect_relation_targets(&field.ty, machine_info.module_path.as_ref());
+        let field_name = field.ident.as_ref().map(|ident| ident.to_string());
+        let field_name_tokens = match &field_name {
+            Some(field_name) => quote! { Some(#field_name) },
+            None => quote! { None },
+        };
+        registrations.extend(relation_registrations_for_targets(
+            machine_info,
+            statum_relation_kind_tokens("MachineField"),
+            quote! {
+                statum::__private::LinkedRelationSource::MachineField {
+                    field_name: #field_name_tokens,
+                    field_index: #field_index,
+                }
+            },
+            targets,
+            &format!(
+                "{}::machine_field::{}",
+                machine_info.name,
+                field_name
+                    .as_deref()
+                    .unwrap_or("__tuple_field")
+            ),
+            &generic_param_names,
+        ));
+    }
+
+    Ok(registrations)
+}
+
+fn relation_registrations_for_targets(
+    machine_info: &MachineInfo,
+    kind_tokens: TokenStream,
+    source_tokens: TokenStream,
+    targets: Vec<RelationTargetCandidate>,
+    key_prefix: &str,
+    generic_param_names: &HashSet<String>,
+) -> Vec<TokenStream> {
+    targets
+        .into_iter()
+        .filter(|target| !references_generic_param(target, generic_param_names))
+        .enumerate()
+        .map(|(index, target)| {
+            let registration_ident = format_ident!(
+                "__STATUM_LINKED_RELATION_{:016X}",
+                stable_hash(&format!("{key_prefix}::{index}::registration"))
+            );
+            let machine_module_path = LitStr::new(machine_info.module_path.as_ref(), Span::call_site());
+            let machine_rust_type_path = LitStr::new(
+                &format!("{}::{}", machine_info.module_path, machine_info.name),
+                Span::call_site(),
+            );
+            let (basis_tokens, target_tokens, helper_tokens) = match target {
+                RelationTargetCandidate::DirectMachine {
+                    machine_path,
+                    state_name,
+                } => {
+                    let machine_path = machine_path.iter().map(|segment| {
+                        let segment = LitStr::new(segment, Span::call_site());
+                        quote! { #segment }
+                    });
+                    let state_name = LitStr::new(&state_name, Span::call_site());
+                    (
+                        quote! { statum::__private::LinkedRelationBasis::DirectTypeSyntax },
+                        quote! {
+                            statum::__private::LinkedRelationTarget::DirectMachine {
+                                machine_path: &[#(#machine_path),*],
+                                state: #state_name,
+                            }
+                        },
+                        quote! {},
+                    )
+                }
+                RelationTargetCandidate::DeclaredReferenceType { ty } => {
+                    let helper_ident = format_ident!(
+                        "__statum_relation_type_name_{:016x}",
+                        stable_hash(&format!(
+                            "{key_prefix}::{index}::{}",
+                            ty.to_token_stream()
+                        ))
+                    );
+                    (
+                        quote! { statum::__private::LinkedRelationBasis::DeclaredReferenceType },
+                        quote! {
+                            statum::__private::LinkedRelationTarget::DeclaredReferenceType {
+                                resolved_type_name: #helper_ident,
+                            }
+                        },
+                        quote! {
+                            #[doc(hidden)]
+                            fn #helper_ident() -> &'static str {
+                                ::core::any::type_name::<#ty>()
+                            }
+                        },
+                    )
+                }
+            };
+
+            quote! {
+                #helper_tokens
+
+                #[doc(hidden)]
+                #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_RELATIONS)]
+                #[linkme(crate = statum::__private::linkme)]
+                static #registration_ident: statum::__private::LinkedRelationDescriptor =
+                    statum::__private::LinkedRelationDescriptor {
+                        machine: statum::MachineDescriptor {
+                            module_path: #machine_module_path,
+                            rust_type_path: #machine_rust_type_path,
+                        },
+                        kind: #kind_tokens,
+                        source: #source_tokens,
+                        basis: #basis_tokens,
+                        target: #target_tokens,
+                    };
+            }
+        })
+        .collect()
+}
+
+fn references_generic_param(
+    target: &RelationTargetCandidate,
+    generic_param_names: &HashSet<String>,
+) -> bool {
+    let RelationTargetCandidate::DeclaredReferenceType { ty } = target else {
+        return false;
+    };
+
+    leading_type_ident(ty)
+        .is_some_and(|ident| ident == "Self" || generic_param_names.contains(&ident.to_string()))
+}
+
+fn statum_relation_kind_tokens(kind: &str) -> TokenStream {
+    let ident = format_ident!("{kind}");
+    quote! { statum::__private::LinkedRelationKind::#ident }
 }
 
 fn static_machine_link_entries(machine_info: &MachineInfo) -> Result<Vec<TokenStream>, TokenStream> {
@@ -2443,6 +2660,15 @@ fn normalized_machine_path(path: &syn::Path) -> Vec<String> {
         })
         .map(|segment| segment.ident.to_string())
         .collect()
+}
+
+fn stable_hash(input: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in input.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn generate_state_presentation_entry_macro(

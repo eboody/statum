@@ -277,14 +277,17 @@ pub use statum_core::__private;
 pub use statum_core::projection;
 #[doc(inline)]
 pub use statum_core::{
-    linked_machines, linked_validator_entries, Branch, CanTransitionMap, CanTransitionTo,
-    CanTransitionWith, DataState, Error, LinkedMachineGraph, LinkedStateDescriptor,
+    linked_machines, linked_reference_types, linked_relations, linked_validator_entries, Branch,
+    CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, LinkedMachineGraph,
+    LinkedReferenceTypeDescriptor, LinkedRelationBasis, LinkedRelationDescriptor,
+    LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget, LinkedStateDescriptor,
     LinkedTransitionDescriptor, LinkedTransitionInventory, LinkedValidatorEntryDescriptor,
     MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder, RebuildAttempt,
-    RebuildReport, RecordedTransition, Rejection, Result, StateDescriptor, StateMarker,
-    StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
-    TransitionPresentation, TransitionPresentationInventory, UnitState, Validation,
+    MachinePresentationDescriptor, MachineReference, MachineReferenceTarget, MachineStateIdentity,
+    MachineTransitionRecorder, RebuildAttempt, RebuildReport, RecordedTransition, Rejection,
+    Result, StateDescriptor, StateMarker, StatePresentation, StaticMachineLinkDescriptor,
+    TransitionDescriptor, TransitionInventory, TransitionPresentation,
+    TransitionPresentationInventory, UnitState, Validation,
 };
 
 /// Define the legal lifecycle phases for a machine.
@@ -355,6 +358,17 @@ pub use statum_macros::state;
 /// }
 /// ```
 pub use statum_macros::machine;
+
+/// Declare one nominal opaque reference type that points at a concrete machine
+/// state.
+///
+/// Apply `#[machine_ref(crate::Machine<crate::State>)]` to a nominal struct or
+/// tuple struct when a field or transition parameter should carry an exact
+/// machine relation without repeating that relation at every use site. In v1
+/// this surface is trait-backed, supports nominal structs and tuple structs
+/// only, and expects an explicit `crate::`, `self::`, `super::`, or absolute
+/// target path; plain type aliases are rejected.
+pub use statum_macros::machine_ref;
 
 /// Validate and generate legal transitions for one source state.
 ///

@@ -21,17 +21,23 @@ pub mod projection;
 #[doc(hidden)]
 pub use introspection::__STATUM_LINKED_MACHINES;
 #[doc(hidden)]
+pub use introspection::__STATUM_LINKED_REFERENCE_TYPES;
+#[doc(hidden)]
+pub use introspection::__STATUM_LINKED_RELATIONS;
+#[doc(hidden)]
 pub use introspection::__STATUM_LINKED_VALIDATOR_ENTRIES;
 
 #[doc(hidden)]
 pub mod __private {
     pub use crate::{
-        LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
-        LinkedTransitionInventory, LinkedValidatorEntryDescriptor, MachinePresentation,
-        MachinePresentationDescriptor, RebuildAttempt, RebuildReport, StateFamily,
+        LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
+        LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
+        LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
+        LinkedValidatorEntryDescriptor, MachinePresentation, MachinePresentationDescriptor,
+        MachineReference, MachineReferenceTarget, RebuildAttempt, RebuildReport, StateFamily,
         StateFamilyMember, StatePresentation, StaticMachineLinkDescriptor, TransitionPresentation,
-        TransitionPresentationInventory, __STATUM_LINKED_MACHINES,
-        __STATUM_LINKED_VALIDATOR_ENTRIES,
+        TransitionPresentationInventory, __STATUM_LINKED_MACHINES, __STATUM_LINKED_REFERENCE_TYPES,
+        __STATUM_LINKED_RELATIONS, __STATUM_LINKED_VALIDATOR_ENTRIES,
     };
     pub use futures;
     pub use linkme;
@@ -55,12 +61,14 @@ pub mod __private {
 }
 
 pub use introspection::{
-    linked_machines, linked_validator_entries, LinkedMachineGraph, LinkedStateDescriptor,
-    LinkedTransitionDescriptor, LinkedTransitionInventory, LinkedValidatorEntryDescriptor,
-    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
-    RecordedTransition, StateDescriptor, StatePresentation, StaticMachineLinkDescriptor,
-    TransitionDescriptor, TransitionInventory, TransitionPresentation,
+    linked_machines, linked_reference_types, linked_relations, linked_validator_entries,
+    LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
+    LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
+    LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
+    LinkedValidatorEntryDescriptor, MachineDescriptor, MachineGraph, MachineIntrospection,
+    MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
+    MachineTransitionRecorder, RecordedTransition, StateDescriptor, StatePresentation,
+    StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory, TransitionPresentation,
     TransitionPresentationInventory,
 };
 
@@ -103,6 +111,21 @@ pub trait UnitState: StateMarker<Data = ()> {}
 ///
 /// Implemented for tuple variants like `InReview(Assignment)`.
 pub trait DataState: StateMarker {}
+
+/// One exact target declared for a nominal machine reference type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MachineReferenceTarget {
+    /// Exact machine path segments resolved from the declaration target.
+    pub machine_path: &'static [&'static str],
+    /// Target state marker name written in the declaration.
+    pub state: &'static str,
+}
+
+/// One nominal type that carries an exact machine relation declared once.
+pub trait MachineReference {
+    /// Exact target described by this nominal reference type.
+    const TARGET: MachineReferenceTarget;
+}
 
 /// A machine that can transition directly to `Next`.
 ///

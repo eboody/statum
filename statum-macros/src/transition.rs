@@ -4,10 +4,11 @@ use std::collections::HashSet;
 use syn::spanned::Spanned;
 use syn::{
     AngleBracketedGenericArguments, Block, FnArg, GenericArgument, Ident, ImplItem, ImplItemFn,
-    ItemImpl, LitStr, Path, PathArguments, PathSegment, ReturnType, Type, TypePath,
+    ItemImpl, LitStr, Pat, Path, PathArguments, PathSegment, ReturnType, Type, TypePath,
 };
 
 use crate::machine::to_shouty_snake_identifier;
+use crate::relation::{RelationTargetCandidate, collect_relation_targets, leading_type_ident};
 use crate::{PresentationAttr, parse_present_attrs, strip_present_attrs, to_snake_case};
 
 /// Stores all metadata for a single transition method in an `impl` block
@@ -21,11 +22,18 @@ pub struct TransitionFn {
     pub return_type_span: Option<Span>,
     pub machine_name: String,
     pub source_state: String,
+    pub parameters: Vec<TransitionParam>,
     pub generics: Vec<Ident>,
     pub internals: Block,
     pub is_async: bool,
     pub vis: syn::Visibility,
     pub span: proc_macro2::Span,
+}
+
+#[allow(unused)]
+pub struct TransitionParam {
+    pub name: Option<String>,
+    pub ty: Type,
 }
 
 impl TransitionFn {
@@ -70,12 +78,18 @@ pub struct TransitionImpl {
     pub machine_name: String,
     /// The source state extracted from `target_type` (e.g. `Draft`)
     pub source_state: String,
+    /// `module_path!()` for the module that owns this transition impl site.
+    pub module_path: String,
+    pub generic_params: Vec<String>,
     pub attrs: Vec<syn::Attribute>,
     /// All transition methods extracted from the `impl`
     pub functions: Vec<TransitionFn>,
 }
 
-pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, TokenStream> {
+pub fn parse_transition_impl(
+    item_impl: &ItemImpl,
+    module_path: &str,
+) -> Result<TransitionImpl, TokenStream> {
     let target_type = *item_impl.self_ty.clone();
     let Some((machine_name, _, source_state, _)) = extract_impl_machine_and_state(&target_type) else {
         let message = LitStr::new(
@@ -93,11 +107,22 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, Tok
             functions.push(parse_transition_fn(method, &machine_name, &source_state)?);
         }
     }
+    let generic_params = item_impl
+        .generics
+        .params
+        .iter()
+        .filter_map(|param| match param {
+            syn::GenericParam::Type(type_param) => Some(type_param.ident.to_string()),
+            _ => None,
+        })
+        .collect();
 
     Ok(TransitionImpl {
         target_type,
         machine_name,
         source_state,
+        module_path: module_path.to_owned(),
+        generic_params,
         attrs: item_impl.attrs.clone(),
         functions,
     })
@@ -147,6 +172,21 @@ pub fn parse_transition_fn(
             }
         })
         .collect();
+    let parameters = method
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            FnArg::Receiver(_) => None,
+            FnArg::Typed(pat_ty) => Some(TransitionParam {
+                name: match pat_ty.pat.as_ref() {
+                    Pat::Ident(ident) => Some(ident.ident.to_string()),
+                    _ => None,
+                },
+                ty: (*pat_ty.ty).clone(),
+            }),
+        })
+        .collect();
 
     let is_async = method.sig.asyncness.is_some();
 
@@ -159,6 +199,7 @@ pub fn parse_transition_fn(
         return_type_span,
         machine_name: machine_name.to_owned(),
         source_state: source_state.to_owned(),
+        parameters,
         generics,
         internals: method.block.clone(),
         is_async,
@@ -289,6 +330,15 @@ pub fn generate_transition_impl(
 
         #( #machine_target_resolver_macro_path!(#transition_binding_callback_ident, #unique_return_state_idents); )*
     };
+    let (relation_machine_module_path, relation_machine_rust_type_path) =
+        match relation_source_machine_descriptor(tr_impl) {
+            Ok(value) => value,
+            Err(err) => return err,
+        };
+    let relation_machine_module_path =
+        LitStr::new(&relation_machine_module_path, Span::call_site());
+    let relation_machine_rust_type_path =
+        LitStr::new(&relation_machine_rust_type_path, Span::call_site());
     let transition_registrations = tr_impl.functions.iter().enumerate().map(|(idx, function)| {
         let return_states = match function.return_states(target_type) {
             Ok(states) => states,
@@ -331,6 +381,14 @@ pub fn generate_transition_impl(
         });
         let target_state_count = return_states.len();
         let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
+        let relation_registrations = transition_param_relation_registrations(
+            tr_impl,
+            function,
+            idx,
+            &relation_machine_module_path,
+            &relation_machine_rust_type_path,
+            &cfg_attrs,
+        );
 
         quote! {
             #(#cfg_attrs)*
@@ -371,6 +429,8 @@ pub fn generate_transition_impl(
                 pub const #id_const_ident: #machine_module_path::TransitionId =
                     #machine_module_path::TransitionId::from_token(&#token_ident);
             }
+
+            #(#relation_registrations)*
         }
     });
     let transition_presentation_registrations = tr_impl.functions.iter().enumerate().filter_map(|(idx, function)| {
@@ -583,6 +643,245 @@ fn transition_impl_unique_suffix(tr_impl: &TransitionImpl) -> String {
     );
 
     format!("{:016x}", stable_hash(&signature))
+}
+
+fn relation_source_machine_descriptor(
+    tr_impl: &TransitionImpl,
+) -> Result<(String, String), TokenStream> {
+    let Type::Path(type_path) = &tr_impl.target_type else {
+        return Err(compile_error_at(
+            tr_impl.target_type.span(),
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+        ));
+    };
+    if type_path.qself.is_some() {
+        return Err(compile_error_at(
+            tr_impl.target_type.span(),
+            "Invalid #[transition] target type. Qualified self types are not supported.",
+        ));
+    }
+
+    let raw_segments = type_path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    if raw_segments.is_empty() {
+        return Err(compile_error_at(
+            tr_impl.target_type.span(),
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+        ));
+    }
+
+    let current_module = split_module_path(&tr_impl.module_path);
+    let resolved_segments = resolve_relation_source_segments(&raw_segments, &current_module);
+    if resolved_segments.is_empty() {
+        return Err(compile_error_at(
+            tr_impl.target_type.span(),
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+        ));
+    }
+
+    let rust_type_path = resolved_segments.join("::");
+    let module_path = resolved_segments[..resolved_segments.len().saturating_sub(1)].join("::");
+    Ok((module_path, rust_type_path))
+}
+
+fn split_module_path(module_path: &str) -> Vec<String> {
+    module_path
+        .split("::")
+        .filter(|segment| !segment.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn resolve_relation_source_segments(
+    raw_segments: &[String],
+    current_module: &[String],
+) -> Vec<String> {
+    let Some(first) = raw_segments.first() else {
+        return Vec::new();
+    };
+
+    match first.as_str() {
+        "crate" => raw_segments[1..].to_vec(),
+        "self" => current_module
+            .iter()
+            .cloned()
+            .chain(raw_segments[1..].iter().cloned())
+            .collect(),
+        "super" => {
+            let super_count = raw_segments
+                .iter()
+                .take_while(|segment| segment.as_str() == "super")
+                .count();
+            let keep = current_module.len().saturating_sub(super_count);
+            current_module[..keep]
+                .iter()
+                .cloned()
+                .chain(raw_segments[super_count..].iter().cloned())
+                .collect()
+        }
+        _ if raw_segments.len() == 1 => current_module
+            .iter()
+            .cloned()
+            .chain(raw_segments.iter().cloned())
+            .collect(),
+        _ => raw_segments.to_vec(),
+    }
+}
+
+fn transition_param_relation_registrations(
+    tr_impl: &TransitionImpl,
+    function: &TransitionFn,
+    function_index: usize,
+    machine_module_path: &LitStr,
+    machine_rust_type_path: &LitStr,
+    cfg_attrs: &[syn::Attribute],
+) -> Vec<TokenStream> {
+    let source_state = LitStr::new(&tr_impl.source_state, function.name.span());
+    let transition_name = LitStr::new(&function.name.to_string(), function.name.span());
+    let generic_param_names = tr_impl
+        .generic_params
+        .iter()
+        .cloned()
+        .chain(function.generics.iter().map(ToString::to_string))
+        .collect::<HashSet<_>>();
+
+    function
+        .parameters
+        .iter()
+        .enumerate()
+        .flat_map(|(param_index, param)| {
+            let targets = collect_relation_targets(&param.ty, &tr_impl.module_path);
+            let param_name_tokens = match &param.name {
+                Some(param_name) => quote! { Some(#param_name) },
+                None => quote! { None },
+            };
+            relation_registrations_for_targets(
+                targets,
+                quote! {
+                    statum::__private::LinkedRelationSource::TransitionParam {
+                        state: #source_state,
+                        transition: #transition_name,
+                        param_index: #param_index,
+                        param_name: #param_name_tokens,
+                    }
+                },
+                machine_module_path,
+                machine_rust_type_path,
+                cfg_attrs,
+                &format!(
+                    "{}::{}::{}::{}::param::{param_index}::function::{function_index}",
+                    tr_impl.module_path,
+                    tr_impl.machine_name,
+                    tr_impl.source_state,
+                    function.name
+                ),
+                &generic_param_names,
+            )
+        })
+        .collect()
+}
+
+fn relation_registrations_for_targets(
+    targets: Vec<RelationTargetCandidate>,
+    source_tokens: TokenStream,
+    machine_module_path: &LitStr,
+    machine_rust_type_path: &LitStr,
+    cfg_attrs: &[syn::Attribute],
+    key_prefix: &str,
+    generic_param_names: &HashSet<String>,
+) -> Vec<TokenStream> {
+    targets
+        .into_iter()
+        .filter(|target| !references_generic_param(target, generic_param_names))
+        .enumerate()
+        .map(|(index, target)| {
+            let registration_ident = format_ident!(
+                "__STATUM_LINKED_RELATION_{:016X}",
+                stable_hash(&format!("{key_prefix}::{index}::registration"))
+            );
+            let (basis_tokens, target_tokens, helper_tokens) = match target {
+                RelationTargetCandidate::DirectMachine {
+                    machine_path,
+                    state_name,
+                } => {
+                    let machine_path = machine_path.iter().map(|segment| {
+                        let segment = LitStr::new(segment, Span::call_site());
+                        quote! { #segment }
+                    });
+                    let state_name = LitStr::new(&state_name, Span::call_site());
+                    (
+                        quote! { statum::__private::LinkedRelationBasis::DirectTypeSyntax },
+                        quote! {
+                            statum::__private::LinkedRelationTarget::DirectMachine {
+                                machine_path: &[#(#machine_path),*],
+                                state: #state_name,
+                            }
+                        },
+                        quote! {},
+                    )
+                }
+                RelationTargetCandidate::DeclaredReferenceType { ty } => {
+                    let helper_ident = format_ident!(
+                        "__statum_transition_relation_type_name_{:016x}",
+                        stable_hash(&format!(
+                            "{key_prefix}::{index}::{}",
+                            ty.to_token_stream()
+                        ))
+                    );
+                    (
+                        quote! { statum::__private::LinkedRelationBasis::DeclaredReferenceType },
+                        quote! {
+                            statum::__private::LinkedRelationTarget::DeclaredReferenceType {
+                                resolved_type_name: #helper_ident,
+                            }
+                        },
+                        quote! {
+                            #[doc(hidden)]
+                            fn #helper_ident() -> &'static str {
+                                ::core::any::type_name::<#ty>()
+                            }
+                        },
+                    )
+                }
+            };
+
+            quote! {
+                #helper_tokens
+
+                #(#cfg_attrs)*
+                #[doc(hidden)]
+                #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_RELATIONS)]
+                #[linkme(crate = statum::__private::linkme)]
+                static #registration_ident: statum::__private::LinkedRelationDescriptor =
+                    statum::__private::LinkedRelationDescriptor {
+                        machine: statum::MachineDescriptor {
+                            module_path: #machine_module_path,
+                            rust_type_path: #machine_rust_type_path,
+                        },
+                        kind: statum::__private::LinkedRelationKind::TransitionParam,
+                        source: #source_tokens,
+                        basis: #basis_tokens,
+                        target: #target_tokens,
+                    };
+            }
+        })
+        .collect()
+}
+
+fn references_generic_param(
+    target: &RelationTargetCandidate,
+    generic_param_names: &HashSet<String>,
+) -> bool {
+    let RelationTargetCandidate::DeclaredReferenceType { ty } = target else {
+        return false;
+    };
+
+    leading_type_ident(ty)
+        .is_some_and(|ident| ident == "Self" || generic_param_names.contains(&ident.to_string()))
 }
 
 fn stable_hash(input: &str) -> u64 {
