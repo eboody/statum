@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::Serialize;
 use statum::{
@@ -103,7 +103,7 @@ impl CodebaseDoc {
         &self.links
     }
 
-    /// Resolved exact cross-machine relations in stable order.
+    /// Resolved exact static relations in stable order.
     pub fn relations(&self) -> &[CodebaseRelation] {
         &self.relations
     }
@@ -111,6 +111,150 @@ impl CodebaseDoc {
     /// Returns one exported machine by its stable codebase index.
     pub fn machine(&self, index: usize) -> Option<&CodebaseMachine> {
         self.machines.get(index)
+    }
+
+    /// Returns one exported relation by its stable codebase index.
+    pub fn relation(&self, index: usize) -> Option<&CodebaseRelation> {
+        self.relations.get(index)
+    }
+
+    /// Groups exact relations by source and target machine for renderer and
+    /// inspector use.
+    pub fn machine_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
+        let mut groups = BTreeMap::<(usize, usize), Vec<usize>>::new();
+        for relation in &self.relations {
+            groups
+                .entry((relation.source_machine(), relation.target_machine))
+                .or_default()
+                .push(relation.index);
+        }
+
+        groups
+            .into_iter()
+            .enumerate()
+            .map(|(index, ((from_machine, to_machine), relation_indices))| {
+                let mut counts =
+                    BTreeMap::<(CodebaseRelationKind, CodebaseRelationBasis), usize>::new();
+                for relation_index in &relation_indices {
+                    let relation = self
+                        .relation(*relation_index)
+                        .expect("grouped relation index should resolve");
+                    *counts.entry((relation.kind, relation.basis)).or_default() += 1;
+                }
+
+                CodebaseMachineRelationGroup {
+                    index,
+                    from_machine,
+                    to_machine,
+                    relation_indices,
+                    counts: counts
+                        .into_iter()
+                        .map(|((kind, basis), count)| CodebaseRelationCount { kind, basis, count })
+                        .collect(),
+                }
+            })
+            .collect()
+    }
+
+    /// Exact relations whose source belongs to `machine_index`.
+    pub fn outbound_relations_for_machine(
+        &self,
+        machine_index: usize,
+    ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
+        self.relations
+            .iter()
+            .filter(move |relation| relation.source_machine() == machine_index)
+    }
+
+    /// Exact relations whose target belongs to `machine_index`.
+    pub fn inbound_relations_for_machine(
+        &self,
+        machine_index: usize,
+    ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
+        self.relations
+            .iter()
+            .filter(move |relation| relation.target_machine == machine_index)
+    }
+
+    /// Exact relations whose source belongs to one exported state.
+    pub fn outbound_relations_for_state(
+        &self,
+        machine_index: usize,
+        state_index: usize,
+    ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
+        self.relations.iter().filter(move |relation| {
+            relation.source_machine() == machine_index
+                && relation
+                    .source_state()
+                    .is_some_and(|state| state == state_index)
+        })
+    }
+
+    /// Exact relations whose target belongs to one exported state.
+    pub fn inbound_relations_for_state(
+        &self,
+        machine_index: usize,
+        state_index: usize,
+    ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
+        self.relations.iter().filter(move |relation| {
+            relation.target_machine == machine_index && relation.target_state == state_index
+        })
+    }
+
+    /// Exact relations whose source belongs to one exported transition site.
+    pub fn outbound_relations_for_transition(
+        &self,
+        machine_index: usize,
+        transition_index: usize,
+    ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
+        self.relations.iter().filter(move |relation| {
+            relation.source_machine() == machine_index
+                && relation
+                    .source_transition()
+                    .is_some_and(|transition| transition == transition_index)
+        })
+    }
+
+    /// Exact relations whose target belongs to one exported transition site.
+    ///
+    /// The current exact relation surface never targets transitions, so this
+    /// iterator is always empty. It exists so the inspector can use the same
+    /// navigation API shape for machines, states, and transitions.
+    pub fn inbound_relations_for_transition(
+        &self,
+        machine_index: usize,
+        transition_index: usize,
+    ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
+        self.relations.iter().filter(move |relation| {
+            relation.target_machine == machine_index
+                && relation
+                    .target_transition()
+                    .is_some_and(|transition| transition == transition_index)
+        })
+    }
+
+    /// Resolves one exact relation into typed source and target references for
+    /// downstream consumers such as the inspector TUI.
+    pub fn relation_detail(&self, index: usize) -> Option<CodebaseRelationDetail<'_>> {
+        let relation = self.relation(index)?;
+        let source_machine = self.machine(relation.source_machine())?;
+        let source_state = relation
+            .source_state()
+            .and_then(|state| source_machine.state(state));
+        let source_transition = relation
+            .source_transition()
+            .and_then(|transition| source_machine.transition(transition));
+        let target_machine = self.machine(relation.target_machine)?;
+        let target_state = target_machine.state(relation.target_state)?;
+
+        Some(CodebaseRelationDetail {
+            relation,
+            source_machine,
+            source_state,
+            source_transition,
+            target_machine,
+            target_state,
+        })
     }
 }
 
@@ -154,6 +298,11 @@ impl CodebaseMachine {
         self.validator_entries.get(index)
     }
 
+    /// Returns one exported transition site by its stable machine-local index.
+    pub fn transition(&self, index: usize) -> Option<&CodebaseTransition> {
+        self.transitions.get(index)
+    }
+
     /// Stable renderer node id for one state in this machine.
     pub fn node_id(&self, state_index: usize) -> String {
         format!("m{}_s{}", self.index, state_index)
@@ -166,6 +315,10 @@ impl CodebaseMachine {
 
     fn cluster_id(&self) -> String {
         format!("m{}", self.index)
+    }
+
+    fn summary_node_id(&self) -> String {
+        format!("m{}_g", self.index)
     }
 
     fn display_label(&self) -> Cow<'static, str> {
@@ -260,18 +413,46 @@ impl CodebaseTransition {
 }
 
 /// Exact relation kinds exported by the codebase document.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 pub enum CodebaseRelationKind {
     StatePayload,
     MachineField,
     TransitionParam,
 }
 
+impl CodebaseRelationKind {
+    /// Human-facing kind label for relation summaries and inspector details.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::StatePayload => "payload",
+            Self::MachineField => "field",
+            Self::TransitionParam => "param",
+        }
+    }
+}
+
 /// Why one exact relation was inferred.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 pub enum CodebaseRelationBasis {
     DirectTypeSyntax,
     DeclaredReferenceType,
+}
+
+impl CodebaseRelationBasis {
+    /// Human-facing basis label for relation summaries and inspector details.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::DirectTypeSyntax => "direct type",
+            Self::DeclaredReferenceType => "declared ref",
+        }
+    }
+
+    fn summary_suffix(self) -> &'static str {
+        match self {
+            Self::DirectTypeSyntax => "",
+            Self::DeclaredReferenceType => " [ref]",
+        }
+    }
 }
 
 /// One exact relation source in the codebase export surface.
@@ -295,6 +476,34 @@ pub enum CodebaseRelationSource {
     },
 }
 
+impl CodebaseRelationSource {
+    /// Stable source machine index for this exact relation source.
+    pub const fn machine(self) -> usize {
+        match self {
+            Self::StatePayload { machine, .. }
+            | Self::MachineField { machine, .. }
+            | Self::TransitionParam { machine, .. } => machine,
+        }
+    }
+
+    /// Stable source state index when the relation source is state-local.
+    pub const fn state(self) -> Option<usize> {
+        match self {
+            Self::StatePayload { state, .. } => Some(state),
+            Self::MachineField { .. } | Self::TransitionParam { .. } => None,
+        }
+    }
+
+    /// Stable source transition index when the relation source is one
+    /// transition parameter.
+    pub const fn transition(self) -> Option<usize> {
+        match self {
+            Self::TransitionParam { transition, .. } => Some(transition),
+            Self::StatePayload { .. } | Self::MachineField { .. } => None,
+        }
+    }
+}
+
 /// One resolved exact relation in the codebase export surface.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct CodebaseRelation {
@@ -313,6 +522,106 @@ pub struct CodebaseRelation {
     /// Declared nominal reference type when this relation came through
     /// `#[machine_ref(...)]`.
     pub declared_reference_type: Option<&'static str>,
+}
+
+impl CodebaseRelation {
+    /// Stable source machine index for this exact relation.
+    pub const fn source_machine(&self) -> usize {
+        self.source.machine()
+    }
+
+    /// Stable source state index when this relation is state-local.
+    pub const fn source_state(&self) -> Option<usize> {
+        self.source.state()
+    }
+
+    /// Stable source transition index when this relation comes from one
+    /// transition parameter.
+    pub const fn source_transition(&self) -> Option<usize> {
+        self.source.transition()
+    }
+
+    /// Stable target transition index.
+    ///
+    /// The current exact relation substrate does not target transitions, so
+    /// this always returns `None`. The method exists so downstream navigation
+    /// can keep one consistent source/target API shape.
+    pub const fn target_transition(&self) -> Option<usize> {
+        None
+    }
+}
+
+/// One grouped machine-to-machine view derived from exact relations.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CodebaseMachineRelationGroup {
+    /// Stable group index in `(from_machine, to_machine)` order.
+    pub index: usize,
+    /// Source machine index shared by the grouped relations.
+    pub from_machine: usize,
+    /// Target machine index shared by the grouped relations.
+    pub to_machine: usize,
+    /// Stable exact relation indices included in this group.
+    pub relation_indices: Vec<usize>,
+    /// Stable grouped counts by relation kind and basis.
+    pub counts: Vec<CodebaseRelationCount>,
+}
+
+impl CodebaseMachineRelationGroup {
+    /// Human-facing label used by machine summary edges in text renderers.
+    pub fn display_label(&self) -> String {
+        let counts = self
+            .counts
+            .iter()
+            .map(CodebaseRelationCount::display_label)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("exact refs: {counts}")
+    }
+}
+
+/// One grouped count inside a machine-to-machine exact relation summary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+pub struct CodebaseRelationCount {
+    /// Exact relation kind for this grouped count.
+    pub kind: CodebaseRelationKind,
+    /// Exact relation basis for this grouped count.
+    pub basis: CodebaseRelationBasis,
+    /// Number of exact relations in this `(kind, basis)` class.
+    pub count: usize,
+}
+
+impl CodebaseRelationCount {
+    /// Human-facing grouped-count label used by machine summary edges.
+    pub fn display_label(&self) -> String {
+        let label = format!(
+            "{}{}",
+            self.kind.display_label(),
+            self.basis.summary_suffix()
+        );
+        if self.count == 1 {
+            label
+        } else {
+            format!("{label} x{}", self.count)
+        }
+    }
+}
+
+/// One typed resolved view of an exact relation for downstream consumers.
+#[derive(Clone, Copy, Debug)]
+pub struct CodebaseRelationDetail<'a> {
+    /// The exact relation record itself.
+    pub relation: &'a CodebaseRelation,
+    /// The resolved source machine.
+    pub source_machine: &'a CodebaseMachine,
+    /// The resolved source state when the relation is state-local.
+    pub source_state: Option<&'a CodebaseState>,
+    /// The resolved source transition when the relation comes from one
+    /// transition parameter.
+    pub source_transition: Option<&'a CodebaseTransition>,
+    /// The resolved target machine.
+    pub target_machine: &'a CodebaseMachine,
+    /// The resolved target state.
+    pub target_state: &'a CodebaseState,
 }
 
 type ResolvedRelationTarget = (usize, usize, Option<&'static str>);

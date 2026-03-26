@@ -296,6 +296,11 @@ surfaces such as `DbRow::into_machine()`, not runtime match outcomes. All
 exact surfaces fail closed on malformed or ambiguous linked metadata.
 Transition-body orchestration, runtime composition, primitive ids with no
 typed wrapper, and terminal-state semantics are intentionally out of scope.
+Graph backends mark directly constructible states with a ` [build]` suffix and
+derive cross-machine summary edges from exact `relations()`. Downstream
+consumers can use `machine_relation_groups()`, inbound and outbound relation
+lookup helpers, and `relation_detail()` to drive exact navigation without
+re-deriving relation semantics.
 
 If you do not want to hand-write a runner crate, install
 `cargo-statum-graph` and point it at an existing library package:

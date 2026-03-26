@@ -5,21 +5,21 @@ expression: "render::mermaid(&doc)"
 %% linked machines: 4
 graph TD
     subgraph m0["codebase::detached::Machine"]
-        m0_s0["Alone"]
+        m0_s0["Alone [build]"]
     end
     subgraph m1["codebase::named_holder::Machine"]
-        m1_s0["Pending (data)"]
-        m1_s1["Settled"]
+        m1_s0["Pending (data) [build]"]
+        m1_s1["Settled [build]"]
     end
     subgraph m2["Task Machine"]
-        m2_s0["Idle"]
-        m2_s1["Running"]
-        m2_s2["Done"]
+        m2_s0["Idle [build]"]
+        m2_s1["Running [build]"]
+        m2_s2["Done [build]"]
     end
     subgraph m3["Workflow Machine"]
-        m3_s0["Draft"]
-        m3_s1["In Progress"]
-        m3_s2["Complete"]
+        m3_s0["Draft [build]"]
+        m3_s1["In Progress [build]"]
+        m3_s2["Complete [build]"]
     end
 
     m2_v0("TaskRow::into_machine()")
@@ -30,6 +30,9 @@ graph TD
     m2_s1 -->|finish| m2_s2
     m3_s0 -->|Start Workflow| m3_s1
     m3_s1 -->|finish| m3_s2
+
+    m1 ==>|exact refs: payload| m2
+    m3 ==>|exact refs: payload, param| m2
 
     m1_s0 -.->|child| m2_s2
     m3_s1 -.->|state_data| m2_s1

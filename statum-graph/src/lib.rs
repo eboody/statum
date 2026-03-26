@@ -8,7 +8,7 @@
 //! surface combines every linked compiled machine family, declared
 //! validator-entry surfaces emitted by compiled `#[validators]` impls, direct
 //! construction availability per state, legacy direct payload links, and exact
-//! cross-machine relations inferred from supported type syntax plus nominal
+//! static relations inferred from supported type syntax plus nominal
 //! `#[machine_ref(...)]` declarations. Validator node labels use the impl self
 //! type as written in source, so they are display syntax rather than canonical
 //! Rust type identity. Method-level `#[cfg]` and `#[cfg_attr]` on validator
@@ -35,9 +35,10 @@ mod export;
 pub mod render;
 
 pub use codebase::{
-    CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine, CodebaseRelation,
-    CodebaseRelationBasis, CodebaseRelationKind, CodebaseRelationSource, CodebaseState,
-    CodebaseTransition, CodebaseValidatorEntry,
+    CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine, CodebaseMachineRelationGroup,
+    CodebaseRelation, CodebaseRelationBasis, CodebaseRelationCount, CodebaseRelationDetail,
+    CodebaseRelationKind, CodebaseRelationSource, CodebaseState, CodebaseTransition,
+    CodebaseValidatorEntry,
 };
 pub use export::{
     ExportDoc, ExportDocError, ExportMachine, ExportSource, ExportState, ExportTransition,

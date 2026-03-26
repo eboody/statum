@@ -293,6 +293,53 @@ fn linked_codebase_write_all_rejects_path_like_stem() {
 }
 
 #[test]
+fn builder_markers_only_render_for_directly_constructible_states() {
+    fn transitions() -> &'static [LinkedTransitionDescriptor] {
+        &[]
+    }
+
+    static STATES: [LinkedStateDescriptor; 2] = [
+        LinkedStateDescriptor {
+            rust_name: "Draft",
+            label: None,
+            description: None,
+            has_data: false,
+            direct_construction_available: false,
+        },
+        LinkedStateDescriptor {
+            rust_name: "Review",
+            label: None,
+            description: None,
+            has_data: true,
+            direct_construction_available: true,
+        },
+    ];
+    static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
+        machine: MachineDescriptor {
+            module_path: "builder_markers",
+            rust_type_path: "builder_markers::Machine",
+        },
+        label: None,
+        description: None,
+        states: &STATES,
+        transitions: LinkedTransitionInventory::new(transitions),
+        static_links: &[],
+    }];
+
+    let doc = CodebaseDoc::try_from_linked(&LINKED).expect("codebase doc");
+    let mermaid = render::mermaid(&doc);
+    let dot = render::dot(&doc);
+    let plantuml = render::plantuml(&doc);
+
+    assert!(mermaid.contains("Review (data) [build]"));
+    assert!(!mermaid.contains("Draft [build]"));
+    assert!(dot.contains("Review (data) [build]"));
+    assert!(!dot.contains("Draft [build]"));
+    assert!(plantuml.contains("Review (data) [build]"));
+    assert!(!plantuml.contains("Draft [build]"));
+}
+
+#[test]
 fn malformed_inventory_rejects_missing_transition_source_before_sort() {
     fn transitions() -> &'static [LinkedTransitionDescriptor] {
         &TRANSITIONS

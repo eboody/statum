@@ -119,6 +119,10 @@ absolute carrier paths such as `::core::option::Option<...>` and
 `crate::`, `self::`, `super::`, or absolute paths rather than imported aliases
 or bare prelude names. `#[machine_ref(...)]` is trait-backed and supports
 nominal structs and tuple structs only; plain type aliases are rejected.
+Codebase graph renderers project direct-construction availability with a
+` [build]` suffix on directly constructible states. They also derive
+cross-machine summary edges from exact `relations()` while leaving the JSON
+surface canonical and relation-level.
 
 ## Transition Identity
 

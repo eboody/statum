@@ -23,7 +23,7 @@ It covers:
 - linked compiled machine topology
 - declared validator-entry surfaces
 - direct construction availability per state
-- exact cross-machine relations from supported static observation points
+- exact static relations from supported static observation points
 
 It does not cover:
 
@@ -43,15 +43,17 @@ Completed:
 - exact relation extraction from state payloads, machine fields, and transition
   parameters
 - trait-backed nominal `#[machine_ref(...)]`
+- visible builder markers in Mermaid, DOT, and PlantUML
+- machine summary edges derived from exact relations
+- relation grouping plus inbound and outbound lookup helpers
+- typed exact relation detail helpers for downstream consumers
 - fail-closed authority guards for unsupported validator cfg shapes
 - fail-closed authority guards for same-name wrapper lookalikes and ambiguous
   direct machine syntax
 
 Still open:
 
-- visible builder markers in Mermaid, DOT, and PlantUML
-- relation-derived machine summary edges in graph renderers
-- richer relation-provenance helpers for downstream consumers
+- inspector-side filtering and layout work that consumes this substrate
 
 ## Authority Contract
 
@@ -244,7 +246,7 @@ Deliverables:
 
 - helpers for inbound and outbound relation lookup
 - stable detail payloads for relation provenance
-- relation-group filtering surfaces
+- stable machine relation groups for downstream filtering and navigation
 
 Success criteria:
 
@@ -264,12 +266,12 @@ Success criteria:
 - [x] Reject unanchored direct machine syntax in the exact lane
 - [x] Keep `links()` as compatibility output while making `relations()` the
       canonical exact surface
-- [ ] Render builder availability visibly in Mermaid
-- [ ] Render builder availability visibly in DOT
-- [ ] Render builder availability visibly in PlantUML
-- [ ] Add machine summary edges derived from `relations()`
-- [ ] Add relation lookup helpers for inbound and outbound navigation
-- [ ] Add stable provenance detail helpers for the inspector
+- [x] Render builder availability visibly in Mermaid
+- [x] Render builder availability visibly in DOT
+- [x] Render builder availability visibly in PlantUML
+- [x] Add machine summary edges derived from `relations()`
+- [x] Add relation lookup helpers for inbound and outbound navigation
+- [x] Add stable provenance detail helpers for the inspector
 
 ## Acceptance Criteria
 

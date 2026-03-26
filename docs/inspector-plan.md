@@ -53,7 +53,7 @@ Claimed authority surface in the exact lane:
 - exact linked compiled machine topology
 - exact declared validator-entry surfaces
 - exact direct-construction availability per state
-- exact cross-machine relations from the codebase export substrate
+- exact static relations from the codebase export substrate
 
 Actual observation point for the exact lane:
 
@@ -202,8 +202,8 @@ Source of truth:
 
 Status:
 
-- foundation done
-- builder rendering and relation projection still open
+- exact static substrate done
+- inspector UI work is the next open milestone
 
 ### Phase 1: Exact Codebase Viewer MVP
 
@@ -347,8 +347,8 @@ Adversarial tests:
 
 - [x] Create the exact static substrate plan
 - [x] Make the inspector plan depend on that substrate
-- [ ] Render builder markers in the exact graph backends
-- [ ] Derive and render exact machine summary edges
+- [x] Render builder markers in the exact graph backends
+- [x] Derive and render exact machine summary edges
 - [ ] Add workspace overview to the TUI
 - [ ] Add machine view with validators and builder markers
 - [ ] Add relation pane with inbound and outbound navigation
@@ -360,7 +360,7 @@ Adversarial tests:
 - [ ] Add snapshot protocol and generic structural diffing
 - [ ] Add composition tree and nested replay navigation
 - [ ] Add helper hooks and one sample application adapter
-- [ ] Add exact-lane tests for builder markers, summary edges, and relation
+- [x] Add exact-lane tests for builder markers, summary edges, and relation
       provenance
 - [ ] Add heuristic-lane separation tests
 - [ ] Add replay, snapshot, and composition protocol tests

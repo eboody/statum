@@ -6,24 +6,28 @@ digraph "statum_codebase" {
     rankdir=TB;
     subgraph "cluster_m0" {
         label="codebase::detached::Machine";
-        m0_s0 [label="Alone"]
+        m0_s0 [label="Alone [build]"]
+        m0_g [label="", shape=point, width=0.01, height=0.01, style=invis]
     }
     subgraph "cluster_m1" {
         label="codebase::named_holder::Machine";
-        m1_s0 [label="Pending (data)"]
-        m1_s1 [label="Settled"]
+        m1_s0 [label="Pending (data) [build]"]
+        m1_s1 [label="Settled [build]"]
+        m1_g [label="", shape=point, width=0.01, height=0.01, style=invis]
     }
     subgraph "cluster_m2" {
         label="Task Machine";
-        m2_s0 [label="Idle"]
-        m2_s1 [label="Running"]
-        m2_s2 [label="Done"]
+        m2_s0 [label="Idle [build]"]
+        m2_s1 [label="Running [build]"]
+        m2_s2 [label="Done [build]"]
+        m2_g [label="", shape=point, width=0.01, height=0.01, style=invis]
     }
     subgraph "cluster_m3" {
         label="Workflow Machine";
-        m3_s0 [label="Draft"]
-        m3_s1 [label="In Progress"]
-        m3_s2 [label="Complete"]
+        m3_s0 [label="Draft [build]"]
+        m3_s1 [label="In Progress [build]"]
+        m3_s2 [label="Complete [build]"]
+        m3_g [label="", shape=point, width=0.01, height=0.01, style=invis]
     }
 
     m2_v0 [label="TaskRow::into_machine()", shape=ellipse, style="rounded,dashed", color="#4b5563"]
@@ -34,6 +38,9 @@ digraph "statum_codebase" {
     m2_s1 -> m2_s2 [label="finish"]
     m3_s0 -> m3_s1 [label="Start Workflow"]
     m3_s1 -> m3_s2 [label="finish"]
+
+    m1_g -> m2_g [ltail="cluster_m1", lhead="cluster_m2", style="bold,dotted", color="#2563eb", fontcolor="#2563eb", penwidth=2, minlen=2, label="exact refs: payload"]
+    m3_g -> m2_g [ltail="cluster_m3", lhead="cluster_m2", style="bold,dotted", color="#2563eb", fontcolor="#2563eb", penwidth=2, minlen=2, label="exact refs: payload, param"]
 
     m1_s0 -> m2_s2 [style=dashed, label="child"]
     m3_s1 -> m2_s1 [style=dashed, label="state_data"]

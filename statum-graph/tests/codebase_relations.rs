@@ -309,3 +309,118 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
         "plain opaque ids without #[machine_ref(...)] should not create exact relations"
     );
 }
+
+#[test]
+fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
+    let doc = CodebaseDoc::linked().expect("linked codebase doc");
+
+    let task = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("task::Machine"))
+        .expect("task machine");
+    let workflow = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("workflow::Machine"))
+        .expect("workflow machine");
+    let opaque = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("opaque::Machine"))
+        .expect("opaque machine");
+    let workflow_in_progress = workflow
+        .states
+        .iter()
+        .find(|state| state.rust_name == "InProgress")
+        .expect("workflow in progress state");
+    let workflow_start = workflow
+        .transitions
+        .iter()
+        .find(|transition| transition.method_name == "start")
+        .expect("workflow start transition");
+    let task_running = task
+        .states
+        .iter()
+        .find(|state| state.rust_name == "Running")
+        .expect("task running state");
+
+    let groups = doc.machine_relation_groups();
+    assert_eq!(groups.len(), 2);
+
+    let workflow_group = groups
+        .iter()
+        .find(|group| group.from_machine == workflow.index && group.to_machine == task.index)
+        .expect("workflow exact group");
+    assert_eq!(workflow_group.relation_indices.len(), 3);
+    assert_eq!(
+        workflow_group
+            .counts
+            .iter()
+            .map(|count| count.display_label())
+            .collect::<Vec<_>>(),
+        vec![
+            "payload".to_string(),
+            "field".to_string(),
+            "param".to_string()
+        ]
+    );
+
+    let opaque_group = groups
+        .iter()
+        .find(|group| group.from_machine == opaque.index && group.to_machine == task.index)
+        .expect("opaque exact group");
+    assert_eq!(opaque_group.relation_indices.len(), 3);
+    assert_eq!(
+        opaque_group
+            .counts
+            .iter()
+            .map(|count| count.display_label())
+            .collect::<Vec<_>>(),
+        vec![
+            "payload [ref]".to_string(),
+            "field [ref]".to_string(),
+            "param [ref]".to_string()
+        ]
+    );
+
+    assert_eq!(
+        doc.outbound_relations_for_machine(workflow.index).count(),
+        workflow_group.relation_indices.len()
+    );
+    assert_eq!(doc.inbound_relations_for_machine(task.index).count(), 6);
+    assert_eq!(
+        doc.outbound_relations_for_state(workflow.index, workflow_in_progress.index)
+            .count(),
+        1
+    );
+    assert_eq!(
+        doc.inbound_relations_for_state(task.index, task_running.index)
+            .count(),
+        6
+    );
+    assert_eq!(
+        doc.outbound_relations_for_transition(workflow.index, workflow_start.index)
+            .count(),
+        1
+    );
+    assert_eq!(
+        doc.inbound_relations_for_transition(workflow.index, workflow_start.index)
+            .count(),
+        0
+    );
+
+    let relation_detail = doc
+        .relation_detail(workflow_group.relation_indices[2])
+        .expect("workflow relation detail");
+    assert_eq!(relation_detail.source_machine.index, workflow.index);
+    assert_eq!(
+        relation_detail
+            .source_transition
+            .map(|transition| transition.method_name),
+        Some("start")
+    );
+    assert_eq!(relation_detail.source_state, None);
+    assert_eq!(relation_detail.target_machine.index, task.index);
+    assert_eq!(relation_detail.target_state.rust_name, "Running");
+}

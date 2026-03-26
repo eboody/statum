@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::codebase::CodebaseDoc;
+use crate::codebase::{CodebaseDoc, CodebaseState};
 use crate::render::{bundle_output_path, validate_output_stem};
 
 /// One built-in renderer output format for codebase documents.
@@ -75,6 +75,7 @@ pub fn mermaid(doc: &CodebaseDoc) -> String {
         format!("%% linked machines: {}", doc.machines().len()),
         "graph TD".to_string(),
     ];
+    let relation_groups = cross_machine_relation_groups(doc);
     let has_validator_entries = doc
         .machines()
         .iter()
@@ -90,7 +91,7 @@ pub fn mermaid(doc: &CodebaseDoc) -> String {
             lines.push(format!(
                 "        {}[\"{}\"]",
                 machine.node_id(state.index),
-                escape_mermaid_label(&state.display_label())
+                escape_mermaid_label(&render_state_label(state))
             ));
         }
         lines.push("    end".to_string());
@@ -127,7 +128,26 @@ pub fn mermaid(doc: &CodebaseDoc) -> String {
         }
     }
 
-    if !doc.links().is_empty() && !doc.machines().is_empty() {
+    if !relation_groups.is_empty() && !doc.machines().is_empty() {
+        lines.push(String::new());
+    }
+
+    for group in &relation_groups {
+        let from_machine = doc
+            .machine(group.from_machine)
+            .expect("relation group source machine should exist");
+        let to_machine = doc
+            .machine(group.to_machine)
+            .expect("relation group target machine should exist");
+        lines.push(format!(
+            "    {} ==>|{}| {}",
+            from_machine.cluster_id(),
+            escape_mermaid_edge_label(&group.display_label()),
+            to_machine.cluster_id()
+        ));
+    }
+
+    if !doc.links().is_empty() && (!doc.machines().is_empty() || !relation_groups.is_empty()) {
         lines.push(String::new());
     }
 
@@ -170,6 +190,7 @@ pub fn dot(doc: &CodebaseDoc) -> String {
         "digraph \"statum_codebase\" {".to_string(),
         "    rankdir=TB;".to_string(),
     ];
+    let relation_groups = cross_machine_relation_groups(doc);
     let has_validator_entries = doc
         .machines()
         .iter()
@@ -188,9 +209,13 @@ pub fn dot(doc: &CodebaseDoc) -> String {
             lines.push(format!(
                 "        {} [label=\"{}\"]",
                 machine.node_id(state.index),
-                escape_dot_label(&state.display_label())
+                escape_dot_label(&render_state_label(state))
             ));
         }
+        lines.push(format!(
+            "        {} [label=\"\", shape=point, width=0.01, height=0.01, style=invis]",
+            machine.summary_node_id()
+        ));
         lines.push("    }".to_string());
     }
 
@@ -225,7 +250,28 @@ pub fn dot(doc: &CodebaseDoc) -> String {
         }
     }
 
-    if !doc.links().is_empty() && !doc.machines().is_empty() {
+    if !relation_groups.is_empty() && !doc.machines().is_empty() {
+        lines.push(String::new());
+    }
+
+    for group in &relation_groups {
+        let from_machine = doc
+            .machine(group.from_machine)
+            .expect("relation group source machine should exist");
+        let to_machine = doc
+            .machine(group.to_machine)
+            .expect("relation group target machine should exist");
+        lines.push(format!(
+            "    {} -> {} [ltail=\"cluster_{}\", lhead=\"cluster_{}\", style=\"bold,dotted\", color=\"#2563eb\", fontcolor=\"#2563eb\", penwidth=2, minlen=2, label=\"{}\"]",
+            from_machine.summary_node_id(),
+            to_machine.summary_node_id(),
+            from_machine.cluster_id(),
+            to_machine.cluster_id(),
+            escape_dot_label(&group.display_label())
+        ));
+    }
+
+    if !doc.links().is_empty() && (!doc.machines().is_empty() || !relation_groups.is_empty()) {
         lines.push(String::new());
     }
 
@@ -272,6 +318,7 @@ pub fn plantuml(doc: &CodebaseDoc) -> String {
         "@startuml".to_string(),
         format!("' linked machines: {}", doc.machines().len()),
     ];
+    let relation_groups = cross_machine_relation_groups(doc);
     let has_validator_entries = doc
         .machines()
         .iter()
@@ -286,7 +333,7 @@ pub fn plantuml(doc: &CodebaseDoc) -> String {
         for state in &machine.states {
             lines.push(format!(
                 "    state \"{}\" as {}",
-                escape_plantuml_label(&state.display_label()),
+                escape_plantuml_label(&render_state_label(state)),
                 machine.node_id(state.index)
             ));
         }
@@ -324,7 +371,26 @@ pub fn plantuml(doc: &CodebaseDoc) -> String {
         }
     }
 
-    if !doc.links().is_empty() && !doc.machines().is_empty() {
+    if !relation_groups.is_empty() && !doc.machines().is_empty() {
+        lines.push(String::new());
+    }
+
+    for group in &relation_groups {
+        let from_machine = doc
+            .machine(group.from_machine)
+            .expect("relation group source machine should exist");
+        let to_machine = doc
+            .machine(group.to_machine)
+            .expect("relation group target machine should exist");
+        lines.push(format!(
+            "{} -[#2563EB,bold]-> {} : {}",
+            from_machine.cluster_id(),
+            to_machine.cluster_id(),
+            escape_plantuml_label(&group.display_label())
+        ));
+    }
+
+    if !doc.links().is_empty() && (!doc.machines().is_empty() || !relation_groups.is_empty()) {
         lines.push(String::new());
     }
 
@@ -382,6 +448,24 @@ fn any_transitions(doc: &CodebaseDoc) -> bool {
     doc.machines()
         .iter()
         .any(|machine| !machine.transitions.is_empty())
+}
+
+fn cross_machine_relation_groups(
+    doc: &CodebaseDoc,
+) -> Vec<crate::codebase::CodebaseMachineRelationGroup> {
+    doc.machine_relation_groups()
+        .into_iter()
+        .filter(|group| group.from_machine != group.to_machine)
+        .collect()
+}
+
+fn render_state_label(state: &CodebaseState) -> String {
+    let base = state.display_label();
+    if state.direct_construction_available {
+        format!("{base} [build]")
+    } else {
+        base.into_owned()
+    }
 }
 
 fn escape_mermaid_label(label: &str) -> String {
