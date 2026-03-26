@@ -50,7 +50,9 @@ fn main() -> ExitCode {
     match run_main() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("{error}");
+            if !error.diagnostics_reported() {
+                eprintln!("{error}");
+            }
             ExitCode::FAILURE
         }
     }

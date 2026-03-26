@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::Component;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 
 use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
 use statum_graph::CodebaseDoc;
@@ -69,6 +69,7 @@ pub enum Error {
         manifest_path: PathBuf,
         status: ExitStatus,
         details: Option<String>,
+        diagnostics_reported: bool,
     },
 }
 
@@ -137,6 +138,7 @@ impl fmt::Display for Error {
                 manifest_path,
                 status,
                 details,
+                diagnostics_reported: _,
             } => match details {
                 Some(details) => write!(
                     formatter,
@@ -150,6 +152,18 @@ impl fmt::Display for Error {
                 ),
             },
         }
+    }
+}
+
+impl Error {
+    pub fn diagnostics_reported(&self) -> bool {
+        matches!(
+            self,
+            Self::RunnerFailed {
+                diagnostics_reported: true,
+                ..
+            }
+        )
     }
 }
 
@@ -191,6 +205,7 @@ pub fn run(options: Options) -> Result<Vec<PathBuf>, Error> {
         temp_dir.path().join("Cargo.toml"),
         &prepared.input.manifest_path,
         "codebase export",
+        RunnerStdio::Captured,
     )?;
 
     Ok(bundle_paths(&out_dir, &options.stem))
@@ -216,6 +231,7 @@ pub fn inspect(options: InspectOptions) -> Result<(), Error> {
         temp_dir.path().join("Cargo.toml"),
         &prepared.input.manifest_path,
         "inspect session",
+        RunnerStdio::Inherited,
     )
 }
 
@@ -590,28 +606,59 @@ fn run_runner(
     runner_manifest_path: PathBuf,
     target_manifest_path: &Path,
     operation: &'static str,
+    stdio: RunnerStdio,
 ) -> Result<(), Error> {
-    let output = Command::new("cargo")
+    let mut command = Command::new("cargo");
+    command
         .arg("run")
         .arg("--quiet")
         .arg("--manifest-path")
-        .arg(&runner_manifest_path)
-        .output()
-        .map_err(|source| Error::Io {
-            action: "run generated cargo runner",
-            path: runner_manifest_path.clone(),
-            source,
-        })?;
+        .arg(&runner_manifest_path);
 
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(Error::RunnerFailed {
-            operation,
-            manifest_path: target_manifest_path.to_path_buf(),
-            status: output.status,
-            details: normalize_runner_failure_details(&output.stderr, &output.stdout),
-        })
+    match stdio {
+        RunnerStdio::Captured => {
+            let output = command.output().map_err(|source| Error::Io {
+                action: "run generated cargo runner",
+                path: runner_manifest_path.clone(),
+                source,
+            })?;
+
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(Error::RunnerFailed {
+                    operation,
+                    manifest_path: target_manifest_path.to_path_buf(),
+                    status: output.status,
+                    details: normalize_runner_failure_details(&output.stderr, &output.stdout),
+                    diagnostics_reported: false,
+                })
+            }
+        }
+        RunnerStdio::Inherited => {
+            let status = command
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .map_err(|source| Error::Io {
+                    action: "run generated cargo runner",
+                    path: runner_manifest_path.clone(),
+                    source,
+                })?;
+
+            if status.success() {
+                Ok(())
+            } else {
+                Err(Error::RunnerFailed {
+                    operation,
+                    manifest_path: target_manifest_path.to_path_buf(),
+                    status,
+                    details: None,
+                    diagnostics_reported: true,
+                })
+            }
+        }
     }
 }
 
@@ -782,6 +829,12 @@ struct PreparedRun {
     input: ResolvedInput,
     selections: Vec<SelectedPackage>,
     patch_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy)]
+enum RunnerStdio {
+    Captured,
+    Inherited,
 }
 
 #[derive(Clone, Copy)]

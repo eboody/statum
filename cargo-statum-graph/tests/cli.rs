@@ -150,8 +150,8 @@ fn inspect_command_fails_closed_without_an_interactive_terminal() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("inspect session"),
-        "stderr should identify the inspect path, got: {stderr}"
+        !stderr.contains("inspect session"),
+        "stderr should not be double-wrapped by the parent CLI, got: {stderr}"
     );
     assert!(
         stderr.contains("requires an interactive terminal on stdin and stdout"),
