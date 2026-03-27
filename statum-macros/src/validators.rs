@@ -34,12 +34,11 @@ struct CollectValidatorContext<'a> {
 
 pub fn parse_validators(
     attr: TokenStream,
-    item: TokenStream,
+    item_impl: ItemImpl,
     module_path: &str,
     line_number: usize,
 ) -> TokenStream {
     let machine_ident = parse_macro_input!(attr as Ident);
-    let item_impl = parse_macro_input!(item as ItemImpl);
     let struct_ident = &item_impl.self_ty;
     let persisted_type_display = struct_ident.to_token_stream().to_string();
     let machine_name = machine_ident.to_string();

@@ -36,7 +36,7 @@ Current shipping surface:
 ## Dependency
 
 The exact static substrate is tracked separately in
-[exact-static-relations-plan.md](/home/eran/code/statum/docs/exact-static-relations-plan.md).
+[exact-static-relations-plan.md](exact-static-relations-plan.md).
 
 That plan is the protocol-truth dependency for this one.
 
@@ -205,7 +205,7 @@ Heuristic lane:
 
 Source of truth:
 
-- [exact-static-relations-plan.md](/home/eran/code/statum/docs/exact-static-relations-plan.md)
+- [exact-static-relations-plan.md](exact-static-relations-plan.md)
 
 Status:
 

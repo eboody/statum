@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
 
-use macro_registry::callsite::current_source_info;
+use macro_registry::callsite::{current_source_info, source_info_for_span_or_callsite};
 use macro_registry::query;
 
 use crate::{
@@ -14,12 +14,14 @@ pub(super) fn resolve_machine_metadata(
     module_path: &str,
     machine_ident: &Ident,
 ) -> Result<MachineInfo, TokenStream> {
+    let source_info = source_info_for_span_or_callsite(machine_ident.span());
     let module_path_key: MachinePath = module_path.into();
     let machine_name = machine_ident.to_string();
     lookup_loaded_machine_in_module(&module_path_key, &machine_name).map_err(|failure| {
-        let current_line = current_source_info().map(|(_, line)| line).unwrap_or_default();
-        let available = available_machine_candidates_in_module(module_path);
-        let same_named_elsewhere = same_named_machine_candidates_elsewhere(&machine_name, module_path);
+        let current_line = source_info.as_ref().map(|(_, line)| *line).unwrap_or_default();
+        let available = available_machine_candidates_in_module(source_info.as_ref(), module_path);
+        let same_named_elsewhere =
+            same_named_machine_candidates_elsewhere(source_info.as_ref(), &machine_name, module_path);
         let loaded_same_named_elsewhere =
             same_named_loaded_machines_elsewhere(&module_path_key, &machine_name);
         let suggested_machine_name = available
@@ -72,11 +74,14 @@ pub(super) fn resolve_machine_metadata(
         } else {
             String::new()
         };
-        let missing_attr_line = plain_struct_line_in_module(module_path, &machine_name).map(|line| {
-            format!(
-                "A struct named `{machine_name}` exists on line {line}, but it is not annotated with `#[machine]`."
-            )
-        });
+        let missing_attr_line =
+            plain_struct_line_in_module(source_info.as_ref(), module_path, &machine_name).map(
+                |line| {
+                    format!(
+                        "A struct named `{machine_name}` exists on line {line}, but it is not annotated with `#[machine]`."
+                    )
+                },
+            );
         let authority_line = match failure {
             LoadedMachineLookupFailure::NotFound => {
                 "Statum only resolves `#[machine]` items that have already expanded before this `#[validators]` impl.".to_string()
@@ -96,18 +101,28 @@ pub(super) fn resolve_machine_metadata(
     })
 }
 
-fn available_machine_candidates_in_module(module_path: &str) -> Vec<query::ItemCandidate> {
-    let Some((file_path, _)) = current_source_info() else {
+fn source_file_from_info(source_info: Option<&(String, usize)>) -> Option<String> {
+    source_info
+        .map(|(file_path, _)| file_path.clone())
+        .or_else(|| current_source_info().map(|(file_path, _)| file_path))
+}
+
+fn available_machine_candidates_in_module(
+    source_info: Option<&(String, usize)>,
+    module_path: &str,
+) -> Vec<query::ItemCandidate> {
+    let Some(file_path) = source_file_from_info(source_info) else {
         return Vec::new();
     };
     query::candidates_in_module(&file_path, module_path, query::ItemKind::Struct, Some("machine"))
 }
 
 fn same_named_machine_candidates_elsewhere(
+    source_info: Option<&(String, usize)>,
     machine_name: &str,
     module_path: &str,
 ) -> Option<Vec<query::ItemCandidate>> {
-    let (file_path, _) = current_source_info()?;
+    let file_path = source_file_from_info(source_info)?;
     let candidates = query::same_named_candidates_elsewhere(
         &file_path,
         module_path,
@@ -118,8 +133,12 @@ fn same_named_machine_candidates_elsewhere(
     (!candidates.is_empty()).then_some(candidates)
 }
 
-fn plain_struct_line_in_module(module_path: &str, struct_name: &str) -> Option<usize> {
-    let (file_path, _) = current_source_info()?;
+fn plain_struct_line_in_module(
+    source_info: Option<&(String, usize)>,
+    module_path: &str,
+    struct_name: &str,
+) -> Option<usize> {
+    let file_path = source_file_from_info(source_info)?;
     query::plain_item_line_in_module(
         &file_path,
         module_path,

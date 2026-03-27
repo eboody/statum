@@ -153,6 +153,7 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_same_names_different_modules.rs");
     t.pass("tests/ui/valid_transition_nested_wrappers.rs");
     t.pass("tests/ui/valid_transition_branch.rs");
+    t.pass("tests/ui/valid_quick_start.rs");
     t.pass("tests/ui/valid_transition_include.rs");
     t.pass("tests/ui/valid_into_machines_by.rs");
     t.pass("tests/ui/valid_transition_map.rs");

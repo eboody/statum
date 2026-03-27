@@ -42,7 +42,7 @@ pub(crate) use syntax::{
     extract_derives, source_file_fingerprint,
 };
 
-use macro_registry::callsite::{current_module_path_at_line, current_module_path_opt};
+use macro_registry::callsite::{module_path_for_span, source_info_for_span_or_callsite};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use syn::{Item, ItemImpl, parse_macro_input};
@@ -138,7 +138,7 @@ pub fn transition(
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     let input = parse_macro_input!(item as ItemImpl);
-    let module_path = match resolved_current_module_path(Span::call_site(), "#[transition]") {
+    let module_path = match resolved_current_module_path(input.impl_token.span, "#[transition]") {
         Ok(path) => path,
         Err(err) => return err,
     };
@@ -172,12 +172,21 @@ pub fn transition(
 /// `.build_reports()`.
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let line_number = Span::call_site().start().line;
-    let module_path = match resolved_current_module_path(Span::call_site(), "#[validators]") {
+    let item_impl = parse_macro_input!(item as ItemImpl);
+    let span = item_impl.impl_token.span;
+    let line_number = source_info_for_span_or_callsite(span)
+        .map(|(_, line_number)| line_number)
+        .filter(|line_number| *line_number > 0)
+        .or_else(|| {
+            let raw_line_number = span.start().line;
+            (raw_line_number > 0).then_some(raw_line_number)
+        })
+        .unwrap_or_default();
+    let module_path = match resolved_current_module_path(span, "#[validators]") {
         Ok(path) => path,
         Err(err) => return err,
     };
-    parse_validators(attr, item, &module_path, line_number)
+    parse_validators(attr, item_impl, &module_path, line_number)
 }
 
 #[doc(hidden)]
@@ -190,12 +199,7 @@ pub(crate) fn resolved_current_module_path(
     span: Span,
     macro_name: &str,
 ) -> Result<String, TokenStream> {
-    let line_number = span.start().line;
-    let resolved = if line_number == 0 {
-        current_module_path_opt()
-    } else {
-        current_module_path_at_line(line_number).or_else(current_module_path_opt)
-    };
+    let resolved = module_path_for_span(span);
 
     resolved.ok_or_else(|| {
         let message = format!(
