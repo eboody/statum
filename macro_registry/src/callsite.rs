@@ -1,4 +1,5 @@
 use module_path_extractor::{find_module_path, get_pseudo_module_path, get_source_info};
+use proc_macro2::Span;
 use std::path::Path;
 
 fn normalize_file_path(file_path: &str) -> String {
@@ -13,9 +14,39 @@ fn normalize_file_path(file_path: &str) -> String {
     }
 }
 
+fn source_file_exists(file_path: &str) -> bool {
+    Path::new(file_path).is_file()
+}
+
 /// Returns `(file_path, line_number)` for the current macro call-site when available.
 pub fn current_source_info() -> Option<(String, usize)> {
-    get_source_info().map(|(file_path, line_number)| (normalize_file_path(&file_path), line_number))
+    get_source_info()
+        .map(|(file_path, line_number)| (normalize_file_path(&file_path), line_number))
+        .filter(|(file_path, _)| source_file_exists(file_path))
+}
+
+/// Returns `(file_path, line_number)` for an explicit span when available.
+pub fn source_info_for_span(span: Span) -> Option<(String, usize)> {
+    let file_path = span
+        .local_file()
+        .map(|path| path.to_string_lossy().into_owned())
+        .or_else(|| {
+            let file_path = span.file();
+            (!file_path.is_empty()).then_some(file_path)
+        })?;
+
+    let file_path = normalize_file_path(&file_path);
+    source_file_exists(&file_path).then_some((file_path, span.start().line))
+}
+
+/// Returns `(file_path, line_number)` for an explicit span, falling back to the
+/// current macro call-site when the span does not carry usable source info.
+pub fn source_info_for_span_or_callsite(span: Span) -> Option<(String, usize)> {
+    match source_info_for_span(span) {
+        Some((file_path, line_number)) if line_number > 0 => Some((file_path, line_number)),
+        Some((file_path, _)) => current_source_info().or(Some((file_path, 0))),
+        None => current_source_info(),
+    }
 }
 
 /// Returns the best-effort source file for the current macro call-site.
@@ -32,6 +63,16 @@ pub fn current_module_path_opt() -> Option<String> {
 /// Returns the best-effort module path for the current macro call-site file at `line_number`.
 pub fn current_module_path_at_line(line_number: usize) -> Option<String> {
     let file_path = current_source_file()?;
+    module_path_for_line(&file_path, line_number)
+}
+
+/// Returns the best-effort module path for an explicit span or, if needed, the
+/// current macro call-site.
+pub fn module_path_for_span(span: Span) -> Option<String> {
+    let (file_path, line_number) = source_info_for_span_or_callsite(span)?;
+    if line_number == 0 {
+        return None;
+    }
     module_path_for_line(&file_path, line_number)
 }
 

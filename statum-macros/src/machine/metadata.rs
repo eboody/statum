@@ -1,4 +1,6 @@
-use macro_registry::callsite::{current_source_file, current_source_info, module_path_for_line};
+use macro_registry::callsite::{
+    current_source_info, module_path_for_span, source_info_for_span_or_callsite,
+};
 use macro_registry::query;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
@@ -78,19 +80,19 @@ impl MachineInfo {
     }
 
     pub fn from_item_struct(item: &ItemStruct) -> syn::Result<Self> {
-        let Some(file_path) = current_source_file() else {
+        let span = item.ident.span();
+        let Some((file_path, line_number)) = source_info_for_span_or_callsite(span) else {
             return Err(syn::Error::new(
-                item.ident.span(),
+                span,
                 format!(
                     "Internal error: could not read source information for `#[machine]` struct `{}`.",
                     item.ident
                 ),
             ));
         };
-        let line_number = item.ident.span().start().line;
-        let Some(module_path) = module_path_for_line(&file_path, line_number) else {
+        let Some(module_path) = module_path_for_span(span) else {
             return Err(syn::Error::new(
-                item.ident.span(),
+                span,
                 format!(
                     "Internal error: could not resolve the module path for `#[machine]` struct `{}`.",
                     item.ident
@@ -131,8 +133,9 @@ impl MachineInfo {
             return None;
         }
 
-        let line_number = item.ident.span().start().line;
-        let file_path = current_source_file();
+        let (file_path, line_number) = source_info_for_span_or_callsite(item.ident.span())
+            .map(|(file_path, line_number)| (Some(file_path), line_number))
+            .unwrap_or((None, item.ident.span().start().line));
         let presentation = parse_present_attrs(&item.attrs).ok()?;
         let presentation_types = parse_presentation_types_attr(&item.attrs).ok()?;
         Some(Self {
