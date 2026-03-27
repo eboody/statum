@@ -11,7 +11,14 @@ use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
 use statum_graph::CodebaseDoc;
 use tempfile::TempDir;
 
+mod heuristics;
 mod inspect;
+
+pub use heuristics::{
+    collect_heuristic_overlay, HeuristicDiagnostic, HeuristicEvidenceKind,
+    HeuristicMachineRelationGroup, HeuristicOverlay, HeuristicRelation, HeuristicRelationCount,
+    HeuristicRelationDetail, HeuristicRelationSource, HeuristicStatusKind, InspectPackageSource,
+};
 
 const GRAPH_EXTENSIONS: [&str; 4] = ["mmd", "dot", "puml", "json"];
 const GRAPH_PACKAGE_NAME: &str = "statum-graph";
@@ -235,8 +242,12 @@ pub fn inspect(options: InspectOptions) -> Result<(), Error> {
     )
 }
 
-pub fn run_inspector(doc: CodebaseDoc, workspace_label: String) -> io::Result<()> {
-    inspect::run(doc, workspace_label)
+pub fn run_inspector(
+    doc: CodebaseDoc,
+    heuristic: HeuristicOverlay,
+    workspace_label: String,
+) -> io::Result<()> {
+    inspect::run(doc, heuristic, workspace_label)
 }
 
 fn load_metadata(manifest_path: &Path) -> Result<Metadata, Error> {
@@ -339,7 +350,11 @@ fn workspace_packages<'a>(metadata: &'a Metadata, ids: &[PackageId]) -> Vec<&'a 
 }
 
 fn has_library_target(package: &Package) -> bool {
-    package.targets.iter().any(|target| {
+    library_target(package).is_some()
+}
+
+fn library_target(package: &Package) -> Option<&cargo_metadata::Target> {
+    package.targets.iter().find(|target| {
         target.kind.iter().any(|kind| {
             matches!(
                 kind,
@@ -588,8 +603,15 @@ fn build_runner_main(
             source.push_str(&rust_str(NO_TTY_INSPECT_MESSAGE));
             source.push_str(").into());\n");
             source.push_str("    }\n");
+            source.push_str("    let heuristic = cargo_statum_graph::collect_heuristic_overlay(\n");
+            source.push_str("        &doc,\n");
+            source.push_str("        &[\n");
+            source.push_str(&inspect_package_sources_literal(selections)?);
+            source.push_str("        ],\n");
+            source.push_str("    );\n");
             source.push_str("    cargo_statum_graph::run_inspector(\n");
             source.push_str("        doc,\n");
+            source.push_str("        heuristic,\n");
             source.push_str(&format!(
                 "        {}.to_owned(),\n",
                 rust_str(workspace_label)
@@ -600,6 +622,30 @@ fn build_runner_main(
     source.push_str("    Ok(())\n");
     source.push_str("}\n");
     Ok(source)
+}
+
+fn inspect_package_sources_literal(selections: &[SelectedPackage]) -> Result<String, Error> {
+    let mut literal = String::new();
+    for selection in selections {
+        literal.push_str("            cargo_statum_graph::InspectPackageSource {\n");
+        literal.push_str(&format!(
+            "                package_name: {}.to_owned(),\n",
+            rust_str(&selection.package_name)
+        ));
+        literal.push_str(&format!(
+            "                manifest_dir: std::path::PathBuf::from({}),\n",
+            rust_path(&selection.manifest_dir, "selected package manifest dir")?
+        ));
+        literal.push_str(&format!(
+            "                lib_target_path: std::path::PathBuf::from({}),\n",
+            rust_path(
+                &selection.lib_target_path,
+                "selected package library target"
+            )?
+        ));
+        literal.push_str("            },\n");
+    }
+    Ok(literal)
 }
 
 fn run_runner(
@@ -784,16 +830,17 @@ fn normalize_absolute_path(path: &Path) -> PathBuf {
 struct SelectedPackage {
     package_name: String,
     manifest_dir: PathBuf,
+    lib_target_path: PathBuf,
 }
 
 impl SelectedPackage {
     fn new(package: &Package, manifest_path: &Path) -> Result<Self, Error> {
-        if !has_library_target(package) {
+        let Some(library_target) = library_target(package) else {
             return Err(Error::PackageHasNoLibrary {
                 manifest_path: manifest_path.to_path_buf(),
                 package: package.name.to_string(),
             });
-        }
+        };
 
         Ok(Self {
             package_name: package.name.to_string(),
@@ -803,6 +850,7 @@ impl SelectedPackage {
                 .parent()
                 .expect("package manifest should have a parent")
                 .to_path_buf(),
+            lib_target_path: normalize_absolute_path(library_target.src_path.as_std_path()),
         })
     }
 
@@ -928,6 +976,7 @@ mod tests {
         let selections = vec![SelectedPackage {
             package_name: "app".to_owned(),
             manifest_dir: PathBuf::from("/tmp/app"),
+            lib_target_path: PathBuf::from("/tmp/app/src/lib.rs"),
         }];
 
         let source = build_runner_main(
@@ -938,6 +987,8 @@ mod tests {
         )
         .expect("runner source");
 
+        assert!(source.contains("collect_heuristic_overlay"));
+        assert!(source.contains("InspectPackageSource"));
         assert!(source.contains("cargo_statum_graph::run_inspector"));
         assert!(source.contains("is_terminal()"));
         assert!(source.contains("/tmp/workspace/Cargo.toml"));
@@ -950,10 +1001,12 @@ mod tests {
             SelectedPackage {
                 package_name: GRAPH_PACKAGE_NAME.to_owned(),
                 manifest_dir: PathBuf::from("/tmp/graph"),
+                lib_target_path: PathBuf::from("/tmp/graph/src/lib.rs"),
             },
             SelectedPackage {
                 package_name: HELPER_PACKAGE_NAME.to_owned(),
                 manifest_dir: PathBuf::from("/tmp/helper"),
+                lib_target_path: PathBuf::from("/tmp/helper/src/lib.rs"),
             },
         ];
 

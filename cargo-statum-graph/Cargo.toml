@@ -2,8 +2,12 @@
 cargo_metadata = "0.21"
 clap = { version = "4.5.39", features = ["derive"] }
 crossterm = "0.29"
+module_path_extractor = { path = "../module_path_extractor", version = "0.6.9" }
+proc-macro2 = { version = "1.0", features = ["span-locations"] }
+quote = "1.0"
 ratatui = "0.29"
 statum-graph = { path = "../statum-graph", version = "0.6.9" }
+syn = { version = "2.0", features = ["full", "visit"] }
 tempfile = "3"
 
 [dev-dependencies]
