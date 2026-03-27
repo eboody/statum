@@ -1,6 +1,7 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -13,8 +14,8 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tab
 use ratatui::{Frame, Terminal};
 use statum_graph::{
     CodebaseDoc, CodebaseMachine, CodebaseMachineRelationGroup, CodebaseRelation,
-    CodebaseRelationDetail, CodebaseRelationSource, CodebaseState, CodebaseTransition,
-    CodebaseValidatorEntry,
+    CodebaseRelationBasis, CodebaseRelationCount, CodebaseRelationDetail, CodebaseRelationKind,
+    CodebaseRelationSource, CodebaseState, CodebaseTransition, CodebaseValidatorEntry,
 };
 
 pub fn run(doc: CodebaseDoc, workspace_label: String) -> io::Result<()> {
@@ -172,11 +173,95 @@ struct SummaryItem {
     group: CodebaseMachineRelationGroup,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InputMode {
+    Normal,
+    Search,
+}
+
+impl InputMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Search => "search",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct ExactFilters {
+    relation_kinds: BTreeSet<CodebaseRelationKind>,
+    relation_bases: BTreeSet<CodebaseRelationBasis>,
+}
+
+impl ExactFilters {
+    fn toggle_kind(&mut self, kind: CodebaseRelationKind) {
+        if !self.relation_kinds.insert(kind) {
+            self.relation_kinds.remove(&kind);
+        }
+    }
+
+    fn toggle_basis(&mut self, basis: CodebaseRelationBasis) {
+        if !self.relation_bases.insert(basis) {
+            self.relation_bases.remove(&basis);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.relation_kinds.clear();
+        self.relation_bases.clear();
+    }
+
+    fn has_active(&self) -> bool {
+        !self.relation_kinds.is_empty() || !self.relation_bases.is_empty()
+    }
+
+    fn matches_relation(&self, relation: &CodebaseRelation) -> bool {
+        (self.relation_kinds.is_empty() || self.relation_kinds.contains(&relation.kind))
+            && (self.relation_bases.is_empty() || self.relation_bases.contains(&relation.basis))
+    }
+
+    fn kind_summary(&self) -> String {
+        if self.relation_kinds.is_empty() {
+            "all".to_owned()
+        } else {
+            self.relation_kinds
+                .iter()
+                .map(|kind| kind.display_label())
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    }
+
+    fn basis_summary(&self) -> String {
+        if self.relation_bases.is_empty() {
+            "all".to_owned()
+        } else {
+            self.relation_bases
+                .iter()
+                .map(|basis| basis.display_label())
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MachineItem {
+    State(usize),
+    Transition(usize),
+    Validator(usize),
+    Summary(SummaryItem),
+}
+
 #[derive(Debug)]
 struct InspectorApp {
     doc: CodebaseDoc,
     workspace_label: String,
     selected_machine: usize,
+    input_mode: InputMode,
+    search_query: String,
+    filters: ExactFilters,
     focus: Focus,
     machine_section: MachineSection,
     machine_item_index: usize,
@@ -191,6 +276,9 @@ impl InspectorApp {
             doc,
             workspace_label,
             selected_machine: 0,
+            input_mode: InputMode::Normal,
+            search_query: String::new(),
+            filters: ExactFilters::default(),
             focus: Focus::Machines,
             machine_section: MachineSection::States,
             machine_item_index: 0,
@@ -201,8 +289,27 @@ impl InspectorApp {
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
+        if self.input_mode == InputMode::Search {
+            self.handle_search_key(key);
+            self.clamp_indices();
+            return;
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            KeyCode::Char('/') => self.input_mode = InputMode::Search,
+            KeyCode::Char('0') => self.filters.clear(),
+            KeyCode::Char('1') => self.filters.toggle_kind(CodebaseRelationKind::StatePayload),
+            KeyCode::Char('2') => self.filters.toggle_kind(CodebaseRelationKind::MachineField),
+            KeyCode::Char('3') => self
+                .filters
+                .toggle_kind(CodebaseRelationKind::TransitionParam),
+            KeyCode::Char('4') => self
+                .filters
+                .toggle_basis(CodebaseRelationBasis::DirectTypeSyntax),
+            KeyCode::Char('5') => self
+                .filters
+                .toggle_basis(CodebaseRelationBasis::DeclaredReferenceType),
             KeyCode::Tab => self.focus = self.focus.next(),
             KeyCode::BackTab => self.focus = self.focus.previous(),
             KeyCode::Left | KeyCode::Char('h') => self.move_left(),
@@ -213,6 +320,23 @@ impl InspectorApp {
         }
 
         self.clamp_indices();
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => self.input_mode = InputMode::Normal,
+            KeyCode::Backspace => {
+                self.search_query.pop();
+            }
+            KeyCode::Char(ch)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.search_query.push(ch);
+            }
+            _ => {}
+        }
     }
 
     fn move_left(&mut self) {
@@ -233,7 +357,21 @@ impl InspectorApp {
 
     fn move_up(&mut self) {
         match self.focus {
-            Focus::Machines => self.selected_machine = self.selected_machine.saturating_sub(1),
+            Focus::Machines => {
+                let visible = self.visible_machine_indices();
+                let Some(current_position) = visible
+                    .iter()
+                    .position(|machine_index| *machine_index == self.selected_machine)
+                else {
+                    if let Some(&first) = visible.first() {
+                        self.selected_machine = first;
+                    }
+                    return;
+                };
+                if current_position > 0 {
+                    self.selected_machine = visible[current_position - 1];
+                }
+            }
             Focus::MachineView => {
                 self.machine_item_index = self.machine_item_index.saturating_sub(1);
             }
@@ -246,10 +384,19 @@ impl InspectorApp {
     fn move_down(&mut self) {
         match self.focus {
             Focus::Machines => {
-                self.selected_machine = self
-                    .selected_machine
-                    .saturating_add(1)
-                    .min(self.doc.machines().len().saturating_sub(1));
+                let visible = self.visible_machine_indices();
+                let Some(current_position) = visible
+                    .iter()
+                    .position(|machine_index| *machine_index == self.selected_machine)
+                else {
+                    if let Some(&first) = visible.first() {
+                        self.selected_machine = first;
+                    }
+                    return;
+                };
+                if let Some(&next) = visible.get(current_position + 1) {
+                    self.selected_machine = next;
+                }
             }
             Focus::MachineView => {
                 self.machine_item_index = self.machine_item_index.saturating_add(1);
@@ -261,14 +408,17 @@ impl InspectorApp {
     }
 
     fn clamp_indices(&mut self) {
-        if self.doc.machines().is_empty() {
+        let visible_machines = self.visible_machine_indices();
+        if visible_machines.is_empty() {
             self.selected_machine = 0;
             self.machine_item_index = 0;
             self.relation_index = 0;
             return;
         }
 
-        self.selected_machine = self.selected_machine.min(self.doc.machines().len() - 1);
+        if !visible_machines.contains(&self.selected_machine) {
+            self.selected_machine = visible_machines[0];
+        }
         self.machine_item_index = self
             .machine_item_index
             .min(self.machine_items().len().saturating_sub(1));
@@ -277,60 +427,105 @@ impl InspectorApp {
             .min(self.relation_items().len().saturating_sub(1));
     }
 
-    fn current_machine(&self) -> &CodebaseMachine {
-        &self.doc.machines()[self.selected_machine]
+    fn current_machine(&self) -> Option<&CodebaseMachine> {
+        let visible_machines = self.visible_machine_indices();
+        let machine_index = visible_machines
+            .iter()
+            .find(|machine_index| **machine_index == self.selected_machine)
+            .copied()
+            .or_else(|| visible_machines.first().copied())?;
+        self.doc.machine(machine_index)
     }
 
-    fn machine_items(&self) -> Vec<String> {
-        let machine = self.current_machine();
+    fn visible_machine_indices(&self) -> Vec<usize> {
+        let query = self.normalized_query();
+        self.doc
+            .machines()
+            .iter()
+            .filter(|machine| self.machine_matches_query(machine, query.as_deref()))
+            .map(|machine| machine.index)
+            .collect()
+    }
+
+    fn machine_items(&self) -> Vec<MachineItem> {
+        let Some(machine) = self.current_machine() else {
+            return Vec::new();
+        };
+        let query = self.normalized_query();
         match self.machine_section {
-            MachineSection::States => machine.states.iter().map(render_state_label).collect(),
+            MachineSection::States => machine
+                .states
+                .iter()
+                .filter(|state| self.state_matches_query(state, query.as_deref()))
+                .map(|state| MachineItem::State(state.index))
+                .collect(),
             MachineSection::Transitions => machine
                 .transitions
                 .iter()
-                .map(|transition| render_transition_label(transition).to_owned())
+                .filter(|transition| self.transition_matches_query(transition, query.as_deref()))
+                .map(|transition| MachineItem::Transition(transition.index))
                 .collect(),
             MachineSection::Validators => machine
                 .validator_entries
                 .iter()
-                .map(|entry| entry.display_label().into_owned())
+                .filter(|entry| self.validator_matches_query(entry, query.as_deref()))
+                .map(|entry| MachineItem::Validator(entry.index))
                 .collect(),
             MachineSection::Summary => self
                 .summary_items()
                 .into_iter()
-                .map(|item| {
-                    let arrow = match item.direction {
-                        SummaryDirection::Outbound => "out",
-                        SummaryDirection::Inbound => "in",
-                    };
-                    let peer_machine = match item.direction {
-                        SummaryDirection::Outbound => self.doc.machine(item.group.to_machine),
-                        SummaryDirection::Inbound => self.doc.machine(item.group.from_machine),
-                    }
-                    .expect("summary peer machine should exist");
-                    format!(
-                        "{arrow} {} : {}",
-                        render_machine_label(peer_machine),
-                        item.group.display_label()
-                    )
-                })
+                .filter(|item| self.summary_item_matches_query(item, query.as_deref()))
+                .map(MachineItem::Summary)
                 .collect(),
         }
     }
 
+    fn machine_item_label(&self, machine: &CodebaseMachine, item: &MachineItem) -> String {
+        match item {
+            MachineItem::State(state_index) => machine
+                .state(*state_index)
+                .map(render_state_label)
+                .unwrap_or_else(|| "<missing state>".to_owned()),
+            MachineItem::Transition(transition_index) => machine
+                .transition(*transition_index)
+                .map(|transition| render_transition_label(transition).to_owned())
+                .unwrap_or_else(|| "<missing transition>".to_owned()),
+            MachineItem::Validator(entry_index) => machine
+                .validator_entry(*entry_index)
+                .map(|entry| entry.display_label().into_owned())
+                .unwrap_or_else(|| "<missing validator>".to_owned()),
+            MachineItem::Summary(item) => {
+                let arrow = match item.direction {
+                    SummaryDirection::Outbound => "out",
+                    SummaryDirection::Inbound => "in",
+                };
+                let peer_machine = match item.direction {
+                    SummaryDirection::Outbound => self.doc.machine(item.group.to_machine),
+                    SummaryDirection::Inbound => self.doc.machine(item.group.from_machine),
+                }
+                .expect("summary peer machine should exist");
+                format!(
+                    "{arrow} {} : {}",
+                    render_machine_label(peer_machine),
+                    item.group.display_label()
+                )
+            }
+        }
+    }
+
     fn summary_items(&self) -> Vec<SummaryItem> {
-        self.doc
-            .machine_relation_groups()
+        let Some(machine) = self.current_machine() else {
+            return Vec::new();
+        };
+        self.filtered_machine_relation_groups()
             .into_iter()
             .filter_map(|group| {
-                if group.from_machine == self.current_machine().index
-                    && group.from_machine != group.to_machine
-                {
+                if group.from_machine == machine.index && group.from_machine != group.to_machine {
                     Some(SummaryItem {
                         direction: SummaryDirection::Outbound,
                         group,
                     })
-                } else if group.to_machine == self.current_machine().index
+                } else if group.to_machine == machine.index
                     && group.from_machine != group.to_machine
                 {
                     Some(SummaryItem {
@@ -344,37 +539,46 @@ impl InspectorApp {
             .collect()
     }
 
-    fn relation_subject(&self) -> RelationSubject {
-        let machine = self.current_machine();
+    fn selected_machine_item(&self) -> Option<MachineItem> {
+        self.machine_items().get(self.machine_item_index).cloned()
+    }
+
+    fn relation_subject(&self) -> Option<RelationSubject> {
+        let machine = self.current_machine()?;
         match self.machine_section {
-            MachineSection::States => machine
-                .states
-                .get(self.machine_item_index)
-                .map(|state| RelationSubject::State {
+            MachineSection::States => match self.selected_machine_item() {
+                Some(MachineItem::State(state)) => Some(RelationSubject::State {
                     machine: machine.index,
-                    state: state.index,
-                })
-                .unwrap_or(RelationSubject::Machine {
+                    state,
+                }),
+                _ => Some(RelationSubject::Machine {
                     machine: machine.index,
                 }),
-            MachineSection::Transitions => machine
-                .transitions
-                .get(self.machine_item_index)
-                .map(|transition| RelationSubject::Transition {
-                    machine: machine.index,
-                    transition: transition.index,
-                })
-                .unwrap_or(RelationSubject::Machine {
-                    machine: machine.index,
-                }),
-            MachineSection::Validators | MachineSection::Summary => RelationSubject::Machine {
-                machine: machine.index,
             },
+            MachineSection::Transitions => match self.selected_machine_item() {
+                Some(MachineItem::Transition(transition)) => Some(RelationSubject::Transition {
+                    machine: machine.index,
+                    transition,
+                }),
+                _ => Some(RelationSubject::Machine {
+                    machine: machine.index,
+                }),
+            },
+            MachineSection::Validators | MachineSection::Summary => {
+                Some(RelationSubject::Machine {
+                    machine: machine.index,
+                })
+            }
         }
     }
 
     fn relation_items(&self) -> Vec<&CodebaseRelation> {
-        match (self.relation_subject(), self.relation_direction) {
+        let query = self.normalized_query();
+        let Some(subject) = self.relation_subject() else {
+            return Vec::new();
+        };
+
+        let base: Vec<&CodebaseRelation> = match (subject, self.relation_direction) {
             (RelationSubject::Machine { machine }, RelationDirection::Outbound) => {
                 self.doc.outbound_relations_for_machine(machine).collect()
             }
@@ -409,7 +613,71 @@ impl InspectorApp {
                 .doc
                 .inbound_relations_for_transition(machine, transition)
                 .collect(),
+        };
+
+        base.into_iter()
+            .filter(|relation| self.filters.matches_relation(relation))
+            .filter(|relation| {
+                self.doc
+                    .relation_detail(relation.index)
+                    .is_some_and(|detail| self.relation_matches_query(&detail, query.as_deref()))
+            })
+            .collect()
+    }
+
+    fn filtered_machine_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
+        let mut filtered = Vec::new();
+        for group in self.doc.machine_relation_groups() {
+            let relation_indices = group
+                .relation_indices
+                .iter()
+                .copied()
+                .filter(|relation_index| {
+                    self.doc
+                        .relation(*relation_index)
+                        .is_some_and(|relation| self.filters.matches_relation(relation))
+                })
+                .collect::<Vec<_>>();
+            if relation_indices.is_empty() {
+                continue;
+            }
+
+            let mut counts =
+                BTreeMap::<(CodebaseRelationKind, CodebaseRelationBasis), usize>::new();
+            for relation_index in &relation_indices {
+                let relation = self
+                    .doc
+                    .relation(*relation_index)
+                    .expect("filtered relation index should resolve");
+                *counts.entry((relation.kind, relation.basis)).or_default() += 1;
+            }
+
+            filtered.push(CodebaseMachineRelationGroup {
+                index: filtered.len(),
+                from_machine: group.from_machine,
+                to_machine: group.to_machine,
+                relation_indices,
+                counts: counts
+                    .into_iter()
+                    .map(|((kind, basis), count)| CodebaseRelationCount { kind, basis, count })
+                    .collect(),
+            });
         }
+        filtered
+    }
+
+    fn visible_machine_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
+        let visible_machine_indices = self
+            .visible_machine_indices()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        self.filtered_machine_relation_groups()
+            .into_iter()
+            .filter(|group| {
+                visible_machine_indices.contains(&group.from_machine)
+                    && visible_machine_indices.contains(&group.to_machine)
+            })
+            .collect()
     }
 
     fn selected_relation(&self) -> Option<&CodebaseRelation> {
@@ -422,12 +690,13 @@ impl InspectorApp {
     }
 
     fn disconnected_group_count(&self) -> usize {
-        if self.doc.machines().is_empty() {
+        let visible_machine_indices = self.visible_machine_indices();
+        if visible_machine_indices.is_empty() {
             return 0;
         }
 
         let mut adjacency = vec![Vec::new(); self.doc.machines().len()];
-        for group in self.doc.machine_relation_groups() {
+        for group in self.visible_machine_relation_groups() {
             if group.from_machine == group.to_machine {
                 continue;
             }
@@ -437,13 +706,13 @@ impl InspectorApp {
 
         let mut seen = vec![false; self.doc.machines().len()];
         let mut groups = 0;
-        for machine in self.doc.machines() {
-            if seen[machine.index] {
+        for machine_index in visible_machine_indices {
+            if seen[machine_index] {
                 continue;
             }
             groups += 1;
-            let mut stack = vec![machine.index];
-            seen[machine.index] = true;
+            let mut stack = vec![machine_index];
+            seen[machine_index] = true;
             while let Some(current) = stack.pop() {
                 for &next in &adjacency[current] {
                     if !seen[next] {
@@ -460,7 +729,7 @@ impl InspectorApp {
     fn render(&self, frame: &mut Frame) {
         let vertical = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(3)])
+            .constraints([Constraint::Min(0), Constraint::Length(4)])
             .split(frame.area());
         let horizontal = Layout::default()
             .direction(Direction::Horizontal)
@@ -492,41 +761,63 @@ impl InspectorApp {
 
         let sections = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(4), Constraint::Min(0)])
+            .constraints([Constraint::Length(6), Constraint::Min(0)])
             .split(inner);
 
+        let visible_machine_indices = self.visible_machine_indices();
+        let visible_machine_count = visible_machine_indices.len();
+        let total_machine_count = self.doc.machines().len();
+        let visible_summary_edges = self
+            .visible_machine_relation_groups()
+            .into_iter()
+            .filter(|group| group.from_machine != group.to_machine)
+            .count();
+        let search_status = if self.has_search_query() {
+            format!("/{}", self.search_query.trim())
+        } else {
+            "<none>".to_owned()
+        };
+
         let counts = Paragraph::new(Text::from(vec![
-            Line::from(format!("machines: {}", self.doc.machines().len())),
-            Line::from(format!("groups: {}", self.disconnected_group_count())),
             Line::from(format!(
-                "summary edges: {}",
-                self.doc
-                    .machine_relation_groups()
-                    .into_iter()
-                    .filter(|group| group.from_machine != group.to_machine)
-                    .count()
+                "machines: {visible_machine_count}/{total_machine_count}"
+            )),
+            Line::from(format!("groups: {}", self.disconnected_group_count())),
+            Line::from(format!("summary edges: {visible_summary_edges}")),
+            Line::from(format!("search: {search_status}")),
+            Line::from(format!(
+                "filters: kind={} basis={}",
+                self.filters.kind_summary(),
+                self.filters.basis_summary()
             )),
         ]));
         frame.render_widget(counts, sections[0]);
 
-        let items = self
-            .doc
-            .machines()
+        let items = visible_machine_indices
             .iter()
+            .filter_map(|machine_index| self.doc.machine(*machine_index))
             .map(|machine| ListItem::new(render_machine_label(machine).to_owned()))
             .collect::<Vec<_>>();
-        let mut state = ListState::default().with_selected(Some(self.selected_machine));
-        let list = List::new(items)
-            .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
-            .highlight_symbol("> ");
+        let selected = visible_machine_indices
+            .iter()
+            .position(|machine_index| *machine_index == self.selected_machine);
+        let mut state = ListState::default().with_selected(selected);
+        let list = if items.is_empty() {
+            List::new(vec![ListItem::new("<no matches>")])
+        } else {
+            List::new(items)
+        }
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
+        .highlight_symbol("> ");
         frame.render_stateful_widget(list, sections[1], &mut state);
     }
 
     fn render_machine_view(&self, frame: &mut Frame, area: Rect) {
-        let block = titled_block(
-            format!("Machine {}", render_machine_label(self.current_machine())),
-            self.focus == Focus::MachineView,
-        );
+        let title = self
+            .current_machine()
+            .map(|machine| format!("Machine {}", render_machine_label(machine)))
+            .unwrap_or_else(|| "Machine <no matches>".to_owned());
+        let block = titled_block(title, self.focus == Focus::MachineView);
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -553,18 +844,23 @@ impl InspectorApp {
         );
         frame.render_widget(tabs, sections[0]);
 
-        let items = self
-            .machine_items()
-            .into_iter()
-            .map(ListItem::new)
-            .collect::<Vec<_>>();
+        let items = self.machine_items();
+        let visible_items = self
+            .current_machine()
+            .map(|machine| {
+                items
+                    .iter()
+                    .map(|item| ListItem::new(self.machine_item_label(machine, item)))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let empty = items.is_empty();
         let mut state =
             ListState::default().with_selected((!empty).then_some(self.machine_item_index));
         let list = if empty {
-            List::new(vec![ListItem::new("<none>")])
+            List::new(vec![ListItem::new(self.empty_list_label())])
         } else {
-            List::new(items)
+            List::new(visible_items)
         }
         .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
         .highlight_symbol("> ");
@@ -615,7 +911,7 @@ impl InspectorApp {
         let empty = relation_labels.is_empty();
         let mut state = ListState::default().with_selected((!empty).then_some(self.relation_index));
         let list = if empty {
-            List::new(vec![ListItem::new("<none>")])
+            List::new(vec![ListItem::new(self.empty_list_label())])
         } else {
             List::new(relation_labels)
         }
@@ -635,15 +931,31 @@ impl InspectorApp {
     }
 
     fn render_status(&self, frame: &mut Frame, area: Rect) {
+        let search_status = if self.has_search_query() {
+            format!("/{}", self.search_query.trim())
+        } else {
+            "<none>".to_owned()
+        };
+        let key_help = if self.input_mode == InputMode::Search {
+            "type to search, enter/esc to finish, backspace to delete"
+        } else {
+            "tab shift-tab h/l j/k / q 1 payload 2 field 3 param 4 direct 5 ref 0 clear"
+        };
         let status = Paragraph::new(Text::from(vec![
             Line::from(vec![
                 Span::styled("focus ", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(self.focus.label()),
                 Span::raw("  "),
-                Span::styled("keys ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw("tab shift-tab h/l j/k q"),
+                Span::styled("mode ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(self.input_mode.label()),
             ]),
-            Line::from("machine tabs switch with h/l while machine view is focused; relations toggle inbound/outbound with h/l."),
+            Line::from(format!("search {search_status}")),
+            Line::from(format!(
+                "relation filters kind={} basis={}",
+                self.filters.kind_summary(),
+                self.filters.basis_summary()
+            )),
+            Line::from(key_help),
         ]))
         .wrap(Wrap { trim: false });
         frame.render_widget(status, area);
@@ -651,14 +963,15 @@ impl InspectorApp {
 
     fn relation_subject_label(&self) -> String {
         match self.relation_subject() {
-            RelationSubject::Machine { machine } => {
+            None => "<no matches>".to_owned(),
+            Some(RelationSubject::Machine { machine }) => {
                 let machine = self
                     .doc
                     .machine(machine)
                     .expect("machine subject should exist");
                 format!("for machine {}", render_machine_label(machine))
             }
-            RelationSubject::State { machine, state } => {
+            Some(RelationSubject::State { machine, state }) => {
                 let machine = self
                     .doc
                     .machine(machine)
@@ -666,10 +979,10 @@ impl InspectorApp {
                 let state = machine.state(state).expect("state subject should exist");
                 format!("for state {}", render_state_label(state))
             }
-            RelationSubject::Transition {
+            Some(RelationSubject::Transition {
                 machine,
                 transition,
-            } => {
+            }) => {
                 let machine = self
                     .doc
                     .machine(machine)
@@ -684,39 +997,260 @@ impl InspectorApp {
 
     fn detail_text(&self) -> Text<'static> {
         match self.focus {
-            Focus::Machines => machine_detail_text(self.current_machine(), &self.doc),
+            Focus::Machines => self
+                .current_machine()
+                .map(|machine| machine_detail_text(machine, &self.doc))
+                .unwrap_or_else(|| Text::from("<no matches>")),
             Focus::MachineView => self.machine_detail_selection_text(),
             Focus::Relations => self
                 .selected_relation_detail()
                 .map(relation_detail_text)
-                .unwrap_or_else(|| Text::from("<no relation selected>")),
+                .unwrap_or_else(|| Text::from(self.empty_list_label())),
         }
     }
 
     fn machine_detail_selection_text(&self) -> Text<'static> {
-        let machine = self.current_machine();
+        let Some(machine) = self.current_machine() else {
+            return Text::from("<no matches>");
+        };
         match self.machine_section {
-            MachineSection::States => machine
-                .states
-                .get(self.machine_item_index)
-                .map(state_detail_text)
-                .unwrap_or_else(|| machine_detail_text(machine, &self.doc)),
-            MachineSection::Transitions => machine
-                .transitions
-                .get(self.machine_item_index)
-                .map(transition_detail_text)
-                .unwrap_or_else(|| machine_detail_text(machine, &self.doc)),
-            MachineSection::Validators => machine
-                .validator_entries
-                .get(self.machine_item_index)
-                .map(validator_detail_text)
-                .unwrap_or_else(|| machine_detail_text(machine, &self.doc)),
-            MachineSection::Summary => self
-                .summary_items()
-                .get(self.machine_item_index)
-                .map(|summary| summary_detail_text(summary, &self.doc))
-                .unwrap_or_else(|| machine_detail_text(machine, &self.doc)),
+            MachineSection::States => match self.selected_machine_item() {
+                Some(MachineItem::State(state_index)) => machine
+                    .state(state_index)
+                    .map(state_detail_text)
+                    .unwrap_or_else(|| machine_detail_text(machine, &self.doc)),
+                _ => machine_detail_text(machine, &self.doc),
+            },
+            MachineSection::Transitions => match self.selected_machine_item() {
+                Some(MachineItem::Transition(transition_index)) => machine
+                    .transition(transition_index)
+                    .map(transition_detail_text)
+                    .unwrap_or_else(|| machine_detail_text(machine, &self.doc)),
+                _ => machine_detail_text(machine, &self.doc),
+            },
+            MachineSection::Validators => match self.selected_machine_item() {
+                Some(MachineItem::Validator(entry_index)) => machine
+                    .validator_entry(entry_index)
+                    .map(validator_detail_text)
+                    .unwrap_or_else(|| machine_detail_text(machine, &self.doc)),
+                _ => machine_detail_text(machine, &self.doc),
+            },
+            MachineSection::Summary => match self.selected_machine_item() {
+                Some(MachineItem::Summary(summary)) => summary_detail_text(&summary, &self.doc),
+                _ => machine_detail_text(machine, &self.doc),
+            },
         }
+    }
+
+    fn has_search_query(&self) -> bool {
+        !self.search_query.trim().is_empty()
+    }
+
+    fn normalized_query(&self) -> Option<String> {
+        let trimmed = self.search_query.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_ascii_lowercase())
+    }
+
+    fn empty_list_label(&self) -> &'static str {
+        if self.has_search_query() || self.filters.has_active() {
+            "<no matches>"
+        } else {
+            "<none>"
+        }
+    }
+
+    fn query_matches_any<I, S>(query: Option<&str>, candidates: I) -> bool
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let Some(query) = query else {
+            return true;
+        };
+        candidates
+            .into_iter()
+            .any(|candidate| candidate.as_ref().to_ascii_lowercase().contains(query))
+    }
+
+    fn machine_matches_query(&self, machine: &CodebaseMachine, query: Option<&str>) -> bool {
+        if Self::query_matches_any(
+            query,
+            [
+                machine.module_path.to_owned(),
+                machine.rust_type_path.to_owned(),
+                render_machine_label(machine).to_owned(),
+                machine.description.unwrap_or_default().to_owned(),
+                machine.docs.unwrap_or_default().to_owned(),
+            ],
+        ) {
+            return true;
+        }
+
+        machine
+            .states
+            .iter()
+            .any(|state| self.state_matches_query(state, query))
+            || machine
+                .transitions
+                .iter()
+                .any(|transition| self.transition_matches_query(transition, query))
+            || machine
+                .validator_entries
+                .iter()
+                .any(|entry| self.validator_matches_query(entry, query))
+            || self.machine_relations_match_query(machine.index, query)
+    }
+
+    fn machine_relations_match_query(&self, machine_index: usize, query: Option<&str>) -> bool {
+        self.doc
+            .outbound_relations_for_machine(machine_index)
+            .chain(self.doc.inbound_relations_for_machine(machine_index))
+            .filter(|relation| self.filters.matches_relation(relation))
+            .any(|relation| {
+                self.doc
+                    .relation_detail(relation.index)
+                    .is_some_and(|detail| self.relation_matches_query(&detail, query))
+            })
+    }
+
+    fn state_matches_query(&self, state: &CodebaseState, query: Option<&str>) -> bool {
+        Self::query_matches_any(
+            query,
+            [
+                state.rust_name.to_owned(),
+                render_state_label(state),
+                state.description.unwrap_or_default().to_owned(),
+                state.docs.unwrap_or_default().to_owned(),
+            ],
+        )
+    }
+
+    fn transition_matches_query(
+        &self,
+        transition: &CodebaseTransition,
+        query: Option<&str>,
+    ) -> bool {
+        Self::query_matches_any(
+            query,
+            [
+                transition.method_name.to_owned(),
+                render_transition_label(transition).to_owned(),
+                transition.description.unwrap_or_default().to_owned(),
+                transition.docs.unwrap_or_default().to_owned(),
+            ],
+        )
+    }
+
+    fn validator_matches_query(&self, entry: &CodebaseValidatorEntry, query: Option<&str>) -> bool {
+        Self::query_matches_any(
+            query,
+            [
+                entry.display_label().into_owned(),
+                entry.source_module_path.to_owned(),
+                entry.source_type_display.to_owned(),
+                entry.docs.unwrap_or_default().to_owned(),
+            ],
+        )
+    }
+
+    fn summary_item_matches_query(&self, item: &SummaryItem, query: Option<&str>) -> bool {
+        let Some(machine) = self.current_machine() else {
+            return false;
+        };
+        let peer_machine = match item.direction {
+            SummaryDirection::Outbound => self.doc.machine(item.group.to_machine),
+            SummaryDirection::Inbound => self.doc.machine(item.group.from_machine),
+        }
+        .expect("summary peer machine should exist");
+        let direction = match item.direction {
+            SummaryDirection::Outbound => "outbound",
+            SummaryDirection::Inbound => "inbound",
+        };
+
+        Self::query_matches_any(
+            query,
+            [
+                direction.to_owned(),
+                item.group.display_label(),
+                render_machine_label(machine).to_owned(),
+                render_machine_label(peer_machine).to_owned(),
+                machine.description.unwrap_or_default().to_owned(),
+                machine.docs.unwrap_or_default().to_owned(),
+                peer_machine.description.unwrap_or_default().to_owned(),
+                peer_machine.docs.unwrap_or_default().to_owned(),
+            ],
+        )
+    }
+
+    fn relation_matches_query(
+        &self,
+        detail: &CodebaseRelationDetail<'_>,
+        query: Option<&str>,
+    ) -> bool {
+        let source_specific = match detail.relation.source {
+            CodebaseRelationSource::StatePayload { field_name, .. } => {
+                field_name.unwrap_or("state_data").to_owned()
+            }
+            CodebaseRelationSource::MachineField { field_name, .. } => {
+                field_name.unwrap_or("<unnamed>").to_owned()
+            }
+            CodebaseRelationSource::TransitionParam {
+                param_name,
+                param_index,
+                ..
+            } => format!("{} {param_index}", param_name.unwrap_or("<unnamed>")),
+        };
+
+        let mut candidates = vec![
+            detail.relation.kind.display_label().to_owned(),
+            detail.relation.basis.display_label().to_owned(),
+            source_specific,
+            render_machine_label(detail.source_machine).to_owned(),
+            detail.source_machine.rust_type_path.to_owned(),
+            detail
+                .source_machine
+                .description
+                .unwrap_or_default()
+                .to_owned(),
+            detail.source_machine.docs.unwrap_or_default().to_owned(),
+            render_machine_label(detail.target_machine).to_owned(),
+            detail.target_machine.rust_type_path.to_owned(),
+            detail
+                .target_machine
+                .description
+                .unwrap_or_default()
+                .to_owned(),
+            detail.target_machine.docs.unwrap_or_default().to_owned(),
+            render_state_label(detail.target_state),
+            detail.target_state.rust_name.to_owned(),
+            detail
+                .target_state
+                .description
+                .unwrap_or_default()
+                .to_owned(),
+            detail.target_state.docs.unwrap_or_default().to_owned(),
+            detail
+                .relation
+                .declared_reference_type
+                .unwrap_or_default()
+                .to_owned(),
+        ];
+
+        if let Some(state) = detail.source_state {
+            candidates.push(render_state_label(state));
+            candidates.push(state.rust_name.to_owned());
+            candidates.push(state.description.unwrap_or_default().to_owned());
+            candidates.push(state.docs.unwrap_or_default().to_owned());
+        }
+
+        if let Some(transition) = detail.source_transition {
+            candidates.push(render_transition_label(transition).to_owned());
+            candidates.push(transition.method_name.to_owned());
+            candidates.push(transition.description.unwrap_or_default().to_owned());
+            candidates.push(transition.docs.unwrap_or_default().to_owned());
+        }
+
+        Self::query_matches_any(query, candidates)
     }
 }
 
@@ -1194,10 +1728,10 @@ mod tests {
         assert_eq!(app.relation_direction, RelationDirection::Outbound);
         assert_eq!(
             app.relation_subject(),
-            RelationSubject::State {
+            Some(RelationSubject::State {
                 machine: 1,
                 state: 1
-            }
+            })
         );
 
         let detail = app
@@ -1205,6 +1739,132 @@ mod tests {
             .expect("selected relation detail should exist");
         assert_eq!(detail.source_machine.label, Some("Workflow Machine"));
         assert_eq!(detail.target_machine.label, Some("Task Machine"));
+    }
+
+    #[test]
+    fn app_search_filters_visible_machines_and_machine_items() {
+        let doc = fixture_doc();
+        let mut app = InspectorApp::new(doc, "/tmp/workspace/Cargo.toml".to_owned());
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert_eq!(app.input_mode, InputMode::Search);
+        for ch in "persisted".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.search_query, "persisted");
+        assert_eq!(app.visible_machine_indices(), vec![1]);
+        assert_eq!(
+            app.current_machine().map(render_machine_label),
+            Some("Workflow Machine")
+        );
+
+        app.machine_section = MachineSection::Transitions;
+        app.search_query = "start workflow".to_owned();
+        app.clamp_indices();
+
+        let machine = app.current_machine().expect("workflow machine");
+        let labels = app
+            .machine_items()
+            .iter()
+            .map(|item| app.machine_item_label(machine, item))
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["Start Workflow"]);
+    }
+
+    #[test]
+    fn app_handles_search_with_no_matches() {
+        let doc = fixture_doc();
+        let mut app = InspectorApp::new(doc, "/tmp/workspace/Cargo.toml".to_owned());
+        app.search_query = "missing-machine".to_owned();
+        app.clamp_indices();
+
+        assert!(app.current_machine().is_none());
+        assert!(app.machine_items().is_empty());
+        assert!(app.relation_items().is_empty());
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| app.render(frame))
+            .expect("render should succeed");
+
+        let rendered = terminal.backend().buffer().content.clone();
+        let text = rendered
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("<no matches>"));
+    }
+
+    #[test]
+    fn app_search_matches_relation_targets_and_keeps_source_machine_visible() {
+        let doc = fixture_doc();
+        let mut app = InspectorApp::new(doc, "/tmp/workspace/Cargo.toml".to_owned());
+        app.search_query = "param".to_owned();
+        app.clamp_indices();
+
+        let labels = app
+            .visible_machine_indices()
+            .into_iter()
+            .filter_map(|machine_index| app.doc.machine(machine_index))
+            .map(render_machine_label)
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["Task Machine", "Workflow Machine"]);
+    }
+
+    #[test]
+    fn app_relation_filters_trim_summary_and_relation_lists() {
+        let doc = fixture_doc();
+        let mut app = InspectorApp::new(doc, "/tmp/workspace/Cargo.toml".to_owned());
+        app.selected_machine = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.machine_section = MachineSection::Summary;
+        app.clamp_indices();
+
+        assert_eq!(app.summary_items().len(), 1);
+        assert_eq!(
+            app.summary_items()[0].group.display_label(),
+            "exact refs: payload, param"
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+        assert_eq!(app.summary_items().len(), 1);
+        assert_eq!(
+            app.summary_items()[0].group.display_label(),
+            "exact refs: param"
+        );
+
+        app.machine_section = MachineSection::States;
+        app.machine_item_index = app
+            .machine_items()
+            .iter()
+            .position(|item| matches!(item, MachineItem::State(1)))
+            .expect("in-progress state should exist");
+        assert!(app.relation_items().is_empty());
+
+        app.machine_section = MachineSection::Transitions;
+        app.machine_item_index = app
+            .machine_items()
+            .iter()
+            .position(|item| matches!(item, MachineItem::Transition(0)))
+            .expect("start transition should exist");
+        let relation = app
+            .relation_items()
+            .first()
+            .copied()
+            .expect("transition-param relation should remain");
+        assert_eq!(relation.kind, CodebaseRelationKind::TransitionParam);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
+        assert!(app.summary_items().is_empty());
+        assert!(app.relation_items().is_empty());
     }
 
     #[test]

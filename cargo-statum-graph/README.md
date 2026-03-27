@@ -63,6 +63,7 @@ MVP shows:
 - machine view with states, transitions, validator entries, and summary edges
 - relation pane with inbound and outbound exact relations for the current
   machine, state, or transition
+- exact-lane search plus relation-kind and relation-basis filters
 - detail pane explaining the current selection, including
   `#[present(description = ...)]` text and source rustdoc (`///`) when
   available
@@ -74,6 +75,11 @@ Keybindings:
 - `tab` / `shift-tab`: move focus between panes
 - `h` / `l`: switch machine tabs or toggle relation direction
 - `j` / `k`: move within the focused list
+- `/`: enter exact-lane search mode
+- `enter` / `esc`: leave search mode
+- `1` / `2` / `3`: toggle payload, field, and param relation filters
+- `4` / `5`: toggle direct-type and declared-reference relation-basis filters
+- `0`: clear relation filters
 - `q`: quit
 
 The inspector is exact-lane only today. It consumes the linked compiled
