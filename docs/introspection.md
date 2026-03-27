@@ -193,9 +193,10 @@ Once you have both:
 you can render the chosen branch and the non-chosen legal branches from the
 same source of truth.
 
-## Presentation Metadata
+## Presentation Metadata And Source Docs
 
-Structural introspection is separate from human-facing metadata.
+Structural introspection is separate from human-facing metadata and longer-form
+source documentation.
 
 If a consumer crate wants labels, descriptions, or phases for rendering, it can
 add a typed `MachinePresentation` overlay keyed by the generated ids. That lets
@@ -210,6 +211,16 @@ For lighter-weight cases, Statum can also emit a generated
 - `#[presentation_types(machine = ..., state = ..., transition = ...)]` on the
   machine when you want typed `metadata = ...` payloads in the generated
   presentation surface
+
+Keep `#[present(description = ...)]` concise. It is the short UI copy surface.
+For fuller docs that should also appear in rustdoc, use outer rustdoc comments
+(`///`). In the linked codebase surface, Statum exports those rustdoc comments
+separately as `docs` on:
+
+- machines from outer docs on the `#[machine]` item
+- states from outer docs on `#[state]` variants
+- transitions from outer docs on `#[transition]` methods
+- validator-entry surfaces from outer docs on the `#[validators]` impl block
 
 Typed presentation metadata follows the same observation point as the graph:
 macro-expanded, cfg-pruned items and supported attribute shapes. If a category
@@ -227,6 +238,10 @@ Machine-local topology comes from the generated machine graph and transition
 inventory. Static cross-machine links come only from direct machine-like
 payload types written in state data. Resolution uses normalized path suffixes
 plus target state names and fails closed on ambiguity instead of guessing.
+The linked codebase JSON and `cargo statum-graph inspect` detail pane expose
+the separate `docs` field directly. The machine-local `ExportDoc` surface still
+joins labels and descriptions only; rustdoc stays in the codebase/inspector
+lane for now.
 
 ## Example
 

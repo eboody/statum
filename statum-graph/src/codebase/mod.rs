@@ -271,6 +271,8 @@ pub struct CodebaseMachine {
     pub label: Option<&'static str>,
     /// Optional human-facing machine description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// States exported in source order.
     pub states: Vec<CodebaseState>,
     /// Transition sites exported in deterministic order.
@@ -349,6 +351,8 @@ pub struct CodebaseState {
     pub label: Option<&'static str>,
     /// Optional human-facing state description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// Whether the state carries `state_data`.
     pub has_data: bool,
     /// Whether direct construction is available for this state.
@@ -377,6 +381,8 @@ pub struct CodebaseValidatorEntry {
     pub source_module_path: &'static str,
     /// Human-facing source syntax for the persisted impl self type as written.
     pub source_type_display: &'static str,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// Stable target-state indices in machine state order.
     pub target_states: Vec<usize>,
 }
@@ -399,6 +405,8 @@ pub struct CodebaseTransition {
     pub label: Option<&'static str>,
     /// Optional human-facing transition description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// Stable source-state index.
     pub from: usize,
     /// Stable legal target-state indices for this transition site.
@@ -1005,6 +1013,7 @@ fn build_machine(
             rust_name: state.rust_name,
             label: state.label,
             description: state.description,
+            docs: state.docs,
             has_data: state.has_data,
             direct_construction_available: state.direct_construction_available,
             is_graph_root: true,
@@ -1064,6 +1073,7 @@ fn build_machine(
             method_name: transition.method_name,
             label: transition.label,
             description: transition.description,
+            docs: transition.docs,
             from,
             to,
         });
@@ -1080,6 +1090,7 @@ fn build_machine(
             rust_type_path: linked.machine.rust_type_path,
             label: linked.label,
             description: linked.description,
+            docs: linked.docs,
             states,
             transitions: exported_transitions,
             validator_entries: Vec::new(),
@@ -1719,6 +1730,7 @@ fn resolve_validator_entries(
             index: machine.validator_entries.len(),
             source_module_path: entry.source_module_path,
             source_type_display: entry.source_type_display,
+            docs: entry.docs,
             target_states,
         });
     }

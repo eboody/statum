@@ -16,6 +16,7 @@ use signatures::{
     AnalyzedValidatorReturn, ValidatorDiagnosticContext, ValidatorReturnKind,
     analyze_validator_return_type, validate_validator_signature, validator_state_name_from_ident,
 };
+use crate::parse_doc_attrs;
 
 pub(super) struct ValidatorMethodSpec {
     pub(super) validator_ident: Ident,
@@ -146,6 +147,11 @@ pub fn parse_validators(
     let source_module_path = syn::LitStr::new(module_path, proc_macro2::Span::call_site());
     let source_type_display =
         syn::LitStr::new(&persisted_type_display, proc_macro2::Span::call_site());
+    let docs = match parse_doc_attrs(&item_impl.attrs) {
+        Ok(docs) => docs,
+        Err(err) => return err.to_compile_error().into(),
+    };
+    let linked_docs = optional_lit_str_tokens(docs.as_deref());
     let validator_target_states = validator_methods
         .iter()
         .map(|method| syn::LitStr::new(&method.variant_name, proc_macro2::Span::call_site()))
@@ -165,6 +171,7 @@ pub fn parse_validators(
                 },
                 source_module_path: #source_module_path,
                 source_type_display: #source_type_display,
+                docs: #linked_docs,
                 target_states: #linked_validator_targets_ident,
             };
     };
@@ -315,6 +322,16 @@ fn stable_hash(input: &str) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+fn optional_lit_str_tokens(value: Option<&str>) -> proc_macro2::TokenStream {
+    match value {
+        Some(value) => {
+            let value = syn::LitStr::new(value, proc_macro2::Span::call_site());
+            quote! { Some(#value) }
+        }
+        None => quote! { None },
+    }
 }
 
 fn generate_empty_validator_methods_error(

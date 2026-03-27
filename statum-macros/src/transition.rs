@@ -9,13 +9,16 @@ use syn::{
 
 use crate::machine::to_shouty_snake_identifier;
 use crate::relation::{RelationTargetCandidate, collect_relation_targets, leading_type_ident};
-use crate::{PresentationAttr, parse_present_attrs, strip_present_attrs, to_snake_case};
+use crate::{
+    PresentationAttr, parse_doc_attrs, parse_present_attrs, strip_present_attrs, to_snake_case,
+};
 
 /// Stores all metadata for a single transition method in an `impl` block
 #[allow(unused)]
 pub struct TransitionFn {
     pub name: Ident,
     pub attrs: Vec<syn::Attribute>,
+    pub docs: Option<String>,
     pub presentation: Option<PresentationAttr>,
     pub has_receiver: bool,
     pub return_type: Option<Type>,
@@ -193,6 +196,7 @@ pub fn parse_transition_fn(
     Ok(TransitionFn {
         name: method.sig.ident.clone(),
         attrs: method.attrs.clone(),
+        docs: parse_doc_attrs(&method.attrs).map_err(|err| err.to_compile_error())?,
         presentation: parse_present_attrs(&method.attrs).map_err(|err| err.to_compile_error())?,
         has_receiver,
         return_type,
@@ -371,6 +375,8 @@ pub fn generate_transition_impl(
                 .and_then(|value| value.description.as_deref()),
             function.name.span(),
         );
+        let linked_docs =
+            optional_lit_str_tokens(function.docs.as_deref(), function.name.span());
         let target_state_idents = return_states.iter().map(|state| {
             let state_ident = format_ident!("{}", state);
             quote! { #machine_module_path::StateId::#state_ident }
@@ -420,6 +426,7 @@ pub fn generate_transition_impl(
                     method_name: #method_name,
                     label: #linked_label,
                     description: #linked_description,
+                    docs: #linked_docs,
                     from: #source_state_name,
                     to: &[#(#target_state_names),*],
                 };

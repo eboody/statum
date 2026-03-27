@@ -182,6 +182,13 @@ machine and add `metadata = ...` to each annotated item in the typed
 categories. Manual `MachinePresentation` overlays still remain first-class when
 the generated sugar is not the right fit.
 
+For fuller documentation that should show up in rustdoc and the exact
+inspector detail pane, use ordinary outer rustdoc comments (`///`) on the
+machine, state variants, transition methods, and `#[validators]` impls. Statum
+keeps that longer-form text separate from `#[present(description = ...)]`: the
+presentation description stays concise UI copy, while the linked codebase
+surface exports rustdoc as `docs` for the inspector and `codebase.json`.
+
 ## Typed Rehydration
 
 `#[validators]` is the feature that turns stored data back into typed machines. Each `is_*` method checks whether the persisted value belongs to a state, returns `()` or state-specific data, and Statum builds the right typed output:

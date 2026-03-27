@@ -63,7 +63,9 @@ MVP shows:
 - machine view with states, transitions, validator entries, and summary edges
 - relation pane with inbound and outbound exact relations for the current
   machine, state, or transition
-- detail pane explaining the current selection
+- detail pane explaining the current selection, including
+  `#[present(description = ...)]` text and source rustdoc (`///`) when
+  available
 
 `inspect` requires an interactive terminal on stdin and stdout.
 
@@ -77,3 +79,8 @@ Keybindings:
 The inspector is exact-lane only today. It consumes the linked compiled
 `CodebaseDoc` surface directly; it does not do heuristic body analysis,
 runtime replay, or snapshot inspection yet.
+
+For concise labels and descriptions in the inspector, use `#[present(...)]`.
+For fuller detail-pane docs that also show up in rustdoc, use outer rustdoc
+comments on the machine, state variants, transition methods, and
+`#[validators]` impls.

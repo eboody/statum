@@ -300,7 +300,10 @@ Graph backends mark directly constructible states with a ` [build]` suffix and
 derive cross-machine summary edges from exact `relations()`. Downstream
 consumers can use `machine_relation_groups()`, inbound and outbound relation
 lookup helpers, and `relation_detail()` to drive exact navigation without
-re-deriving relation semantics.
+re-deriving relation semantics. The codebase surface also carries source
+rustdoc separately as `docs` on machines, states, transitions, and validator
+entries. Use `#[present(description = ...)]` for concise UI copy and outer
+rustdoc comments (`///`) for fuller inspector and `codebase.json` detail.
 
 If you do not want to hand-write a runner crate, install
 `cargo-statum-graph` and point it at an existing library package:

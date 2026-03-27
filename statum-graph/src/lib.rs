@@ -13,7 +13,9 @@
 //! type as written in source, so they are display syntax rather than canonical
 //! Rust type identity. Method-level `#[cfg]` and `#[cfg_attr]` on validator
 //! methods are rejected at the macro layer. `include!()`-generated validator
-//! impls are also rejected.
+//! impls are also rejected. The linked codebase surface also carries source
+//! rustdoc separately as `docs` on machines, states, transitions, and
+//! validator-entry surfaces.
 //!
 //! Use [`MachineDoc::from_machine`] for Statum-generated machine families and
 //! [`MachineDoc::try_from_graph`] when you need to validate an externally
@@ -22,7 +24,9 @@
 //! This crate does not model orchestration order across machines or
 //! runtime-selected branches for one run. Optional presentation metadata may
 //! be joined onto the validated machine graph for renderer output, but it does
-//! not change the authoritative structural surface.
+//! not change the authoritative structural surface. Use
+//! `#[present(description = ...)]` for concise renderer copy and ordinary outer
+//! rustdoc comments (`///`) for fuller codebase/inspector detail.
 
 use std::collections::{HashMap, HashSet};
 

@@ -447,6 +447,8 @@ pub struct LinkedMachineGraph {
     pub label: Option<&'static str>,
     /// Optional human-facing machine description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// All states known to the machine.
     pub states: &'static [LinkedStateDescriptor],
     /// All transition sites known to the machine.
@@ -514,6 +516,8 @@ pub struct LinkedStateDescriptor {
     pub label: Option<&'static str>,
     /// Optional human-facing state description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// Whether the state carries `state_data`.
     pub has_data: bool,
     /// Whether the machine exposes direct construction for this state.
@@ -542,6 +546,8 @@ pub struct LinkedTransitionDescriptor {
     pub label: Option<&'static str>,
     /// Optional human-facing transition description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// Exact source state for the transition site.
     pub from: &'static str,
     /// Exact legal target states for the transition site.
@@ -704,6 +710,8 @@ pub struct LinkedValidatorEntryDescriptor {
     pub source_module_path: &'static str,
     /// Human-facing source syntax for the persisted impl self type as written.
     pub source_type_display: &'static str,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// State marker names this `#[validators]` impl can rebuild when it matches.
     pub target_states: &'static [&'static str],
 }
@@ -1054,6 +1062,7 @@ mod tests {
             method_name: "submit",
             label: Some("Submit"),
             description: None,
+            docs: Some("Submits the draft for review."),
             from: "Draft",
             to: &["Review"],
         }];
@@ -1067,6 +1076,7 @@ mod tests {
                 rust_name: "Draft",
                 label: None,
                 description: None,
+                docs: Some("Initial draft state."),
                 has_data: false,
                 direct_construction_available: true,
             },
@@ -1074,6 +1084,7 @@ mod tests {
                 rust_name: "Review",
                 label: Some("Review"),
                 description: None,
+                docs: Some("Review state with payload."),
                 has_data: true,
                 direct_construction_available: true,
             },
@@ -1092,15 +1103,25 @@ mod tests {
             },
             label: Some("Workflow"),
             description: None,
+            docs: Some("Workflow machine docs."),
             states: &STATES,
             transitions: LinkedTransitionInventory::new(linked_transitions),
             static_links: &LINKS,
         };
 
         assert_eq!(linked.state("Review"), Some(&STATES[1]));
+        assert_eq!(linked.docs, Some("Workflow machine docs."));
+        assert_eq!(
+            linked.state("Draft").and_then(|state| state.docs),
+            Some("Initial draft state.")
+        );
         assert_eq!(
             linked.transition_from_method("Draft", "submit"),
             Some(&linked_transitions()[0])
+        );
+        assert_eq!(
+            linked_transitions()[0].docs,
+            Some("Submits the draft for review.")
         );
         assert_eq!(linked.transitions_from("Draft").count(), 1);
         assert_eq!(linked.static_links, &LINKS);
@@ -1115,12 +1136,17 @@ mod tests {
             },
             source_module_path: "workflow::rows",
             source_type_display: "DbRow",
+            docs: Some("Rebuilds workflow machines from database rows."),
             target_states: &["Draft", "Review"],
         };
 
         assert_eq!(ENTRY.machine.rust_type_path, "workflow::Machine");
         assert_eq!(ENTRY.source_module_path, "workflow::rows");
         assert_eq!(ENTRY.source_type_display, "DbRow");
+        assert_eq!(
+            ENTRY.docs,
+            Some("Rebuilds workflow machines from database rows.")
+        );
         assert_eq!(ENTRY.target_states, &["Draft", "Review"]);
     }
 }

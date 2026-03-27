@@ -764,7 +764,7 @@ fn render_relation_label(detail: &CodebaseRelationDetail<'_>) -> String {
 }
 
 fn machine_detail_text(machine: &CodebaseMachine, doc: &CodebaseDoc) -> Text<'static> {
-    Text::from(vec![
+    let mut lines = vec![
         Line::from(format!("machine: {}", render_machine_label(machine))),
         Line::from(format!("path: {}", machine.rust_type_path)),
         Line::from(format!("states: {}", machine.states.len())),
@@ -778,11 +778,13 @@ fn machine_detail_text(machine: &CodebaseMachine, doc: &CodebaseDoc) -> Text<'st
             "inbound exact relations: {}",
             doc.inbound_relations_for_machine(machine.index).count()
         )),
-    ])
+    ];
+    append_description_and_docs(&mut lines, machine.description, machine.docs);
+    Text::from(lines)
 }
 
 fn state_detail_text(state: &CodebaseState) -> Text<'static> {
-    Text::from(vec![
+    let mut lines = vec![
         Line::from(format!("state: {}", render_state_label(state))),
         Line::from(format!("rust name: {}", state.rust_name)),
         Line::from(format!("has data: {}", yes_no(state.has_data))),
@@ -791,11 +793,13 @@ fn state_detail_text(state: &CodebaseState) -> Text<'static> {
             yes_no(state.direct_construction_available)
         )),
         Line::from(format!("graph root: {}", yes_no(state.is_graph_root))),
-    ])
+    ];
+    append_description_and_docs(&mut lines, state.description, state.docs);
+    Text::from(lines)
 }
 
 fn transition_detail_text(transition: &CodebaseTransition) -> Text<'static> {
-    Text::from(vec![
+    let mut lines = vec![
         Line::from(format!(
             "transition: {}",
             render_transition_label(transition)
@@ -804,15 +808,19 @@ fn transition_detail_text(transition: &CodebaseTransition) -> Text<'static> {
         Line::from(format!("from state index: {}", transition.from)),
         Line::from(format!("target count: {}", transition.to.len())),
         Line::from(format!("targets: {:?}", transition.to)),
-    ])
+    ];
+    append_description_and_docs(&mut lines, transition.description, transition.docs);
+    Text::from(lines)
 }
 
 fn validator_detail_text(entry: &CodebaseValidatorEntry) -> Text<'static> {
-    Text::from(vec![
+    let mut lines = vec![
         Line::from(format!("validator: {}", entry.display_label())),
         Line::from(format!("module: {}", entry.source_module_path)),
         Line::from(format!("target states: {:?}", entry.target_states)),
-    ])
+    ];
+    append_description_and_docs(&mut lines, None, entry.docs);
+    Text::from(lines)
 }
 
 fn summary_detail_text(summary: &SummaryItem, doc: &CodebaseDoc) -> Text<'static> {
@@ -831,7 +839,7 @@ fn summary_detail_text(summary: &SummaryItem, doc: &CodebaseDoc) -> Text<'static
         SummaryDirection::Inbound => "inbound",
     };
 
-    Text::from(vec![
+    let mut lines = vec![
         Line::from(format!("{direction_label} summary edge")),
         Line::from(format!("from: {}", render_machine_label(source_machine))),
         Line::from(format!("to: {}", render_machine_label(target_machine))),
@@ -840,7 +848,22 @@ fn summary_detail_text(summary: &SummaryItem, doc: &CodebaseDoc) -> Text<'static
             "relation count: {}",
             summary.group.relation_indices.len()
         )),
-    ])
+    ];
+
+    append_named_description_and_docs(
+        &mut lines,
+        "source machine",
+        source_machine.description,
+        source_machine.docs,
+    );
+    append_named_description_and_docs(
+        &mut lines,
+        "target machine",
+        target_machine.description,
+        target_machine.docs,
+    );
+
+    Text::from(lines)
 }
 
 fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
@@ -899,7 +922,83 @@ fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
         lines.push(Line::from(format!("declared ref type: {reference_type}")));
     }
 
+    append_named_description_and_docs(
+        &mut lines,
+        "source machine",
+        detail.source_machine.description,
+        detail.source_machine.docs,
+    );
+    if let Some(state) = detail.source_state {
+        append_named_description_and_docs(
+            &mut lines,
+            "source state",
+            state.description,
+            state.docs,
+        );
+    }
+    if let Some(transition) = detail.source_transition {
+        append_named_description_and_docs(
+            &mut lines,
+            "source transition",
+            transition.description,
+            transition.docs,
+        );
+    }
+    append_named_description_and_docs(
+        &mut lines,
+        "target machine",
+        detail.target_machine.description,
+        detail.target_machine.docs,
+    );
+    append_named_description_and_docs(
+        &mut lines,
+        "target state",
+        detail.target_state.description,
+        detail.target_state.docs,
+    );
+
     Text::from(lines)
+}
+
+fn append_description_and_docs(
+    lines: &mut Vec<Line<'static>>,
+    description: Option<&'static str>,
+    docs: Option<&'static str>,
+) {
+    append_named_description_and_docs(lines, "", description, docs);
+}
+
+fn append_named_description_and_docs(
+    lines: &mut Vec<Line<'static>>,
+    prefix: &str,
+    description: Option<&'static str>,
+    docs: Option<&'static str>,
+) {
+    if let Some(description) = description {
+        append_text_section(lines, section_label(prefix, "Description"), description);
+    }
+    if let Some(docs) = docs {
+        append_text_section(lines, section_label(prefix, "Docs"), docs);
+    }
+}
+
+fn append_text_section(lines: &mut Vec<Line<'static>>, heading: String, text: &'static str) {
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        heading,
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    for line in text.lines() {
+        lines.push(Line::from(line.to_owned()));
+    }
+}
+
+fn section_label(prefix: &str, suffix: &str) -> String {
+    if prefix.is_empty() {
+        suffix.to_owned()
+    } else {
+        format!("{prefix} {suffix}")
+    }
 }
 
 fn yes_no(value: bool) -> &'static str {
@@ -924,16 +1023,23 @@ mod tests {
         #[state]
         pub enum State {
             Idle,
+            /// Task work is currently executing.
             Running,
             Done,
         }
 
+        /// Handles the task lifecycle.
         #[machine]
-        #[present(label = "Task Machine")]
+        #[present(label = "Task Machine", description = "Owns the exact task lifecycle.")]
         pub struct Machine<State> {}
 
         #[transition]
         impl Machine<Idle> {
+            /// Starts task execution.
+            #[present(
+                label = "Start Task",
+                description = "Moves an idle task into running work."
+            )]
             fn start(self) -> Machine<Running> {
                 self.transition()
             }
@@ -954,16 +1060,30 @@ mod tests {
         #[state]
         pub enum State {
             Draft,
+            /// Workflow execution is delegated to a running task.
+            #[present(
+                label = "In Progress",
+                description = "Work is currently delegated to a running task."
+            )]
             InProgress(super::task::Machine<super::task::Running>),
             Done,
         }
 
+        /// Coordinates multi-step workflow progress.
         #[machine]
-        #[present(label = "Workflow Machine")]
+        #[present(
+            label = "Workflow Machine",
+            description = "Tracks workflow progress across task execution."
+        )]
         pub struct Machine<State> {}
 
         #[transition]
         impl Machine<Draft> {
+            /// Starts the workflow and hands control to the task machine.
+            #[present(
+                label = "Start Workflow",
+                description = "Begins workflow execution with a running task."
+            )]
             fn start(
                 self,
                 task: super::task::Machine<super::task::Running>,
@@ -983,6 +1103,7 @@ mod tests {
             pub status: &'static str,
         }
 
+        /// Rebuilds workflow machines from persisted workflow rows.
         #[validators(Machine)]
         impl WorkflowRow {
             fn is_draft(&self) -> statum::Result<()> {
@@ -1013,6 +1134,19 @@ mod tests {
 
     fn fixture_doc() -> CodebaseDoc {
         CodebaseDoc::linked().expect("linked codebase doc")
+    }
+
+    fn text_contents(text: Text<'_>) -> String {
+        text.lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -1071,5 +1205,80 @@ mod tests {
             .expect("selected relation detail should exist");
         assert_eq!(detail.source_machine.label, Some("Workflow Machine"));
         assert_eq!(detail.target_machine.label, Some("Task Machine"));
+    }
+
+    #[test]
+    fn detail_pane_shows_descriptions_and_docs() {
+        let doc = fixture_doc();
+        let workflow = doc
+            .machines()
+            .iter()
+            .find(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine");
+        let in_progress = workflow
+            .state_named("InProgress")
+            .expect("in-progress state");
+        let start = workflow
+            .transitions
+            .iter()
+            .find(|transition| transition.method_name == "start")
+            .expect("workflow start transition");
+        let validator = workflow
+            .validator_entries
+            .first()
+            .expect("workflow validator entry");
+        let relation = doc
+            .outbound_relations_for_machine(workflow.index)
+            .next()
+            .expect("workflow relation");
+        let relation_detail = doc
+            .relation_detail(relation.index)
+            .expect("workflow relation detail");
+        let summary = doc
+            .machine_relation_groups()
+            .into_iter()
+            .find(|group| group.from_machine == workflow.index)
+            .expect("workflow summary");
+        let summary_item = SummaryItem {
+            direction: SummaryDirection::Outbound,
+            group: summary,
+        };
+
+        let machine_detail = text_contents(machine_detail_text(workflow, &doc));
+        assert!(machine_detail.contains("Description"));
+        assert!(machine_detail.contains("Tracks workflow progress across task execution."));
+        assert!(machine_detail.contains("Docs"));
+        assert!(machine_detail.contains("Coordinates multi-step workflow progress."));
+
+        let state_detail = text_contents(state_detail_text(in_progress));
+        assert!(state_detail.contains("Description"));
+        assert!(state_detail.contains("Work is currently delegated to a running task."));
+        assert!(state_detail.contains("Docs"));
+        assert!(state_detail.contains("Workflow execution is delegated to a running task."));
+
+        let transition_detail = text_contents(transition_detail_text(start));
+        assert!(transition_detail.contains("Description"));
+        assert!(transition_detail.contains("Begins workflow execution with a running task."));
+        assert!(transition_detail.contains("Docs"));
+        assert!(transition_detail
+            .contains("Starts the workflow and hands control to the task machine."));
+
+        let validator_detail = text_contents(validator_detail_text(validator));
+        assert!(validator_detail.contains("Docs"));
+        assert!(
+            validator_detail.contains("Rebuilds workflow machines from persisted workflow rows.")
+        );
+
+        let relation_text = text_contents(relation_detail_text(relation_detail));
+        assert!(relation_text.contains("source machine Description"));
+        assert!(relation_text.contains("source machine Docs"));
+        assert!(relation_text.contains("target machine Description"));
+        assert!(relation_text.contains("target machine Docs"));
+
+        let summary_text = text_contents(summary_detail_text(&summary_item, &doc));
+        assert!(summary_text.contains("source machine Description"));
+        assert!(summary_text.contains("source machine Docs"));
+        assert!(summary_text.contains("target machine Description"));
+        assert!(summary_text.contains("target machine Docs"));
     }
 }

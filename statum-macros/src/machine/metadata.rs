@@ -8,7 +8,7 @@ use crate::{
     EnumInfo, LoadedStateLookupFailure, ModulePath, SourceFingerprint, StateModulePath,
     crate_root_for_file, extract_derives, format_loaded_state_candidates,
     lookup_loaded_state_enum, lookup_loaded_state_enum_by_name, source_file_fingerprint,
-    parse_present_attrs, parse_presentation_types_attr, PresentationAttr,
+    parse_doc_attrs, parse_present_attrs, parse_presentation_types_attr, PresentationAttr,
     PresentationTypesAttr,
 };
 use super::extra_type_arguments_tokens;
@@ -21,6 +21,7 @@ pub struct MachineInfo {
     pub vis: String,
     pub derives: Vec<String>,
     pub fields: Vec<MachineField>,
+    pub docs: Option<String>,
     pub presentation: Option<PresentationAttr>,
     pub presentation_types: Option<PresentationTypesAttr>,
     pub module_path: MachinePath,
@@ -110,6 +111,7 @@ impl MachineInfo {
                 .filter_map(extract_derives)
                 .flatten()
                 .collect(),
+            docs: parse_doc_attrs(&item.attrs)?,
             presentation: parse_present_attrs(&item.attrs)?,
             presentation_types: parse_presentation_types_attr(&item.attrs)?,
             module_path,
@@ -142,6 +144,7 @@ impl MachineInfo {
                 .filter_map(extract_derives)
                 .flatten()
                 .collect(),
+            docs: parse_doc_attrs(&item.attrs).ok()?,
             presentation,
             presentation_types,
             fields: collect_fields(item),

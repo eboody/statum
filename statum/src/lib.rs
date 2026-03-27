@@ -191,7 +191,10 @@
 //! `machine::PRESENTATION` constant from `#[present(...)]` attributes. Add
 //! `#[presentation_types(...)]` on the machine when those attributes should
 //! carry typed `metadata = ...` payloads instead of just labels and
-//! descriptions.
+//! descriptions. Keep `#[present(description = ...)]` concise: it is the short
+//! UI copy surface. For fuller docs that should also appear in rustdoc and the
+//! linked inspector detail pane, use outer rustdoc comments (`///`) on the
+//! machine, state variants, transition methods, and `#[validators]` impls.
 //!
 //! ```rust
 //! use statum::{

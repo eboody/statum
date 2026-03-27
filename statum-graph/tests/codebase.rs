@@ -17,18 +17,27 @@ mod task {
     #[state]
     pub enum State {
         Idle,
-        #[present(label = "Running")]
+        /// Task execution is in progress.
+        #[present(label = "Running", description = "Task execution is active.")]
         Running,
         Done,
     }
 
+    /// Handles the task lifecycle from idle to done.
     #[machine]
-    #[present(label = "Task Machine")]
+    #[present(
+        label = "Task Machine",
+        description = "Owns the exact task execution lifecycle."
+    )]
     pub struct Machine<State> {}
 
     #[transition]
     impl Machine<Idle> {
-        #[present(label = "Start Task")]
+        /// Starts task execution.
+        #[present(
+            label = "Start Task",
+            description = "Moves the task from idle into running work."
+        )]
         fn start(self) -> Machine<Running> {
             self.transition()
         }
@@ -45,6 +54,7 @@ mod task {
         pub status: &'static str,
     }
 
+    /// Rebuilds task machines from persisted task rows.
     #[validators(Machine)]
     impl TaskRow {
         fn is_idle(&self) -> statum::Result<()> {
@@ -80,18 +90,30 @@ mod workflow {
     #[state]
     pub enum State {
         Draft,
-        #[present(label = "In Progress")]
+        /// Workflow execution is delegated to a running task.
+        #[present(
+            label = "In Progress",
+            description = "Work is currently delegated to a running task."
+        )]
         InProgress(super::task::Machine<super::task::Running>),
         Complete,
     }
 
+    /// Coordinates workflow progress around task execution.
     #[machine]
-    #[present(label = "Workflow Machine")]
+    #[present(
+        label = "Workflow Machine",
+        description = "Tracks workflow progress across task execution."
+    )]
     pub struct Machine<State> {}
 
     #[transition]
     impl Machine<Draft> {
-        #[present(label = "Start Workflow")]
+        /// Starts the workflow with a running task.
+        #[present(
+            label = "Start Workflow",
+            description = "Begins workflow execution with a running task."
+        )]
         fn start(
             self,
             running_task: super::task::Machine<super::task::Running>,
@@ -111,6 +133,7 @@ mod workflow {
         pub status: &'static str,
     }
 
+    /// Rebuilds workflow machines from persisted workflow rows.
     #[validators(Machine)]
     impl WorkflowRow {
         fn is_draft(&self) -> statum::Result<()> {
@@ -188,6 +211,14 @@ fn linked_codebase_doc_collects_machines_and_links() {
         .expect("workflow machine");
     assert_eq!(workflow.label, Some("Workflow Machine"));
     assert_eq!(
+        workflow.description,
+        Some("Tracks workflow progress across task execution.")
+    );
+    assert_eq!(
+        workflow.docs,
+        Some("Coordinates workflow progress around task execution.")
+    );
+    assert_eq!(
         workflow
             .states
             .iter()
@@ -195,12 +226,45 @@ fn linked_codebase_doc_collects_machines_and_links() {
             .map(|state| state.label),
         Some(Some("In Progress"))
     );
+    assert_eq!(
+        workflow
+            .states
+            .iter()
+            .find(|state| state.rust_name == "InProgress")
+            .and_then(|state| state.description),
+        Some("Work is currently delegated to a running task.")
+    );
+    assert_eq!(
+        workflow
+            .states
+            .iter()
+            .find(|state| state.rust_name == "InProgress")
+            .and_then(|state| state.docs),
+        Some("Workflow execution is delegated to a running task.")
+    );
+    let workflow_start = workflow
+        .transitions
+        .iter()
+        .find(|transition| transition.method_name == "start")
+        .expect("workflow start transition");
+    assert_eq!(
+        workflow_start.description,
+        Some("Begins workflow execution with a running task.")
+    );
+    assert_eq!(
+        workflow_start.docs,
+        Some("Starts the workflow with a running task.")
+    );
     assert_eq!(workflow.validator_entries.len(), 1);
     assert_eq!(
         workflow.validator_entries[0].source_type_display,
         "WorkflowRow"
     );
     assert_eq!(workflow.validator_entries[0].target_states, vec![0, 1, 2]);
+    assert_eq!(
+        workflow.validator_entries[0].docs,
+        Some("Rebuilds workflow machines from persisted workflow rows.")
+    );
 
     let workflow_link = doc
         .links()
@@ -228,8 +292,20 @@ fn linked_codebase_doc_collects_machines_and_links() {
     assert_eq!(target_state.rust_name, "Done");
     assert_eq!(target_machine.validator_entries.len(), 1);
     assert_eq!(
+        target_machine.description,
+        Some("Owns the exact task execution lifecycle.")
+    );
+    assert_eq!(
+        target_machine.docs,
+        Some("Handles the task lifecycle from idle to done.")
+    );
+    assert_eq!(
         target_machine.validator_entries[0].display_label().as_ref(),
         "TaskRow::into_machine()"
+    );
+    assert_eq!(
+        target_machine.validator_entries[0].docs,
+        Some("Rebuilds task machines from persisted task rows.")
     );
 }
 
@@ -303,6 +379,7 @@ fn builder_markers_only_render_for_directly_constructible_states() {
             rust_name: "Draft",
             label: None,
             description: None,
+            docs: None,
             has_data: false,
             direct_construction_available: false,
         },
@@ -310,6 +387,7 @@ fn builder_markers_only_render_for_directly_constructible_states() {
             rust_name: "Review",
             label: None,
             description: None,
+            docs: None,
             has_data: true,
             direct_construction_available: true,
         },
@@ -321,6 +399,7 @@ fn builder_markers_only_render_for_directly_constructible_states() {
         },
         label: None,
         description: None,
+        docs: None,
         states: &STATES,
         transitions: LinkedTransitionInventory::new(transitions),
         static_links: &[],
@@ -350,6 +429,7 @@ fn malformed_inventory_rejects_missing_transition_source_before_sort() {
             rust_name: "Draft",
             label: None,
             description: None,
+            docs: None,
             has_data: false,
             direct_construction_available: true,
         },
@@ -357,6 +437,7 @@ fn malformed_inventory_rejects_missing_transition_source_before_sort() {
             rust_name: "Review",
             label: None,
             description: None,
+            docs: None,
             has_data: false,
             direct_construction_available: true,
         },
@@ -368,6 +449,7 @@ fn malformed_inventory_rejects_missing_transition_source_before_sort() {
             to: &["Review"],
             label: None,
             description: None,
+            docs: None,
         },
         LinkedTransitionDescriptor {
             method_name: "ghost",
@@ -375,6 +457,7 @@ fn malformed_inventory_rejects_missing_transition_source_before_sort() {
             to: &["Review"],
             label: None,
             description: None,
+            docs: None,
         },
     ];
     static LINKED: [LinkedMachineGraph; 1] = [LinkedMachineGraph {
@@ -384,6 +467,7 @@ fn malformed_inventory_rejects_missing_transition_source_before_sort() {
         },
         label: None,
         description: None,
+        docs: None,
         states: &STATES,
         transitions: LinkedTransitionInventory::new(transitions),
         static_links: &[],
@@ -407,6 +491,7 @@ fn malformed_inventory_rejects_missing_static_link_source_state() {
         rust_name: "Draft",
         label: None,
         description: None,
+        docs: None,
         has_data: false,
         direct_construction_available: true,
     }];
@@ -423,6 +508,7 @@ fn malformed_inventory_rejects_missing_static_link_source_state() {
         },
         label: None,
         description: None,
+        docs: None,
         states: &STATES,
         transitions: LinkedTransitionInventory::new(transitions),
         static_links: &LINKS,
@@ -445,6 +531,7 @@ fn malformed_inventory_rejects_missing_validator_machine() {
         },
         source_module_path: "broken",
         source_type_display: "BrokenRow",
+        docs: None,
         target_states: &["Draft"],
     }];
 
@@ -466,6 +553,7 @@ fn malformed_inventory_rejects_missing_validator_target_state() {
         rust_name: "Draft",
         label: None,
         description: None,
+        docs: None,
         has_data: false,
         direct_construction_available: true,
     }];
@@ -476,6 +564,7 @@ fn malformed_inventory_rejects_missing_validator_target_state() {
         },
         label: None,
         description: None,
+        docs: None,
         states: &STATES,
         transitions: LinkedTransitionInventory::new(transitions),
         static_links: &[],
@@ -487,6 +576,7 @@ fn malformed_inventory_rejects_missing_validator_target_state() {
         },
         source_module_path: "workflow",
         source_type_display: "DbRow",
+        docs: None,
         target_states: &["Missing"],
     }];
 
@@ -508,6 +598,7 @@ fn malformed_inventory_rejects_empty_validator_target_set() {
         rust_name: "Draft",
         label: None,
         description: None,
+        docs: None,
         has_data: false,
         direct_construction_available: true,
     }];
@@ -518,6 +609,7 @@ fn malformed_inventory_rejects_empty_validator_target_set() {
         },
         label: None,
         description: None,
+        docs: None,
         states: &STATES,
         transitions: LinkedTransitionInventory::new(transitions),
         static_links: &[],
@@ -529,6 +621,7 @@ fn malformed_inventory_rejects_empty_validator_target_set() {
         },
         source_module_path: "workflow",
         source_type_display: "DbRow",
+        docs: None,
         target_states: &[],
     }];
 
@@ -550,6 +643,7 @@ fn malformed_inventory_rejects_duplicate_validator_target_state() {
         rust_name: "Draft",
         label: None,
         description: None,
+        docs: None,
         has_data: false,
         direct_construction_available: true,
     }];
@@ -560,6 +654,7 @@ fn malformed_inventory_rejects_duplicate_validator_target_state() {
         },
         label: None,
         description: None,
+        docs: None,
         states: &STATES,
         transitions: LinkedTransitionInventory::new(transitions),
         static_links: &[],
@@ -571,6 +666,7 @@ fn malformed_inventory_rejects_duplicate_validator_target_state() {
         },
         source_module_path: "workflow",
         source_type_display: "DbRow",
+        docs: None,
         target_states: &["Draft", "Draft"],
     }];
 
@@ -592,6 +688,7 @@ fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
         rust_name: "Draft",
         label: None,
         description: None,
+        docs: None,
         has_data: false,
         direct_construction_available: true,
     }];
@@ -602,6 +699,7 @@ fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
         },
         label: None,
         description: None,
+        docs: None,
         states: &STATES,
         transitions: LinkedTransitionInventory::new(transitions),
         static_links: &[],
@@ -614,6 +712,7 @@ fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
             },
             source_module_path: "workflow",
             source_type_display: "DbRow",
+            docs: None,
             target_states: &["Draft"],
         },
         LinkedValidatorEntryDescriptor {
@@ -623,6 +722,7 @@ fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
             },
             source_module_path: "workflow",
             source_type_display: "DbRow",
+            docs: None,
             target_states: &["Draft"],
         },
     ];

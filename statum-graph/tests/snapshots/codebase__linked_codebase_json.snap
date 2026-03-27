@@ -1,5 +1,6 @@
 ---
 source: statum-graph/tests/codebase.rs
+assertion_line: 319
 expression: "render::json(&doc)"
 ---
 {
@@ -10,12 +11,14 @@ expression: "render::json(&doc)"
       "rust_type_path": "codebase::detached::Machine",
       "label": null,
       "description": null,
+      "docs": null,
       "states": [
         {
           "index": 0,
           "rust_name": "Alone",
           "label": null,
           "description": null,
+          "docs": null,
           "has_data": false,
           "direct_construction_available": true,
           "is_graph_root": true
@@ -30,12 +33,14 @@ expression: "render::json(&doc)"
       "rust_type_path": "codebase::named_holder::Machine",
       "label": null,
       "description": null,
+      "docs": null,
       "states": [
         {
           "index": 0,
           "rust_name": "Pending",
           "label": null,
           "description": null,
+          "docs": null,
           "has_data": true,
           "direct_construction_available": true,
           "is_graph_root": true
@@ -45,6 +50,7 @@ expression: "render::json(&doc)"
           "rust_name": "Settled",
           "label": null,
           "description": null,
+          "docs": null,
           "has_data": false,
           "direct_construction_available": true,
           "is_graph_root": false
@@ -56,6 +62,7 @@ expression: "render::json(&doc)"
           "method_name": "settle",
           "label": null,
           "description": null,
+          "docs": null,
           "from": 0,
           "to": [
             1
@@ -69,13 +76,15 @@ expression: "render::json(&doc)"
       "module_path": "codebase::task",
       "rust_type_path": "codebase::task::Machine",
       "label": "Task Machine",
-      "description": null,
+      "description": "Owns the exact task execution lifecycle.",
+      "docs": "Handles the task lifecycle from idle to done.",
       "states": [
         {
           "index": 0,
           "rust_name": "Idle",
           "label": null,
           "description": null,
+          "docs": null,
           "has_data": false,
           "direct_construction_available": true,
           "is_graph_root": true
@@ -84,7 +93,8 @@ expression: "render::json(&doc)"
           "index": 1,
           "rust_name": "Running",
           "label": "Running",
-          "description": null,
+          "description": "Task execution is active.",
+          "docs": "Task execution is in progress.",
           "has_data": false,
           "direct_construction_available": true,
           "is_graph_root": false
@@ -94,6 +104,7 @@ expression: "render::json(&doc)"
           "rust_name": "Done",
           "label": null,
           "description": null,
+          "docs": null,
           "has_data": false,
           "direct_construction_available": true,
           "is_graph_root": false
@@ -104,7 +115,8 @@ expression: "render::json(&doc)"
           "index": 0,
           "method_name": "start",
           "label": "Start Task",
-          "description": null,
+          "description": "Moves the task from idle into running work.",
+          "docs": "Starts task execution.",
           "from": 0,
           "to": [
             1
@@ -115,6 +127,7 @@ expression: "render::json(&doc)"
           "method_name": "finish",
           "label": null,
           "description": null,
+          "docs": null,
           "from": 1,
           "to": [
             2
@@ -126,6 +139,7 @@ expression: "render::json(&doc)"
           "index": 0,
           "source_module_path": "codebase::task",
           "source_type_display": "TaskRow",
+          "docs": "Rebuilds task machines from persisted task rows.",
           "target_states": [
             0,
             1,
@@ -139,13 +153,15 @@ expression: "render::json(&doc)"
       "module_path": "codebase::workflow",
       "rust_type_path": "codebase::workflow::Machine",
       "label": "Workflow Machine",
-      "description": null,
+      "description": "Tracks workflow progress across task execution.",
+      "docs": "Coordinates workflow progress around task execution.",
       "states": [
         {
           "index": 0,
           "rust_name": "Draft",
           "label": null,
           "description": null,
+          "docs": null,
           "has_data": false,
           "direct_construction_available": true,
           "is_graph_root": true
@@ -154,7 +170,8 @@ expression: "render::json(&doc)"
           "index": 1,
           "rust_name": "InProgress",
           "label": "In Progress",
-          "description": null,
+          "description": "Work is currently delegated to a running task.",
+          "docs": "Workflow execution is delegated to a running task.",
           "has_data": true,
           "direct_construction_available": true,
           "is_graph_root": false
@@ -164,6 +181,7 @@ expression: "render::json(&doc)"
           "rust_name": "Complete",
           "label": null,
           "description": null,
+          "docs": null,
           "has_data": false,
           "direct_construction_available": true,
           "is_graph_root": false
@@ -174,7 +192,8 @@ expression: "render::json(&doc)"
           "index": 0,
           "method_name": "start",
           "label": "Start Workflow",
-          "description": null,
+          "description": "Begins workflow execution with a running task.",
+          "docs": "Starts the workflow with a running task.",
           "from": 0,
           "to": [
             1
@@ -185,6 +204,7 @@ expression: "render::json(&doc)"
           "method_name": "finish",
           "label": null,
           "description": null,
+          "docs": null,
           "from": 1,
           "to": [
             2
@@ -196,6 +216,7 @@ expression: "render::json(&doc)"
           "index": 0,
           "source_module_path": "codebase::workflow",
           "source_type_display": "WorkflowRow",
+          "docs": "Rebuilds workflow machines from persisted workflow rows.",
           "target_states": [
             0,
             1,

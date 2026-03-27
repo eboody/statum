@@ -34,8 +34,8 @@ moddef::moddef!(
 );
 
 pub(crate) use presentation::{
-    PresentationAttr, PresentationTypesAttr, parse_present_attrs, parse_presentation_types_attr,
-    strip_present_attrs,
+    PresentationAttr, PresentationTypesAttr, parse_doc_attrs, parse_present_attrs,
+    parse_presentation_types_attr, strip_present_attrs,
 };
 pub(crate) use syntax::{
     ItemTarget, ModulePath, SourceFingerprint, crate_root_for_file, current_crate_root,

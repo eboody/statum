@@ -6,7 +6,8 @@ use syn::{Expr, Fields, Ident, Item, ItemEnum, LitStr, Path, Type, Visibility};
 
 use crate::{
     ItemTarget, ModulePath, SourceFingerprint, crate_root_for_file, current_crate_root,
-    extract_derives, parse_present_attrs, source_file_fingerprint, PresentationAttr,
+    extract_derives, parse_doc_attrs, parse_present_attrs, source_file_fingerprint,
+    PresentationAttr,
 };
 
 // Structure to hold extracted enum data
@@ -30,6 +31,7 @@ pub struct EnumInfo {
 pub struct VariantInfo {
     pub name: String,
     pub shape: VariantShape,
+    pub docs: Option<String>,
     pub presentation: Option<PresentationAttr>,
 }
 
@@ -429,11 +431,13 @@ impl EnumInfo {
                         .collect(),
                 },
             };
+            let docs = parse_doc_attrs(&variant.attrs)?;
             let presentation = parse_present_attrs(&variant.attrs)?;
 
             variants.push(VariantInfo {
                 name,
                 shape,
+                docs,
                 presentation,
             });
         }

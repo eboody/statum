@@ -2158,6 +2158,7 @@ fn generate_machine_module_introspection(
             .as_ref()
             .and_then(|value| value.description.as_deref()),
     );
+    let machine_docs = optional_lit_str_tokens(machine_info.docs.as_deref());
     let machine_meta_ty = presentation_type_tokens(presentation_types.machine.as_ref());
     let state_meta_ty = presentation_type_tokens(presentation_types.state.as_ref());
     let transition_meta_ty = presentation_type_tokens(presentation_types.transition.as_ref());
@@ -2315,6 +2316,7 @@ fn generate_machine_module_introspection(
                 },
                 label: #machine_presentation_label,
                 description: #machine_presentation_description,
+                docs: #machine_docs,
                 states: __STATUM_LINKED_STATES,
                 transitions: statum::__private::LinkedTransitionInventory::new(__statum_linked_transitions),
                 static_links: __STATUM_STATIC_MACHINE_LINKS,
@@ -2343,6 +2345,7 @@ fn linked_state_entries(machine_info: &MachineInfo) -> Result<Vec<TokenStream>, 
                     .as_ref()
                     .and_then(|value| value.description.as_deref()),
             );
+            let docs = optional_lit_str_tokens(variant.docs.as_deref());
             let has_data = !matches!(variant.shape, crate::state::VariantShape::Unit);
 
             Ok(quote! {
@@ -2350,6 +2353,7 @@ fn linked_state_entries(machine_info: &MachineInfo) -> Result<Vec<TokenStream>, 
                     rust_name: #rust_name,
                     label: #label,
                     description: #description,
+                    docs: #docs,
                     has_data: #has_data,
                     direct_construction_available: true,
                 }
