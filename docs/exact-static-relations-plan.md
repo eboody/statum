@@ -47,13 +47,17 @@ Completed:
 - machine summary edges derived from exact relations
 - relation grouping plus inbound and outbound lookup helpers
 - typed exact relation detail helpers for downstream consumers
+- exact-lane search and filtering in the inspector over the canonical export
+  model
 - fail-closed authority guards for unsupported validator cfg shapes
 - fail-closed authority guards for same-name wrapper lookalikes and ambiguous
   direct machine syntax
 
-Still open:
+Plan status:
 
-- inspector-side filtering and layout work that consumes this substrate
+- complete
+- future TUI expansion is tracked in
+  [inspector-plan.md](/home/eran/code/statum/docs/inspector-plan.md)
 
 ## Authority Contract
 
@@ -227,6 +231,10 @@ Success criteria:
 - users can see direct-construction availability in graph outputs without
   mistaking it for initial-state semantics
 
+Status:
+
+- done
+
 ### Phase 2: Relation Projection And Summary Edges
 
 Deliverables:
@@ -240,6 +248,10 @@ Success criteria:
 - graph outputs make cross-machine static coupling legible without hiding the
   underlying exact relation records
 
+Status:
+
+- done
+
 ### Phase 3: Inspector-Facing Provenance Helpers
 
 Deliverables:
@@ -252,6 +264,10 @@ Success criteria:
 
 - the TUI can answer what points at this and why without reconstructing export
   semantics itself
+
+Status:
+
+- done
 
 ## Checklist
 

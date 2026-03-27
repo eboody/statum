@@ -31,6 +31,7 @@ Current shipping surface:
 - `cargo statum-graph inspect /path/to/workspace`
 - exact-lane workspace overview
 - exact machine, relation, and detail panes
+- exact-lane search and relation-kind or relation-basis filters
 - keyboard navigation over linked compiled `CodebaseDoc`
 
 ## Dependency
@@ -141,7 +142,7 @@ Invariant-placement risks:
 The default TUI should use a stable multi-pane layout:
 
 - left: workspace overview, machine list, and disconnected groups
-- center: exact graph view or later timeline view
+- center: exact machine and relation navigation, then later timeline view
 - right: machine, state, transition, and relation details for the current
   selection
 - bottom: search results, filter status, and later runtime event logs
@@ -158,6 +159,7 @@ Workspace overview should show:
 - machine count
 - disconnected groups
 - exact machine summary edges
+- exact-lane search status
 - filters for relation kind and provenance
 
 Machine view should show:
@@ -210,7 +212,7 @@ Source of truth:
 Status:
 
 - exact static substrate done
-- inspector UI work is the next open milestone
+- consumed by the shipped inspector exact lane
 
 ### Phase 1: Exact Codebase Viewer MVP
 
@@ -248,17 +250,23 @@ Success criteria:
 
 Status:
 
-- relation pane, inbound and outbound navigation, and provenance detail are in
-- exact-lane search and filtering are still open
+- done through `cargo statum-graph inspect`
+- the exact lane now supports search plus relation-kind and relation-basis
+  filters without re-deriving semantics outside `CodebaseDoc`
 
 ### Phase 3: Heuristic Overlay Lane
 
 Deliverables:
 
 - optional heuristic relation collector
+- separate heuristic session state instead of mutating `CodebaseDoc`
+- visible unavailable state when heuristic collection cannot run
 - separate styling from the exact lane
+- toggle to show exact only, heuristic only, or both
+- heuristic-lane search and filters separate from the exact lane
 - provenance display for heuristic relations
-- explicit unavailable state when heuristic analysis cannot run
+- detail-pane support that explains the heuristic basis for each relation
+- no Mermaid, DOT, PlantUML, or JSON export path for heuristic relations
 
 Success criteria:
 
@@ -266,8 +274,8 @@ Success criteria:
 
 Next milestone:
 
-- add exact-lane search and filtering before heuristic discovery so the exact
-  inspector remains usable at larger workspace scale
+- design and ship a heuristic overlay contract that makes broader discovery
+  useful while keeping exact and heuristic relations impossible to confuse
 
 ### Phase 4: Replay MVP
 
@@ -376,8 +384,11 @@ Adversarial tests:
 - [x] Add machine view with validators and builder markers
 - [x] Add relation pane with inbound and outbound navigation
 - [x] Add provenance detail pane
-- [ ] Add exact-lane search and filters
+- [x] Add exact-lane search and filters
 - [ ] Add separate heuristic overlay lane
+- [ ] Add exact-only, heuristic-only, and mixed visibility toggles
+- [ ] Add heuristic provenance detail blocks
+- [ ] Add explicit unavailable-state handling for heuristic collection
 - [ ] Add replay session model
 - [ ] Add timeline stepping
 - [ ] Add snapshot protocol and generic structural diffing
