@@ -1,6 +1,5 @@
 ---
 source: statum-graph/tests/codebase.rs
-assertion_line: 319
 expression: "render::json(&doc)"
 ---
 {
@@ -258,7 +257,8 @@ expression: "render::json(&doc)"
       },
       "target_machine": 2,
       "target_state": 2,
-      "declared_reference_type": null
+      "declared_reference_type": null,
+      "attested_via": null
     },
     {
       "index": 1,
@@ -273,7 +273,8 @@ expression: "render::json(&doc)"
       },
       "target_machine": 2,
       "target_state": 1,
-      "declared_reference_type": null
+      "declared_reference_type": null,
+      "attested_via": null
     },
     {
       "index": 2,
@@ -289,7 +290,8 @@ expression: "render::json(&doc)"
       },
       "target_machine": 2,
       "target_state": 1,
-      "declared_reference_type": null
+      "declared_reference_type": null,
+      "attested_via": null
     }
   ]
 }

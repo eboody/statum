@@ -174,6 +174,13 @@ If you want a ready-made renderer for that graph surface, the workspace also
 ships [statum-graph](statum-graph/README.md), which exports machine-local
 topology and Mermaid output directly from `MachineIntrospection::GRAPH`.
 
+Statum also supports exact cross-machine transition provenance. Direct
+single-target transitions get generated `*_and_attest()` companions returning
+`statum::Attested<Machine<NextState>, Via>`. On the consumer side, annotate one
+machine parameter with `#[via(...)]`, and Statum generates binders like
+`.from_capture(...).start_shipping()` while exporting that dependency into the
+linked `CodebaseDoc` and inspector relation details.
+
 For source-local labels and descriptions, use `#[present(...)]` on the machine,
 state variants, and transition methods. If you also want typed metadata in the
 generated `machine::PRESENTATION` constant, declare
@@ -323,6 +330,8 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
 - Transition methods must take `self` or `mut self`.
 - Return `Machine<NextState>` directly, or wrap it in canonical `::core::result::Result`, `::core::option::Option`, or `::statum::Branch` when the transition is conditional.
 - Use `transition_with(data)` when the target state carries data.
+- Direct single-target transitions also get generated `*_and_attest()` companions.
+- To require exact child-transition provenance in another transition, annotate one machine parameter with `#[via(...)]`; Statum then generates `from_*` binders such as `.from_capture(...).start_shipping()`.
 
 `#[validators]`
 

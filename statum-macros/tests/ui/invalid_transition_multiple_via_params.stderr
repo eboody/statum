@@ -1,0 +1,5 @@
+error: Error: `#[transition]` method `Workflow<Ready>::finish` supports at most one `#[via(...)]` parameter in v1.
+  --> tests/ui/invalid_transition_multiple_via_params.rs:41:5
+   |
+41 |     fn finish(
+   |     ^^

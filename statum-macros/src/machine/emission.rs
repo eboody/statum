@@ -2090,6 +2090,11 @@ fn generate_machine_state_surface(
             #[allow(unused_imports)]
             use super::*;
 
+            pub mod via {
+                #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+                pub struct Route<const ID: u64>;
+            }
+
             pub struct Fields #extra_machine_generics {
                 #(#fields_struct_fields),*
             }

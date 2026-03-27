@@ -103,7 +103,8 @@ collects every linked compiled machine family and exports:
 - declared validator-entry surfaces from compiled `#[validators]` impls
 - direct-construction availability per state
 - exact relation records from state payloads, machine fields, transition
-  parameters, and nominal `#[machine_ref(...)]` declarations
+  parameters, `#[via(...)]` declarations, and nominal `#[machine_ref(...)]`
+  declarations
 
 That combined view is still static. It is not a whole-workspace source scan, it
 does not model runtime orchestration, and validator entries describe declared
@@ -119,10 +120,103 @@ absolute carrier paths such as `::core::option::Option<...>` and
 `crate::`, `self::`, `super::`, or absolute paths rather than imported aliases
 or bare prelude names. `#[machine_ref(...)]` is trait-backed and supports
 nominal structs and tuple structs only; plain type aliases are rejected.
+Use it when a stable artifact or handoff type should count as an exact
+cross-machine reference without repeating that relationship at every field or
+method. Target the earliest stable producer state for that artifact rather
+than a later consumer state.
 Codebase graph renderers project direct-construction availability with a
 ` [build]` suffix on directly constructible states. They also derive
 cross-machine summary edges from exact `relations()` while leaving the JSON
 surface canonical and relation-level.
+
+## Attested Cross-Machine Composition
+
+Statum can also carry exact transition provenance across machine boundaries
+without changing the base transition surface.
+
+Direct single-target transitions get generated `*_and_attest()` companions that
+return `statum::Attested<Machine<NextState>, Via>`. The plain transition still
+returns the plain machine:
+
+```rust
+use statum::{machine, state, transition};
+
+#[state]
+enum PaymentState {
+    Authorized,
+    Captured,
+}
+
+#[machine]
+struct PaymentMachine<PaymentState> {}
+
+#[transition]
+impl PaymentMachine<Authorized> {
+    fn capture(self) -> PaymentMachine<Captured> {
+        self.transition()
+    }
+}
+
+#[state]
+enum FulfillmentState {
+    ReadyToShip,
+    Shipping,
+}
+
+#[machine]
+struct FulfillmentMachine<FulfillmentState> {}
+
+#[transition]
+impl FulfillmentMachine<ReadyToShip> {
+    fn start_shipping(
+        self,
+        #[via(crate::payment_machine::via::Capture)]
+        payment: PaymentMachine<Captured>,
+    ) -> FulfillmentMachine<Shipping> {
+        let _ = payment;
+        self.transition()
+    }
+}
+
+let captured = PaymentMachine::<Authorized>::builder()
+    .build()
+    .capture_and_attest();
+
+let shipping = FulfillmentMachine::<ReadyToShip>::builder()
+    .build()
+    .from_capture(captured)
+    .start_shipping();
+```
+
+In that example:
+
+- `capture()` still means only “move to `Captured`”
+- `capture_and_attest()` means “move to `Captured` and carry exact provenance
+  that this happened via `capture`”
+- `#[via(...)]` declares that `start_shipping` accepts that exact attested
+  route
+- `.from_capture(...)` is generated from the `#[via(...)]` declaration and
+  forwards into the one authored `start_shipping(...)` method
+
+The linked codebase surface exports those declarations as exact
+transition-parameter relations with producer machine, producer source state,
+producer transition, and target child state detail. That lets the inspector say
+not only “this transition takes `PaymentMachine<Captured>`,” but also “it can
+depend on `PaymentMachine<Authorized>::capture` specifically.”
+
+In v1, most callers should stay on the generated `*_and_attest()` and
+`.from_*()` surfaces rather than naming the raw `Via` marker type directly.
+
+The authority surface here is still explicit and fail-closed:
+
+- observation point: macro-expanded, cfg-pruned `#[transition]` signatures plus
+  explicit `#[via(...)]` declarations and generated attested-route inventories
+- supported in v1: direct single-target producer transitions and at most one
+  `#[via(...)]` parameter per consumer transition
+- producer route names are machine-scoped and must stay unique; duplicate
+  attested route names fail closed in `CodebaseDoc::linked()`
+- unsupported cases: contribute no exact attested relation or fail with a macro
+  diagnostic rather than exporting guessed provenance
 
 ## Transition Identity
 

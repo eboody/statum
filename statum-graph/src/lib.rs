@@ -39,10 +39,10 @@ mod export;
 pub mod render;
 
 pub use codebase::{
-    CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine, CodebaseMachineRelationGroup,
-    CodebaseRelation, CodebaseRelationBasis, CodebaseRelationCount, CodebaseRelationDetail,
-    CodebaseRelationKind, CodebaseRelationSource, CodebaseState, CodebaseTransition,
-    CodebaseValidatorEntry,
+    CodebaseAttestedRoute, CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine,
+    CodebaseMachineRelationGroup, CodebaseRelation, CodebaseRelationBasis, CodebaseRelationCount,
+    CodebaseRelationDetail, CodebaseRelationKind, CodebaseRelationSource, CodebaseState,
+    CodebaseTransition, CodebaseValidatorEntry,
 };
 pub use export::{
     ExportDoc, ExportDocError, ExportMachine, ExportSource, ExportState, ExportTransition,

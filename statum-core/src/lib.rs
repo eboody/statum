@@ -26,18 +26,21 @@ pub use introspection::__STATUM_LINKED_REFERENCE_TYPES;
 pub use introspection::__STATUM_LINKED_RELATIONS;
 #[doc(hidden)]
 pub use introspection::__STATUM_LINKED_VALIDATOR_ENTRIES;
+#[doc(hidden)]
+pub use introspection::__STATUM_LINKED_VIA_ROUTES;
 
 #[doc(hidden)]
 pub mod __private {
     pub use crate::{
-        LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
+        Attested, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
         LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
         LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
-        LinkedValidatorEntryDescriptor, MachinePresentation, MachinePresentationDescriptor,
-        MachineReference, MachineReferenceTarget, RebuildAttempt, RebuildReport, StateFamily,
-        StateFamilyMember, StatePresentation, StaticMachineLinkDescriptor, TransitionPresentation,
-        TransitionPresentationInventory, __STATUM_LINKED_MACHINES, __STATUM_LINKED_REFERENCE_TYPES,
-        __STATUM_LINKED_RELATIONS, __STATUM_LINKED_VALIDATOR_ENTRIES,
+        LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachinePresentation,
+        MachinePresentationDescriptor, MachineReference, MachineReferenceTarget, RebuildAttempt,
+        RebuildReport, StateFamily, StateFamilyMember, StatePresentation,
+        StaticMachineLinkDescriptor, TransitionPresentation, TransitionPresentationInventory,
+        __STATUM_LINKED_MACHINES, __STATUM_LINKED_REFERENCE_TYPES, __STATUM_LINKED_RELATIONS,
+        __STATUM_LINKED_VALIDATOR_ENTRIES, __STATUM_LINKED_VIA_ROUTES,
     };
     pub use futures;
     pub use linkme;
@@ -58,15 +61,19 @@ pub mod __private {
             Self { _private: 0 }
         }
     }
+
+    pub fn attest<T, Via>(inner: T) -> crate::Attested<T, Via> {
+        crate::Attested::new(inner)
+    }
 }
 
 pub use introspection::{
     linked_machines, linked_reference_types, linked_relations, linked_validator_entries,
-    LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
+    linked_via_routes, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
     LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
     LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
-    LinkedValidatorEntryDescriptor, MachineDescriptor, MachineGraph, MachineIntrospection,
-    MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
+    LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachineDescriptor, MachineGraph,
+    MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
     MachineTransitionRecorder, RecordedTransition, StateDescriptor, StatePresentation,
     StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory, TransitionPresentation,
     TransitionPresentationInventory,
@@ -183,6 +190,50 @@ pub enum Branch<A, B> {
     First(A),
     /// The second legal target branch.
     Second(B),
+}
+
+/// A machine value with attached typed provenance for how it was produced.
+///
+/// Statum uses this wrapper for attested transition routes such as
+/// `capture_and_attest()` and generated `from_*()` binders. The public surface
+/// exposes the wrapped machine and the route type, but construction stays on
+/// the macro-generated path so ordinary callers cannot forge attestation
+/// accidentally.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Attested<T, Via> {
+    inner: T,
+    marker: core::marker::PhantomData<Via>,
+}
+
+impl<T, Via> Attested<T, Via> {
+    #[doc(hidden)]
+    pub fn new(inner: T) -> Self {
+        Self {
+            inner,
+            marker: core::marker::PhantomData,
+        }
+    }
+
+    /// Consumes the wrapper and returns the attested inner value.
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+
+    /// Borrows the attested inner value.
+    pub fn as_ref(&self) -> &T {
+        &self.inner
+    }
+
+    /// Maps the inner value while preserving the attested route marker.
+    pub fn map_inner<U>(self, f: impl FnOnce(T) -> U) -> Attested<U, Via> {
+        Attested::new(f(self.inner))
+    }
+}
+
+impl<T, Via> AsRef<T> for Attested<T, Via> {
+    fn as_ref(&self) -> &T {
+        self.as_ref()
+    }
 }
 
 /// Convenience result alias used by Statum APIs.

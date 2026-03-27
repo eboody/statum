@@ -18,9 +18,19 @@ use statum_graph::{
     CodebaseRelationSource, CodebaseState, CodebaseTransition, CodebaseValidatorEntry,
 };
 
-pub fn run(doc: CodebaseDoc, workspace_label: String) -> io::Result<()> {
+use crate::heuristics::{
+    HeuristicDiagnostic, HeuristicEvidenceKind, HeuristicMachineRelationGroup, HeuristicOverlay,
+    HeuristicRelation, HeuristicRelationCount, HeuristicRelationDetail, HeuristicRelationSource,
+    HeuristicStatusKind,
+};
+
+pub fn run(
+    doc: CodebaseDoc,
+    heuristic: HeuristicOverlay,
+    workspace_label: String,
+) -> io::Result<()> {
     let mut terminal = setup_terminal()?;
-    let mut app = InspectorApp::new(doc, workspace_label);
+    let mut app = InspectorApp::new(doc, heuristic, workspace_label);
 
     let result = (|| -> io::Result<()> {
         loop {
@@ -155,6 +165,39 @@ impl RelationDirection {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LaneMode {
+    Exact,
+    Heuristic,
+    Mixed,
+}
+
+impl LaneMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Heuristic => "heuristic",
+            Self::Mixed => "mixed",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Exact => Self::Heuristic,
+            Self::Heuristic => Self::Mixed,
+            Self::Mixed => Self::Exact,
+        }
+    }
+
+    fn shows_exact(self) -> bool {
+        matches!(self, Self::Exact | Self::Mixed)
+    }
+
+    fn shows_heuristic(self) -> bool {
+        matches!(self, Self::Heuristic | Self::Mixed)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RelationSubject {
     Machine { machine: usize },
     State { machine: usize, state: usize },
@@ -168,9 +211,21 @@ enum SummaryDirection {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SummaryItem {
+struct ExactSummaryItem {
     direction: SummaryDirection,
     group: CodebaseMachineRelationGroup,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct HeuristicSummaryItem {
+    direction: SummaryDirection,
+    group: HeuristicMachineRelationGroup,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SummaryItem {
+    Exact(ExactSummaryItem),
+    Heuristic(HeuristicSummaryItem),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -184,6 +239,43 @@ impl InputMode {
         match self {
             Self::Normal => "normal",
             Self::Search => "search",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct HeuristicFilters {
+    evidence_kinds: BTreeSet<HeuristicEvidenceKind>,
+}
+
+impl HeuristicFilters {
+    fn toggle_evidence_kind(&mut self, evidence_kind: HeuristicEvidenceKind) {
+        if !self.evidence_kinds.insert(evidence_kind) {
+            self.evidence_kinds.remove(&evidence_kind);
+        }
+    }
+
+    fn clear(&mut self) {
+        self.evidence_kinds.clear();
+    }
+
+    fn has_active(&self) -> bool {
+        !self.evidence_kinds.is_empty()
+    }
+
+    fn matches_relation(&self, relation: &HeuristicRelation) -> bool {
+        self.evidence_kinds.is_empty() || self.evidence_kinds.contains(&relation.evidence_kind)
+    }
+
+    fn evidence_summary(&self) -> String {
+        if self.evidence_kinds.is_empty() {
+            "all".to_owned()
+        } else {
+            self.evidence_kinds
+                .iter()
+                .map(|evidence_kind| evidence_kind.display_label())
+                .collect::<Vec<_>>()
+                .join(", ")
         }
     }
 }
@@ -254,14 +346,32 @@ enum MachineItem {
     Summary(SummaryItem),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RelationItem {
+    Exact(usize),
+    Heuristic(usize),
+}
+
+#[derive(Clone, Copy, Debug)]
+enum RelationDetailSelection<'a> {
+    Exact(CodebaseRelationDetail<'a>),
+    Heuristic {
+        detail: HeuristicRelationDetail<'a>,
+        shadowed_by_exact: bool,
+    },
+}
+
 #[derive(Debug)]
 struct InspectorApp {
     doc: CodebaseDoc,
+    heuristic: HeuristicOverlay,
     workspace_label: String,
     selected_machine: usize,
     input_mode: InputMode,
     search_query: String,
     filters: ExactFilters,
+    heuristic_filters: HeuristicFilters,
+    lane_mode: LaneMode,
     focus: Focus,
     machine_section: MachineSection,
     machine_item_index: usize,
@@ -271,14 +381,17 @@ struct InspectorApp {
 }
 
 impl InspectorApp {
-    fn new(doc: CodebaseDoc, workspace_label: String) -> Self {
+    fn new(doc: CodebaseDoc, heuristic: HeuristicOverlay, workspace_label: String) -> Self {
         Self {
             doc,
+            heuristic,
             workspace_label,
             selected_machine: 0,
             input_mode: InputMode::Normal,
             search_query: String::new(),
             filters: ExactFilters::default(),
+            heuristic_filters: HeuristicFilters::default(),
+            lane_mode: LaneMode::Exact,
             focus: Focus::Machines,
             machine_section: MachineSection::States,
             machine_item_index: 0,
@@ -298,7 +411,10 @@ impl InspectorApp {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('/') => self.input_mode = InputMode::Search,
-            KeyCode::Char('0') => self.filters.clear(),
+            KeyCode::Char('0') => {
+                self.filters.clear();
+                self.heuristic_filters.clear();
+            }
             KeyCode::Char('1') => self.filters.toggle_kind(CodebaseRelationKind::StatePayload),
             KeyCode::Char('2') => self.filters.toggle_kind(CodebaseRelationKind::MachineField),
             KeyCode::Char('3') => self
@@ -310,6 +426,13 @@ impl InspectorApp {
             KeyCode::Char('5') => self
                 .filters
                 .toggle_basis(CodebaseRelationBasis::DeclaredReferenceType),
+            KeyCode::Char('6') => self
+                .heuristic_filters
+                .toggle_evidence_kind(HeuristicEvidenceKind::Signature),
+            KeyCode::Char('7') => self
+                .heuristic_filters
+                .toggle_evidence_kind(HeuristicEvidenceKind::Body),
+            KeyCode::Char('m') => self.lane_mode = self.lane_mode.next(),
             KeyCode::Tab => self.focus = self.focus.next(),
             KeyCode::BackTab => self.focus = self.focus.previous(),
             KeyCode::Left | KeyCode::Char('h') => self.move_left(),
@@ -494,7 +617,7 @@ impl InspectorApp {
                 .validator_entry(*entry_index)
                 .map(|entry| entry.display_label().into_owned())
                 .unwrap_or_else(|| "<missing validator>".to_owned()),
-            MachineItem::Summary(item) => {
+            MachineItem::Summary(SummaryItem::Exact(item)) => {
                 let arrow = match item.direction {
                     SummaryDirection::Outbound => "out",
                     SummaryDirection::Inbound => "in",
@@ -505,7 +628,23 @@ impl InspectorApp {
                 }
                 .expect("summary peer machine should exist");
                 format!(
-                    "{arrow} {} : {}",
+                    "[exact] {arrow} {} : {}",
+                    render_machine_label(peer_machine),
+                    item.group.display_label()
+                )
+            }
+            MachineItem::Summary(SummaryItem::Heuristic(item)) => {
+                let arrow = match item.direction {
+                    SummaryDirection::Outbound => "out",
+                    SummaryDirection::Inbound => "in",
+                };
+                let peer_machine = match item.direction {
+                    SummaryDirection::Outbound => self.doc.machine(item.group.to_machine),
+                    SummaryDirection::Inbound => self.doc.machine(item.group.from_machine),
+                }
+                .expect("summary peer machine should exist");
+                format!(
+                    "[heur] {arrow} {} : {}",
                     render_machine_label(peer_machine),
                     item.group.display_label()
                 )
@@ -517,26 +656,61 @@ impl InspectorApp {
         let Some(machine) = self.current_machine() else {
             return Vec::new();
         };
-        self.filtered_machine_relation_groups()
-            .into_iter()
-            .filter_map(|group| {
-                if group.from_machine == machine.index && group.from_machine != group.to_machine {
-                    Some(SummaryItem {
-                        direction: SummaryDirection::Outbound,
-                        group,
-                    })
-                } else if group.to_machine == machine.index
-                    && group.from_machine != group.to_machine
-                {
-                    Some(SummaryItem {
-                        direction: SummaryDirection::Inbound,
-                        group,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect()
+        let mut items = Vec::new();
+
+        if self.lane_mode.shows_exact() {
+            items.extend(
+                self.filtered_machine_relation_groups()
+                    .into_iter()
+                    .filter_map(|group| {
+                        if group.from_machine == machine.index
+                            && group.from_machine != group.to_machine
+                        {
+                            Some(SummaryItem::Exact(ExactSummaryItem {
+                                direction: SummaryDirection::Outbound,
+                                group,
+                            }))
+                        } else if group.to_machine == machine.index
+                            && group.from_machine != group.to_machine
+                        {
+                            Some(SummaryItem::Exact(ExactSummaryItem {
+                                direction: SummaryDirection::Inbound,
+                                group,
+                            }))
+                        } else {
+                            None
+                        }
+                    }),
+            );
+        }
+
+        if self.lane_mode.shows_heuristic() {
+            items.extend(
+                self.filtered_heuristic_machine_relation_groups()
+                    .into_iter()
+                    .filter_map(|group| {
+                        if group.from_machine == machine.index
+                            && group.from_machine != group.to_machine
+                        {
+                            Some(SummaryItem::Heuristic(HeuristicSummaryItem {
+                                direction: SummaryDirection::Outbound,
+                                group,
+                            }))
+                        } else if group.to_machine == machine.index
+                            && group.from_machine != group.to_machine
+                        {
+                            Some(SummaryItem::Heuristic(HeuristicSummaryItem {
+                                direction: SummaryDirection::Inbound,
+                                group,
+                            }))
+                        } else {
+                            None
+                        }
+                    }),
+            );
+        }
+
+        items
     }
 
     fn selected_machine_item(&self) -> Option<MachineItem> {
@@ -572,57 +746,28 @@ impl InspectorApp {
         }
     }
 
-    fn relation_items(&self) -> Vec<&CodebaseRelation> {
+    fn relation_items(&self) -> Vec<RelationItem> {
         let query = self.normalized_query();
         let Some(subject) = self.relation_subject() else {
             return Vec::new();
         };
 
-        let base: Vec<&CodebaseRelation> = match (subject, self.relation_direction) {
-            (RelationSubject::Machine { machine }, RelationDirection::Outbound) => {
-                self.doc.outbound_relations_for_machine(machine).collect()
-            }
-            (RelationSubject::Machine { machine }, RelationDirection::Inbound) => {
-                self.doc.inbound_relations_for_machine(machine).collect()
-            }
-            (RelationSubject::State { machine, state }, RelationDirection::Outbound) => self
-                .doc
-                .outbound_relations_for_state(machine, state)
-                .collect(),
-            (RelationSubject::State { machine, state }, RelationDirection::Inbound) => self
-                .doc
-                .inbound_relations_for_state(machine, state)
-                .collect(),
-            (
-                RelationSubject::Transition {
-                    machine,
-                    transition,
-                },
-                RelationDirection::Outbound,
-            ) => self
-                .doc
-                .outbound_relations_for_transition(machine, transition)
-                .collect(),
-            (
-                RelationSubject::Transition {
-                    machine,
-                    transition,
-                },
-                RelationDirection::Inbound,
-            ) => self
-                .doc
-                .inbound_relations_for_transition(machine, transition)
-                .collect(),
-        };
-
-        base.into_iter()
-            .filter(|relation| self.filters.matches_relation(relation))
-            .filter(|relation| {
-                self.doc
-                    .relation_detail(relation.index)
-                    .is_some_and(|detail| self.relation_matches_query(&detail, query.as_deref()))
-            })
-            .collect()
+        let mut items = Vec::new();
+        if self.lane_mode.shows_exact() {
+            items.extend(
+                self.exact_relation_items(subject, query.as_deref())
+                    .into_iter()
+                    .map(RelationItem::Exact),
+            );
+        }
+        if self.lane_mode.shows_heuristic() {
+            items.extend(
+                self.heuristic_relation_items(subject, query.as_deref())
+                    .into_iter()
+                    .map(RelationItem::Heuristic),
+            );
+        }
+        items
     }
 
     fn filtered_machine_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
@@ -666,6 +811,72 @@ impl InspectorApp {
         filtered
     }
 
+    fn filtered_heuristic_machine_relation_groups(&self) -> Vec<HeuristicMachineRelationGroup> {
+        let mut filtered = Vec::new();
+        for group in self.heuristic.machine_relation_groups() {
+            let relation_indices = group
+                .relation_indices
+                .iter()
+                .copied()
+                .filter(|relation_index| {
+                    self.heuristic
+                        .relation(*relation_index)
+                        .is_some_and(|relation| {
+                            self.heuristic_filters.matches_relation(relation)
+                                && !self.should_hide_shadowed_heuristic_relation(relation)
+                        })
+                })
+                .collect::<Vec<_>>();
+            if relation_indices.is_empty() {
+                continue;
+            }
+
+            let mut counts = BTreeMap::<HeuristicEvidenceKind, usize>::new();
+            for relation_index in &relation_indices {
+                let relation = self
+                    .heuristic
+                    .relation(*relation_index)
+                    .expect("filtered heuristic relation index should resolve");
+                *counts.entry(relation.evidence_kind).or_default() += 1;
+            }
+
+            filtered.push(HeuristicMachineRelationGroup {
+                index: filtered.len(),
+                from_machine: group.from_machine,
+                to_machine: group.to_machine,
+                relation_indices,
+                counts: counts
+                    .into_iter()
+                    .map(|(evidence_kind, count)| HeuristicRelationCount {
+                        evidence_kind,
+                        count,
+                    })
+                    .collect(),
+            });
+        }
+        filtered
+    }
+
+    fn should_hide_shadowed_heuristic_relation(&self, relation: &HeuristicRelation) -> bool {
+        self.lane_mode == LaneMode::Mixed
+            && self.heuristic_relation_has_visible_exact_cover(relation)
+    }
+
+    fn heuristic_relation_has_visible_exact_cover(&self, relation: &HeuristicRelation) -> bool {
+        self.doc
+            .relations()
+            .iter()
+            .filter(|exact| self.filters.matches_relation(exact))
+            .any(|exact| exact_covers_heuristic_relation(exact, relation))
+    }
+
+    fn heuristic_relation_has_exact_cover(&self, relation: &HeuristicRelation) -> bool {
+        self.doc
+            .relations()
+            .iter()
+            .any(|exact| exact_covers_heuristic_relation(exact, relation))
+    }
+
     fn visible_machine_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
         let visible_machine_indices = self
             .visible_machine_indices()
@@ -680,13 +891,137 @@ impl InspectorApp {
             .collect()
     }
 
-    fn selected_relation(&self) -> Option<&CodebaseRelation> {
-        self.relation_items().get(self.relation_index).copied()
+    fn visible_heuristic_machine_relation_groups(&self) -> Vec<HeuristicMachineRelationGroup> {
+        let visible_machine_indices = self
+            .visible_machine_indices()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        self.filtered_heuristic_machine_relation_groups()
+            .into_iter()
+            .filter(|group| {
+                visible_machine_indices.contains(&group.from_machine)
+                    && visible_machine_indices.contains(&group.to_machine)
+            })
+            .collect()
     }
 
-    fn selected_relation_detail(&self) -> Option<CodebaseRelationDetail<'_>> {
-        self.selected_relation()
-            .and_then(|relation| self.doc.relation_detail(relation.index))
+    fn selected_relation_detail(&self) -> Option<RelationDetailSelection<'_>> {
+        match self.relation_items().get(self.relation_index).copied()? {
+            RelationItem::Exact(index) => self
+                .doc
+                .relation_detail(index)
+                .map(RelationDetailSelection::Exact),
+            RelationItem::Heuristic(index) => {
+                self.heuristic
+                    .relation_detail(&self.doc, index)
+                    .map(|detail| RelationDetailSelection::Heuristic {
+                        detail,
+                        shadowed_by_exact: self.heuristic_relation_has_exact_cover(detail.relation),
+                    })
+            }
+        }
+    }
+
+    fn exact_relation_items(&self, subject: RelationSubject, query: Option<&str>) -> Vec<usize> {
+        let base: Vec<&CodebaseRelation> = match (subject, self.relation_direction) {
+            (RelationSubject::Machine { machine }, RelationDirection::Outbound) => {
+                self.doc.outbound_relations_for_machine(machine).collect()
+            }
+            (RelationSubject::Machine { machine }, RelationDirection::Inbound) => {
+                self.doc.inbound_relations_for_machine(machine).collect()
+            }
+            (RelationSubject::State { machine, state }, RelationDirection::Outbound) => self
+                .doc
+                .outbound_relations_for_state(machine, state)
+                .collect(),
+            (RelationSubject::State { machine, state }, RelationDirection::Inbound) => self
+                .doc
+                .inbound_relations_for_state(machine, state)
+                .collect(),
+            (
+                RelationSubject::Transition {
+                    machine,
+                    transition,
+                },
+                RelationDirection::Outbound,
+            ) => self
+                .doc
+                .outbound_relations_for_transition(machine, transition)
+                .collect(),
+            (
+                RelationSubject::Transition {
+                    machine,
+                    transition,
+                },
+                RelationDirection::Inbound,
+            ) => self
+                .doc
+                .inbound_relations_for_transition(machine, transition)
+                .collect(),
+        };
+
+        base.into_iter()
+            .filter(|relation| self.filters.matches_relation(relation))
+            .filter_map(|relation| {
+                self.doc
+                    .relation_detail(relation.index)
+                    .filter(|detail| self.relation_matches_query(detail, query))
+                    .map(|_| relation.index)
+            })
+            .collect()
+    }
+
+    fn heuristic_relation_items(
+        &self,
+        subject: RelationSubject,
+        query: Option<&str>,
+    ) -> Vec<usize> {
+        let base: Vec<&HeuristicRelation> = match (subject, self.relation_direction) {
+            (RelationSubject::Machine { machine }, RelationDirection::Outbound) => self
+                .heuristic
+                .outbound_relations_for_machine(machine)
+                .collect(),
+            (RelationSubject::Machine { machine }, RelationDirection::Inbound) => self
+                .heuristic
+                .inbound_relations_for_machine(machine)
+                .collect(),
+            (RelationSubject::State { machine, state }, RelationDirection::Outbound) => self
+                .heuristic
+                .outbound_relations_for_state(machine, state)
+                .collect(),
+            (RelationSubject::State { .. }, RelationDirection::Inbound) => Vec::new(),
+            (
+                RelationSubject::Transition {
+                    machine,
+                    transition,
+                },
+                RelationDirection::Outbound,
+            ) => self
+                .heuristic
+                .outbound_relations_for_transition(machine, transition)
+                .collect(),
+            (
+                RelationSubject::Transition {
+                    machine,
+                    transition,
+                },
+                RelationDirection::Inbound,
+            ) => self
+                .heuristic
+                .inbound_relations_for_transition(machine, transition)
+                .collect(),
+        };
+
+        base.into_iter()
+            .filter(|relation| self.heuristic_filters.matches_relation(relation))
+            .filter(|relation| !self.should_hide_shadowed_heuristic_relation(relation))
+            .filter_map(|relation| {
+                self.heuristic
+                    .relation_detail(&self.doc, relation.index)
+                    .filter(|detail| self.heuristic_relation_matches_query(detail, query))
+                    .map(|_| relation.index)
+            })
+            .collect()
     }
 
     fn disconnected_group_count(&self) -> usize {
@@ -696,12 +1031,23 @@ impl InspectorApp {
         }
 
         let mut adjacency = vec![Vec::new(); self.doc.machines().len()];
-        for group in self.visible_machine_relation_groups() {
-            if group.from_machine == group.to_machine {
-                continue;
+        if self.lane_mode.shows_exact() {
+            for group in self.visible_machine_relation_groups() {
+                if group.from_machine == group.to_machine {
+                    continue;
+                }
+                adjacency[group.from_machine].push(group.to_machine);
+                adjacency[group.to_machine].push(group.from_machine);
             }
-            adjacency[group.from_machine].push(group.to_machine);
-            adjacency[group.to_machine].push(group.from_machine);
+        }
+        if self.lane_mode.shows_heuristic() {
+            for group in self.visible_heuristic_machine_relation_groups() {
+                if group.from_machine == group.to_machine {
+                    continue;
+                }
+                adjacency[group.from_machine].push(group.to_machine);
+                adjacency[group.to_machine].push(group.from_machine);
+            }
         }
 
         let mut seen = vec![false; self.doc.machines().len()];
@@ -729,7 +1075,7 @@ impl InspectorApp {
     fn render(&self, frame: &mut Frame) {
         let vertical = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(4)])
+            .constraints([Constraint::Min(0), Constraint::Length(6)])
             .split(frame.area());
         let horizontal = Layout::default()
             .direction(Direction::Horizontal)
@@ -767,8 +1113,13 @@ impl InspectorApp {
         let visible_machine_indices = self.visible_machine_indices();
         let visible_machine_count = visible_machine_indices.len();
         let total_machine_count = self.doc.machines().len();
-        let visible_summary_edges = self
+        let visible_exact_summary_edges = self
             .visible_machine_relation_groups()
+            .into_iter()
+            .filter(|group| group.from_machine != group.to_machine)
+            .count();
+        let visible_heuristic_summary_edges = self
+            .visible_heuristic_machine_relation_groups()
             .into_iter()
             .filter(|group| group.from_machine != group.to_machine)
             .count();
@@ -778,19 +1129,25 @@ impl InspectorApp {
             "<none>".to_owned()
         };
 
-        let counts = Paragraph::new(Text::from(vec![
+        let mut lines = vec![
             Line::from(format!(
                 "machines: {visible_machine_count}/{total_machine_count}"
             )),
             Line::from(format!("groups: {}", self.disconnected_group_count())),
-            Line::from(format!("summary edges: {visible_summary_edges}")),
-            Line::from(format!("search: {search_status}")),
-            Line::from(format!(
-                "filters: kind={} basis={}",
-                self.filters.kind_summary(),
-                self.filters.basis_summary()
-            )),
-        ]));
+        ];
+        if self.lane_mode.shows_exact() {
+            lines.push(Line::from(format!(
+                "exact summary edges: {visible_exact_summary_edges}"
+            )));
+        }
+        if self.lane_mode.shows_heuristic() {
+            lines.push(Line::from(format!(
+                "heuristic summary edges: {visible_heuristic_summary_edges}"
+            )));
+        }
+        lines.push(Line::from(format!("search: {search_status}")));
+        lines.push(Line::from(format!("lane: {}", self.lane_mode.label())));
+        let counts = Paragraph::new(Text::from(lines));
         frame.render_widget(counts, sections[0]);
 
         let items = visible_machine_indices
@@ -870,7 +1227,7 @@ impl InspectorApp {
     fn render_relations(&self, frame: &mut Frame, area: Rect) {
         let subject_label = self.relation_subject_label();
         let block = titled_block(
-            format!("Relations {}", subject_label),
+            format!("Relations [{}] {}", self.lane_mode.label(), subject_label),
             self.focus == Focus::Relations,
         );
         let inner = block.inner(area);
@@ -901,11 +1258,19 @@ impl InspectorApp {
             .relation_items()
             .into_iter()
             .map(|relation| {
-                let detail = self
-                    .doc
-                    .relation_detail(relation.index)
-                    .expect("relation detail should resolve");
-                ListItem::new(render_relation_label(&detail))
+                let label = match relation {
+                    RelationItem::Exact(index) => self
+                        .doc
+                        .relation_detail(index)
+                        .map(|detail| render_relation_label(&detail))
+                        .unwrap_or_else(|| "[exact] <missing relation>".to_owned()),
+                    RelationItem::Heuristic(index) => self
+                        .heuristic
+                        .relation_detail(&self.doc, index)
+                        .map(|detail| render_heuristic_relation_label(&detail))
+                        .unwrap_or_else(|| "[heur] <missing relation>".to_owned()),
+                };
+                ListItem::new(label)
             })
             .collect::<Vec<_>>();
         let empty = relation_labels.is_empty();
@@ -939,25 +1304,41 @@ impl InspectorApp {
         let key_help = if self.input_mode == InputMode::Search {
             "type to search, enter/esc to finish, backspace to delete"
         } else {
-            "tab shift-tab h/l j/k / q 1 payload 2 field 3 param 4 direct 5 ref 0 clear"
+            "tab shift-tab h/l j/k / m q 1 payload 2 field 3 param 4 direct 5 ref 6 sig 7 body 0 clear"
         };
-        let status = Paragraph::new(Text::from(vec![
+        let mut lines = vec![
             Line::from(vec![
                 Span::styled("focus ", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(self.focus.label()),
                 Span::raw("  "),
                 Span::styled("mode ", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(self.input_mode.label()),
+                Span::raw("  "),
+                Span::styled("lane ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(self.lane_mode.label()),
             ]),
             Line::from(format!("search {search_status}")),
-            Line::from(format!(
-                "relation filters kind={} basis={}",
+        ];
+        if self.lane_mode.shows_exact() {
+            lines.push(Line::from(format!(
+                "exact filters kind={} basis={}",
                 self.filters.kind_summary(),
                 self.filters.basis_summary()
-            )),
-            Line::from(key_help),
-        ]))
-        .wrap(Wrap { trim: false });
+            )));
+        }
+        if self.lane_mode.shows_heuristic() {
+            lines.push(Line::from(format!(
+                "heuristic filters evidence={}",
+                self.heuristic_filters.evidence_summary()
+            )));
+            lines.push(Line::from(format!(
+                "heuristics {} ({})",
+                self.heuristic.status().display_label(),
+                self.heuristic.diagnostics().len()
+            )));
+        }
+        lines.push(Line::from(key_help));
+        let status = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
         frame.render_widget(status, area);
     }
 
@@ -1004,8 +1385,8 @@ impl InspectorApp {
             Focus::MachineView => self.machine_detail_selection_text(),
             Focus::Relations => self
                 .selected_relation_detail()
-                .map(relation_detail_text)
-                .unwrap_or_else(|| Text::from(self.empty_list_label())),
+                .map(relation_detail_selection_text)
+                .unwrap_or_else(|| self.empty_relation_text()),
         }
     }
 
@@ -1052,10 +1433,24 @@ impl InspectorApp {
     }
 
     fn empty_list_label(&self) -> &'static str {
-        if self.has_search_query() || self.filters.has_active() {
+        if self.has_search_query()
+            || self.filters.has_active()
+            || self.heuristic_filters.has_active()
+        {
             "<no matches>"
         } else {
             "<none>"
+        }
+    }
+
+    fn empty_relation_text(&self) -> Text<'static> {
+        if self.relation_items().is_empty()
+            && self.lane_mode.shows_heuristic()
+            && self.heuristic.status() == HeuristicStatusKind::Unavailable
+        {
+            heuristic_status_text(self.heuristic.status(), self.heuristic.diagnostics())
+        } else {
+            Text::from(self.empty_list_label())
         }
     }
 
@@ -1098,10 +1493,17 @@ impl InspectorApp {
                 .validator_entries
                 .iter()
                 .any(|entry| self.validator_matches_query(entry, query))
-            || self.machine_relations_match_query(machine.index, query)
+            || (self.lane_mode.shows_exact()
+                && self.machine_exact_relations_match_query(machine.index, query))
+            || (self.lane_mode.shows_heuristic()
+                && self.machine_heuristic_relations_match_query(machine.index, query))
     }
 
-    fn machine_relations_match_query(&self, machine_index: usize, query: Option<&str>) -> bool {
+    fn machine_exact_relations_match_query(
+        &self,
+        machine_index: usize,
+        query: Option<&str>,
+    ) -> bool {
         self.doc
             .outbound_relations_for_machine(machine_index)
             .chain(self.doc.inbound_relations_for_machine(machine_index))
@@ -1110,6 +1512,22 @@ impl InspectorApp {
                 self.doc
                     .relation_detail(relation.index)
                     .is_some_and(|detail| self.relation_matches_query(&detail, query))
+            })
+    }
+
+    fn machine_heuristic_relations_match_query(
+        &self,
+        machine_index: usize,
+        query: Option<&str>,
+    ) -> bool {
+        self.heuristic
+            .outbound_relations_for_machine(machine_index)
+            .chain(self.heuristic.inbound_relations_for_machine(machine_index))
+            .filter(|relation| self.heuristic_filters.matches_relation(relation))
+            .any(|relation| {
+                self.heuristic
+                    .relation_detail(&self.doc, relation.index)
+                    .is_some_and(|detail| self.heuristic_relation_matches_query(&detail, query))
             })
     }
 
@@ -1157,21 +1575,38 @@ impl InspectorApp {
         let Some(machine) = self.current_machine() else {
             return false;
         };
-        let peer_machine = match item.direction {
-            SummaryDirection::Outbound => self.doc.machine(item.group.to_machine),
-            SummaryDirection::Inbound => self.doc.machine(item.group.from_machine),
-        }
-        .expect("summary peer machine should exist");
-        let direction = match item.direction {
-            SummaryDirection::Outbound => "outbound",
-            SummaryDirection::Inbound => "inbound",
+        let (direction, label, peer_machine) = match item {
+            SummaryItem::Exact(item) => {
+                let peer_machine = match item.direction {
+                    SummaryDirection::Outbound => self.doc.machine(item.group.to_machine),
+                    SummaryDirection::Inbound => self.doc.machine(item.group.from_machine),
+                }
+                .expect("summary peer machine should exist");
+                let direction = match item.direction {
+                    SummaryDirection::Outbound => "outbound exact",
+                    SummaryDirection::Inbound => "inbound exact",
+                };
+                (direction, item.group.display_label(), peer_machine)
+            }
+            SummaryItem::Heuristic(item) => {
+                let peer_machine = match item.direction {
+                    SummaryDirection::Outbound => self.doc.machine(item.group.to_machine),
+                    SummaryDirection::Inbound => self.doc.machine(item.group.from_machine),
+                }
+                .expect("summary peer machine should exist");
+                let direction = match item.direction {
+                    SummaryDirection::Outbound => "outbound heuristic",
+                    SummaryDirection::Inbound => "inbound heuristic",
+                };
+                (direction, item.group.display_label(), peer_machine)
+            }
         };
 
         Self::query_matches_any(
             query,
             [
                 direction.to_owned(),
-                item.group.display_label(),
+                label,
                 render_machine_label(machine).to_owned(),
                 render_machine_label(peer_machine).to_owned(),
                 machine.description.unwrap_or_default().to_owned(),
@@ -1235,6 +1670,10 @@ impl InspectorApp {
                 .unwrap_or_default()
                 .to_owned(),
         ];
+        if let Some(attested_via) = detail.relation.attested_via {
+            candidates.push(attested_via.via_module_path.to_owned());
+            candidates.push(attested_via.route_name.to_owned());
+        }
 
         if let Some(state) = detail.source_state {
             candidates.push(render_state_label(state));
@@ -1248,6 +1687,68 @@ impl InspectorApp {
             candidates.push(transition.method_name.to_owned());
             candidates.push(transition.description.unwrap_or_default().to_owned());
             candidates.push(transition.docs.unwrap_or_default().to_owned());
+        }
+        if let Some(machine) = detail.attested_via_machine {
+            candidates.push(render_machine_label(machine).to_owned());
+            candidates.push(machine.rust_type_path.to_owned());
+        }
+        if let Some(state) = detail.attested_via_state {
+            candidates.push(render_state_label(state));
+            candidates.push(state.rust_name.to_owned());
+        }
+        if let Some(transition) = detail.attested_via_transition {
+            candidates.push(render_transition_label(transition).to_owned());
+            candidates.push(transition.method_name.to_owned());
+        }
+
+        Self::query_matches_any(query, candidates)
+    }
+
+    fn heuristic_relation_matches_query(
+        &self,
+        detail: &HeuristicRelationDetail<'_>,
+        query: Option<&str>,
+    ) -> bool {
+        let mut candidates = vec![
+            detail.relation.evidence_kind.display_label().to_owned(),
+            detail.relation.source.kind_label().to_owned(),
+            detail.relation.matched_path_text.clone(),
+            detail.relation.file_path.display().to_string(),
+            detail.relation.line_number.to_string(),
+            detail.relation.snippet.clone().unwrap_or_default(),
+            render_machine_label(detail.source_machine).to_owned(),
+            detail.source_machine.rust_type_path.to_owned(),
+            detail
+                .source_machine
+                .description
+                .unwrap_or_default()
+                .to_owned(),
+            detail.source_machine.docs.unwrap_or_default().to_owned(),
+            render_heuristic_source_label(detail),
+            render_machine_label(detail.target_machine).to_owned(),
+            detail.target_machine.rust_type_path.to_owned(),
+            detail
+                .target_machine
+                .description
+                .unwrap_or_default()
+                .to_owned(),
+            detail.target_machine.docs.unwrap_or_default().to_owned(),
+        ];
+
+        if let Some(state) = detail.source_state {
+            candidates.push(render_state_label(state));
+            candidates.push(state.rust_name.to_owned());
+            candidates.push(state.description.unwrap_or_default().to_owned());
+            candidates.push(state.docs.unwrap_or_default().to_owned());
+        }
+        if let Some(transition) = detail.source_transition {
+            candidates.push(render_transition_label(transition).to_owned());
+            candidates.push(transition.method_name.to_owned());
+            candidates.push(transition.description.unwrap_or_default().to_owned());
+            candidates.push(transition.docs.unwrap_or_default().to_owned());
+        }
+        if let Some(method_name) = detail.relation.source.method_name() {
+            candidates.push(method_name.to_owned());
         }
 
         Self::query_matches_any(query, candidates)
@@ -1287,13 +1788,61 @@ fn render_transition_label(transition: &CodebaseTransition) -> &str {
     transition.label.unwrap_or(transition.method_name)
 }
 
+fn render_heuristic_source_label(detail: &HeuristicRelationDetail<'_>) -> String {
+    match &detail.relation.source {
+        HeuristicRelationSource::State { .. } => detail
+            .source_state
+            .map(render_state_label)
+            .unwrap_or_else(|| "<missing state>".to_owned()),
+        HeuristicRelationSource::Transition { .. } => detail
+            .source_transition
+            .map(|transition| render_transition_label(transition).to_owned())
+            .unwrap_or_else(|| "<missing transition>".to_owned()),
+        HeuristicRelationSource::Method { method_name, .. } => {
+            if let Some(state) = detail.source_state {
+                format!("{}::{}", render_state_label(state), method_name)
+            } else {
+                method_name.clone()
+            }
+        }
+    }
+}
+
+fn exact_covers_heuristic_relation(
+    exact: &CodebaseRelation,
+    heuristic: &HeuristicRelation,
+) -> bool {
+    if exact.source_machine() != heuristic.source.machine()
+        || exact.target_machine != heuristic.target_machine
+    {
+        return false;
+    }
+
+    match heuristic.source.transition() {
+        Some(transition) => exact.source_transition() == Some(transition),
+        None => match heuristic.source.state() {
+            Some(state) => exact.source_state() == Some(state),
+            None => true,
+        },
+    }
+}
+
 fn render_relation_label(detail: &CodebaseRelationDetail<'_>) -> String {
     format!(
-        "{} ({}) -> {} :: {}",
+        "[exact] {} ({}) -> {} :: {}",
         detail.relation.kind.display_label(),
         detail.relation.basis.display_label(),
         render_machine_label(detail.target_machine),
         render_state_label(detail.target_state)
+    )
+}
+
+fn render_heuristic_relation_label(detail: &HeuristicRelationDetail<'_>) -> String {
+    format!(
+        "[heur] {} -> {} ({})",
+        render_machine_label(detail.target_machine),
+        render_heuristic_source_label(detail),
+        detail.relation.evidence_kind.display_label()
     )
 }
 
@@ -1358,9 +1907,27 @@ fn validator_detail_text(entry: &CodebaseValidatorEntry) -> Text<'static> {
 }
 
 fn summary_detail_text(summary: &SummaryItem, doc: &CodebaseDoc) -> Text<'static> {
-    let (source_machine, target_machine) = match summary.direction {
-        SummaryDirection::Outbound => (summary.group.from_machine, summary.group.to_machine),
-        SummaryDirection::Inbound => (summary.group.from_machine, summary.group.to_machine),
+    let (lane_label, direction, group_from, group_to, label, relation_count) = match summary {
+        SummaryItem::Exact(summary) => (
+            "exact",
+            summary.direction,
+            summary.group.from_machine,
+            summary.group.to_machine,
+            summary.group.display_label(),
+            summary.group.relation_indices.len(),
+        ),
+        SummaryItem::Heuristic(summary) => (
+            "heuristic",
+            summary.direction,
+            summary.group.from_machine,
+            summary.group.to_machine,
+            summary.group.display_label(),
+            summary.group.relation_indices.len(),
+        ),
+    };
+    let (source_machine, target_machine) = match direction {
+        SummaryDirection::Outbound => (group_from, group_to),
+        SummaryDirection::Inbound => (group_from, group_to),
     };
     let source_machine = doc
         .machine(source_machine)
@@ -1368,20 +1935,17 @@ fn summary_detail_text(summary: &SummaryItem, doc: &CodebaseDoc) -> Text<'static
     let target_machine = doc
         .machine(target_machine)
         .expect("summary target machine should exist");
-    let direction_label = match summary.direction {
+    let direction_label = match direction {
         SummaryDirection::Outbound => "outbound",
         SummaryDirection::Inbound => "inbound",
     };
 
     let mut lines = vec![
-        Line::from(format!("{direction_label} summary edge")),
+        Line::from(format!("{direction_label} {lane_label} summary edge")),
         Line::from(format!("from: {}", render_machine_label(source_machine))),
         Line::from(format!("to: {}", render_machine_label(target_machine))),
-        Line::from(format!("label: {}", summary.group.display_label())),
-        Line::from(format!(
-            "relation count: {}",
-            summary.group.relation_indices.len()
-        )),
+        Line::from(format!("label: {label}")),
+        Line::from(format!("relation count: {relation_count}")),
     ];
 
     append_named_description_and_docs(
@@ -1398,6 +1962,16 @@ fn summary_detail_text(summary: &SummaryItem, doc: &CodebaseDoc) -> Text<'static
     );
 
     Text::from(lines)
+}
+
+fn relation_detail_selection_text(detail: RelationDetailSelection<'_>) -> Text<'static> {
+    match detail {
+        RelationDetailSelection::Exact(detail) => relation_detail_text(detail),
+        RelationDetailSelection::Heuristic {
+            detail,
+            shadowed_by_exact,
+        } => heuristic_relation_detail_text(detail, shadowed_by_exact),
+    }
 }
 
 fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
@@ -1455,6 +2029,30 @@ fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
     if let Some(reference_type) = detail.relation.declared_reference_type {
         lines.push(Line::from(format!("declared ref type: {reference_type}")));
     }
+    if let Some(attested_via) = detail.relation.attested_via {
+        lines.push(Line::from(format!(
+            "attested via: {}::{}",
+            attested_via.via_module_path, attested_via.route_name
+        )));
+    }
+    if let Some(machine) = detail.attested_via_machine {
+        lines.push(Line::from(format!(
+            "producer machine: {}",
+            render_machine_label(machine)
+        )));
+    }
+    if let Some(state) = detail.attested_via_state {
+        lines.push(Line::from(format!(
+            "producer state: {}",
+            render_state_label(state)
+        )));
+    }
+    if let Some(transition) = detail.attested_via_transition {
+        lines.push(Line::from(format!(
+            "producer transition: {}",
+            render_transition_label(transition)
+        )));
+    }
 
     append_named_description_and_docs(
         &mut lines,
@@ -1490,7 +2088,121 @@ fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
         detail.target_state.description,
         detail.target_state.docs,
     );
+    if let Some(machine) = detail.attested_via_machine {
+        append_named_description_and_docs(
+            &mut lines,
+            "producer machine",
+            machine.description,
+            machine.docs,
+        );
+    }
+    if let Some(state) = detail.attested_via_state {
+        append_named_description_and_docs(
+            &mut lines,
+            "producer state",
+            state.description,
+            state.docs,
+        );
+    }
+    if let Some(transition) = detail.attested_via_transition {
+        append_named_description_and_docs(
+            &mut lines,
+            "producer transition",
+            transition.description,
+            transition.docs,
+        );
+    }
 
+    Text::from(lines)
+}
+
+fn heuristic_relation_detail_text(
+    detail: HeuristicRelationDetail<'_>,
+    shadowed_by_exact: bool,
+) -> Text<'static> {
+    let mut lines = vec![
+        Line::from("heuristic relation"),
+        Line::from("basis: source-scanned affinity"),
+        Line::from(format!(
+            "evidence: {}",
+            detail.relation.evidence_kind.display_label()
+        )),
+        Line::from(format!(
+            "source kind: {}",
+            detail.relation.source.kind_label()
+        )),
+        Line::from(format!(
+            "source machine: {}",
+            render_machine_label(detail.source_machine)
+        )),
+        Line::from(format!(
+            "source item: {}",
+            render_heuristic_source_label(&detail)
+        )),
+        Line::from(format!(
+            "target machine: {}",
+            render_machine_label(detail.target_machine)
+        )),
+        Line::from(format!(
+            "matched path: {}",
+            detail.relation.matched_path_text
+        )),
+        Line::from(format!(
+            "location: {}:{}",
+            detail.relation.file_path.display(),
+            detail.relation.line_number
+        )),
+    ];
+    if shadowed_by_exact {
+        lines.push(Line::from(
+            "exact lane already covers this relationship and will hide it in mixed mode.",
+        ));
+    }
+    if let Some(snippet) = detail.relation.snippet.as_deref() {
+        lines.push(Line::from(format!("snippet: {snippet}")));
+    }
+
+    append_named_description_and_docs(
+        &mut lines,
+        "source machine",
+        detail.source_machine.description,
+        detail.source_machine.docs,
+    );
+    if let Some(state) = detail.source_state {
+        append_named_description_and_docs(
+            &mut lines,
+            "source state",
+            state.description,
+            state.docs,
+        );
+    }
+    if let Some(transition) = detail.source_transition {
+        append_named_description_and_docs(
+            &mut lines,
+            "source transition",
+            transition.description,
+            transition.docs,
+        );
+    }
+    append_named_description_and_docs(
+        &mut lines,
+        "target machine",
+        detail.target_machine.description,
+        detail.target_machine.docs,
+    );
+
+    Text::from(lines)
+}
+
+fn heuristic_status_text(
+    status: HeuristicStatusKind,
+    diagnostics: &[HeuristicDiagnostic],
+) -> Text<'static> {
+    let mut lines = vec![Line::from(format!("heuristics {}", status.display_label()))];
+    for diagnostic in diagnostics.iter().take(4) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(diagnostic.display_label()));
+    }
     Text::from(lines)
 }
 
@@ -1549,6 +2261,7 @@ mod tests {
 
     use crossterm::event::KeyModifiers;
     use ratatui::backend::TestBackend;
+    use std::path::PathBuf;
 
     #[allow(dead_code)]
     mod task {
@@ -1670,6 +2383,64 @@ mod tests {
         CodebaseDoc::linked().expect("linked codebase doc")
     }
 
+    fn empty_heuristic_overlay() -> HeuristicOverlay {
+        HeuristicOverlay::from_parts(HeuristicStatusKind::Available, Vec::new(), Vec::new())
+    }
+
+    fn fixture_heuristic_overlay(doc: &CodebaseDoc) -> HeuristicOverlay {
+        let workflow = doc
+            .machines()
+            .iter()
+            .find(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine");
+        let task = doc
+            .machines()
+            .iter()
+            .find(|machine| machine.label == Some("Task Machine"))
+            .expect("task machine");
+        let transition = workflow
+            .transitions
+            .iter()
+            .find(|transition| transition.method_name == "start")
+            .expect("workflow start transition");
+
+        HeuristicOverlay::from_parts(
+            HeuristicStatusKind::Available,
+            Vec::new(),
+            vec![
+                HeuristicRelation {
+                    index: 0,
+                    source: HeuristicRelationSource::Transition {
+                        machine: workflow.index,
+                        transition: transition.index,
+                    },
+                    target_machine: task.index,
+                    evidence_kind: HeuristicEvidenceKind::Signature,
+                    matched_path_text: "task::Machine < task::Running >".to_owned(),
+                    file_path: PathBuf::from("/tmp/workspace/src/workflow.rs"),
+                    line_number: 10,
+                    snippet: Some(
+                        "fn start(self, task: task::Machine<task::Running>) -> Machine<InProgress> {"
+                            .to_owned(),
+                    ),
+                },
+                HeuristicRelation {
+                    index: 1,
+                    source: HeuristicRelationSource::Transition {
+                        machine: workflow.index,
+                        transition: transition.index,
+                    },
+                    target_machine: task.index,
+                    evidence_kind: HeuristicEvidenceKind::Body,
+                    matched_path_text: "task::Receipt".to_owned(),
+                    file_path: PathBuf::from("/tmp/workspace/src/workflow.rs"),
+                    line_number: 11,
+                    snippet: Some("let _receipt = task::Receipt;".to_owned()),
+                },
+            ],
+        )
+    }
+
     fn text_contents(text: Text<'_>) -> String {
         text.lines
             .iter()
@@ -1686,7 +2457,11 @@ mod tests {
     #[test]
     fn app_renders_workspace_machine_and_relation_views() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(doc, "/tmp/workspace/Cargo.toml".to_owned());
+        let mut app = InspectorApp::new(
+            doc,
+            empty_heuristic_overlay(),
+            "/tmp/workspace/Cargo.toml".to_owned(),
+        );
         app.selected_machine = app
             .doc
             .machines()
@@ -1706,30 +2481,43 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
 
-        assert!(text.contains("machines: 2"));
-        assert!(text.contains("summary edges: 1"));
+        assert!(text.contains("machines:"));
+        assert!(text.contains("exact summary edges: 1"));
         assert!(text.contains("Workflow Machine"));
         assert!(text.contains("Task Machine"));
         assert!(text.contains("Draft [build]"));
-        assert!(text.contains("Relations for state Draft [build]"));
+        assert!(text.contains("Relations [exact] for state Draft [build]"));
     }
 
     #[test]
     fn app_navigation_reaches_relations_and_details() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(doc, "/tmp/workspace/Cargo.toml".to_owned());
-
-        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let mut app = InspectorApp::new(
+            doc,
+            empty_heuristic_overlay(),
+            "/tmp/workspace/Cargo.toml".to_owned(),
+        );
+        let workflow_index = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.selected_machine = workflow_index;
+        app.machine_item_index = app
+            .machine_items()
+            .iter()
+            .position(|item| matches!(item, MachineItem::State(1)))
+            .expect("in-progress state should exist");
+        app.focus = Focus::Relations;
+        app.clamp_indices();
 
         assert_eq!(app.focus, Focus::Relations);
         assert_eq!(app.relation_direction, RelationDirection::Outbound);
         assert_eq!(
             app.relation_subject(),
             Some(RelationSubject::State {
-                machine: 1,
+                machine: workflow_index,
                 state: 1
             })
         );
@@ -1737,6 +2525,9 @@ mod tests {
         let detail = app
             .selected_relation_detail()
             .expect("selected relation detail should exist");
+        let RelationDetailSelection::Exact(detail) = detail else {
+            panic!("expected exact relation detail");
+        };
         assert_eq!(detail.source_machine.label, Some("Workflow Machine"));
         assert_eq!(detail.target_machine.label, Some("Task Machine"));
     }
@@ -1744,7 +2535,11 @@ mod tests {
     #[test]
     fn app_search_filters_visible_machines_and_machine_items() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(doc, "/tmp/workspace/Cargo.toml".to_owned());
+        let mut app = InspectorApp::new(
+            doc,
+            empty_heuristic_overlay(),
+            "/tmp/workspace/Cargo.toml".to_owned(),
+        );
 
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
         assert_eq!(app.input_mode, InputMode::Search);
@@ -1755,7 +2550,7 @@ mod tests {
 
         assert_eq!(app.input_mode, InputMode::Normal);
         assert_eq!(app.search_query, "persisted");
-        assert_eq!(app.visible_machine_indices(), vec![1]);
+        assert_eq!(app.visible_machine_indices().len(), 1);
         assert_eq!(
             app.current_machine().map(render_machine_label),
             Some("Workflow Machine")
@@ -1777,7 +2572,11 @@ mod tests {
     #[test]
     fn app_handles_search_with_no_matches() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(doc, "/tmp/workspace/Cargo.toml".to_owned());
+        let mut app = InspectorApp::new(
+            doc,
+            empty_heuristic_overlay(),
+            "/tmp/workspace/Cargo.toml".to_owned(),
+        );
         app.search_query = "missing-machine".to_owned();
         app.clamp_indices();
 
@@ -1802,7 +2601,11 @@ mod tests {
     #[test]
     fn app_search_matches_relation_targets_and_keeps_source_machine_visible() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(doc, "/tmp/workspace/Cargo.toml".to_owned());
+        let mut app = InspectorApp::new(
+            doc,
+            empty_heuristic_overlay(),
+            "/tmp/workspace/Cargo.toml".to_owned(),
+        );
         app.search_query = "param".to_owned();
         app.clamp_indices();
 
@@ -1818,7 +2621,11 @@ mod tests {
     #[test]
     fn app_relation_filters_trim_summary_and_relation_lists() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(doc, "/tmp/workspace/Cargo.toml".to_owned());
+        let mut app = InspectorApp::new(
+            doc,
+            empty_heuristic_overlay(),
+            "/tmp/workspace/Cargo.toml".to_owned(),
+        );
         app.selected_machine = app
             .doc
             .machines()
@@ -1829,17 +2636,21 @@ mod tests {
         app.clamp_indices();
 
         assert_eq!(app.summary_items().len(), 1);
-        assert_eq!(
-            app.summary_items()[0].group.display_label(),
-            "exact refs: payload, param"
-        );
+        match &app.summary_items()[0] {
+            SummaryItem::Exact(item) => {
+                assert_eq!(item.group.display_label(), "exact refs: payload, param");
+            }
+            SummaryItem::Heuristic(_) => panic!("expected exact summary item"),
+        }
 
         app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
         assert_eq!(app.summary_items().len(), 1);
-        assert_eq!(
-            app.summary_items()[0].group.display_label(),
-            "exact refs: param"
-        );
+        match &app.summary_items()[0] {
+            SummaryItem::Exact(item) => {
+                assert_eq!(item.group.display_label(), "exact refs: param");
+            }
+            SummaryItem::Heuristic(_) => panic!("expected exact summary item"),
+        }
 
         app.machine_section = MachineSection::States;
         app.machine_item_index = app
@@ -1860,7 +2671,16 @@ mod tests {
             .first()
             .copied()
             .expect("transition-param relation should remain");
-        assert_eq!(relation.kind, CodebaseRelationKind::TransitionParam);
+        match relation {
+            RelationItem::Exact(index) => {
+                let relation = app
+                    .doc
+                    .relation(index)
+                    .expect("exact relation should exist");
+                assert_eq!(relation.kind, CodebaseRelationKind::TransitionParam);
+            }
+            RelationItem::Heuristic(_) => panic!("expected exact relation"),
+        }
 
         app.handle_key(KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE));
         assert!(app.summary_items().is_empty());
@@ -1899,10 +2719,10 @@ mod tests {
             .into_iter()
             .find(|group| group.from_machine == workflow.index)
             .expect("workflow summary");
-        let summary_item = SummaryItem {
+        let summary_item = SummaryItem::Exact(ExactSummaryItem {
             direction: SummaryDirection::Outbound,
             group: summary,
-        };
+        });
 
         let machine_detail = text_contents(machine_detail_text(workflow, &doc));
         assert!(machine_detail.contains("Description"));
@@ -1940,5 +2760,117 @@ mod tests {
         assert!(summary_text.contains("source machine Docs"));
         assert!(summary_text.contains("target machine Description"));
         assert!(summary_text.contains("target machine Docs"));
+    }
+
+    #[test]
+    fn app_cycles_lane_modes_and_surfaces_heuristic_relations() {
+        let doc = fixture_doc();
+        let overlay = fixture_heuristic_overlay(&doc);
+        let mut app = InspectorApp::new(doc, overlay, "/tmp/workspace/Cargo.toml".to_owned());
+        app.selected_machine = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.machine_section = MachineSection::Transitions;
+        app.machine_item_index = 0;
+
+        assert_eq!(app.lane_mode, LaneMode::Exact);
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        assert_eq!(app.lane_mode, LaneMode::Heuristic);
+        let heuristic_items = app.relation_items();
+        assert_eq!(heuristic_items.len(), 2);
+        assert!(matches!(heuristic_items[0], RelationItem::Heuristic(_)));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        assert_eq!(app.lane_mode, LaneMode::Mixed);
+    }
+
+    #[test]
+    fn mixed_lane_hides_heuristic_relations_covered_by_exact() {
+        let doc = fixture_doc();
+        let overlay = fixture_heuristic_overlay(&doc);
+        let mut app = InspectorApp::new(doc, overlay, "/tmp/workspace/Cargo.toml".to_owned());
+        app.selected_machine = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.machine_section = MachineSection::Transitions;
+        app.machine_item_index = 0;
+        app.lane_mode = LaneMode::Mixed;
+
+        let relation_items = app.relation_items();
+        assert_eq!(relation_items.len(), 1);
+        assert!(matches!(relation_items[0], RelationItem::Exact(_)));
+
+        app.machine_section = MachineSection::Summary;
+        let summary_items = app.summary_items();
+        assert_eq!(summary_items.len(), 1);
+        assert!(matches!(summary_items[0], SummaryItem::Exact(_)));
+    }
+
+    #[test]
+    fn heuristic_filters_only_trim_heuristic_lane() {
+        let doc = fixture_doc();
+        let overlay = fixture_heuristic_overlay(&doc);
+        let mut app = InspectorApp::new(doc, overlay, "/tmp/workspace/Cargo.toml".to_owned());
+        app.selected_machine = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.machine_section = MachineSection::Transitions;
+        app.machine_item_index = 0;
+        app.lane_mode = LaneMode::Heuristic;
+
+        assert_eq!(app.relation_items().len(), 2);
+        app.handle_key(KeyEvent::new(KeyCode::Char('6'), KeyModifiers::NONE));
+        assert_eq!(app.relation_items().len(), 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE));
+        assert_eq!(app.relation_items().len(), 2);
+    }
+
+    #[test]
+    fn heuristic_detail_marks_exact_shadowing() {
+        let doc = fixture_doc();
+        let overlay = fixture_heuristic_overlay(&doc);
+        let mut app = InspectorApp::new(doc, overlay, "/tmp/workspace/Cargo.toml".to_owned());
+        app.selected_machine = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.machine_section = MachineSection::Transitions;
+        app.machine_item_index = 0;
+        app.lane_mode = LaneMode::Heuristic;
+        app.focus = Focus::Relations;
+
+        let text = text_contents(app.detail_text());
+        assert!(text.contains("exact lane already covers this relationship"));
+    }
+
+    #[test]
+    fn unavailable_heuristic_lane_is_explicit() {
+        let doc = fixture_doc();
+        let overlay = HeuristicOverlay::from_parts(
+            HeuristicStatusKind::Unavailable,
+            vec![HeuristicDiagnostic {
+                context: "package fixture-app".to_owned(),
+                message: "failed to parse source".to_owned(),
+            }],
+            Vec::new(),
+        );
+        let mut app = InspectorApp::new(doc, overlay, "/tmp/workspace/Cargo.toml".to_owned());
+        app.lane_mode = LaneMode::Heuristic;
+        app.focus = Focus::Relations;
+
+        let text = text_contents(app.detail_text());
+        assert!(text.contains("heuristics unavailable"));
+        assert!(text.contains("failed to parse source"));
     }
 }

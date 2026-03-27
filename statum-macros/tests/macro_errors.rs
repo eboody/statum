@@ -101,6 +101,7 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_transition_foreign_same_leaf_machine.rs");
     t.compile_fail("tests/ui/invalid_transition_self_qualified_machine.rs");
     t.compile_fail("tests/ui/invalid_transition_map_undeclared_edge.rs");
+    t.compile_fail("tests/ui/invalid_transition_multiple_via_params.rs");
     t.compile_fail("tests/ui/invalid_legacy_transition_helper_trait.rs");
 }
 
@@ -153,9 +154,11 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_same_names_different_modules.rs");
     t.pass("tests/ui/valid_transition_nested_wrappers.rs");
     t.pass("tests/ui/valid_transition_branch.rs");
+    t.pass("tests/ui/valid_quick_start.rs");
     t.pass("tests/ui/valid_transition_include.rs");
     t.pass("tests/ui/valid_into_machines_by.rs");
     t.pass("tests/ui/valid_transition_map.rs");
+    t.pass("tests/ui/valid_transition_attestation.rs");
     t.pass("tests/ui/valid_machine_introspection.rs");
     t.pass("tests/ui/valid_machine_introspection_cfg_dedup.rs");
     t.pass("tests/ui/valid_presentation_sugar.rs");

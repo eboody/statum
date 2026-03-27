@@ -361,6 +361,17 @@ pub fn linked_relations() -> &'static [LinkedRelationDescriptor] {
     &__STATUM_LINKED_RELATIONS
 }
 
+/// Linked attested transition routes visible to the current build.
+#[doc(hidden)]
+#[linkme::distributed_slice]
+pub static __STATUM_LINKED_VIA_ROUTES: [LinkedViaRouteDescriptor];
+
+/// Returns every linked attested transition route visible to the current
+/// build.
+pub fn linked_via_routes() -> &'static [LinkedViaRouteDescriptor] {
+    &__STATUM_LINKED_VIA_ROUTES
+}
+
 /// Linked reference-type declarations visible to the current build.
 #[doc(hidden)]
 #[linkme::distributed_slice]
@@ -585,6 +596,8 @@ pub enum LinkedRelationBasis {
     DirectTypeSyntax,
     /// The scanned type resolved through one declared reference type.
     DeclaredReferenceType,
+    /// The target was declared explicitly through `#[via(...)]`.
+    ViaDeclaration,
 }
 
 /// Exact target written into one linked relation record.
@@ -601,6 +614,21 @@ pub enum LinkedRelationTarget {
     DeclaredReferenceType {
         /// Compiler-resolved type identity getter for the named reference type.
         resolved_type_name: fn() -> &'static str,
+    },
+    /// An attested route declared through `#[via(...)]`.
+    AttestedRoute {
+        /// Machine module path that owns the attested route namespace.
+        via_module_path: &'static str,
+        /// Human-facing attested route name, such as `Capture`.
+        route_name: &'static str,
+        /// Stable route id used to join consumer declarations with producer
+        /// attested transition metadata.
+        route_id: u64,
+        /// Exact target machine path segments carried by the attested inner
+        /// machine type.
+        machine_path: &'static [&'static str],
+        /// Target state marker name carried by the attested inner machine type.
+        state: &'static str,
     },
 }
 
@@ -625,6 +653,28 @@ impl PartialEq for LinkedRelationTarget {
                     resolved_type_name: right_name,
                 },
             ) => left_name() == right_name(),
+            (
+                Self::AttestedRoute {
+                    via_module_path: left_module_path,
+                    route_name: left_route_name,
+                    route_id: left_route_id,
+                    machine_path: left_machine_path,
+                    state: left_state,
+                },
+                Self::AttestedRoute {
+                    via_module_path: right_module_path,
+                    route_name: right_route_name,
+                    route_id: right_route_id,
+                    machine_path: right_machine_path,
+                    state: right_state,
+                },
+            ) => {
+                left_module_path == right_module_path
+                    && left_route_name == right_route_name
+                    && left_route_id == right_route_id
+                    && left_machine_path == right_machine_path
+                    && left_state == right_state
+            }
             _ => false,
         }
     }
@@ -675,6 +725,25 @@ pub struct LinkedRelationDescriptor {
     pub basis: LinkedRelationBasis,
     /// Exact relation target.
     pub target: LinkedRelationTarget,
+}
+
+/// One producer transition that can generate an attested route value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LinkedViaRouteDescriptor {
+    /// Rust-facing identity of the producer machine family.
+    pub machine: MachineDescriptor,
+    /// Machine-module path that owns the generated `machine::via` namespace.
+    pub via_module_path: &'static str,
+    /// Human-facing route name, such as `Capture`.
+    pub route_name: &'static str,
+    /// Stable route id shared with `LinkedRelationTarget::AttestedRoute`.
+    pub route_id: u64,
+    /// Rust transition method name on the producer machine.
+    pub transition: &'static str,
+    /// Exact producer source state.
+    pub source_state: &'static str,
+    /// Exact producer target state.
+    pub target_state: &'static str,
 }
 
 /// One declared reference type carried by the linked build inventory.

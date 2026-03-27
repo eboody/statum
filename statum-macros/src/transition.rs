@@ -3,8 +3,9 @@ use quote::{format_ident, quote, ToTokens};
 use std::collections::HashSet;
 use syn::spanned::Spanned;
 use syn::{
-    AngleBracketedGenericArguments, Block, FnArg, GenericArgument, Ident, ImplItem, ImplItemFn,
-    ItemImpl, LitStr, Pat, Path, PathArguments, PathSegment, ReturnType, Type, TypePath,
+    punctuated::Punctuated, token::Comma, AngleBracketedGenericArguments, Attribute, Block, Expr,
+    FnArg, GenericArgument, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Pat, Path,
+    PathArguments, PathSegment, ReturnType, Type, TypePath,
 };
 
 use crate::machine::to_shouty_snake_identifier;
@@ -27,6 +28,7 @@ pub struct TransitionFn {
     pub source_state: String,
     pub parameters: Vec<TransitionParam>,
     pub generics: Vec<Ident>,
+    pub sig_generics: syn::Generics,
     pub internals: Block,
     pub is_async: bool,
     pub vis: syn::Visibility,
@@ -36,7 +38,19 @@ pub struct TransitionFn {
 #[allow(unused)]
 pub struct TransitionParam {
     pub name: Option<String>,
+    pub binding_ident: Ident,
     pub ty: Type,
+    pub via_routes: Vec<ViaRoute>,
+    pub span: Span,
+}
+
+#[allow(unused)]
+pub struct ViaRoute {
+    pub display_path: String,
+    pub via_module_path: String,
+    pub route_name: String,
+    pub route_type: Type,
+    pub route_id: u64,
 }
 
 impl TransitionFn {
@@ -107,7 +121,12 @@ pub fn parse_transition_impl(
     let mut functions = Vec::new();
     for item in &item_impl.items {
         if let ImplItem::Fn(method) = item {
-            functions.push(parse_transition_fn(method, &machine_name, &source_state)?);
+            functions.push(parse_transition_fn(
+                method,
+                &machine_name,
+                &source_state,
+                module_path,
+            )?);
         }
     }
     let generic_params = item_impl
@@ -150,6 +169,7 @@ pub fn parse_transition_fn(
     method: &ImplItemFn,
     machine_name: &str,
     source_state: &str,
+    source_module_path: &str,
 ) -> Result<TransitionFn, TokenStream> {
     let has_receiver = matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)));
 
@@ -181,15 +201,13 @@ pub fn parse_transition_fn(
         .iter()
         .filter_map(|arg| match arg {
             FnArg::Receiver(_) => None,
-            FnArg::Typed(pat_ty) => Some(TransitionParam {
-                name: match pat_ty.pat.as_ref() {
-                    Pat::Ident(ident) => Some(ident.ident.to_string()),
-                    _ => None,
-                },
-                ty: (*pat_ty.ty).clone(),
-            }),
+            FnArg::Typed(pat_ty) => Some(parse_transition_param(
+                pat_ty,
+                source_module_path,
+                method.sig.ident.span(),
+            )),
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     let is_async = method.sig.asyncness.is_some();
 
@@ -205,6 +223,7 @@ pub fn parse_transition_fn(
         source_state: source_state.to_owned(),
         parameters,
         generics,
+        sig_generics: method.sig.generics.clone(),
         internals: method.block.clone(),
         is_async,
         vis: method.vis.to_owned(),
@@ -212,6 +231,183 @@ pub fn parse_transition_fn(
     })
 }
 
+fn parse_transition_param(
+    pat_ty: &syn::PatType,
+    source_module_path: &str,
+    fallback_span: Span,
+) -> Result<TransitionParam, TokenStream> {
+    let name = match pat_ty.pat.as_ref() {
+        Pat::Ident(ident) => Some(ident.ident.to_string()),
+        _ => None,
+    };
+    let binding_ident = match pat_ty.pat.as_ref() {
+        Pat::Ident(ident) => ident.ident.clone(),
+        _ => format_ident!(
+            "__statum_arg_{}",
+            stable_hash(&pat_ty.pat.to_token_stream().to_string())
+        ),
+    };
+    let via_routes = parse_via_routes(&pat_ty.attrs, source_module_path, fallback_span)?;
+
+    Ok(TransitionParam {
+        name,
+        binding_ident,
+        ty: (*pat_ty.ty).clone(),
+        via_routes,
+        span: pat_ty.span(),
+    })
+}
+
+fn parse_via_routes(
+    attrs: &[Attribute],
+    source_module_path: &str,
+    fallback_span: Span,
+) -> Result<Vec<ViaRoute>, TokenStream> {
+    let via_attrs = attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("via"))
+        .collect::<Vec<_>>();
+    if via_attrs.is_empty() {
+        return Ok(Vec::new());
+    }
+    if via_attrs.len() > 1 {
+        return Err(compile_error_at(
+            via_attrs[1].span(),
+            "Error: transition parameters support at most one `#[via(...)]` attribute.",
+        ));
+    }
+    let via_attr = via_attrs[0];
+    let paths = via_attr
+        .parse_args_with(Punctuated::<Path, Comma>::parse_terminated)
+        .map_err(|err| err.to_compile_error())?;
+    if paths.is_empty() {
+        return Err(compile_error_at(
+            via_attr.span(),
+            "Error: `#[via(...)]` must list at least one attested route path.",
+        ));
+    }
+
+    let mut routes = Vec::new();
+    let mut seen = HashSet::new();
+    for path in paths {
+        let route = parse_via_route(&path, source_module_path, fallback_span)?;
+        if !seen.insert(route.display_path.clone()) {
+            return Err(compile_error_at(
+                path.span(),
+                "Error: duplicate attested route path in `#[via(...)]`.",
+            ));
+        }
+        routes.push(route);
+    }
+
+    Ok(routes)
+}
+
+fn parse_via_route(
+    path: &Path,
+    source_module_path: &str,
+    fallback_span: Span,
+) -> Result<ViaRoute, TokenStream> {
+    if path
+        .segments
+        .iter()
+        .any(|segment| !matches!(segment.arguments, PathArguments::None))
+    {
+        return Err(compile_error_at(
+            path.span(),
+            "Error: `#[via(...)]` only accepts simple route paths such as `crate::payment::via::Capture`.",
+        ));
+    }
+    let Some(resolved_segments) = explicit_path_segments(path, source_module_path) else {
+        return Err(compile_error_at(
+            path.span(),
+            "Error: `#[via(...)]` expects an explicit `crate::`, `self::`, `super::`, or absolute route path such as `crate::payment::via::Capture`.",
+        ));
+    };
+    if resolved_segments.len() < 3
+        || resolved_segments
+            .get(resolved_segments.len().saturating_sub(2))
+            .is_none_or(|segment| segment != "via")
+    {
+        return Err(compile_error_at(
+            path.span(),
+            "Error: `#[via(...)]` paths must end in `::via::<Route>`.",
+        ));
+    }
+
+    let route_name = resolved_segments
+        .last()
+        .cloned()
+        .expect("validated route name");
+    let route_id = stable_hash(&route_name);
+    let via_module_path = resolved_segments[..resolved_segments.len() - 1].join("::");
+    let route_type = via_route_type(path, route_id, fallback_span)?;
+
+    Ok(ViaRoute {
+        display_path: path.to_token_stream().to_string(),
+        via_module_path,
+        route_name,
+        route_type,
+        route_id,
+    })
+}
+
+fn via_route_type(path: &Path, route_id: u64, fallback_span: Span) -> Result<Type, TokenStream> {
+    let mut route_path = path.clone();
+    let Some(last_segment) = route_path.segments.last_mut() else {
+        return Err(compile_error_at(
+            fallback_span,
+            "Error: invalid `#[via(...)]` route path.",
+        ));
+    };
+    let route_expr = Expr::Verbatim(quote! { #route_id });
+    let route_segment: PathSegment = syn::parse_quote! { Route<{ #route_expr }> };
+    *last_segment = route_segment;
+    syn::parse2(quote! { #route_path }).map_err(|err| err.to_compile_error())
+}
+
+fn explicit_path_segments(path: &Path, source_module_path: &str) -> Option<Vec<String>> {
+    let raw_segments = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    if raw_segments.is_empty() {
+        return None;
+    }
+
+    if path.leading_colon.is_some() {
+        return Some(raw_segments);
+    }
+
+    let module_segments = split_module_path(source_module_path);
+    let mut resolved = Vec::new();
+    let mut index = 0;
+    match raw_segments.first()?.as_str() {
+        "crate" => {
+            resolved.push(module_segments.first()?.clone());
+            index = 1;
+        }
+        "self" => {
+            resolved.extend(module_segments);
+            index = 1;
+        }
+        "super" => {
+            resolved.extend(module_segments);
+            while matches!(raw_segments.get(index).map(String::as_str), Some("super")) {
+                if resolved.len() <= 1 {
+                    return None;
+                }
+                resolved.pop();
+                index += 1;
+            }
+        }
+        _ => return None,
+    }
+
+    resolved.extend(raw_segments.into_iter().skip(index));
+    Some(resolved)
+}
 pub fn validate_transition_functions(
     tr_impl: &TransitionImpl,
 ) -> Option<TokenStream> {
@@ -250,6 +446,21 @@ pub fn validate_transition_functions(
         };
         drop(return_state);
         drop(return_states);
+
+        let via_param_count = func
+            .parameters
+            .iter()
+            .filter(|param| !param.via_routes.is_empty())
+            .count();
+        if via_param_count > 1 {
+            let message = format!(
+                "Error: `#[transition]` method `{}<{}>::{}` supports at most one `#[via(...)]` parameter in v1.",
+                tr_impl.machine_name,
+                tr_impl.source_state,
+                func.name,
+            );
+            return Some(compile_error_at(func.span, &message));
+        }
     }
 
     None
@@ -334,15 +545,15 @@ pub fn generate_transition_impl(
 
         #( #machine_target_resolver_macro_path!(#transition_binding_callback_ident, #unique_return_state_idents); )*
     };
-    let (relation_machine_module_path, relation_machine_rust_type_path) =
+    let (relation_machine_module_path_string, relation_machine_rust_type_path_string) =
         match relation_source_machine_descriptor(tr_impl) {
             Ok(value) => value,
             Err(err) => return err,
         };
     let relation_machine_module_path =
-        LitStr::new(&relation_machine_module_path, Span::call_site());
+        LitStr::new(&relation_machine_module_path_string, Span::call_site());
     let relation_machine_rust_type_path =
-        LitStr::new(&relation_machine_rust_type_path, Span::call_site());
+        LitStr::new(&relation_machine_rust_type_path_string, Span::call_site());
     let transition_registrations = tr_impl.functions.iter().enumerate().map(|(idx, function)| {
         let return_states = match function.return_states(target_type) {
             Ok(states) => states,
@@ -395,6 +606,14 @@ pub fn generate_transition_impl(
             &relation_machine_rust_type_path,
             &cfg_attrs,
         );
+        let via_route_registration = attested_route_registration(
+            tr_impl,
+            function,
+            idx,
+            &relation_machine_module_path,
+            &relation_machine_rust_type_path,
+            &cfg_attrs,
+        );
 
         quote! {
             #(#cfg_attrs)*
@@ -437,6 +656,7 @@ pub fn generate_transition_impl(
                     #machine_module_path::TransitionId::from_token(&#token_ident);
             }
 
+            #via_route_registration
             #(#relation_registrations)*
         }
     });
@@ -472,25 +692,357 @@ pub fn generate_transition_impl(
                 };
         })
     });
-    let sanitized_input = strip_present_attrs_from_transition_impl(input);
+    let attested_companions = generate_attested_companion_methods(
+        &input.generics,
+        target_type,
+        where_clause,
+        tr_impl,
+        &machine_module_path,
+    );
+    let via_binders = generate_via_binders(&input.generics, target_type, where_clause, tr_impl);
+    let sanitized_input = strip_transition_impl_attrs(input);
 
     quote! {
         #transition_support_bindings
         #(#transition_registrations)*
         #(#transition_presentation_registrations)*
         #sanitized_input
+        #attested_companions
+        #via_binders
     }
 }
 
-fn strip_present_attrs_from_transition_impl(input: &ItemImpl) -> ItemImpl {
+fn strip_transition_impl_attrs(input: &ItemImpl) -> ItemImpl {
     let mut sanitized = input.clone();
     sanitized.attrs = strip_present_attrs(&sanitized.attrs);
     for item in &mut sanitized.items {
         if let ImplItem::Fn(method) = item {
             method.attrs = strip_present_attrs(&method.attrs);
+            for arg in &mut method.sig.inputs {
+                if let FnArg::Typed(pat_ty) = arg {
+                    pat_ty.attrs = strip_via_attrs(&pat_ty.attrs);
+                }
+            }
         }
     }
     sanitized
+}
+
+fn strip_via_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
+    attrs
+        .iter()
+        .filter(|attr| !attr.path().is_ident("via"))
+        .cloned()
+        .collect()
+}
+
+fn attested_route_registration(
+    tr_impl: &TransitionImpl,
+    function: &TransitionFn,
+    function_index: usize,
+    relation_machine_module_path: &LitStr,
+    relation_machine_rust_type_path: &LitStr,
+    cfg_attrs: &[syn::Attribute],
+) -> TokenStream {
+    let Some(target_state) = direct_return_state(function, &tr_impl.target_type) else {
+        return quote! {};
+    };
+
+    let unique_suffix = transition_site_unique_suffix(tr_impl, function, function_index);
+    let registration_ident = format_ident!("__STATUM_LINKED_VIA_ROUTE_{}", unique_suffix);
+    let route_name = route_marker_name(&function.name.to_string());
+    let route_name_lit = LitStr::new(&route_name, function.name.span());
+    let route_id = stable_hash(&route_name);
+    let method_name = LitStr::new(&function.name.to_string(), function.name.span());
+    let source_state = LitStr::new(&tr_impl.source_state, function.name.span());
+    let target_state = LitStr::new(&target_state, function.name.span());
+    let via_module_path = LitStr::new(
+        &format!(
+            "{}::{}::via",
+            relation_machine_module_path.value(),
+            to_snake_case(&tr_impl.machine_name)
+        ),
+        function.name.span(),
+    );
+
+    quote! {
+        #(#cfg_attrs)*
+        #[doc(hidden)]
+        #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_VIA_ROUTES)]
+        #[linkme(crate = statum::__private::linkme)]
+        static #registration_ident: statum::__private::LinkedViaRouteDescriptor =
+            statum::__private::LinkedViaRouteDescriptor {
+                machine: statum::MachineDescriptor {
+                    module_path: #relation_machine_module_path,
+                    rust_type_path: #relation_machine_rust_type_path,
+                },
+                via_module_path: #via_module_path,
+                route_name: #route_name_lit,
+                route_id: #route_id,
+                transition: #method_name,
+                source_state: #source_state,
+                target_state: #target_state,
+            };
+    }
+}
+
+fn generate_attested_companion_methods(
+    input_generics: &syn::Generics,
+    target_type: &Type,
+    where_clause: Option<&syn::WhereClause>,
+    tr_impl: &TransitionImpl,
+    machine_module_path: &Path,
+) -> TokenStream {
+    let methods = tr_impl
+        .functions
+        .iter()
+        .filter_map(|function| {
+            let Some(_target_state) = direct_return_state(function, target_type) else {
+                return None;
+            };
+            let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
+            let return_type = function.return_type.as_ref()?;
+            let route_name = route_marker_name(&function.name.to_string());
+            let route_id = stable_hash(&route_name);
+            let companion_ident = format_ident!("{}_and_attest", function.name);
+            let asyncness = function.is_async.then_some(quote! { async });
+            let await_tokens = function.is_async.then_some(quote! { .await });
+            let params = function.parameters.iter().map(|param| {
+                let binding_ident = &param.binding_ident;
+                let ty = &param.ty;
+                quote! { #binding_ident: #ty }
+            });
+            let call_args = function
+                .parameters
+                .iter()
+                .map(|param| {
+                    let binding_ident = &param.binding_ident;
+                    quote! { #binding_ident }
+                })
+                .collect::<Vec<_>>();
+            let vis = &function.vis;
+            let sig_generics = &function.sig_generics;
+            let method_ident = &function.name;
+            let route_type: Type =
+                syn::parse_quote! { #machine_module_path::via::Route<{ #route_id }> };
+            let route_return_ty = quote! { statum::__private::Attested<#return_type, #route_type> };
+            Some(quote! {
+                #(#cfg_attrs)*
+                #vis #asyncness fn #companion_ident #sig_generics (
+                    self,
+                    #(#params),*
+                ) -> #route_return_ty {
+                    let __statum_next = self.#method_ident(#(#call_args),*) #await_tokens;
+                    statum::__private::attest::<_, #route_type>(__statum_next)
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if methods.is_empty() {
+        return quote! {};
+    }
+
+    let (impl_generics, _, _) = input_generics.split_for_impl();
+    quote! {
+        impl #impl_generics #target_type #where_clause {
+            #(#methods)*
+        }
+    }
+}
+
+struct ViaMethodBinding<'a> {
+    function: &'a TransitionFn,
+    via_param_index: usize,
+}
+
+struct ViaBinderGroup<'a> {
+    route: &'a ViaRoute,
+    binding_ty: &'a Type,
+    vis: &'a syn::Visibility,
+    methods: Vec<ViaMethodBinding<'a>>,
+}
+
+fn generate_via_binders(
+    input_generics: &syn::Generics,
+    target_type: &Type,
+    where_clause: Option<&syn::WhereClause>,
+    tr_impl: &TransitionImpl,
+) -> TokenStream {
+    let groups = match collect_via_binder_groups(tr_impl) {
+        Ok(groups) => groups,
+        Err(err) => return err,
+    };
+    if groups.is_empty() {
+        return quote! {};
+    }
+
+    let (impl_generics, _, _) = input_generics.split_for_impl();
+    let type_generics = input_generics.clone();
+    let adapter_tokens = groups.iter().enumerate().map(|(index, group)| {
+        let binder_ident = format_ident!("from_{}", to_snake_case(&group.route.route_name));
+        let adapter_ident = format_ident!(
+            "__statum_{}_{}_{}_via_{}",
+            to_snake_case(&tr_impl.machine_name),
+            to_snake_case(&tr_impl.source_state),
+            to_snake_case(&group.route.route_name),
+            index,
+        );
+        let binding_ty = group.binding_ty;
+        let route_type = &group.route.route_type;
+        let vis = group.vis;
+        let binder_impl = quote! {
+            impl #impl_generics #target_type #where_clause {
+                #vis fn #binder_ident(
+                    self,
+                    __statum_attested: statum::__private::Attested<#binding_ty, #route_type>,
+                ) -> #adapter_ident #type_generics {
+                    #adapter_ident {
+                        machine: self,
+                        attested: __statum_attested,
+                    }
+                }
+            }
+        };
+        let adapter_methods = group.methods.iter().map(|binding| {
+            let function = binding.function;
+            let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
+            let vis = &function.vis;
+            let asyncness = function.is_async.then_some(quote! { async });
+            let await_tokens = function.is_async.then_some(quote! { .await });
+            let method_ident = &function.name;
+            let sig_generics = &function.sig_generics;
+            let return_type = function
+                .return_type
+                .as_ref()
+                .expect("validated transition return type");
+            let params = function
+                .parameters
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != binding.via_param_index)
+                .map(|(_, param)| {
+                    let binding_ident = &param.binding_ident;
+                    let ty = &param.ty;
+                    quote! { #binding_ident: #ty }
+                })
+                .collect::<Vec<_>>();
+            let call_args = function
+                .parameters
+                .iter()
+                .enumerate()
+                .map(|(index, param)| {
+                    if index == binding.via_param_index {
+                        quote! { self.attested.into_inner() }
+                    } else {
+                        let binding_ident = &param.binding_ident;
+                        quote! { #binding_ident }
+                    }
+                })
+                .collect::<Vec<_>>();
+            quote! {
+                #(#cfg_attrs)*
+                #vis #asyncness fn #method_ident #sig_generics (
+                    self,
+                    #(#params),*
+                ) -> #return_type {
+                    self.machine.#method_ident(#(#call_args),*) #await_tokens
+                }
+            }
+        });
+        quote! {
+            #[doc(hidden)]
+            #vis struct #adapter_ident #type_generics #where_clause {
+                machine: #target_type,
+                attested: statum::__private::Attested<#binding_ty, #route_type>,
+            }
+
+            impl #impl_generics #adapter_ident #type_generics #where_clause {
+                #(#adapter_methods)*
+            }
+
+            #binder_impl
+        }
+    });
+
+    quote! { #(#adapter_tokens)* }
+}
+
+fn collect_via_binder_groups<'a>(
+    tr_impl: &'a TransitionImpl,
+) -> Result<Vec<ViaBinderGroup<'a>>, TokenStream> {
+    let mut groups = Vec::<ViaBinderGroup<'a>>::new();
+
+    for function in &tr_impl.functions {
+        let Some((via_param_index, via_param)) = function
+            .parameters
+            .iter()
+            .enumerate()
+            .find(|(_, param)| !param.via_routes.is_empty())
+        else {
+            continue;
+        };
+
+        for route in &via_param.via_routes {
+            if let Some(existing) = groups.iter_mut().find(|group| {
+                group.route.display_path == route.display_path
+            }) {
+                if existing.binding_ty.to_token_stream().to_string()
+                    != via_param.ty.to_token_stream().to_string()
+                {
+                    let message = format!(
+                        "Error: attested route `{}` is reused on `{}<{}>` with incompatible parameter types in v1.",
+                        route.display_path, tr_impl.machine_name, tr_impl.source_state,
+                    );
+                    return Err(compile_error_at(via_param.span, &message));
+                }
+                if existing.vis.to_token_stream().to_string()
+                    != function.vis.to_token_stream().to_string()
+                {
+                    let message = format!(
+                        "Error: attested route `{}` is reused on `{}<{}>` with different visibilities in v1.",
+                        route.display_path, tr_impl.machine_name, tr_impl.source_state,
+                    );
+                    return Err(compile_error_at(function.span, &message));
+                }
+                existing.methods.push(ViaMethodBinding {
+                    function,
+                    via_param_index,
+                });
+            } else {
+                groups.push(ViaBinderGroup {
+                    route,
+                    binding_ty: &via_param.ty,
+                    vis: &function.vis,
+                    methods: vec![ViaMethodBinding {
+                        function,
+                        via_param_index,
+                    }],
+                });
+            }
+        }
+    }
+
+    Ok(groups)
+}
+
+fn route_marker_name(method_name: &str) -> String {
+    let mut route = String::new();
+    for part in method_name.split('_').filter(|part| !part.is_empty()) {
+        let mut chars = part.chars();
+        if let Some(first) = chars.next() {
+            route.extend(first.to_uppercase());
+            route.extend(chars.flat_map(char::to_lowercase));
+        }
+    }
+    route
+}
+
+fn direct_return_state(function: &TransitionFn, target_type: &Type) -> Option<String> {
+    let return_type = function.return_type.as_ref()?;
+    let type_path = type_path(return_type)?;
+    let segment = machine_segment_matching_target(&type_path.path, target_type)?;
+    extract_machine_state_from_segment(segment).map(|(_, state, _)| state)
 }
 
 fn optional_lit_str_tokens(value: Option<&str>, span: Span) -> TokenStream {
@@ -755,41 +1307,101 @@ fn transition_param_relation_registrations(
         .cloned()
         .chain(function.generics.iter().map(ToString::to_string))
         .collect::<HashSet<_>>();
+    let mut registrations = Vec::new();
 
-    function
-        .parameters
-        .iter()
-        .enumerate()
-        .flat_map(|(param_index, param)| {
-            let targets = collect_relation_targets(&param.ty, &tr_impl.module_path);
-            let param_name_tokens = match &param.name {
-                Some(param_name) => quote! { Some(#param_name) },
-                None => quote! { None },
-            };
-            relation_registrations_for_targets(
-                targets,
-                quote! {
-                    statum::__private::LinkedRelationSource::TransitionParam {
-                        state: #source_state,
-                        transition: #transition_name,
-                        param_index: #param_index,
-                        param_name: #param_name_tokens,
-                    }
-                },
-                machine_module_path,
-                machine_rust_type_path,
-                cfg_attrs,
-                &format!(
-                    "{}::{}::{}::{}::param::{param_index}::function::{function_index}",
-                    tr_impl.module_path,
-                    tr_impl.machine_name,
-                    tr_impl.source_state,
-                    function.name
-                ),
-                &generic_param_names,
-            )
-        })
-        .collect()
+    for (param_index, param) in function.parameters.iter().enumerate() {
+        let targets = collect_relation_targets(&param.ty, &tr_impl.module_path);
+        let param_name_tokens = match &param.name {
+            Some(param_name) => quote! { Some(#param_name) },
+            None => quote! { None },
+        };
+        let source_tokens = quote! {
+            statum::__private::LinkedRelationSource::TransitionParam {
+                state: #source_state,
+                transition: #transition_name,
+                param_index: #param_index,
+                param_name: #param_name_tokens,
+            }
+        };
+        registrations.extend(relation_registrations_for_targets(
+            targets,
+            source_tokens.clone(),
+            machine_module_path,
+            machine_rust_type_path,
+            cfg_attrs,
+            &format!(
+                "{}::{}::{}::{}::param::{param_index}::function::{function_index}",
+                tr_impl.module_path,
+                tr_impl.machine_name,
+                tr_impl.source_state,
+                function.name
+            ),
+            &generic_param_names,
+        ));
+
+        if let Some((target_machine_path, target_state)) =
+            exact_direct_machine_target(&param.ty, &tr_impl.module_path)
+        {
+            for (route_index, route) in param.via_routes.iter().enumerate() {
+                let registration_ident = format_ident!(
+                    "__STATUM_LINKED_RELATION_{:016X}",
+                    stable_hash(&format!(
+                        "{}::{}::{}::{}::param::{param_index}::route::{route_index}",
+                        tr_impl.module_path,
+                        tr_impl.machine_name,
+                        tr_impl.source_state,
+                        function.name,
+                    ))
+                );
+                let route_name = LitStr::new(&route.route_name, function.name.span());
+                let via_module_path = LitStr::new(&route.via_module_path, function.name.span());
+                let route_id = route.route_id;
+                let target_machine_path_tokens = target_machine_path.iter().map(|segment| {
+                    let segment = LitStr::new(segment, function.name.span());
+                    quote! { #segment }
+                });
+                let target_state = LitStr::new(&target_state, function.name.span());
+                registrations.push(quote! {
+                    #(#cfg_attrs)*
+                    #[doc(hidden)]
+                    #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_RELATIONS)]
+                    #[linkme(crate = statum::__private::linkme)]
+                    static #registration_ident: statum::__private::LinkedRelationDescriptor =
+                        statum::__private::LinkedRelationDescriptor {
+                            machine: statum::MachineDescriptor {
+                                module_path: #machine_module_path,
+                                rust_type_path: #machine_rust_type_path,
+                            },
+                            kind: statum::__private::LinkedRelationKind::TransitionParam,
+                            source: #source_tokens,
+                            basis: statum::__private::LinkedRelationBasis::ViaDeclaration,
+                            target: statum::__private::LinkedRelationTarget::AttestedRoute {
+                                via_module_path: #via_module_path,
+                                route_name: #route_name,
+                                route_id: #route_id,
+                                machine_path: &[#(#target_machine_path_tokens),*],
+                                state: #target_state,
+                            },
+                        };
+                });
+            }
+        }
+    }
+
+    registrations
+}
+
+fn exact_direct_machine_target(
+    ty: &Type,
+    source_module_path: &str,
+) -> Option<(Vec<String>, String)> {
+    match collect_relation_targets(ty, source_module_path).as_slice() {
+        [RelationTargetCandidate::DirectMachine {
+            machine_path,
+            state_name,
+        }] => Some((machine_path.clone(), state_name.clone())),
+        _ => None,
+    }
 }
 
 fn relation_registrations_for_targets(

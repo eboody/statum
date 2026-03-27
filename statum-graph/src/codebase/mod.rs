@@ -5,7 +5,7 @@ use serde::Serialize;
 use statum::{
     LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
     LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
-    LinkedValidatorEntryDescriptor, StaticMachineLinkDescriptor,
+    LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, StaticMachineLinkDescriptor,
 };
 
 pub mod render;
@@ -26,6 +26,7 @@ impl CodebaseDoc {
             statum::linked_machines(),
             statum::linked_validator_entries(),
             statum::linked_relations(),
+            statum::linked_via_routes(),
             statum::linked_reference_types(),
         )
     }
@@ -35,7 +36,7 @@ impl CodebaseDoc {
     pub fn try_from_linked(
         linked: &'static [LinkedMachineGraph],
     ) -> Result<Self, CodebaseDocError> {
-        Self::try_from_linked_with_inventories(linked, &[], &[], &[])
+        Self::try_from_linked_with_inventories(linked, &[], &[], &[], &[])
     }
 
     /// Builds a combined codebase document from explicit linked machine and
@@ -44,13 +45,14 @@ impl CodebaseDoc {
         linked: &'static [LinkedMachineGraph],
         validator_entries: &'static [LinkedValidatorEntryDescriptor],
     ) -> Result<Self, CodebaseDocError> {
-        Self::try_from_linked_with_inventories(linked, validator_entries, &[], &[])
+        Self::try_from_linked_with_inventories(linked, validator_entries, &[], &[], &[])
     }
 
     fn try_from_linked_with_inventories(
         linked: &'static [LinkedMachineGraph],
         validator_entries: &'static [LinkedValidatorEntryDescriptor],
         relations: &'static [LinkedRelationDescriptor],
+        via_routes: &'static [LinkedViaRouteDescriptor],
         reference_types: &'static [LinkedReferenceTypeDescriptor],
     ) -> Result<Self, CodebaseDocError> {
         let mut linked = linked.to_vec();
@@ -79,7 +81,7 @@ impl CodebaseDoc {
         let resolved_validator_entries =
             resolve_validator_entries(&mut machines, validator_entries)?;
         let links = resolve_static_links(&machines, &static_links)?;
-        let relations = resolve_relations(&machines, relations, reference_types)?;
+        let relations = resolve_relations(&machines, relations, via_routes, reference_types)?;
 
         debug_assert_eq!(
             resolved_validator_entries,
@@ -246,6 +248,15 @@ impl CodebaseDoc {
             .and_then(|transition| source_machine.transition(transition));
         let target_machine = self.machine(relation.target_machine)?;
         let target_state = target_machine.state(relation.target_state)?;
+        let attested_via_machine = relation
+            .attested_via
+            .and_then(|route| self.machine(route.machine));
+        let attested_via_state = relation
+            .attested_via
+            .and_then(|route| attested_via_machine.and_then(|machine| machine.state(route.state)));
+        let attested_via_transition = relation.attested_via.and_then(|route| {
+            attested_via_machine.and_then(|machine| machine.transition(route.transition))
+        });
 
         Some(CodebaseRelationDetail {
             relation,
@@ -254,6 +265,9 @@ impl CodebaseDoc {
             source_transition,
             target_machine,
             target_state,
+            attested_via_machine,
+            attested_via_state,
+            attested_via_transition,
         })
     }
 }
@@ -444,6 +458,7 @@ impl CodebaseRelationKind {
 pub enum CodebaseRelationBasis {
     DirectTypeSyntax,
     DeclaredReferenceType,
+    ViaDeclaration,
 }
 
 impl CodebaseRelationBasis {
@@ -452,6 +467,7 @@ impl CodebaseRelationBasis {
         match self {
             Self::DirectTypeSyntax => "direct type",
             Self::DeclaredReferenceType => "declared ref",
+            Self::ViaDeclaration => "via declaration",
         }
     }
 
@@ -459,6 +475,7 @@ impl CodebaseRelationBasis {
         match self {
             Self::DirectTypeSyntax => "",
             Self::DeclaredReferenceType => " [ref]",
+            Self::ViaDeclaration => " [via]",
         }
     }
 }
@@ -530,6 +547,8 @@ pub struct CodebaseRelation {
     /// Declared nominal reference type when this relation came through
     /// `#[machine_ref(...)]`.
     pub declared_reference_type: Option<&'static str>,
+    /// Exact attested producer route when this relation came from `#[via(...)]`.
+    pub attested_via: Option<CodebaseAttestedRoute>,
 }
 
 impl CodebaseRelation {
@@ -557,6 +576,21 @@ impl CodebaseRelation {
     pub const fn target_transition(&self) -> Option<usize> {
         None
     }
+}
+
+/// One resolved producer route attached to a `#[via(...)]` exact relation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct CodebaseAttestedRoute {
+    /// Stable producer machine index.
+    pub machine: usize,
+    /// Stable producer source-state index.
+    pub state: usize,
+    /// Stable producer transition index.
+    pub transition: usize,
+    /// Machine-module path that owns the attested route namespace.
+    pub via_module_path: &'static str,
+    /// Human-facing route name such as `Capture`.
+    pub route_name: &'static str,
 }
 
 /// One grouped machine-to-machine view derived from exact relations.
@@ -630,6 +664,15 @@ pub struct CodebaseRelationDetail<'a> {
     pub target_machine: &'a CodebaseMachine,
     /// The resolved target state.
     pub target_state: &'a CodebaseState,
+    /// The resolved producer machine when this exact relation came from one
+    /// attested route declaration.
+    pub attested_via_machine: Option<&'a CodebaseMachine>,
+    /// The resolved producer source state when this exact relation came from
+    /// one attested route declaration.
+    pub attested_via_state: Option<&'a CodebaseState>,
+    /// The resolved producer transition when this exact relation came from one
+    /// attested route declaration.
+    pub attested_via_transition: Option<&'a CodebaseTransition>,
 }
 
 type ResolvedRelationTarget = (usize, usize, Option<&'static str>);
@@ -789,6 +832,43 @@ pub enum CodebaseDocError {
         relation: String,
         target_machine_path: String,
         target_state: &'static str,
+    },
+    /// One attested producer route appears more than once in the linked
+    /// inventory.
+    DuplicateViaRoute {
+        via_module_path: &'static str,
+        route_name: &'static str,
+    },
+    /// One `#[via(...)]` exact relation points at a producer route missing from
+    /// the linked inventory.
+    MissingRelationViaRoute {
+        relation: String,
+        via_module_path: &'static str,
+        route_name: &'static str,
+    },
+    /// One `#[via(...)]` relation points at a producer source state missing
+    /// from the resolved machine graph.
+    MissingRelationViaSourceState {
+        machine: &'static str,
+        state: &'static str,
+        relation: String,
+    },
+    /// One `#[via(...)]` relation points at a producer transition missing from
+    /// the resolved machine graph.
+    MissingRelationViaTransition {
+        machine: &'static str,
+        state: &'static str,
+        transition: &'static str,
+        relation: String,
+    },
+    /// One `#[via(...)]` relation declared an inner target state that does not
+    /// match the attested producer route it references.
+    MismatchedRelationViaTarget {
+        relation: String,
+        via_module_path: &'static str,
+        route_name: &'static str,
+        declared_target_state: &'static str,
+        producer_target_state: &'static str,
     },
     /// One static payload link points at a source state missing from the
     /// machine state list.
@@ -961,6 +1041,48 @@ Fix: rerun with `--package` to export one crate, or move one machine to a distin
             } => write!(
                 formatter,
                 "linked exact relation `{relation}` ambiguously matches target `{target_machine_path}<{target_state}>`"
+            ),
+            Self::DuplicateViaRoute {
+                via_module_path,
+                route_name,
+            } => write!(
+                formatter,
+                "linked attested route `{via_module_path}::{route_name}` appears more than once in the producer inventory"
+            ),
+            Self::MissingRelationViaRoute {
+                relation,
+                via_module_path,
+                route_name,
+            } => write!(
+                formatter,
+                "linked exact relation `{relation}` points at missing attested route `{via_module_path}::{route_name}`"
+            ),
+            Self::MissingRelationViaSourceState {
+                machine,
+                state,
+                relation,
+            } => write!(
+                formatter,
+                "linked exact relation `{relation}` points at missing attested source state `{machine}::{state}`"
+            ),
+            Self::MissingRelationViaTransition {
+                machine,
+                state,
+                transition,
+                relation,
+            } => write!(
+                formatter,
+                "linked exact relation `{relation}` points at missing attested producer transition `{machine}::{state}::{transition}`"
+            ),
+            Self::MismatchedRelationViaTarget {
+                relation,
+                via_module_path,
+                route_name,
+                declared_target_state,
+                producer_target_state,
+            } => write!(
+                formatter,
+                "linked exact relation `{relation}` declares target state `{declared_target_state}`, but attested route `{via_module_path}::{route_name}` produces `{producer_target_state}`"
             ),
             Self::MissingStaticLinkSourceState { machine, state } => write!(
                 formatter,
@@ -1183,12 +1305,22 @@ struct ResolvedReferenceTypeTarget {
     target_state: usize,
 }
 
+#[derive(Clone, Copy)]
+struct ResolvedViaRoute {
+    machine: usize,
+    state: usize,
+    transition: usize,
+    target_state_name: &'static str,
+}
+
 fn resolve_relations(
     machines: &[CodebaseMachine],
     relations: &'static [LinkedRelationDescriptor],
+    via_routes: &'static [LinkedViaRouteDescriptor],
     reference_types: &'static [LinkedReferenceTypeDescriptor],
 ) -> Result<Vec<CodebaseRelation>, CodebaseDocError> {
     let reference_types = resolve_reference_type_targets(machines, reference_types)?;
+    let via_routes = resolve_via_routes(machines, via_routes)?;
     let mut relations = relations.to_vec();
     relations.sort_by(compare_relations);
 
@@ -1254,27 +1386,76 @@ fn resolve_relations(
             }
         };
 
-        let resolved_target = match relation.target {
+        let (resolved_target, attested_via) = match relation.target {
             LinkedRelationTarget::DirectMachine {
                 machine_path,
                 state,
-            } => resolve_optional_target_machine(
-                machines,
+            } => (
+                resolve_optional_target_machine(
+                    machines,
+                    machine_path,
+                    state,
+                    &relation_summary(&relation),
+                    true,
+                )?,
+                None,
+            ),
+            LinkedRelationTarget::DeclaredReferenceType { resolved_type_name } => (
+                reference_types
+                    .get(resolved_type_name())
+                    .copied()
+                    .map(|target| {
+                        (
+                            target.target_machine,
+                            target.target_state,
+                            Some(target.rust_type_path),
+                        )
+                    }),
+                None,
+            ),
+            LinkedRelationTarget::AttestedRoute {
+                via_module_path,
+                route_name,
+                route_id,
                 machine_path,
                 state,
-                &relation_summary(&relation),
-                true,
-            )?,
-            LinkedRelationTarget::DeclaredReferenceType { resolved_type_name } => reference_types
-                .get(resolved_type_name())
-                .copied()
-                .map(|target| {
-                    (
-                        target.target_machine,
-                        target.target_state,
-                        Some(target.rust_type_path),
-                    )
-                }),
+            } => {
+                let relation_label = relation_summary(&relation);
+                let resolved_target = resolve_optional_target_machine(
+                    machines,
+                    machine_path,
+                    state,
+                    &relation_label,
+                    true,
+                )?;
+                let resolved_route = via_routes
+                    .get(&(via_module_path, route_id))
+                    .copied()
+                    .ok_or_else(|| CodebaseDocError::MissingRelationViaRoute {
+                        relation: relation_label.clone(),
+                        via_module_path,
+                        route_name,
+                    })?;
+                if resolved_route.target_state_name != state {
+                    return Err(CodebaseDocError::MismatchedRelationViaTarget {
+                        relation: relation_label,
+                        via_module_path,
+                        route_name,
+                        declared_target_state: state,
+                        producer_target_state: resolved_route.target_state_name,
+                    });
+                }
+                (
+                    resolved_target,
+                    Some(CodebaseAttestedRoute {
+                        machine: resolved_route.machine,
+                        state: resolved_route.state,
+                        transition: resolved_route.transition,
+                        via_module_path,
+                        route_name,
+                    }),
+                )
+            }
         };
         let Some((target_machine, target_state, declared_reference_type)) = resolved_target else {
             continue;
@@ -1288,10 +1469,66 @@ fn resolve_relations(
             target_machine,
             target_state,
             declared_reference_type,
+            attested_via,
         });
     }
 
     Ok(exported)
+}
+
+fn resolve_via_routes(
+    machines: &[CodebaseMachine],
+    via_routes: &'static [LinkedViaRouteDescriptor],
+) -> Result<HashMap<(&'static str, u64), ResolvedViaRoute>, CodebaseDocError> {
+    let exact_machine_positions = machines
+        .iter()
+        .map(|machine| (machine.rust_type_path, machine.index))
+        .collect::<HashMap<_, _>>();
+    let mut resolved = HashMap::with_capacity(via_routes.len());
+
+    for route in via_routes {
+        if resolved.contains_key(&(route.via_module_path, route.route_id)) {
+            return Err(CodebaseDocError::DuplicateViaRoute {
+                via_module_path: route.via_module_path,
+                route_name: route.route_name,
+            });
+        }
+        let machine_index = resolve_relation_source_machine(
+            machines,
+            &exact_machine_positions,
+            route.machine.rust_type_path,
+            route.route_name,
+        )?;
+        let machine = &machines[machine_index];
+        let state = machine
+            .state_named(route.source_state)
+            .map(|state| state.index)
+            .ok_or_else(|| CodebaseDocError::MissingRelationViaSourceState {
+                machine: machine.rust_type_path,
+                state: route.source_state,
+                relation: format!("{}::{}", route.via_module_path, route.route_name),
+            })?;
+        let transition = machine
+            .transition_site(route.source_state, route.transition)
+            .map(|transition| transition.index)
+            .ok_or_else(|| CodebaseDocError::MissingRelationViaTransition {
+                machine: machine.rust_type_path,
+                state: route.source_state,
+                transition: route.transition,
+                relation: format!("{}::{}", route.via_module_path, route.route_name),
+            })?;
+        resolved.insert(
+            (route.via_module_path, route.route_id),
+            ResolvedViaRoute {
+                machine: machine.index,
+                state,
+                transition,
+                target_state_name: route.target_state,
+            },
+        );
+    }
+
+    Ok(resolved)
 }
 
 fn resolve_reference_type_targets(
@@ -1475,6 +1712,7 @@ fn map_relation_basis(basis: LinkedRelationBasis) -> CodebaseRelationBasis {
     match basis {
         LinkedRelationBasis::DirectTypeSyntax => CodebaseRelationBasis::DirectTypeSyntax,
         LinkedRelationBasis::DeclaredReferenceType => CodebaseRelationBasis::DeclaredReferenceType,
+        LinkedRelationBasis::ViaDeclaration => CodebaseRelationBasis::ViaDeclaration,
     }
 }
 
@@ -1582,6 +1820,27 @@ fn compare_relation_targets(
                 resolved_type_name: right_name,
             },
         ) => left_name().cmp(right_name()),
+        (
+            LinkedRelationTarget::AttestedRoute {
+                via_module_path: left_module_path,
+                route_name: left_route_name,
+                route_id: left_route_id,
+                machine_path: left_machine_path,
+                state: left_state,
+            },
+            LinkedRelationTarget::AttestedRoute {
+                via_module_path: right_module_path,
+                route_name: right_route_name,
+                route_id: right_route_id,
+                machine_path: right_machine_path,
+                state: right_state,
+            },
+        ) => left_module_path
+            .cmp(right_module_path)
+            .then_with(|| left_route_name.cmp(right_route_name))
+            .then_with(|| left_route_id.cmp(right_route_id))
+            .then_with(|| left_machine_path.cmp(right_machine_path))
+            .then_with(|| left_state.cmp(right_state)),
         (left, right) => linked_relation_target_rank(left).cmp(&linked_relation_target_rank(right)),
     }
 }
@@ -1598,6 +1857,7 @@ fn linked_relation_basis_rank(basis: LinkedRelationBasis) -> u8 {
     match basis {
         LinkedRelationBasis::DirectTypeSyntax => 0,
         LinkedRelationBasis::DeclaredReferenceType => 1,
+        LinkedRelationBasis::ViaDeclaration => 2,
     }
 }
 
@@ -1613,11 +1873,12 @@ fn linked_relation_target_rank(target: &LinkedRelationTarget) -> u8 {
     match target {
         LinkedRelationTarget::DirectMachine { .. } => 0,
         LinkedRelationTarget::DeclaredReferenceType { .. } => 1,
+        LinkedRelationTarget::AttestedRoute { .. } => 2,
     }
 }
 
 fn relation_summary(relation: &LinkedRelationDescriptor) -> String {
-    match relation.source {
+    let base = match relation.source {
         LinkedRelationSource::StatePayload { state, field_name } => match field_name {
             Some(field_name) => format!(
                 "{} state payload {}::{}",
@@ -1656,6 +1917,16 @@ fn relation_summary(relation: &LinkedRelationDescriptor) -> String {
                 relation.machine.rust_type_path, state, transition, param_index
             ),
         },
+    };
+
+    match relation.target {
+        LinkedRelationTarget::AttestedRoute {
+            via_module_path,
+            route_name,
+            ..
+        } => format!("{base} via {via_module_path}::{route_name}"),
+        LinkedRelationTarget::DirectMachine { .. }
+        | LinkedRelationTarget::DeclaredReferenceType { .. } => base,
     }
 }
 

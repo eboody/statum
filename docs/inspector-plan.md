@@ -1,283 +1,60 @@
-# Statum Inspector Plan
+# Statum Inspector Roadmap
 
-This plan describes the shared inspector TUI for Statum.
+This file tracks the remaining inspector work after the exact codebase viewer
+and heuristic overlay shipped.
 
-The inspector is now codebase-first.
+## Current Shipping Surface
 
-The first job is not replay. The first job is to make Statum's exact static
-protocol surface navigable at workspace scale, then layer heuristic discovery
-and runtime replay on top without mixing their authority levels.
-
-## Goal
-
-Build a reusable inspector in the spirit of `lazygit` that lets a developer:
-
-- see what machines exist in a workspace
-- inspect each machine's states and legal transitions
-- inspect declared validator entry surfaces
-- see which states are directly constructible
-- see what points at a selected machine, state, or transition
-- see why a relation exists
-
-Later phases add:
-
-- heuristic relation overlays
-- replay of recorded runtime transitions
-- snapshots and diffs
-- parent and child composition trees
-
-Current shipping surface:
-
-- `cargo statum-graph inspect /path/to/workspace`
-- exact-lane workspace overview
-- exact machine, relation, and detail panes
-- exact-lane search and relation-kind or relation-basis filters
-- keyboard navigation over linked compiled `CodebaseDoc`
-
-## Dependency
-
-The exact static substrate is tracked separately in
-[exact-static-relations-plan.md](/home/eran/code/statum/docs/exact-static-relations-plan.md).
-
-That plan is the protocol-truth dependency for this one.
-
-The inspector should consume that substrate. It should not re-derive exact
-static relations for itself.
-
-## Non-Goals
-
-This plan does not try to:
-
-- infer runtime values from static type information alone
-- export heuristic relations as if they were exact
-- infer parent and child runtime composition from module layout or naming
-- promise exact data diffs without explicit snapshot or projection input
-- replace the exact codebase export model with a TUI-only interpretation
-
-## Authority Contract
-
-Claimed authority surface in the exact lane:
+Today `cargo statum-graph inspect /path/to/workspace` already provides:
 
 - exact linked compiled machine topology
 - exact declared validator-entry surfaces
 - exact direct-construction availability per state
-- exact static relations from the codebase export substrate
+- exact cross-machine relations from state payloads, machine fields,
+  transition parameters, `#[via(...)]` declarations, and nominal
+  `#[machine_ref(...)]` declarations
+- machine, relation, and detail panes over the linked `CodebaseDoc`
+- search plus exact relation-kind and relation-basis filters
+- heuristic-only, exact-only, and mixed lane toggles
+- source-scanned heuristic machine-coupling overlay with explicit unavailable
+  handling
 
-Actual observation point for the exact lane:
+The exact lane remains the only authoritative lane. The heuristic lane stays
+useful but non-authoritative and TUI-only.
 
-- `MachineIntrospection::GRAPH`
-- linked compiled machine, validator-entry, relation, and reference-type
-  inventories
-- macro-expanded, cfg-pruned `#[machine]`, `#[transition]`, `#[validators]`,
-  and `#[machine_ref]` items
-
-Claimed authority surface in the heuristic lane:
-
-- none
-
-The heuristic lane is useful but non-authoritative. It may use broader source
-or body analysis later, but it must stay visually and semantically separate
-from exact relations.
-
-Claimed authority surface in the runtime lane:
-
-- exact executed transition paths from explicit runtime events
-- exact displayed data only for snapshots or projections an application
-  explicitly provides
-
-Fail-closed rule:
-
-If the inspector does not have the required exact, heuristic, or runtime
-inputs, it must show that the information is unavailable. It must not guess.
-
-## Layering
-
-Narrative layer:
-
-- the interactive inspector app and its panes
-
-Stage layer:
-
-- one workspace session model
-- exact static selection state
-- optional heuristic overlay state
-- later replay and composition state
-
-Protocol-truth layer:
-
-- exact `CodebaseDoc` export
-- later runtime transition events
-- later runtime composition events
-- later snapshot or projection inputs
-
-Plain-function leaves:
-
-- rendering helpers
-- keybindings
-- search and filtering
-- layout and focus management
-- label formatting
-
-Duplication risks:
-
-- separate graph models for exact export and the inspector
-- separate relation semantics in renderers and the TUI
-- mixing heuristic relations into the exact export contract
-
-Locality risks:
-
-- spreading selection and relation semantics across panes instead of one
-  session model
-- making the graph widget decide semantics that belong in the session or
-  export model
-
-Invariant-placement risks:
-
-- computing exact relations from heuristic scans
-- inferring executed paths from topology
-- inferring data changes from type metadata alone
-
-## Product Shape
-
-The default TUI should use a stable multi-pane layout:
-
-- left: workspace overview, machine list, and disconnected groups
-- center: exact machine and relation navigation, then later timeline view
-- right: machine, state, transition, and relation details for the current
-  selection
-- bottom: search results, filter status, and later runtime event logs
-
-Core exact-lane views:
-
-- workspace overview
-- machine view
-- relation view
-- detail pane
-
-Workspace overview should show:
-
-- machine count
-- disconnected groups
-- exact machine summary edges
-- exact-lane search status
-- filters for relation kind and provenance
-
-Machine view should show:
-
-- states
-- transitions
-- validator-entry nodes
-- builder markers
-
-Relation view should show:
-
-- inbound exact relations for the current machine, state, or transition
-- outbound exact relations for the current machine, state, or transition
-- relation kind
-- relation basis
-
-Detail pane should show why a relation exists, for example:
-
-- `state_payload`
-- `machine_field`
-- `transition_param`
-- `validator_entry`
-- `direct_construction_available`
-
-## Exact And Heuristic Lanes
-
-The inspector should expose two different static lanes.
+## Authority Contract
 
 Exact lane:
 
-- backed by `CodebaseDoc`
-- exported through Mermaid, DOT, PlantUML, and JSON
-- default view when the inspector opens
+- claimed authority surface:
+  exact linked compiled machine topology, validator-entry surfaces,
+  direct-construction availability, and exact relation detail
+- actual observation point:
+  `MachineIntrospection::GRAPH` plus linked compiled machine, validator-entry,
+  relation, attested-route, and reference-type inventories
+- fail-closed rule:
+  unsupported exact cases must reject explicitly or contribute no exact
+  metadata
 
 Heuristic lane:
 
-- optional and TUI-only
-- separate filters and styling
-- visible provenance for why each heuristic relation exists
-- never merged into the exact export model
+- claimed authority surface: none
+- actual observation point:
+  parsed raw source of reachable library module trees plus the selected
+  packages' transition signatures and bodies
+- fail-closed rule:
+  unavailable or partial collection must be shown as unavailable rather than
+  guessed
 
-## Phases
+Runtime lane:
 
-### Phase 0: Exact Static Substrate
+- claimed authority surface:
+  exact executed transition paths from explicit runtime events and only the
+  snapshots or projections an application explicitly provides
 
-Source of truth:
+## Remaining Phases
 
-- [exact-static-relations-plan.md](/home/eran/code/statum/docs/exact-static-relations-plan.md)
-
-Status:
-
-- exact static substrate done
-- consumed by the shipped inspector exact lane
-
-### Phase 1: Exact Codebase Viewer MVP
-
-Deliverables:
-
-- load one `CodebaseDoc`
-- workspace overview
-- machine view
-- validator-entry display
-- visible builder markers
-- exact machine summary edges
-
-Success criteria:
-
-- graph-only mode answers what machines exist and how they statically connect
-
-Status:
-
-- done through `cargo statum-graph inspect`
-- the current center pane is a structured exact view, not a dedicated graph
-  widget
-
-### Phase 2: Exact Relation Navigation
-
-Deliverables:
-
-- relation pane
-- inbound and outbound navigation
-- provenance detail pane
-- exact-lane search and filtering
-
-Success criteria:
-
-- the user can answer what points at this and why
-
-Status:
-
-- done through `cargo statum-graph inspect`
-- the exact lane now supports search plus relation-kind and relation-basis
-  filters without re-deriving semantics outside `CodebaseDoc`
-
-### Phase 3: Heuristic Overlay Lane
-
-Deliverables:
-
-- optional heuristic relation collector
-- separate heuristic session state instead of mutating `CodebaseDoc`
-- visible unavailable state when heuristic collection cannot run
-- separate styling from the exact lane
-- toggle to show exact only, heuristic only, or both
-- heuristic-lane search and filters separate from the exact lane
-- provenance display for heuristic relations
-- detail-pane support that explains the heuristic basis for each relation
-- no Mermaid, DOT, PlantUML, or JSON export path for heuristic relations
-
-Success criteria:
-
-- users can opt into broader discovery without weakening the exact lane
-
-Next milestone:
-
-- design and ship a heuristic overlay contract that makes broader discovery
-  useful while keeping exact and heuristic relations impossible to confuse
-
-### Phase 4: Replay MVP
+### Phase 1: Replay MVP
 
 Deliverables:
 
@@ -290,7 +67,7 @@ Success criteria:
 
 - exact executed paths are replayable without snapshots
 
-### Phase 5: Snapshot Support
+### Phase 2: Snapshot Support
 
 Deliverables:
 
@@ -303,7 +80,7 @@ Success criteria:
 
 - data changes are inspectable when provided and visibly unavailable when not
 
-### Phase 6: Composition Tree
+### Phase 3: Composition Tree
 
 Deliverables:
 
@@ -313,9 +90,9 @@ Deliverables:
 
 Success criteria:
 
-- the user can step into and out of sub-machines without losing context
+- users can step into and out of sub-machines without losing context
 
-### Phase 7: Adapter Ergonomics And Polish
+### Phase 4: Adapter Ergonomics And Polish
 
 Deliverables:
 
@@ -329,23 +106,7 @@ Success criteria:
 
 - one application can integrate without rebuilding the whole protocol
 
-## Testing Plan
-
-Exact-lane tests:
-
-- workspace with multiple machines
-- disconnected groups
-- exact machine summary edges
-- builder markers
-- relation-pane lookup for inbound and outbound edges
-- provenance details for each exact relation kind
-
-Heuristic-lane tests:
-
-- heuristic relations are visually distinct
-- heuristic provenance is visible
-- heuristic results never appear in exact export output
-- unavailable heuristic state is explicit
+## Remaining Test Plan
 
 Runtime tests:
 
@@ -353,64 +114,46 @@ Runtime tests:
 - missing event fields fail clearly
 - stale or out-of-order sequences are rejected
 
-Composition tests:
-
-- attach and detach ordering
-- nested machine stepping
-- orphan child detection
-
 Snapshot tests:
 
 - missing snapshots
 - redacted values
 - structural diffs across maps and lists
 
+Composition tests:
+
+- attach and detach ordering
+- nested machine stepping
+- orphan child detection
+
 Adversarial tests:
 
-- exact lane with no heuristic overlay
-- heuristic lane with no runtime replay
-- runtime replay with no snapshots
+- replay with no snapshots
 - composition events with unknown machine ids
 - duplicate machine instance ids
 - stale export and runtime protocol version mismatch
 
 ## Checklist
 
-- [x] Create the exact static substrate plan
-- [x] Make the inspector plan depend on that substrate
-- [x] Render builder markers in the exact graph backends
-- [x] Derive and render exact machine summary edges
-- [x] Add workspace overview to the TUI
-- [x] Add machine view with validators and builder markers
-- [x] Add relation pane with inbound and outbound navigation
-- [x] Add provenance detail pane
-- [x] Add exact-lane search and filters
-- [ ] Add separate heuristic overlay lane
-- [ ] Add exact-only, heuristic-only, and mixed visibility toggles
-- [ ] Add heuristic provenance detail blocks
-- [ ] Add explicit unavailable-state handling for heuristic collection
 - [ ] Add replay session model
 - [ ] Add timeline stepping
 - [ ] Add snapshot protocol and generic structural diffing
 - [ ] Add composition tree and nested replay navigation
 - [ ] Add helper hooks and one sample application adapter
-- [x] Add exact-lane tests for builder markers, summary edges, and relation
-      provenance
-- [ ] Add heuristic-lane separation tests
 - [ ] Add replay, snapshot, and composition protocol tests
 
 ## Acceptance Criteria
 
-This plan is working when the inspector can answer:
+The shipped inspector already answers:
 
 - what machines exist in this workspace
-- where can this machine be entered through validators
+- where a machine can be entered through validators
 - which states are directly constructible
-- what points at this machine, state, or transition
-- why that relation exists
+- what points at a machine, state, or transition
+- why that exact relation exists
 
-Later phases extend that to:
+This roadmap is complete when the inspector can also answer:
 
 - what executed at runtime
 - what data changed
-- where this machine sits in a parent and child runtime tree
+- where a machine sits in a parent and child runtime tree

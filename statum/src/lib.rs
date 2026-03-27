@@ -280,17 +280,17 @@ pub use statum_core::__private;
 pub use statum_core::projection;
 #[doc(inline)]
 pub use statum_core::{
-    linked_machines, linked_reference_types, linked_relations, linked_validator_entries, Branch,
-    CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, LinkedMachineGraph,
-    LinkedReferenceTypeDescriptor, LinkedRelationBasis, LinkedRelationDescriptor,
-    LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget, LinkedStateDescriptor,
-    LinkedTransitionDescriptor, LinkedTransitionInventory, LinkedValidatorEntryDescriptor,
-    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineReference, MachineReferenceTarget, MachineStateIdentity,
-    MachineTransitionRecorder, RebuildAttempt, RebuildReport, RecordedTransition, Rejection,
-    Result, StateDescriptor, StateMarker, StatePresentation, StaticMachineLinkDescriptor,
-    TransitionDescriptor, TransitionInventory, TransitionPresentation,
-    TransitionPresentationInventory, UnitState, Validation,
+    linked_machines, linked_reference_types, linked_relations, linked_validator_entries,
+    linked_via_routes, Attested, Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith,
+    DataState, Error, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
+    LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
+    LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
+    LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachineDescriptor, MachineGraph,
+    MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineReference,
+    MachineReferenceTarget, MachineStateIdentity, MachineTransitionRecorder, RebuildAttempt,
+    RebuildReport, RecordedTransition, Rejection, Result, StateDescriptor, StateMarker,
+    StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
+    TransitionPresentation, TransitionPresentationInventory, UnitState, Validation,
 };
 
 /// Define the legal lifecycle phases for a machine.
@@ -370,7 +370,9 @@ pub use statum_macros::machine;
 /// machine relation without repeating that relation at every use site. In v1
 /// this surface is trait-backed, supports nominal structs and tuple structs
 /// only, and expects an explicit `crate::`, `self::`, `super::`, or absolute
-/// target path; plain type aliases are rejected.
+/// target path; plain type aliases are rejected. When the reference is a
+/// stable artifact or handoff type, point it at the earliest stable producer
+/// state for that artifact instead of a later consumer state.
 pub use statum_macros::machine_ref;
 
 /// Validate and generate legal transitions for one source state.
