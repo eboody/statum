@@ -42,7 +42,7 @@ pub(crate) use syntax::{
     extract_derives, source_file_fingerprint,
 };
 
-use macro_registry::callsite::module_path_for_span;
+use macro_registry::callsite::{module_path_for_span, source_info_for_span_or_callsite};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use syn::{Item, ItemImpl, parse_macro_input};
@@ -173,9 +173,16 @@ pub fn transition(
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_impl = parse_macro_input!(item as ItemImpl);
-    let line_number = item_impl.impl_token.span.start().line;
-    let module_path = match resolved_current_module_path(item_impl.impl_token.span, "#[validators]")
-    {
+    let span = item_impl.impl_token.span;
+    let line_number = source_info_for_span_or_callsite(span)
+        .map(|(_, line_number)| line_number)
+        .filter(|line_number| *line_number > 0)
+        .or_else(|| {
+            let raw_line_number = span.start().line;
+            (raw_line_number > 0).then_some(raw_line_number)
+        })
+        .unwrap_or_default();
+    let module_path = match resolved_current_module_path(span, "#[validators]") {
         Ok(path) => path,
         Err(err) => return err,
     };
