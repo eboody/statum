@@ -14,17 +14,18 @@ It is authoritative only for machine-local structure:
 For linked-build codebase export, `statum-graph` can also combine every linked
 compiled machine family, legacy direct payload links, declared validator-entry
 surfaces, direct-construction availability per state, and exact relation
-records inferred from supported type syntax plus nominal
-`#[machine_ref(...)]` declarations. That codebase view is still static only. It
-does not model runtime-selected branches or orchestration order across
-machines. Validator node labels come from the impl self type as written in
-source and are display-only, not canonical Rust type identity. Method-level
-`#[cfg]` and `#[cfg_attr]` on validator methods are rejected at the macro
-layer. `include!()`-generated validator impls are also rejected. In v1, exact
-direct-type relations recurse only through canonical absolute carrier paths
-such as `::core::option::Option<...>` and `::core::result::Result<..., E>`,
-and direct machine targets must use explicit `crate::`, `self::`, `super::`,
-or absolute paths instead of imported aliases or bare names.
+records inferred from supported type syntax, `#[via(...)]` declarations, and
+nominal `#[machine_ref(...)]` declarations. That codebase view is still static
+only. It does not model runtime-selected branches or orchestration order
+across machines. Validator node labels come from the impl self type as written
+in source and are display-only, not canonical Rust type identity.
+Method-level `#[cfg]` and `#[cfg_attr]` on validator methods are rejected at
+the macro layer. `include!()`-generated validator impls are also rejected. In
+v1, exact direct-type relations recurse only through canonical absolute carrier
+paths such as `::core::option::Option<...>` and
+`::core::result::Result<..., E>`, and direct machine targets must use explicit
+`crate::`, `self::`, `super::`, or absolute paths instead of imported aliases
+or bare names.
 
 ## Install
 
@@ -284,18 +285,31 @@ assert_eq!(paths.len(), 4);
 The codebase view is based on the linked compiled build, not a source scan.
 Legacy `links()` come only from direct machine-like payload types written in
 state data, including named fields. The richer exact `relations()` surface also
-covers machine fields, transition parameters, and nominal opaque reference
-types declared once with `#[machine_ref(...)]`. In v1, `#[machine_ref(...)]`
-supports nominal structs and tuple structs only; plain type aliases are
-rejected. Exact direct-type relations recurse only through canonical absolute
-carrier paths such as `::core::option::Option<...>` and
-`::core::result::Result<..., E>`, and direct machine targets must use explicit
-`crate::`, `self::`, `super::`, or absolute paths. Validator-entry nodes come
-only from compiled `#[validators]` impls and represent declared rebuild
-surfaces such as `DbRow::into_machine()`, not runtime match outcomes. All
-exact surfaces fail closed on malformed or ambiguous linked metadata.
+covers machine fields, transition parameters, `#[via(...)]` declarations, and
+nominal opaque reference types declared once with `#[machine_ref(...)]`. In
+v1, `#[machine_ref(...)]` supports nominal structs and tuple structs only;
+plain type aliases are rejected. Exact direct-type relations recurse only
+through canonical absolute carrier paths such as `::core::option::Option<...>`
+and `::core::result::Result<..., E>`, and direct machine targets must use
+explicit `crate::`, `self::`, `super::`, or absolute paths. Validator-entry
+nodes come only from compiled `#[validators]` impls and represent declared
+rebuild surfaces such as `DbRow::into_machine()`, not runtime match outcomes.
+All exact surfaces fail closed on malformed or ambiguous linked metadata.
 Transition-body orchestration, runtime composition, primitive ids with no
 typed wrapper, and terminal-state semantics are intentionally out of scope.
+
+`#[via(...)]` is the exact relation surface for “this parent transition depends
+on this exact child transition route.” For example, if one transition takes
+`crate::PaymentMachine<crate::Captured>` and also declares
+`#[via(self::payment_machine::via::Capture)]`,
+`CodebaseDoc` can say both:
+
+- the parent transition depends on the child being in `Captured`
+- the parent transition can depend on `PaymentMachine<Authorized>::capture`
+
+This improves exact relation detail without inferring a protocol-stage graph.
+For a runnable example that also asserts the linked relation basis, see
+[`statum-examples/src/toy_demos/17-attested-composition.rs`](../statum-examples/src/toy_demos/17-attested-composition.rs).
 Graph backends mark directly constructible states with a ` [build]` suffix and
 derive cross-machine summary edges from exact `relations()`. Downstream
 consumers can use `machine_relation_groups()`, inbound and outbound relation

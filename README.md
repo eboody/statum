@@ -26,7 +26,9 @@ lifecycle phases with `#[state]`, durable context with `#[machine]`, legal
 moves with `#[transition]`, and typed rehydration from existing data with
 `#[validators]`.
 
-It is opinionated on purpose: explicit transitions, state-specific data, and compile-time method gating. If that is the shape of your problem, the API stays small and the safety payoff is high.
+It is opinionated on purpose: explicit transitions, state-specific data, and
+compile-time method gating. If that is the shape of your problem, the API stays
+small and the safety payoff is high.
 
 ## Install
 
@@ -34,7 +36,7 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 
 ```toml
 [dependencies]
-statum = "0.6.7"
+statum = "0.6.9"
 ```
 
 ## 60-Second Example
@@ -79,6 +81,13 @@ fn main() {
 
 Example: [statum-examples/src/toy_demos/example_01_setup.rs](statum-examples/src/toy_demos/example_01_setup.rs)
 
+## Start Here
+
+- Want the idea quickly: read [What The Compiler Enforces](#what-the-compiler-enforces)
+- Want the flagship feature: jump to [Typed Rehydration](#typed-rehydration)
+- Want graphs and CLI tooling: read [Machine Introspection And Exact Relations](#machine-introspection-and-exact-relations)
+- Want a full app-shaped example: go to [Showcases](#showcases) or [docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md)
+
 ## What The Compiler Enforces
 
 The syntax example above is small. The point is not the syntax. The point is
@@ -94,8 +103,8 @@ enums, optional fields, and comments:
   in that state.
 
 This is the point of Statum: only legal, understood states become first-class
-values. Raw rows and event projections stay raw until `#[validators]` proves
-they can become typed machines.
+values. Raw rows and projections are not trusted as typed states until
+`#[validators]` proves them.
 
 If you add derives, place them below `#[state]` and `#[machine]`:
 
@@ -129,76 +138,36 @@ That avoids the common `missing fields marker and state_data` error.
 Roughly, Statum generates:
 
 - Marker types for each state variant, such as `Off` and `On`.
-- A machine type parameterized by the current state, with hidden `marker` and `state_data` fields.
+- A machine type parameterized by the current state, with hidden `marker` and
+  `state_data` fields.
 - Builders for new machines, such as `LightSwitch::<Off>::builder()`.
-- A machine-scoped enum like `task_machine::SomeState` for matching reconstructed machines.
-  `task_machine::State` remains an alias for compatibility.
-- A machine-scoped `task_machine::Fields` struct for batch rebuilds where each row needs different machine context.
+- A machine-scoped enum like `task_machine::SomeState` for matching
+  reconstructed machines. `task_machine::State` remains as a compatibility
+  alias.
+- A machine-scoped `task_machine::Fields` struct for batch rebuilds where each
+  row needs different machine context.
 - A machine-scoped batch rehydration trait like `task_machine::IntoMachinesExt`.
 
-This is the whole model. The rest of the crate is about making those four pieces ergonomic.
+This is the whole model. The rest of the crate is about making those four
+pieces ergonomic.
 
-> Typed rehydration is the unusual part: if you already have rows, events, or persisted workflow data, `#[validators]` can rebuild them into typed machines. Full example below.
+> Typed rehydration is the unusual part: if you already have rows, events, or
+> persisted workflow data, `#[validators]` can rebuild them into typed
+> machines. Full example below.
 
 If you are evaluating Statum from the outside, start with
-[docs/start-here.md](docs/start-here.md). For a guided app-shaped walkthrough
-that starts minimal and adds features one by one, see
-[docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md). For the
-flagship persistence story, see
+[docs/start-here.md](docs/start-here.md). For a guided app-shaped walkthrough,
+see [docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md). For
+the flagship persistence story, see
 [docs/case-study-event-log-rebuild.md](docs/case-study-event-log-rebuild.md).
-
-## Machine Introspection
-
-Statum can also emit typed machine introspection directly from the machine
-definition itself. Use it when downstream tooling needs the machine structure
-without rebuilding a parallel graph table by hand: CLI explainers, generated
-docs, graph exports, branch-strip views, test assertions about exact legal
-transitions, and replay or debug tooling.
-
-The generated graph is derived from macro-expanded, cfg-pruned
-`#[transition]` method signatures. Supported return shapes are direct
-`Machine<NextState>` values plus canonical wrapper paths around those machine
-types: `::core::option::Option<...>`, `::core::result::Result<..., E>`, and
-`::statum::Branch<..., ...>`. Unsupported custom decision enums, wrapper
-aliases, and differently-qualified machine paths are rejected instead of
-exported as best-effort graph metadata. Whole-item `#[cfg]` gates are
-supported, but nested `#[cfg]` or `#[cfg_attr]` on `#[state]` variants,
-variant payload fields, or `#[machine]` fields are rejected because they would
-otherwise drift the generated metadata from the active build.
-
-See [docs/introspection.md](docs/introspection.md) for the full guide and
-[statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)
-for a runnable example.
-
-If you want a ready-made renderer for that graph surface, the workspace also
-ships [statum-graph](statum-graph/README.md), which exports machine-local
-topology and Mermaid output directly from `MachineIntrospection::GRAPH`.
-
-Statum also supports exact cross-machine transition provenance. Direct
-single-target transitions get generated `*_and_attest()` companions returning
-`statum::Attested<Machine<NextState>, Via>`. On the consumer side, annotate one
-machine parameter with `#[via(...)]`, and Statum generates binders like
-`.from_capture(...).start_shipping()` while exporting that dependency into the
-linked `CodebaseDoc` and inspector relation details.
-
-For source-local labels and descriptions, use `#[present(...)]` on the machine,
-state variants, and transition methods. If you also want typed metadata in the
-generated `machine::PRESENTATION` constant, declare
-`#[presentation_types(machine = ..., state = ..., transition = ...)]` on the
-machine and add `metadata = ...` to each annotated item in the typed
-categories. Manual `MachinePresentation` overlays still remain first-class when
-the generated sugar is not the right fit.
-
-For fuller documentation that should show up in rustdoc and the exact
-inspector detail pane, use ordinary outer rustdoc comments (`///`) on the
-machine, state variants, transition methods, and `#[validators]` impls. Statum
-keeps that longer-form text separate from `#[present(description = ...)]`: the
-presentation description stays concise UI copy, while the linked codebase
-surface exports rustdoc as `docs` for the inspector and `codebase.json`.
 
 ## Typed Rehydration
 
-`#[validators]` is the feature that turns stored data back into typed machines. Each `is_*` method checks whether the persisted value belongs to a state, returns `()` or state-specific data, and Statum builds the right typed output:
+This example shows how raw database rows become typed workflow states.
+
+`#[validators]` is the feature that turns stored data back into typed machines.
+Each `is_*` method checks whether the persisted value belongs to a state,
+returns `()` or state-specific data, and Statum builds the right typed output:
 
 ```rust
 use statum::{machine, state, validators};
@@ -287,31 +256,64 @@ fn main() -> statum::Result<()> {
 
 Key details:
 
-- Validator methods run against your persisted type and return either `statum::Result<T>` for simple yes/no membership or `statum::Validation<T>` when a failed match should carry a stable reason key and optional message into rebuild reports.
-- Machine fields are available by name inside validator methods through generated bindings, so `client` and `name` are usable without boilerplate parameter plumbing. Persisted-row fields still live on `self`.
-
-> Note
-> Generated machine-field bindings are rewritten in normal validator expressions, but not inside nested macro token trees such as `format!` or `println!`. If you need to use a machine field there, bind it to a local first, then pass the local into the macro.
-
-- Unit states return `statum::Result<()>` or `statum::Validation<()>`; data-bearing states return `statum::Result<StateData>` or `statum::Validation<StateData>`.
-- `.build_report()` and `.build_reports()` keep the same rebuild semantics as `.build()`, but they also record validator attempts in order. Diagnostic validators populate `RebuildAttempt.reason_key` and `RebuildAttempt.message`.
-- `.build()` returns the generated wrapper enum, which you can match as `task_machine::SomeState`.
-  `task_machine::State` is kept as an alias so older code still compiles.
+- Validator methods return either `statum::Result<T>` for simple membership or
+  `statum::Validation<T>` when a failed match should carry a stable diagnostic
+  reason into rebuild reports.
+- Machine fields are available by name inside validator methods through
+  generated bindings, so `client` and `name` are usable without boilerplate
+  parameter plumbing. Persisted-row fields still live on `self`.
+- Unit states return `statum::Result<()>` or `statum::Validation<()>`;
+  data-bearing states return `statum::Result<StateData>` or
+  `statum::Validation<StateData>`.
+- `.build()` returns the generated wrapper enum, which you can match as
+  `task_machine::SomeState`. `task_machine::State` remains as an alias.
+- `.build_report()` and `.build_reports()` preserve the same rebuild semantics
+  while also recording validator attempts in order.
 - If any validator is `async`, the generated builder becomes `async`.
-- Use `.into_machines_by(|row| task_machine::Fields { ... })` when batch reconstruction needs different machine fields per row.
-- For append-only event logs, project events into validator rows first. `statum::projection::reduce_one` and `reduce_grouped` are the small helper layer for that.
-- If no validator matches, `.build()` and `.build_report().into_result()` both return `statum::Error::InvalidState`.
+- Use `.into_machines_by(|row| task_machine::Fields { ... })` when batch
+  reconstruction needs different machine fields per row.
+- For append-only event logs, project events into validator rows first.
+  `statum::projection::reduce_one` and `reduce_grouped` are the small helper
+  layer for that.
+- If no validator matches, `.build()` returns `statum::Error::InvalidState`.
 
 Examples: [statum-examples/src/toy_demos/09-persistent-data.rs](statum-examples/src/toy_demos/09-persistent-data.rs), [statum-examples/src/toy_demos/10-persistent-data-vecs.rs](statum-examples/src/toy_demos/10-persistent-data-vecs.rs), [statum-examples/src/toy_demos/14-batch-machine-fields.rs](statum-examples/src/toy_demos/14-batch-machine-fields.rs), [statum-examples/src/showcases/sqlite_event_log_rebuild.rs](statum-examples/src/showcases/sqlite_event_log_rebuild.rs)
 
 More detail: [docs/persistence-and-validators.md](docs/persistence-and-validators.md)
+
+## Machine Introspection And Exact Relations
+
+Statum can also emit typed machine introspection directly from the machine
+definition itself. That graph comes from macro-expanded, cfg-pruned
+`#[transition]` signatures, so downstream tooling can render exact transition
+sites and legal targets without maintaining a parallel graph table by hand.
+
+See [docs/introspection.md](docs/introspection.md) for the full guide,
+supported wrapper shapes, and exactness limits. Runnable examples:
+[statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)
+and
+[statum-examples/src/toy_demos/17-attested-composition.rs](statum-examples/src/toy_demos/17-attested-composition.rs).
+
+If you want ready-made graph renderers, the workspace also ships
+[statum-graph](statum-graph/README.md). If you want a linked-build codebase
+graph and inspector TUI, see
+[cargo-statum-graph](cargo-statum-graph/README.md).
+
+Statum also supports exact cross-machine transition provenance. Direct
+single-target transitions get generated `*_and_attest()` companions returning
+`statum::Attested<Machine<NextState>, Via>`. On the consumer side, annotate one
+machine parameter with `#[via(...)]`, and Statum generates binders like
+`.from_capture(...).start_shipping()` while exporting that dependency into the
+linked relation metadata and inspector detail. This improves exact relation
+graphs; it does not infer a workflow or protocol-stage graph for you.
 
 ## Core Rules
 
 `#[state]`
 
 - Apply it to an enum.
-- Variants must be unit variants, single-field tuple variants, or named-field variants.
+- Variants must be unit variants, single-field tuple variants, or named-field
+  variants.
 - Generics on the state enum are not supported.
 
 `#[machine]`
@@ -319,19 +321,20 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
 - Apply it to a struct.
 - The first generic parameter must match the `#[state]` enum name.
 - Additional type and const generics are supported after the state generic.
-- Extra machine lifetime generics are effectively unavailable because Rust
-  requires lifetimes before type parameters, and Statum reserves the first
-  generic slot for the state family.
 - Put `#[machine]` above `#[derive(...)]`.
 
 `#[transition]`
 
 - Apply it to `impl Machine<State>` blocks that define legal transitions.
 - Transition methods must take `self` or `mut self`.
-- Return `Machine<NextState>` directly, or wrap it in canonical `::core::result::Result`, `::core::option::Option`, or `::statum::Branch` when the transition is conditional.
+- Return `Machine<NextState>` directly, or wrap it in canonical `Result`,
+  `Option`, or `statum::Branch` when the transition is conditional.
 - Use `transition_with(data)` when the target state carries data.
-- Direct single-target transitions also get generated `*_and_attest()` companions.
-- To require exact child-transition provenance in another transition, annotate one machine parameter with `#[via(...)]`; Statum then generates `from_*` binders such as `.from_capture(...).start_shipping()`.
+- Direct single-target transitions also get generated `*_and_attest()`
+  companions.
+- To require exact child-transition provenance in another transition, annotate
+  one machine parameter with `#[via(...)]`; Statum then generates `from_*`
+  binders such as `.from_capture(...).start_shipping()`.
 
 `#[validators]`
 
@@ -342,7 +345,8 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
   data-bearing states.
 - Prefer `into_machine()` for single-item reconstruction.
 - For collections that share machine fields, call `.into_machines()`.
-- For collections where machine fields vary per item, call `.into_machines_by(|row| machine::Fields { ... })`.
+- For collections where machine fields vary per item, call
+  `.into_machines_by(|row| machine::Fields { ... })`.
 - From other modules, import `machine::IntoMachinesExt as _` first.
 
 ## When To Use Statum
@@ -368,15 +372,18 @@ More design guidance: [docs/typestate-builder-design-playbook.md](docs/typestate
 
 **`missing fields marker and state_data`**
 
-Your derives expanded before `#[machine]`. Put `#[machine]` above `#[derive(...)]`.
+Your derives expanded before `#[machine]`. Put `#[machine]` above
+`#[derive(...)]`.
 
 **Transition helpers in the wrong place**
 
-Keep non-transition helpers in normal `impl` blocks. `#[transition]` is for protocol edges, not general utility methods.
+Keep non-transition helpers in normal `impl` blocks. `#[transition]` is for
+protocol edges, not general utility methods.
 
 **State shape errors**
 
-`#[state]` accepts unit variants, single-field tuple variants, and named-field variants.
+`#[state]` accepts unit variants, single-field tuple variants, and named-field
+variants.
 
 ## Showcases
 
@@ -390,11 +397,18 @@ cargo run -p statum-examples --bin tokio-sqlite-job-runner
 cargo run -p statum-examples --bin tokio-websocket-session
 ```
 
-- `axum-sqlite-review` demonstrates `#[validators]` rebuilding typed machines from database rows before each HTTP transition.
-- `clap-sqlite-deploy-pipeline` demonstrates repeated CLI invocations, SQLite-backed typed rehydration, and explicit apply/failure/rollback phases.
-- `sqlite-event-log-rebuild` demonstrates append-only event storage, projection-based typed rehydration, and batch `.into_machines()` reconstruction.
-- `tokio-sqlite-job-runner` demonstrates retries, leases, async side effects, and typed rehydration in a background worker loop.
-- `tokio-websocket-session` demonstrates protocol-safe frame handling, phase-gated behavior, and a session lifecycle that is not persistence-driven.
+- `axum-sqlite-review` demonstrates `#[validators]` rebuilding typed machines
+  from database rows before each HTTP transition.
+- `clap-sqlite-deploy-pipeline` demonstrates repeated CLI invocations,
+  SQLite-backed typed rehydration, and explicit apply/failure/rollback phases.
+- `sqlite-event-log-rebuild` demonstrates append-only event storage,
+  projection-based typed rehydration, and batch `.into_machines()`
+  reconstruction.
+- `tokio-sqlite-job-runner` demonstrates retries, leases, async side effects,
+  and typed rehydration in a background worker loop.
+- `tokio-websocket-session` demonstrates protocol-safe frame handling,
+  phase-gated behavior, and a session lifecycle that is not
+  persistence-driven.
 
 Start with the guided review tutorial if you want one example explained in
 order:
@@ -412,27 +426,23 @@ Start with [docs/agents/README.md](docs/agents/README.md).
 
 If you are starting from an architecture memo or protocol guide rather than
 from code, use the prompts under `docs/agents/prompts/`. If you use Codex
-locally, an explicit `statum-skill` works well as a deeper layer on top
-of the conservative templates in this repo.
+locally, an explicit `statum-skill` works well as a deeper layer on top of the
+conservative templates in this repo.
 
 ## Learn More
 
 - Toy demos: [statum-examples/src/toy_demos/](statum-examples/src/toy_demos/)
 - Showcase apps: [statum-examples/src/showcases/](statum-examples/src/showcases/)
-- Crate docs: [statum](https://docs.rs/statum), [statum-core](https://docs.rs/statum-core), [statum-macros](https://docs.rs/statum-macros)
-- Review showcase binary: [statum-examples/src/bin/axum-sqlite-review.rs](statum-examples/src/bin/axum-sqlite-review.rs)
-- Deploy pipeline binary: [statum-examples/src/bin/clap-sqlite-deploy-pipeline.rs](statum-examples/src/bin/clap-sqlite-deploy-pipeline.rs)
-- Event log binary: [statum-examples/src/bin/sqlite-event-log-rebuild.rs](statum-examples/src/bin/sqlite-event-log-rebuild.rs)
-- Job runner binary: [statum-examples/src/bin/tokio-sqlite-job-runner.rs](statum-examples/src/bin/tokio-sqlite-job-runner.rs)
-- Session binary: [statum-examples/src/bin/tokio-websocket-session.rs](statum-examples/src/bin/tokio-websocket-session.rs)
-- Coding-agent kit: [docs/agents/README.md](docs/agents/README.md)
 - Start here: [docs/start-here.md](docs/start-here.md)
 - Guided review tutorial: [docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md)
 - Event-log case study: [docs/case-study-event-log-rebuild.md](docs/case-study-event-log-rebuild.md)
 - Typed rehydration and validators: [docs/persistence-and-validators.md](docs/persistence-and-validators.md)
+- Machine introspection and exact relations: [docs/introspection.md](docs/introspection.md)
 - Patterns and advanced usage: [docs/patterns.md](docs/patterns.md)
 - Typestate builder design playbook: [docs/typestate-builder-design-playbook.md](docs/typestate-builder-design-playbook.md)
-- API docs: [docs.rs/statum](https://docs.rs/statum)
+- Coding-agent kit: [docs/agents/README.md](docs/agents/README.md)
+- Crate docs: [statum](https://docs.rs/statum), [statum-core](https://docs.rs/statum-core), [statum-macros](https://docs.rs/statum-macros)
+- Graph tooling: [statum-graph](statum-graph/README.md), [cargo-statum-graph](cargo-statum-graph/README.md)
 
 ## Stability
 

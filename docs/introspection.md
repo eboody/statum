@@ -171,7 +171,7 @@ impl FulfillmentMachine<ReadyToShip> {
     fn start_shipping(
         self,
         #[via(crate::payment_machine::via::Capture)]
-        payment: PaymentMachine<Captured>,
+        payment: crate::PaymentMachine<crate::Captured>,
     ) -> FulfillmentMachine<Shipping> {
         let _ = payment;
         self.transition()
@@ -188,6 +188,9 @@ let shipping = FulfillmentMachine::<ReadyToShip>::builder()
     .start_shipping();
 ```
 
+Runnable version:
+[statum-examples/src/toy_demos/17-attested-composition.rs](../statum-examples/src/toy_demos/17-attested-composition.rs)
+
 In that example:
 
 - `capture()` still means only “move to `Captured`”
@@ -198,11 +201,20 @@ In that example:
 - `.from_capture(...)` is generated from the `#[via(...)]` declaration and
   forwards into the one authored `start_shipping(...)` method
 
+If you also want the plain machine parameter to contribute a direct-type exact
+relation, write that machine parameter with an explicit `crate::`, `self::`,
+`super::`, or absolute path instead of a bare type name.
+
 The linked codebase surface exports those declarations as exact
 transition-parameter relations with producer machine, producer source state,
 producer transition, and target child state detail. That lets the inspector say
 not only “this transition takes `PaymentMachine<Captured>`,” but also “it can
 depend on `PaymentMachine<Authorized>::capture` specifically.”
+
+The machine graph is still just the machine's own states and transitions.
+`#[via(...)]` enriches the linked codebase relation graph and inspector detail;
+it does not create new machine states or infer a whole workflow/protocol-stage
+graph by itself.
 
 In v1, most callers should stay on the generated `*_and_attest()` and
 `.from_*()` surfaces rather than naming the raw `Via` marker type directly.
@@ -339,5 +351,7 @@ lane for now.
 
 ## Example
 
-Runnable example:
-[statum-examples/src/toy_demos/16-machine-introspection.rs](../statum-examples/src/toy_demos/16-machine-introspection.rs)
+Runnable examples:
+
+- [statum-examples/src/toy_demos/16-machine-introspection.rs](../statum-examples/src/toy_demos/16-machine-introspection.rs)
+- [statum-examples/src/toy_demos/17-attested-composition.rs](../statum-examples/src/toy_demos/17-attested-composition.rs)

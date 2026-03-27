@@ -29,3 +29,5 @@ pub mod example_14_batch_machine_fields;
 pub mod example_15_transition_map;
 #[path = "16-machine-introspection.rs"]
 pub mod example_16_machine_introspection;
+#[path = "17-attested-composition.rs"]
+pub mod example_17_attested_composition;

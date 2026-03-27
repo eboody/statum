@@ -419,6 +419,9 @@ Once this progression clicks, the other features are easier to place:
   rebuild many rows when each one needs different machine fields
 - [15-transition-map.rs](../statum-examples/src/toy_demos/15-transition-map.rs):
   declare legal transition edges up front
+- [17-attested-composition.rs](../statum-examples/src/toy_demos/17-attested-composition.rs):
+  carry exact child-transition provenance into a parent transition and inspect
+  the resulting relation in the linked codebase graph
 - [sqlite_event_log_rebuild.rs](../statum-examples/src/showcases/sqlite_event_log_rebuild.rs):
   append-only events projected back into typed machine states
 
@@ -426,3 +429,8 @@ If you want the full app version of this tutorial, read
 [axum_sqlite_review.rs](../statum-examples/src/showcases/axum_sqlite_review.rs)
 after this doc. It uses the same core idea, just with HTTP and SQLite around
 it.
+
+If the next question is “how does this show up in the graph and inspector
+tools?”, read [introspection.md](introspection.md) next. That guide covers the
+exact machine graph, the linked codebase relation graph, and the attested
+composition surface.

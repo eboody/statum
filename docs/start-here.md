@@ -65,6 +65,9 @@ It shows:
 
 Use the focused docs rather than reading everything:
 
+- [Machine introspection and exact relation graphs](introspection.md) if you
+  care about graph export, inspector detail, or exact cross-machine
+  relationships such as `*_and_attest()` plus `#[via(...)]`
 - [Typed rehydration and validators](persistence-and-validators.md)
 - [Patterns and guidance](patterns.md)
 - [Migration guide](migration.md) if you are upgrading an older Statum codebase

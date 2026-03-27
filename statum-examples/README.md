@@ -21,9 +21,10 @@ cargo run -p statum-examples --bin tokio-websocket-session
 ## Contents
 
 - Toy demos:
-  - `example_01_setup.rs` through `16-machine-introspection.rs`
+  - `example_01_setup.rs` through `17-attested-composition.rs`
   - best when you are learning the macros or one helper at a time
   - includes an introspection example that shows exact branch alternatives and runtime transition recording
+  - includes an attested-composition example that shows `*_and_attest()`, `#[via(...)]`, generated `.from_*()` binders, and the resulting exact linked relation metadata
 - Showcases:
   - `axum-sqlite-review`: HTTP + SQLite + typed rehydration
   - `clap-sqlite-deploy-pipeline`: multi-invocation CLI workflow
