@@ -11,6 +11,14 @@ use statum::{
 };
 use statum_graph::{codebase::render, CodebaseDoc};
 
+fn broken_row_type_name() -> &'static str {
+    "broken::BrokenRow"
+}
+
+fn workflow_db_row_type_name() -> &'static str {
+    "workflow::DbRow"
+}
+
 mod task {
     use statum::{machine, state, transition, validators, Error};
 
@@ -531,6 +539,7 @@ fn malformed_inventory_rejects_missing_validator_machine() {
         },
         source_module_path: "broken",
         source_type_display: "BrokenRow",
+        resolved_source_type_name: broken_row_type_name,
         docs: None,
         target_states: &["Draft"],
     }];
@@ -576,6 +585,7 @@ fn malformed_inventory_rejects_missing_validator_target_state() {
         },
         source_module_path: "workflow",
         source_type_display: "DbRow",
+        resolved_source_type_name: workflow_db_row_type_name,
         docs: None,
         target_states: &["Missing"],
     }];
@@ -621,6 +631,7 @@ fn malformed_inventory_rejects_empty_validator_target_set() {
         },
         source_module_path: "workflow",
         source_type_display: "DbRow",
+        resolved_source_type_name: workflow_db_row_type_name,
         docs: None,
         target_states: &[],
     }];
@@ -666,6 +677,7 @@ fn malformed_inventory_rejects_duplicate_validator_target_state() {
         },
         source_module_path: "workflow",
         source_type_display: "DbRow",
+        resolved_source_type_name: workflow_db_row_type_name,
         docs: None,
         target_states: &["Draft", "Draft"],
     }];
@@ -712,6 +724,7 @@ fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
             },
             source_module_path: "workflow",
             source_type_display: "DbRow",
+            resolved_source_type_name: workflow_db_row_type_name,
             docs: None,
             target_states: &["Draft"],
         },
@@ -722,6 +735,7 @@ fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
             },
             source_module_path: "workflow",
             source_type_display: "DbRow",
+            resolved_source_type_name: workflow_db_row_type_name,
             docs: None,
             target_states: &["Draft"],
         },

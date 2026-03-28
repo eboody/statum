@@ -7,8 +7,9 @@ It builds a temporary runner internally, links the selected crate, and writes
 the combined static codebase graph as Mermaid, DOT, PlantUML, and JSON,
 including declared validator-entry nodes from compiled `#[validators]` impls.
 It can also launch an inspector TUI over that same linked compiled
-`CodebaseDoc` surface, with a separate heuristic lane for broader
-source-scanned machine coupling hints.
+`CodebaseDoc` surface, with declared workspace journeys above the exact graph
+and a separate heuristic lane for broader source-scanned machine coupling
+hints.
 
 ## Install
 
@@ -61,9 +62,16 @@ That launches the inspector TUI for the selected workspace. The current
 surface shows:
 
 - workspace overview with machine count and disconnected groups
+- optional workspace `Journeys` section driven by declared `statum::journeys!`
+  narratives
 - machine view with states, transitions, validator entries, and summary edges
+  that default to `Summary` when a machine has visible relationships
+- journey view with ordered entry-to-outcome cards and exact, declared,
+  heuristic, or missing segment coverage
 - relation pane with inbound and outbound exact relations plus optional
   heuristic machine-to-machine coupling hints
+- explicit empty-state guidance when the selected state or transition has no
+  direct relations but the machine does
 - search plus exact relation-kind filters and current relation-basis filters
   for direct-type and declared-reference relations
 - heuristic evidence filters for type-surface and body matches
@@ -72,13 +80,18 @@ surface shows:
   `#[present(description = ...)]` text and source rustdoc (`///`) when
   available. For `#[via(...)]` relations, the detail pane also shows the
   attested route, producer machine, producer source state, and producer
-  transition.
+  transition. Journey detail also shows bridge types, machine-ref targets,
+  and exact, declared, heuristic, or missing segment coverage.
+
+If declared journeys exist, the inspector opens on `Journeys` first. If none
+exist, it keeps the current machine-first behavior.
 
 `inspect` requires an interactive terminal on stdin and stdout.
 
 Keybindings:
 
 - `tab` / `shift-tab`: move focus between panes
+- `w`: toggle the workspace list between `Machines` and `Journeys`
 - `h` / `l`: switch machine tabs or toggle relation direction
 - `j` / `k`: move within the focused list
 - `/`: enter search mode
@@ -97,6 +110,16 @@ Exact lane:
 - is where `#[via(...)]` relations appear with exact producer-route detail
 - fails closed on malformed exact relation inventories instead of writing a
   partial graph bundle or inspector view
+
+Declared journeys:
+
+- are inspector-only in v1
+- are registered through `statum::journeys!`
+- sit above the exact graph instead of changing it
+- can reference machines, states, validator entry surfaces, and declared
+  bridge types
+- classify each segment as exact, declared bridge, heuristic cover, or missing
+- do not change Mermaid, DOT, PlantUML, JSON, or `CodebaseDoc`
 
 Heuristic lane:
 

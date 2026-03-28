@@ -74,6 +74,13 @@ fn test_invalid_machine_ref_usage() {
 }
 
 #[test]
+fn test_invalid_journeys_usage() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/invalid_journeys_bridge_entry.rs");
+    t.compile_fail("tests/ui/invalid_journeys_adjacent_bridges.rs");
+}
+
+#[test]
 fn test_invalid_transition_usage() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_transition_no_methods.rs");
@@ -175,4 +182,5 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
     t.pass("tests/ui/valid_machine_ref.rs");
+    t.pass("tests/ui/valid_journeys.rs");
 }

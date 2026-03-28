@@ -419,6 +419,10 @@ pub struct CodebaseValidatorEntry {
     pub source_module_path: &'static str,
     /// Human-facing source syntax for the persisted impl self type as written.
     pub source_type_display: &'static str,
+    /// Compiler-resolved source type identity for this validator impl.
+    #[doc(hidden)]
+    #[serde(skip_serializing)]
+    pub resolved_source_type_name: &'static str,
     /// Optional longer-form source documentation from outer rustdoc comments.
     pub docs: Option<&'static str>,
     /// Stable target-state indices in machine state order.
@@ -2127,6 +2131,7 @@ fn resolve_validator_entries(
             index: machine.validator_entries.len(),
             source_module_path: entry.source_module_path,
             source_type_display: entry.source_type_display,
+            resolved_source_type_name: (entry.resolved_source_type_name)(),
             docs: entry.docs,
             target_states,
         });

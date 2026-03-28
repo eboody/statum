@@ -1,0 +1,6 @@
+error: Error: `entry` cannot be `bridge!(...)`.
+       Fix: start a journey from `machine!(...)`, `state!(...)`, or `validator!(...)`.
+  --> tests/ui/invalid_journeys_bridge_entry.rs:22:13
+   |
+22 |     journey broken {
+   |             ^^^^^^

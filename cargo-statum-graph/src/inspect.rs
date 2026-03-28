@@ -23,14 +23,19 @@ use crate::heuristics::{
     HeuristicRelation, HeuristicRelationCount, HeuristicRelationDetail, HeuristicRelationSource,
     HeuristicStatusKind,
 };
+use crate::journeys::{
+    JourneyNodeReference, JourneyNodeRole, JourneyOverlay, JourneySegmentKind, ResolvedJourney,
+    ResolvedJourneyNode, ResolvedJourneySegment, visible_journey_counts,
+};
 
 pub fn run(
     doc: CodebaseDoc,
     heuristic: HeuristicOverlay,
+    journeys: JourneyOverlay,
     workspace_label: String,
 ) -> io::Result<()> {
     let mut terminal = setup_terminal()?;
-    let mut app = InspectorApp::new(doc, heuristic, workspace_label);
+    let mut app = InspectorApp::new(doc, heuristic, journeys, workspace_label);
 
     let result = (|| -> io::Result<()> {
         loop {
@@ -67,33 +72,48 @@ fn restore_terminal(terminal: &mut InspectorTerminal) -> io::Result<()> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Focus {
-    Machines,
-    MachineView,
-    Relations,
+    Workspace,
+    MainView,
+    BottomView,
 }
 
 impl Focus {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Machines => "machines",
-            Self::MachineView => "machine",
-            Self::Relations => "relations",
-        }
-    }
-
     fn next(self) -> Self {
         match self {
-            Self::Machines => Self::MachineView,
-            Self::MachineView => Self::Relations,
-            Self::Relations => Self::Machines,
+            Self::Workspace => Self::MainView,
+            Self::MainView => Self::BottomView,
+            Self::BottomView => Self::Workspace,
         }
     }
 
     fn previous(self) -> Self {
         match self {
-            Self::Machines => Self::Relations,
-            Self::MachineView => Self::Machines,
-            Self::Relations => Self::MachineView,
+            Self::Workspace => Self::BottomView,
+            Self::MainView => Self::Workspace,
+            Self::BottomView => Self::MainView,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceSection {
+    Machines,
+    Journeys,
+}
+
+impl WorkspaceSection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Machines => "Machines",
+            Self::Journeys => "Journeys",
+        }
+    }
+
+    fn next(self, has_journeys: bool) -> Self {
+        match (self, has_journeys) {
+            (_, false) => Self::Machines,
+            (Self::Machines, true) => Self::Journeys,
+            (Self::Journeys, true) => Self::Machines,
         }
     }
 }
@@ -347,6 +367,16 @@ enum MachineItem {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JourneyNodeItem {
+    Node(usize),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JourneySegmentItem {
+    Segment(usize),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RelationItem {
     Exact(usize),
     Heuristic(usize),
@@ -365,8 +395,11 @@ enum RelationDetailSelection<'a> {
 struct InspectorApp {
     doc: CodebaseDoc,
     heuristic: HeuristicOverlay,
+    journeys: JourneyOverlay,
     workspace_label: String,
+    workspace_section: WorkspaceSection,
     selected_machine: usize,
+    selected_journey: usize,
     input_mode: InputMode,
     search_query: String,
     filters: ExactFilters,
@@ -375,32 +408,170 @@ struct InspectorApp {
     focus: Focus,
     machine_section: MachineSection,
     machine_item_index: usize,
+    journey_node_index: usize,
     relation_direction: RelationDirection,
     relation_index: usize,
     should_quit: bool,
 }
 
 impl InspectorApp {
-    fn new(doc: CodebaseDoc, heuristic: HeuristicOverlay, workspace_label: String) -> Self {
-        Self {
+    fn new(
+        doc: CodebaseDoc,
+        heuristic: HeuristicOverlay,
+        journeys: JourneyOverlay,
+        workspace_label: String,
+    ) -> Self {
+        let workspace_section = if journeys.is_empty() {
+            WorkspaceSection::Machines
+        } else {
+            WorkspaceSection::Journeys
+        };
+        let mut app = Self {
             doc,
             heuristic,
+            journeys,
             workspace_label,
+            workspace_section,
             selected_machine: 0,
+            selected_journey: 0,
             input_mode: InputMode::Normal,
             search_query: String::new(),
             filters: ExactFilters::default(),
             heuristic_filters: HeuristicFilters::default(),
             lane_mode: LaneMode::Exact,
-            focus: Focus::Machines,
+            focus: Focus::Workspace,
             machine_section: MachineSection::States,
             machine_item_index: 0,
+            journey_node_index: 0,
             relation_direction: RelationDirection::Outbound,
             relation_index: 0,
             should_quit: false,
+        };
+        app.clamp_indices();
+        if app.workspace_section == WorkspaceSection::Machines {
+            if let Some(machine) = app.current_machine() {
+                app.machine_section = app.preferred_machine_section(machine.index);
+            }
+        }
+        app
+    }
+
+    fn focus_label(&self) -> &'static str {
+        match (self.workspace_section, self.focus) {
+            (WorkspaceSection::Machines, Focus::Workspace) => "machines",
+            (WorkspaceSection::Machines, Focus::MainView) => "machine",
+            (WorkspaceSection::Machines, Focus::BottomView) => "relations",
+            (WorkspaceSection::Journeys, Focus::Workspace) => "journeys",
+            (WorkspaceSection::Journeys, Focus::MainView) => "journey",
+            (WorkspaceSection::Journeys, Focus::BottomView) => "segments",
         }
     }
 
+    fn shows_journey_heuristics(&self) -> bool {
+        self.lane_mode.shows_heuristic()
+    }
+
+    fn current_journey(&self) -> Option<&ResolvedJourney> {
+        let visible = self.visible_journey_indices();
+        let journey_index = visible
+            .iter()
+            .find(|journey_index| **journey_index == self.selected_journey)
+            .copied()
+            .or_else(|| visible.first().copied())?;
+        self.journeys.journey(journey_index)
+    }
+
+    fn visible_journey_indices(&self) -> Vec<usize> {
+        let query = self.normalized_query();
+        self.journeys
+            .journeys()
+            .iter()
+            .filter(|journey| self.journey_matches_query(journey, query.as_deref()))
+            .map(|journey| journey.index)
+            .collect()
+    }
+
+    fn select_journey(&mut self, journey_index: usize) {
+        self.selected_journey = journey_index;
+        self.journey_node_index = 0;
+        self.relation_index = 0;
+    }
+
+    fn journey_node_items(&self) -> Vec<JourneyNodeItem> {
+        let Some(journey) = self.current_journey() else {
+            return Vec::new();
+        };
+        journey
+            .nodes
+            .iter()
+            .filter(|node| self.journey_node_matches_query(journey, node, self.normalized_query().as_deref()))
+            .map(|node| JourneyNodeItem::Node(node.index))
+            .collect()
+    }
+
+    fn journey_segment_items(&self) -> Vec<JourneySegmentItem> {
+        let Some(journey) = self.current_journey() else {
+            return Vec::new();
+        };
+        journey
+            .segments
+            .iter()
+            .filter(|segment| {
+                self.journey_segment_matches_query(journey, segment, self.normalized_query().as_deref())
+            })
+            .map(|segment| JourneySegmentItem::Segment(segment.index))
+            .collect()
+    }
+
+    fn selected_journey_node(&self) -> Option<&ResolvedJourneyNode> {
+        let item = self.journey_node_items().get(self.journey_node_index).copied()?;
+        let JourneyNodeItem::Node(index) = item;
+        self.current_journey()?.nodes.get(index)
+    }
+
+    fn selected_journey_segment(&self) -> Option<&ResolvedJourneySegment> {
+        let item = self.journey_segment_items().get(self.relation_index).copied()?;
+        let JourneySegmentItem::Segment(index) = item;
+        self.current_journey()?.segments.get(index)
+    }
+
+    fn select_machine(&mut self, machine_index: usize) {
+        self.selected_machine = machine_index;
+        self.machine_section = self.preferred_machine_section(machine_index);
+        self.machine_item_index = 0;
+        self.relation_index = 0;
+    }
+
+    fn current_machine(&self) -> Option<&CodebaseMachine> {
+        let visible_machines = self.visible_machine_indices();
+        let machine_index = visible_machines
+            .iter()
+            .find(|machine_index| **machine_index == self.selected_machine)
+            .copied()
+            .or_else(|| visible_machines.first().copied())?;
+        self.doc.machine(machine_index)
+    }
+
+    fn visible_machine_indices(&self) -> Vec<usize> {
+        let query = self.normalized_query();
+        self.doc
+            .machines()
+            .iter()
+            .filter(|machine| self.machine_matches_query(machine, query.as_deref()))
+            .map(|machine| machine.index)
+            .collect()
+    }
+
+    fn preferred_machine_section(&self, machine_index: usize) -> MachineSection {
+        if self.machine_visible_summary_counts(machine_index) != (0, 0) {
+            MachineSection::Summary
+        } else {
+            MachineSection::States
+        }
+    }
+}
+
+impl InspectorApp {
     fn handle_key(&mut self, key: KeyEvent) {
         if self.input_mode == InputMode::Search {
             self.handle_search_key(key);
@@ -432,7 +603,23 @@ impl InspectorApp {
             KeyCode::Char('7') => self
                 .heuristic_filters
                 .toggle_evidence_kind(HeuristicEvidenceKind::Body),
-            KeyCode::Char('m') => self.lane_mode = self.lane_mode.next(),
+            KeyCode::Char('m') => {
+                self.lane_mode = self.lane_mode.next();
+                if self.workspace_section == WorkspaceSection::Machines {
+                    if let Some(machine) = self.current_machine() {
+                        self.machine_section = self.preferred_machine_section(machine.index);
+                        self.machine_item_index = 0;
+                        self.relation_index = 0;
+                    }
+                }
+            }
+            KeyCode::Char('w') => {
+                self.workspace_section =
+                    self.workspace_section.next(!self.journeys.is_empty());
+                self.machine_item_index = 0;
+                self.journey_node_index = 0;
+                self.relation_index = 0;
+            }
             KeyCode::Tab => self.focus = self.focus.next(),
             KeyCode::BackTab => self.focus = self.focus.previous(),
             KeyCode::Left | KeyCode::Char('h') => self.move_left(),
@@ -464,41 +651,79 @@ impl InspectorApp {
 
     fn move_left(&mut self) {
         match self.focus {
-            Focus::Machines => self.focus = self.focus.previous(),
-            Focus::MachineView => self.machine_section = self.machine_section.previous(),
-            Focus::Relations => self.relation_direction = self.relation_direction.toggle(),
+            Focus::Workspace => self.focus = self.focus.previous(),
+            Focus::MainView => {
+                if self.workspace_section == WorkspaceSection::Machines {
+                    self.machine_section = self.machine_section.previous();
+                }
+            }
+            Focus::BottomView => {
+                if self.workspace_section == WorkspaceSection::Machines {
+                    self.relation_direction = self.relation_direction.toggle();
+                }
+            }
         }
     }
 
     fn move_right(&mut self) {
         match self.focus {
-            Focus::Machines => self.focus = self.focus.next(),
-            Focus::MachineView => self.machine_section = self.machine_section.next(),
-            Focus::Relations => self.relation_direction = self.relation_direction.toggle(),
+            Focus::Workspace => self.focus = self.focus.next(),
+            Focus::MainView => {
+                if self.workspace_section == WorkspaceSection::Machines {
+                    self.machine_section = self.machine_section.next();
+                }
+            }
+            Focus::BottomView => {
+                if self.workspace_section == WorkspaceSection::Machines {
+                    self.relation_direction = self.relation_direction.toggle();
+                }
+            }
         }
     }
 
     fn move_up(&mut self) {
         match self.focus {
-            Focus::Machines => {
-                let visible = self.visible_machine_indices();
-                let Some(current_position) = visible
-                    .iter()
-                    .position(|machine_index| *machine_index == self.selected_machine)
-                else {
-                    if let Some(&first) = visible.first() {
-                        self.selected_machine = first;
+            Focus::Workspace => match self.workspace_section {
+                WorkspaceSection::Machines => {
+                    let visible = self.visible_machine_indices();
+                    let Some(current_position) = visible
+                        .iter()
+                        .position(|machine_index| *machine_index == self.selected_machine)
+                    else {
+                        if let Some(&first) = visible.first() {
+                            self.select_machine(first);
+                        }
+                        return;
+                    };
+                    if current_position > 0 {
+                        self.select_machine(visible[current_position - 1]);
                     }
-                    return;
-                };
-                if current_position > 0 {
-                    self.selected_machine = visible[current_position - 1];
+                }
+                WorkspaceSection::Journeys => {
+                    let visible = self.visible_journey_indices();
+                    let Some(current_position) = visible
+                        .iter()
+                        .position(|journey_index| *journey_index == self.selected_journey)
+                    else {
+                        if let Some(&first) = visible.first() {
+                            self.select_journey(first);
+                        }
+                        return;
+                    };
+                    if current_position > 0 {
+                        self.select_journey(visible[current_position - 1]);
+                    }
                 }
             }
-            Focus::MachineView => {
-                self.machine_item_index = self.machine_item_index.saturating_sub(1);
+            Focus::MainView => match self.workspace_section {
+                WorkspaceSection::Machines => {
+                    self.machine_item_index = self.machine_item_index.saturating_sub(1);
+                }
+                WorkspaceSection::Journeys => {
+                    self.journey_node_index = self.journey_node_index.saturating_sub(1);
+                }
             }
-            Focus::Relations => {
+            Focus::BottomView => {
                 self.relation_index = self.relation_index.saturating_sub(1);
             }
         }
@@ -506,68 +731,149 @@ impl InspectorApp {
 
     fn move_down(&mut self) {
         match self.focus {
-            Focus::Machines => {
-                let visible = self.visible_machine_indices();
-                let Some(current_position) = visible
-                    .iter()
-                    .position(|machine_index| *machine_index == self.selected_machine)
-                else {
-                    if let Some(&first) = visible.first() {
-                        self.selected_machine = first;
+            Focus::Workspace => match self.workspace_section {
+                WorkspaceSection::Machines => {
+                    let visible = self.visible_machine_indices();
+                    let Some(current_position) = visible
+                        .iter()
+                        .position(|machine_index| *machine_index == self.selected_machine)
+                    else {
+                        if let Some(&first) = visible.first() {
+                            self.select_machine(first);
+                        }
+                        return;
+                    };
+                    if let Some(&next) = visible.get(current_position + 1) {
+                        self.select_machine(next);
                     }
-                    return;
-                };
-                if let Some(&next) = visible.get(current_position + 1) {
-                    self.selected_machine = next;
+                }
+                WorkspaceSection::Journeys => {
+                    let visible = self.visible_journey_indices();
+                    let Some(current_position) = visible
+                        .iter()
+                        .position(|journey_index| *journey_index == self.selected_journey)
+                    else {
+                        if let Some(&first) = visible.first() {
+                            self.select_journey(first);
+                        }
+                        return;
+                    };
+                    if let Some(&next) = visible.get(current_position + 1) {
+                        self.select_journey(next);
+                    }
                 }
             }
-            Focus::MachineView => {
-                self.machine_item_index = self.machine_item_index.saturating_add(1);
+            Focus::MainView => match self.workspace_section {
+                WorkspaceSection::Machines => {
+                    self.machine_item_index = self.machine_item_index.saturating_add(1);
+                }
+                WorkspaceSection::Journeys => {
+                    self.journey_node_index = self.journey_node_index.saturating_add(1);
+                }
             }
-            Focus::Relations => {
+            Focus::BottomView => {
                 self.relation_index = self.relation_index.saturating_add(1);
             }
         }
     }
 
     fn clamp_indices(&mut self) {
-        let visible_machines = self.visible_machine_indices();
-        if visible_machines.is_empty() {
-            self.selected_machine = 0;
-            self.machine_item_index = 0;
-            self.relation_index = 0;
-            return;
-        }
+        match self.workspace_section {
+            WorkspaceSection::Machines => {
+                let visible_machines = self.visible_machine_indices();
+                if visible_machines.is_empty() {
+                    self.selected_machine = 0;
+                    self.machine_item_index = 0;
+                    self.relation_index = 0;
+                    return;
+                }
 
-        if !visible_machines.contains(&self.selected_machine) {
-            self.selected_machine = visible_machines[0];
+                if !visible_machines.contains(&self.selected_machine) {
+                    self.select_machine(visible_machines[0]);
+                }
+                self.machine_item_index = self
+                    .machine_item_index
+                    .min(self.machine_items().len().saturating_sub(1));
+                self.relation_index = self
+                    .relation_index
+                    .min(self.relation_items().len().saturating_sub(1));
+            }
+            WorkspaceSection::Journeys => {
+                let visible_journeys = self.visible_journey_indices();
+                if visible_journeys.is_empty() {
+                    self.selected_journey = 0;
+                    self.journey_node_index = 0;
+                    self.relation_index = 0;
+                    return;
+                }
+
+                if !visible_journeys.contains(&self.selected_journey) {
+                    self.select_journey(visible_journeys[0]);
+                }
+                self.journey_node_index = self
+                    .journey_node_index
+                    .min(self.journey_node_items().len().saturating_sub(1));
+                self.relation_index = self
+                    .relation_index
+                    .min(self.journey_segment_items().len().saturating_sub(1));
+            }
         }
-        self.machine_item_index = self
-            .machine_item_index
-            .min(self.machine_items().len().saturating_sub(1));
-        self.relation_index = self
-            .relation_index
-            .min(self.relation_items().len().saturating_sub(1));
     }
 
-    fn current_machine(&self) -> Option<&CodebaseMachine> {
-        let visible_machines = self.visible_machine_indices();
-        let machine_index = visible_machines
-            .iter()
-            .find(|machine_index| **machine_index == self.selected_machine)
-            .copied()
-            .or_else(|| visible_machines.first().copied())?;
-        self.doc.machine(machine_index)
+    fn machine_visible_summary_counts(&self, machine_index: usize) -> (usize, usize) {
+        let exact = if self.lane_mode.shows_exact() {
+            self.filtered_machine_relation_groups()
+                .into_iter()
+                .filter(|group| {
+                    group.from_machine != group.to_machine
+                        && (group.from_machine == machine_index || group.to_machine == machine_index)
+                })
+                .count()
+        } else {
+            0
+        };
+        let heuristic = if self.lane_mode.shows_heuristic() {
+            self.filtered_heuristic_machine_relation_groups()
+                .into_iter()
+                .filter(|group| {
+                    group.from_machine != group.to_machine
+                        && (group.from_machine == machine_index || group.to_machine == machine_index)
+                })
+                .count()
+        } else {
+            0
+        };
+        (exact, heuristic)
     }
 
-    fn visible_machine_indices(&self) -> Vec<usize> {
-        let query = self.normalized_query();
-        self.doc
-            .machines()
-            .iter()
-            .filter(|machine| self.machine_matches_query(machine, query.as_deref()))
-            .map(|machine| machine.index)
-            .collect()
+    fn machine_has_any_heuristic_summary(&self, machine_index: usize) -> bool {
+        self.heuristic
+            .machine_relation_groups()
+            .into_iter()
+            .any(|group| {
+                group.from_machine != group.to_machine
+                    && (group.from_machine == machine_index || group.to_machine == machine_index)
+            })
+    }
+
+    fn machine_section_label(&self, machine: &CodebaseMachine, section: MachineSection) -> String {
+        match section {
+            MachineSection::States => format!("States ({})", machine.states.len()),
+            MachineSection::Transitions => {
+                format!("Transitions ({})", machine.transitions.len())
+            }
+            MachineSection::Validators => {
+                format!("Validators ({})", machine.validator_entries.len())
+            }
+            MachineSection::Summary => {
+                let (exact, heuristic) = self.machine_visible_summary_counts(machine.index);
+                match self.lane_mode {
+                    LaneMode::Exact => format!("Summary ({exact})"),
+                    LaneMode::Heuristic => format!("Summary ({heuristic})"),
+                    LaneMode::Mixed => format!("Summary ({exact}e/{heuristic}h)"),
+                }
+            }
+        }
     }
 
     fn machine_items(&self) -> Vec<MachineItem> {
@@ -650,6 +956,79 @@ impl InspectorApp {
                 )
             }
         }
+    }
+
+    fn journey_node_label(&self, journey: &ResolvedJourney, node: &ResolvedJourneyNode) -> String {
+        let role = match node.role {
+            JourneyNodeRole::Entry => "entry",
+            JourneyNodeRole::Step => "step",
+            JourneyNodeRole::Outcome => "outcome",
+        };
+        format!("[{role}] {}", self.journey_node_subject_label(journey, node))
+    }
+
+    fn journey_node_subject_label(
+        &self,
+        _journey: &ResolvedJourney,
+        node: &ResolvedJourneyNode,
+    ) -> String {
+        match &node.reference {
+            JourneyNodeReference::Machine { machine } => self
+                .doc
+                .machine(*machine)
+                .map(|machine| render_machine_label(machine).to_owned())
+                .unwrap_or_else(|| "<missing machine>".to_owned()),
+            JourneyNodeReference::State { machine, state } => self
+                .doc
+                .machine(*machine)
+                .and_then(|machine| machine.state(*state).map(|state| (machine, state)))
+                .map(|(machine, state)| {
+                    format!(
+                        "{} :: {}",
+                        render_machine_label(machine),
+                        render_state_label(state)
+                    )
+                })
+                .unwrap_or_else(|| "<missing state>".to_owned()),
+            JourneyNodeReference::Validator {
+                machine,
+                entry,
+                source_type_display,
+            } => self
+                .doc
+                .machine(*machine)
+                .and_then(|machine| machine.validator_entry(*entry).map(|entry| (machine, entry)))
+                .map(|(machine, entry)| {
+                    format!(
+                        "{} -> {}",
+                        entry.display_label(),
+                        render_machine_label(machine)
+                    )
+                })
+                .unwrap_or_else(|| format!("{source_type_display}::into_machine()")),
+            JourneyNodeReference::Bridge { type_display, .. } => {
+                format!("bridge {type_display}")
+            }
+        }
+    }
+
+    fn journey_segment_label(
+        &self,
+        journey: &ResolvedJourney,
+        segment: &ResolvedJourneySegment,
+    ) -> String {
+        let kind = segment.visible_kind(self.shows_journey_heuristics()).display_label();
+        let from = journey
+            .nodes
+            .get(segment.from_node)
+            .map(|node| self.journey_node_subject_label(journey, node))
+            .unwrap_or_else(|| "<missing>".to_owned());
+        let to = journey
+            .nodes
+            .get(segment.to_node)
+            .map(|node| self.journey_node_subject_label(journey, node))
+            .unwrap_or_else(|| "<missing>".to_owned());
+        format!("[{kind}] {from} -> {to}")
     }
 
     fn summary_items(&self) -> Vec<SummaryItem> {
@@ -1091,8 +1470,16 @@ impl InspectorApp {
             .split(horizontal[1]);
 
         self.render_workspace(frame, horizontal[0]);
-        self.render_machine_view(frame, center[0]);
-        self.render_relations(frame, center[1]);
+        match self.workspace_section {
+            WorkspaceSection::Machines => {
+                self.render_machine_view(frame, center[0]);
+                self.render_relations(frame, center[1]);
+            }
+            WorkspaceSection::Journeys => {
+                self.render_journey_view(frame, center[0]);
+                self.render_journey_segments(frame, center[1]);
+            }
+        }
         self.render_detail(frame, horizontal[2]);
         self.render_status(frame, vertical[1]);
     }
@@ -1100,19 +1487,39 @@ impl InspectorApp {
     fn render_workspace(&self, frame: &mut Frame, area: Rect) {
         let block = titled_block(
             format!("Workspace {}", self.workspace_label),
-            self.focus == Focus::Machines,
+            self.focus == Focus::Workspace,
         );
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
         let sections = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(6), Constraint::Min(0)])
+            .constraints([Constraint::Length(3), Constraint::Length(6), Constraint::Min(0)])
             .split(inner);
+
+        let tabs = Tabs::new(
+            [WorkspaceSection::Machines, WorkspaceSection::Journeys]
+                .into_iter()
+                .map(|section| Line::from(section.label()))
+                .collect::<Vec<_>>(),
+        )
+        .select(match self.workspace_section {
+            WorkspaceSection::Machines => 0,
+            WorkspaceSection::Journeys => 1,
+        })
+        .highlight_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+        frame.render_widget(tabs, sections[0]);
 
         let visible_machine_indices = self.visible_machine_indices();
         let visible_machine_count = visible_machine_indices.len();
         let total_machine_count = self.doc.machines().len();
+        let visible_journey_indices = self.visible_journey_indices();
+        let visible_journey_count = visible_journey_indices.len();
+        let total_journey_count = self.journeys.journeys().len();
         let visible_exact_summary_edges = self
             .visible_machine_relation_groups()
             .into_iter()
@@ -1129,18 +1536,24 @@ impl InspectorApp {
             "<none>".to_owned()
         };
 
-        let mut lines = vec![
-            Line::from(format!(
-                "machines: {visible_machine_count}/{total_machine_count}"
-            )),
-            Line::from(format!("groups: {}", self.disconnected_group_count())),
-        ];
-        if self.lane_mode.shows_exact() {
+        let mut lines = match self.workspace_section {
+            WorkspaceSection::Machines => vec![
+                Line::from(format!(
+                    "machines: {visible_machine_count}/{total_machine_count}"
+                )),
+                Line::from(format!("groups: {}", self.disconnected_group_count())),
+            ],
+            WorkspaceSection::Journeys => vec![Line::from(format!(
+                "journeys: {visible_journey_count}/{total_journey_count}"
+            ))],
+        };
+        if self.workspace_section == WorkspaceSection::Machines && self.lane_mode.shows_exact() {
             lines.push(Line::from(format!(
                 "exact summary edges: {visible_exact_summary_edges}"
             )));
         }
-        if self.lane_mode.shows_heuristic() {
+        if self.workspace_section == WorkspaceSection::Machines && self.lane_mode.shows_heuristic()
+        {
             lines.push(Line::from(format!(
                 "heuristic summary edges: {visible_heuristic_summary_edges}"
             )));
@@ -1148,16 +1561,41 @@ impl InspectorApp {
         lines.push(Line::from(format!("search: {search_status}")));
         lines.push(Line::from(format!("lane: {}", self.lane_mode.label())));
         let counts = Paragraph::new(Text::from(lines));
-        frame.render_widget(counts, sections[0]);
+        frame.render_widget(counts, sections[1]);
 
-        let items = visible_machine_indices
-            .iter()
-            .filter_map(|machine_index| self.doc.machine(*machine_index))
-            .map(|machine| ListItem::new(render_machine_label(machine).to_owned()))
-            .collect::<Vec<_>>();
-        let selected = visible_machine_indices
-            .iter()
-            .position(|machine_index| *machine_index == self.selected_machine);
+        let (items, selected) = match self.workspace_section {
+            WorkspaceSection::Machines => (
+                visible_machine_indices
+                    .iter()
+                    .filter_map(|machine_index| self.doc.machine(*machine_index))
+                    .map(|machine| ListItem::new(render_machine_label(machine).to_owned()))
+                    .collect::<Vec<_>>(),
+                visible_machine_indices
+                    .iter()
+                    .position(|machine_index| *machine_index == self.selected_machine),
+            ),
+            WorkspaceSection::Journeys => (
+                visible_journey_indices
+                    .iter()
+                    .filter_map(|journey_index| self.journeys.journey(*journey_index))
+                    .map(|journey| {
+                        let counts =
+                            visible_journey_counts(journey, self.shows_journey_heuristics());
+                        ListItem::new(format!(
+                            "{} [{}e {}d {}h {}m]",
+                            journey.display_label(),
+                            counts.exact,
+                            counts.declared,
+                            counts.heuristic,
+                            counts.missing
+                        ))
+                    })
+                    .collect::<Vec<_>>(),
+                visible_journey_indices
+                    .iter()
+                    .position(|journey_index| *journey_index == self.selected_journey),
+            ),
+        };
         let mut state = ListState::default().with_selected(selected);
         let list = if items.is_empty() {
             List::new(vec![ListItem::new("<no matches>")])
@@ -1166,15 +1604,42 @@ impl InspectorApp {
         }
         .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
         .highlight_symbol("> ");
-        frame.render_stateful_widget(list, sections[1], &mut state);
+        frame.render_stateful_widget(list, sections[2], &mut state);
     }
 
     fn render_machine_view(&self, frame: &mut Frame, area: Rect) {
         let title = self
             .current_machine()
-            .map(|machine| format!("Machine {}", render_machine_label(machine)))
+            .map(|machine| {
+                let (exact, heuristic) = self.machine_visible_summary_counts(machine.index);
+                match self.lane_mode {
+                    LaneMode::Exact if exact > 0 => {
+                        format!(
+                            "Machine {} [{} exact edge{}]",
+                            render_machine_label(machine),
+                            exact,
+                            if exact == 1 { "" } else { "s" }
+                        )
+                    }
+                    LaneMode::Heuristic if heuristic > 0 => {
+                        format!(
+                            "Machine {} [{} heuristic edge{}]",
+                            render_machine_label(machine),
+                            heuristic,
+                            if heuristic == 1 { "" } else { "s" }
+                        )
+                    }
+                    LaneMode::Mixed if exact > 0 || heuristic > 0 => format!(
+                        "Machine {} [{} exact, {} heuristic]",
+                        render_machine_label(machine),
+                        exact,
+                        heuristic
+                    ),
+                    _ => format!("Machine {}", render_machine_label(machine)),
+                }
+            })
             .unwrap_or_else(|| "Machine <no matches>".to_owned());
-        let block = titled_block(title, self.focus == Focus::MachineView);
+        let block = titled_block(title, self.focus == Focus::MainView);
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -1185,7 +1650,11 @@ impl InspectorApp {
         let tabs = Tabs::new(
             MachineSection::ORDER
                 .into_iter()
-                .map(|section| Line::from(section.label()))
+                .map(|section| {
+                    self.current_machine()
+                        .map(|machine| Line::from(self.machine_section_label(machine, section)))
+                        .unwrap_or_else(|| Line::from(section.label()))
+                })
                 .collect::<Vec<_>>(),
         )
         .select(
@@ -1228,7 +1697,7 @@ impl InspectorApp {
         let subject_label = self.relation_subject_label();
         let block = titled_block(
             format!("Relations [{}] {}", self.lane_mode.label(), subject_label),
-            self.focus == Focus::Relations,
+            self.focus == Focus::BottomView,
         );
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -1285,6 +1754,91 @@ impl InspectorApp {
         frame.render_stateful_widget(list, sections[1], &mut state);
     }
 
+    fn render_journey_view(&self, frame: &mut Frame, area: Rect) {
+        let title = self
+            .current_journey()
+            .map(|journey| {
+                let counts = visible_journey_counts(journey, self.shows_journey_heuristics());
+                format!(
+                    "Journey {} [{} exact, {} declared, {} heuristic, {} missing]",
+                    journey.display_label(),
+                    counts.exact,
+                    counts.declared,
+                    counts.heuristic,
+                    counts.missing
+                )
+            })
+            .unwrap_or_else(|| "Journey <no matches>".to_owned());
+        let block = titled_block(title, self.focus == Focus::MainView);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let items = self
+            .current_journey()
+            .map(|journey| {
+                self.journey_node_items()
+                    .iter()
+                    .map(|item| match item {
+                        JourneyNodeItem::Node(index) => journey
+                            .nodes
+                            .get(*index)
+                            .map(|node| ListItem::new(self.journey_node_label(journey, node)))
+                            .unwrap_or_else(|| ListItem::new("<missing journey node>")),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let empty = items.is_empty();
+        let mut state =
+            ListState::default().with_selected((!empty).then_some(self.journey_node_index));
+        let list = if empty {
+            List::new(vec![ListItem::new(self.empty_list_label())])
+        } else {
+            List::new(items)
+        }
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
+        .highlight_symbol("> ");
+        frame.render_stateful_widget(list, inner, &mut state);
+    }
+
+    fn render_journey_segments(&self, frame: &mut Frame, area: Rect) {
+        let title = self
+            .current_journey()
+            .map(|journey| format!("Journey Segments [{}] {}", self.lane_mode.label(), journey.display_label()))
+            .unwrap_or_else(|| "Journey Segments".to_owned());
+        let block = titled_block(title, self.focus == Focus::BottomView);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let items = self
+            .current_journey()
+            .map(|journey| {
+                self.journey_segment_items()
+                    .iter()
+                    .map(|item| match item {
+                        JourneySegmentItem::Segment(index) => journey
+                            .segments
+                            .get(*index)
+                            .map(|segment| {
+                                ListItem::new(self.journey_segment_label(journey, segment))
+                            })
+                            .unwrap_or_else(|| ListItem::new("<missing journey segment>")),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let empty = items.is_empty();
+        let mut state = ListState::default().with_selected((!empty).then_some(self.relation_index));
+        let list = if empty {
+            List::new(vec![ListItem::new(self.empty_list_label())])
+        } else {
+            List::new(items)
+        }
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
+        .highlight_symbol("> ");
+        frame.render_stateful_widget(list, inner, &mut state);
+    }
+
     fn render_detail(&self, frame: &mut Frame, area: Rect) {
         let block = titled_block("Detail", false);
         let inner = block.inner(area);
@@ -1304,29 +1858,33 @@ impl InspectorApp {
         let key_help = if self.input_mode == InputMode::Search {
             "type to search, enter/esc to finish, backspace to delete"
         } else {
-            "tab shift-tab h/l j/k / m q 1 payload 2 field 3 param 4 direct 5 ref 6 sig 7 body 0 clear"
+            "tab shift-tab h/l j/k / w section m lane q 1 payload 2 field 3 param 4 direct 5 ref 6 sig 7 body 0 clear"
         };
         let mut lines = vec![
             Line::from(vec![
                 Span::styled("focus ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::raw(self.focus.label()),
+                Span::raw(self.focus_label()),
                 Span::raw("  "),
                 Span::styled("mode ", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(self.input_mode.label()),
+                Span::raw("  "),
+                Span::styled("section ", Style::default().add_modifier(Modifier::BOLD)),
+                Span::raw(self.workspace_section.label()),
                 Span::raw("  "),
                 Span::styled("lane ", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(self.lane_mode.label()),
             ]),
             Line::from(format!("search {search_status}")),
         ];
-        if self.lane_mode.shows_exact() {
+        if self.workspace_section == WorkspaceSection::Machines && self.lane_mode.shows_exact() {
             lines.push(Line::from(format!(
                 "exact filters kind={} basis={}",
                 self.filters.kind_summary(),
                 self.filters.basis_summary()
             )));
         }
-        if self.lane_mode.shows_heuristic() {
+        if self.workspace_section == WorkspaceSection::Machines && self.lane_mode.shows_heuristic()
+        {
             lines.push(Line::from(format!(
                 "heuristic filters evidence={}",
                 self.heuristic_filters.evidence_summary()
@@ -1336,6 +1894,10 @@ impl InspectorApp {
                 self.heuristic.status().display_label(),
                 self.heuristic.diagnostics().len()
             )));
+        } else if self.workspace_section == WorkspaceSection::Journeys {
+            lines.push(Line::from(
+                "journeys show exact, declared, heuristic, and missing segments per lane",
+            ));
         }
         lines.push(Line::from(key_help));
         let status = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
@@ -1378,15 +1940,33 @@ impl InspectorApp {
 
     fn detail_text(&self) -> Text<'static> {
         match self.focus {
-            Focus::Machines => self
-                .current_machine()
-                .map(|machine| machine_detail_text(machine, &self.doc))
-                .unwrap_or_else(|| Text::from("<no matches>")),
-            Focus::MachineView => self.machine_detail_selection_text(),
-            Focus::Relations => self
-                .selected_relation_detail()
-                .map(relation_detail_selection_text)
-                .unwrap_or_else(|| self.empty_relation_text()),
+            Focus::Workspace => match self.workspace_section {
+                WorkspaceSection::Machines => self
+                    .current_machine()
+                    .map(|machine| machine_detail_text(machine, &self.doc))
+                    .unwrap_or_else(|| Text::from("<no matches>")),
+                WorkspaceSection::Journeys => self
+                    .current_journey()
+                    .map(|journey| journey_detail_text(journey, self.shows_journey_heuristics()))
+                    .unwrap_or_else(|| Text::from("<no matches>")),
+            },
+            Focus::MainView => match self.workspace_section {
+                WorkspaceSection::Machines => self.machine_detail_selection_text(),
+                WorkspaceSection::Journeys => self
+                    .selected_journey_node()
+                    .and_then(|node| self.current_journey().map(|journey| journey_node_detail_text(journey, node, &self.doc)))
+                    .unwrap_or_else(|| self.empty_journey_node_text()),
+            },
+            Focus::BottomView => match self.workspace_section {
+                WorkspaceSection::Machines => self
+                    .selected_relation_detail()
+                    .map(relation_detail_selection_text)
+                    .unwrap_or_else(|| self.empty_relation_text()),
+                WorkspaceSection::Journeys => self
+                    .selected_journey_segment()
+                    .and_then(|segment| self.current_journey().map(|journey| self.journey_segment_detail_text(journey, segment)))
+                    .unwrap_or_else(|| self.empty_journey_segment_text()),
+            },
         }
     }
 
@@ -1448,10 +2028,109 @@ impl InspectorApp {
             && self.lane_mode.shows_heuristic()
             && self.heuristic.status() == HeuristicStatusKind::Unavailable
         {
-            heuristic_status_text(self.heuristic.status(), self.heuristic.diagnostics())
-        } else {
-            Text::from(self.empty_list_label())
+            return heuristic_status_text(self.heuristic.status(), self.heuristic.diagnostics());
         }
+
+        let Some(subject) = self.relation_subject() else {
+            return Text::from(self.empty_list_label());
+        };
+        let machine_index = match subject {
+            RelationSubject::Machine { machine }
+            | RelationSubject::State { machine, .. }
+            | RelationSubject::Transition { machine, .. } => machine,
+        };
+        let Some(machine) = self.doc.machine(machine_index) else {
+            return Text::from(self.empty_list_label());
+        };
+        let (exact_summary_count, heuristic_summary_count) =
+            self.machine_visible_summary_counts(machine_index);
+        let has_any_heuristic_summary = self.machine_has_any_heuristic_summary(machine_index);
+        let lane_label = match self.lane_mode {
+            LaneMode::Exact => "exact",
+            LaneMode::Heuristic => "heuristic",
+            LaneMode::Mixed => "visible",
+        };
+
+        let mut lines = match subject {
+            RelationSubject::State { state, .. } => {
+                let state = machine.state(state).expect("state subject should exist");
+                vec![
+                    Line::from(format!(
+                        "No {lane_label} relations for state {}.",
+                        render_state_label(state)
+                    )),
+                    Line::from("State selections only show relations attached directly to that state."),
+                ]
+            }
+            RelationSubject::Transition { transition, .. } => {
+                let transition = machine
+                    .transition(transition)
+                    .expect("transition subject should exist");
+                vec![
+                    Line::from(format!(
+                        "No {lane_label} relations for transition {}.",
+                        render_transition_label(transition)
+                    )),
+                    Line::from("Transition selections only show relations attached directly to that transition."),
+                ]
+            }
+            RelationSubject::Machine { .. } => {
+                return Text::from(self.empty_list_label());
+            }
+        };
+
+        if exact_summary_count > 0 || heuristic_summary_count > 0 {
+            lines.push(Line::from(format!(
+                "Try Summary to inspect machine-level edges ({} exact, {} heuristic visible).",
+                exact_summary_count, heuristic_summary_count
+            )));
+        }
+        if matches!(subject, RelationSubject::State { .. }) && !machine.transitions.is_empty() {
+            lines.push(Line::from(
+                "Try Transitions to inspect transition-parameter and attested-route edges.",
+            ));
+        }
+        if !self.lane_mode.shows_heuristic() && has_any_heuristic_summary {
+            lines.push(Line::from(
+                "Switch to heuristic or mixed mode with `m` to inspect weaker source-scanned couplings.",
+            ));
+        }
+
+        Text::from(lines)
+    }
+
+    fn empty_journey_node_text(&self) -> Text<'static> {
+        let Some(journey) = self.current_journey() else {
+            return Text::from(self.empty_list_label());
+        };
+        Text::from(vec![
+            Line::from(format!(
+                "No journey nodes are visible for `{}`.",
+                journey.display_label()
+            )),
+            Line::from("Try clearing search filters or selecting a different journey."),
+        ])
+    }
+
+    fn empty_journey_segment_text(&self) -> Text<'static> {
+        let Some(journey) = self.current_journey() else {
+            return Text::from(self.empty_list_label());
+        };
+        Text::from(vec![
+            Line::from(format!(
+                "No journey segments are visible for `{}`.",
+                journey.display_label()
+            )),
+            Line::from("Try clearing search filters or switching lane mode with `m`."),
+        ])
+    }
+
+    fn journey_segment_detail_text(
+        &self,
+        journey: &ResolvedJourney,
+        segment: &ResolvedJourneySegment,
+    ) -> Text<'static> {
+        journey_segment_detail_text(journey, segment, self.shows_journey_heuristics(), &self.doc)
     }
 
     fn query_matches_any<I, S>(query: Option<&str>, candidates: I) -> bool
@@ -1763,6 +2442,119 @@ impl InspectorApp {
 
         Self::query_matches_any(query, candidates)
     }
+
+    fn journey_matches_query(&self, journey: &ResolvedJourney, query: Option<&str>) -> bool {
+        if Self::query_matches_any(
+            query,
+            [
+                journey.full_id.clone(),
+                journey.display_label().to_owned(),
+                journey.docs.unwrap_or_default().to_owned(),
+            ],
+        ) {
+            return true;
+        }
+
+        journey
+            .nodes
+            .iter()
+            .any(|node| self.journey_node_matches_query(journey, node, query))
+            || journey
+                .segments
+                .iter()
+                .any(|segment| self.journey_segment_matches_query(journey, segment, query))
+    }
+
+    fn journey_node_matches_query(
+        &self,
+        journey: &ResolvedJourney,
+        node: &ResolvedJourneyNode,
+        query: Option<&str>,
+    ) -> bool {
+        let mut candidates = vec![
+            node.role.display_label().to_owned(),
+            self.journey_node_subject_label(journey, node),
+        ];
+
+        match &node.reference {
+            JourneyNodeReference::Machine { machine } => {
+                if let Some(machine) = self.doc.machine(*machine) {
+                    candidates.push(render_machine_label(machine).to_owned());
+                    candidates.push(machine.rust_type_path.to_owned());
+                    candidates.push(machine.description.unwrap_or_default().to_owned());
+                    candidates.push(machine.docs.unwrap_or_default().to_owned());
+                }
+            }
+            JourneyNodeReference::State { machine, state } => {
+                if let Some((machine, state)) = self
+                    .doc
+                    .machine(*machine)
+                    .and_then(|machine| machine.state(*state).map(|state| (machine, state)))
+                {
+                    candidates.push(render_machine_label(machine).to_owned());
+                    candidates.push(machine.rust_type_path.to_owned());
+                    candidates.push(render_state_label(state));
+                    candidates.push(state.rust_name.to_owned());
+                    candidates.push(state.description.unwrap_or_default().to_owned());
+                    candidates.push(state.docs.unwrap_or_default().to_owned());
+                }
+            }
+            JourneyNodeReference::Validator {
+                machine,
+                entry,
+                source_type_display,
+            } => {
+                candidates.push((*source_type_display).to_owned());
+                if let Some((machine, entry)) = self
+                    .doc
+                    .machine(*machine)
+                    .and_then(|machine| machine.validator_entry(*entry).map(|entry| (machine, entry)))
+                {
+                    candidates.push(render_machine_label(machine).to_owned());
+                    candidates.push(machine.rust_type_path.to_owned());
+                    candidates.push(entry.display_label().into_owned());
+                    candidates.push(entry.docs.unwrap_or_default().to_owned());
+                }
+            }
+            JourneyNodeReference::Bridge {
+                type_display,
+                resolved_type_name,
+                ..
+            } => {
+                candidates.push((*type_display).to_owned());
+                candidates.push((*resolved_type_name).to_owned());
+            }
+        }
+
+        Self::query_matches_any(query, candidates)
+    }
+
+    fn journey_segment_matches_query(
+        &self,
+        journey: &ResolvedJourney,
+        segment: &ResolvedJourneySegment,
+        query: Option<&str>,
+    ) -> bool {
+        let mut candidates = vec![
+            segment.visible_kind(self.shows_journey_heuristics()).display_label().to_owned(),
+            segment.visible_basis(self.shows_journey_heuristics()).display_label().to_owned(),
+            self.journey_segment_label(journey, segment),
+        ];
+        if let Some(label) = &segment.exact_label {
+            candidates.push(label.clone());
+        }
+        if let Some(label) = &segment.heuristic_label {
+            candidates.push(label.clone());
+        }
+        if let Some(from_node) = journey.nodes.get(segment.from_node) {
+            candidates.push(self.journey_node_subject_label(journey, from_node));
+        }
+        if let Some(to_node) = journey.nodes.get(segment.to_node) {
+            candidates.push(self.journey_node_subject_label(journey, to_node));
+        }
+
+        Self::query_matches_any(query, candidates)
+    }
 }
 
 fn titled_block(title: impl Into<Line<'static>>, focused: bool) -> Block<'static> {
@@ -1876,6 +2668,112 @@ fn machine_detail_text(machine: &CodebaseMachine, doc: &CodebaseDoc) -> Text<'st
     Text::from(lines)
 }
 
+fn journey_detail_text(journey: &ResolvedJourney, shows_heuristic: bool) -> Text<'static> {
+    let counts = visible_journey_counts(journey, shows_heuristic);
+    let mut lines = vec![
+        Line::from(format!("journey: {}", journey.display_label())),
+        Line::from(format!("id: {}", journey.full_id)),
+        Line::from(format!("nodes: {}", journey.nodes.len())),
+        Line::from(format!("segments: {}", journey.segments.len())),
+        Line::from(format!(
+            "coverage: {} exact, {} declared, {} heuristic, {} missing",
+            counts.exact, counts.declared, counts.heuristic, counts.missing
+        )),
+    ];
+    append_description_and_docs(&mut lines, None, journey.docs);
+    Text::from(lines)
+}
+
+fn journey_node_detail_text(
+    journey: &ResolvedJourney,
+    node: &ResolvedJourneyNode,
+    doc: &CodebaseDoc,
+) -> Text<'static> {
+    let mut lines = vec![Line::from(format!("journey role: {}", node.role.display_label()))];
+    match &node.reference {
+        JourneyNodeReference::Machine { machine } => {
+            let machine = doc.machine(*machine).expect("journey machine should exist");
+            lines.push(Line::from(format!(
+                "machine: {}",
+                render_machine_label(machine)
+            )));
+            lines.push(Line::from(format!("path: {}", machine.rust_type_path)));
+            append_description_and_docs(&mut lines, machine.description, machine.docs);
+        }
+        JourneyNodeReference::State { machine, state } => {
+            let machine = doc.machine(*machine).expect("journey state machine should exist");
+            let state = machine.state(*state).expect("journey state should exist");
+            lines.push(Line::from(format!(
+                "machine: {}",
+                render_machine_label(machine)
+            )));
+            lines.push(Line::from(format!("state: {}", render_state_label(state))));
+            append_named_description_and_docs(
+                &mut lines,
+                "machine",
+                machine.description,
+                machine.docs,
+            );
+            append_named_description_and_docs(&mut lines, "state", state.description, state.docs);
+        }
+        JourneyNodeReference::Validator {
+            machine,
+            entry,
+            source_type_display: _,
+        } => {
+            let machine = doc.machine(*machine).expect("journey validator machine should exist");
+            let entry = machine
+                .validator_entry(*entry)
+                .expect("journey validator entry should exist");
+            lines.push(Line::from(format!("validator: {}", entry.display_label())));
+            lines.push(Line::from(format!(
+                "machine: {}",
+                render_machine_label(machine)
+            )));
+            lines.push(Line::from(format!("module: {}", entry.source_module_path)));
+            lines.push(Line::from(format!("target states: {:?}", entry.target_states)));
+            append_named_description_and_docs(
+                &mut lines,
+                "machine",
+                machine.description,
+                machine.docs,
+            );
+            append_named_description_and_docs(&mut lines, "validator", None, entry.docs);
+        }
+        JourneyNodeReference::Bridge {
+            type_display,
+            resolved_type_name,
+            declared_reference_target,
+        } => {
+            lines.push(Line::from(format!("bridge type: {type_display}")));
+            lines.push(Line::from(format!("resolved type: {resolved_type_name}")));
+            match declared_reference_target {
+                Some(target) => {
+                    let machine = doc
+                        .machine(target.machine)
+                        .expect("journey bridge machine should exist");
+                    let state = machine
+                        .state(target.state)
+                        .expect("journey bridge state should exist");
+                    lines.push(Line::from("machine_ref: yes"));
+                    lines.push(Line::from(format!(
+                        "machine_ref target: {} :: {}",
+                        render_machine_label(machine),
+                        render_state_label(state)
+                    )));
+                }
+                None => lines.push(Line::from("machine_ref: no")),
+            }
+        }
+    }
+
+    if let Some(journey_docs) = journey.docs {
+        append_named_description_and_docs(&mut lines, "journey", None, Some(journey_docs));
+    }
+
+    Text::from(lines)
+}
+
 fn state_detail_text(state: &CodebaseState) -> Text<'static> {
     let mut lines = vec![
         Line::from(format!("state: {}", render_state_label(state))),
@@ -1888,6 +2786,79 @@ fn state_detail_text(state: &CodebaseState) -> Text<'static> {
         Line::from(format!("graph root: {}", yes_no(state.is_graph_root))),
     ];
     append_description_and_docs(&mut lines, state.description, state.docs);
+    Text::from(lines)
+}
+
+fn journey_segment_detail_text(
+    journey: &ResolvedJourney,
+    segment: &ResolvedJourneySegment,
+    shows_heuristic: bool,
+    doc: &CodebaseDoc,
+) -> Text<'static> {
+    let from = journey
+        .nodes
+        .get(segment.from_node)
+        .expect("journey segment source node should exist");
+    let to = journey
+        .nodes
+        .get(segment.to_node)
+        .expect("journey segment target node should exist");
+    let mut lines = vec![
+        Line::from(format!(
+            "kind: {}",
+            segment.visible_kind(shows_heuristic).display_label()
+        )),
+        Line::from(format!(
+            "basis: {}",
+            segment.visible_basis(shows_heuristic).display_label()
+        )),
+        Line::from(format!("from: {}", from.role.display_label())),
+        Line::from(format!("to: {}", to.role.display_label())),
+    ];
+
+    if let Some(machine_index) = segment.from_machine {
+        let machine = doc.machine(machine_index).expect("journey source machine");
+        lines.push(Line::from(format!(
+            "source machine: {}",
+            render_machine_label(machine)
+        )));
+    }
+    if let Some(machine_index) = segment.to_machine {
+        let machine = doc.machine(machine_index).expect("journey target machine");
+        lines.push(Line::from(format!(
+            "target machine: {}",
+            render_machine_label(machine)
+        )));
+    }
+    if segment.same_machine {
+        lines.push(Line::from("same machine segment: yes"));
+    }
+    if let Some(label) = &segment.exact_label {
+        lines.push(Line::from(format!(
+            "exact cover: {} ({})",
+            segment.exact_count, label
+        )));
+    }
+    if let Some(label) = &segment.heuristic_label {
+        lines.push(Line::from(format!(
+            "heuristic cover: {} ({})",
+            segment.heuristic_count, label
+        )));
+    }
+    if segment.visible_kind(shows_heuristic) == JourneySegmentKind::Missing
+        && segment.heuristic_count > 0
+    {
+        lines.push(Line::from(
+            "heuristic cover exists, but the current lane hides it; switch lane mode with `m`.",
+        ));
+    }
+    if segment.visible_kind(shows_heuristic) == JourneySegmentKind::DeclaredBridge {
+        lines.push(Line::from(
+            "This segment is declared explicitly as a narrative bridge, not inferred from the exact graph.",
+        ));
+    }
+
+    append_named_description_and_docs(&mut lines, "journey", None, journey.docs);
     Text::from(lines)
 }
 
@@ -2436,6 +3407,24 @@ mod tests {
         HeuristicOverlay::from_parts(HeuristicStatusKind::Available, Vec::new(), Vec::new())
     }
 
+    fn empty_journey_overlay() -> JourneyOverlay {
+        JourneyOverlay::default()
+    }
+
+    fn fixture_journey_overlay(doc: &CodebaseDoc) -> JourneyOverlay {
+        crate::journeys::collect_journey_overlay(doc, &empty_heuristic_overlay())
+            .expect("journey overlay")
+    }
+
+    fn fixture_app(doc: CodebaseDoc, heuristic: HeuristicOverlay) -> InspectorApp {
+        InspectorApp::new(
+            doc,
+            heuristic,
+            empty_journey_overlay(),
+            "/tmp/workspace/Cargo.toml".to_owned(),
+        )
+    }
+
     fn fixture_heuristic_overlay(doc: &CodebaseDoc) -> HeuristicOverlay {
         let workflow = doc
             .machines()
@@ -2506,17 +3495,14 @@ mod tests {
     #[test]
     fn app_renders_workspace_machine_and_relation_views() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(
-            doc,
-            empty_heuristic_overlay(),
-            "/tmp/workspace/Cargo.toml".to_owned(),
-        );
-        app.selected_machine = app
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        let workflow_index = app
             .doc
             .machines()
             .iter()
             .position(|machine| machine.label == Some("Workflow Machine"))
             .expect("workflow machine should exist");
+        app.select_machine(workflow_index);
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("terminal");
 
@@ -2531,37 +3517,127 @@ mod tests {
             .collect::<String>();
 
         assert!(text.contains("machines:"));
-        assert!(text.contains("exact summary edges: 1"));
+        assert!(text.contains("exact summary edges:"));
         assert!(text.contains("Workflow Machine"));
         assert!(text.contains("Task Machine"));
-        assert!(text.contains("Draft [build]"));
-        assert!(text.contains("Relations [exact] for state Draft [build]"));
+        assert!(text.contains("Machine Workflow Machine [1 exact edge]"));
+        assert!(text.contains("Relations [exact] for machine Workflow Machine"));
     }
 
     #[test]
-    fn app_navigation_reaches_relations_and_details() {
+    fn app_defaults_to_journeys_when_declared_journeys_exist() {
         let doc = fixture_doc();
+        let journeys = fixture_journey_overlay(&doc);
+        let app = InspectorApp::new(
+            doc,
+            empty_heuristic_overlay(),
+            journeys,
+            "/tmp/workspace/Cargo.toml".to_owned(),
+        );
+
+        assert_eq!(app.workspace_section, WorkspaceSection::Journeys);
+        assert_eq!(app.focus, Focus::Workspace);
+        assert_eq!(
+            app.current_journey().map(ResolvedJourney::display_label),
+            Some("Workflow Story")
+        );
+    }
+
+    #[test]
+    fn journey_detail_pane_shows_bridge_and_segment_explanations() {
+        let doc = fixture_doc();
+        let journeys = fixture_journey_overlay(&doc);
         let mut app = InspectorApp::new(
             doc,
             empty_heuristic_overlay(),
+            journeys,
             "/tmp/workspace/Cargo.toml".to_owned(),
         );
+
+        app.focus = Focus::MainView;
+        app.journey_node_index = 2;
+        let node_text = text_contents(app.detail_text());
+        assert!(node_text.contains("bridge type:"));
+        assert!(node_text.contains("machine_ref: yes"));
+
+        app.focus = Focus::BottomView;
+        app.relation_index = 1;
+        let segment_text = text_contents(app.detail_text());
+        assert!(segment_text.contains("kind: declared bridge"));
+        assert!(segment_text.contains("basis: declared bridge"));
+        assert!(segment_text.contains("declared explicitly as a narrative bridge"));
+    }
+
+    #[test]
+    fn journey_workspace_detail_respects_lane_visibility() {
+        let journey = ResolvedJourney {
+            index: 0,
+            full_id: "workflow::story".to_owned(),
+            module_path: "workflow",
+            id: "story",
+            label: Some("Story"),
+            docs: None,
+            nodes: Vec::new(),
+            segments: vec![ResolvedJourneySegment {
+                index: 0,
+                from_node: 0,
+                to_node: 0,
+                from_machine: None,
+                to_machine: None,
+                declared_bridge: false,
+                same_machine: false,
+                exact_label: None,
+                exact_count: 0,
+                heuristic_label: Some("heuristic refs: body".to_owned()),
+                heuristic_count: 1,
+            }],
+        };
+
+        let exact_text = text_contents(journey_detail_text(&journey, false));
+        assert!(exact_text.contains("coverage: 0 exact, 0 declared, 0 heuristic, 1 missing"));
+
+        let mixed_text = text_contents(journey_detail_text(&journey, true));
+        assert!(mixed_text.contains("coverage: 0 exact, 0 declared, 1 heuristic, 0 missing"));
+    }
+
+    #[test]
+    fn relation_rich_machines_default_to_summary() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
         let workflow_index = app
             .doc
             .machines()
             .iter()
             .position(|machine| machine.label == Some("Workflow Machine"))
             .expect("workflow machine should exist");
-        app.selected_machine = workflow_index;
+
+        app.select_machine(workflow_index);
+
+        assert_eq!(app.machine_section, MachineSection::Summary);
+        assert_eq!(app.summary_items().len(), 1);
+    }
+
+    #[test]
+    fn app_navigation_reaches_relations_and_details() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        let workflow_index = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.select_machine(workflow_index);
+        app.machine_section = MachineSection::States;
         app.machine_item_index = app
             .machine_items()
             .iter()
             .position(|item| matches!(item, MachineItem::State(1)))
             .expect("in-progress state should exist");
-        app.focus = Focus::Relations;
+        app.focus = Focus::BottomView;
         app.clamp_indices();
 
-        assert_eq!(app.focus, Focus::Relations);
+        assert_eq!(app.focus, Focus::BottomView);
         assert_eq!(app.relation_direction, RelationDirection::Outbound);
         assert_eq!(
             app.relation_subject(),
@@ -2584,11 +3660,7 @@ mod tests {
     #[test]
     fn app_search_filters_visible_machines_and_machine_items() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(
-            doc,
-            empty_heuristic_overlay(),
-            "/tmp/workspace/Cargo.toml".to_owned(),
-        );
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
 
         app.handle_key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
         assert_eq!(app.input_mode, InputMode::Search);
@@ -2621,11 +3693,7 @@ mod tests {
     #[test]
     fn app_handles_search_with_no_matches() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(
-            doc,
-            empty_heuristic_overlay(),
-            "/tmp/workspace/Cargo.toml".to_owned(),
-        );
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
         app.search_query = "missing-machine".to_owned();
         app.clamp_indices();
 
@@ -2650,11 +3718,7 @@ mod tests {
     #[test]
     fn app_search_matches_relation_targets_and_keeps_source_machine_visible() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(
-            doc,
-            empty_heuristic_overlay(),
-            "/tmp/workspace/Cargo.toml".to_owned(),
-        );
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
         app.search_query = "param".to_owned();
         app.clamp_indices();
 
@@ -2670,17 +3734,14 @@ mod tests {
     #[test]
     fn app_relation_filters_trim_summary_and_relation_lists() {
         let doc = fixture_doc();
-        let mut app = InspectorApp::new(
-            doc,
-            empty_heuristic_overlay(),
-            "/tmp/workspace/Cargo.toml".to_owned(),
-        );
-        app.selected_machine = app
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        let workflow_index = app
             .doc
             .machines()
             .iter()
             .position(|machine| machine.label == Some("Workflow Machine"))
             .expect("workflow machine should exist");
+        app.select_machine(workflow_index);
         app.machine_section = MachineSection::Summary;
         app.clamp_indices();
 
@@ -2815,13 +3876,14 @@ mod tests {
     fn app_cycles_lane_modes_and_surfaces_heuristic_relations() {
         let doc = fixture_doc();
         let overlay = fixture_heuristic_overlay(&doc);
-        let mut app = InspectorApp::new(doc, overlay, "/tmp/workspace/Cargo.toml".to_owned());
-        app.selected_machine = app
+        let mut app = fixture_app(doc, overlay);
+        let workflow_index = app
             .doc
             .machines()
             .iter()
             .position(|machine| machine.label == Some("Workflow Machine"))
             .expect("workflow machine should exist");
+        app.select_machine(workflow_index);
         app.machine_section = MachineSection::Transitions;
         app.machine_item_index = 0;
 
@@ -2840,13 +3902,14 @@ mod tests {
     fn mixed_lane_hides_heuristic_relations_covered_by_exact() {
         let doc = fixture_doc();
         let overlay = fixture_heuristic_overlay(&doc);
-        let mut app = InspectorApp::new(doc, overlay, "/tmp/workspace/Cargo.toml".to_owned());
-        app.selected_machine = app
+        let mut app = fixture_app(doc, overlay);
+        let workflow_index = app
             .doc
             .machines()
             .iter()
             .position(|machine| machine.label == Some("Workflow Machine"))
             .expect("workflow machine should exist");
+        app.select_machine(workflow_index);
         app.machine_section = MachineSection::Transitions;
         app.machine_item_index = 0;
         app.lane_mode = LaneMode::Mixed;
@@ -2865,13 +3928,14 @@ mod tests {
     fn heuristic_filters_only_trim_heuristic_lane() {
         let doc = fixture_doc();
         let overlay = fixture_heuristic_overlay(&doc);
-        let mut app = InspectorApp::new(doc, overlay, "/tmp/workspace/Cargo.toml".to_owned());
-        app.selected_machine = app
+        let mut app = fixture_app(doc, overlay);
+        let workflow_index = app
             .doc
             .machines()
             .iter()
             .position(|machine| machine.label == Some("Workflow Machine"))
             .expect("workflow machine should exist");
+        app.select_machine(workflow_index);
         app.machine_section = MachineSection::Transitions;
         app.machine_item_index = 0;
         app.lane_mode = LaneMode::Heuristic;
@@ -2887,20 +3951,70 @@ mod tests {
     fn heuristic_detail_marks_exact_shadowing() {
         let doc = fixture_doc();
         let overlay = fixture_heuristic_overlay(&doc);
-        let mut app = InspectorApp::new(doc, overlay, "/tmp/workspace/Cargo.toml".to_owned());
-        app.selected_machine = app
+        let mut app = fixture_app(doc, overlay);
+        let workflow_index = app
             .doc
             .machines()
             .iter()
             .position(|machine| machine.label == Some("Workflow Machine"))
             .expect("workflow machine should exist");
+        app.select_machine(workflow_index);
         app.machine_section = MachineSection::Transitions;
         app.machine_item_index = 0;
         app.lane_mode = LaneMode::Heuristic;
-        app.focus = Focus::Relations;
+        app.focus = Focus::BottomView;
 
         let text = text_contents(app.detail_text());
         assert!(text.contains("exact lane already covers this relationship"));
+    }
+
+    #[test]
+    fn empty_state_relations_hint_toward_summary_and_transitions() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        let workflow_index = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.select_machine(workflow_index);
+        app.machine_section = MachineSection::States;
+        app.machine_item_index = app
+            .machine_items()
+            .iter()
+            .position(|item| matches!(item, MachineItem::State(0)))
+            .expect("draft state should exist");
+        app.focus = Focus::BottomView;
+
+        let text = text_contents(app.detail_text());
+        assert!(text.contains("No exact relations for state Draft [build]."));
+        assert!(text.contains("Try Summary to inspect machine-level edges"));
+        assert!(text.contains("Try Transitions to inspect transition-parameter and attested-route edges."));
+    }
+
+    #[test]
+    fn exact_lane_empty_relations_can_point_to_heuristic_mode() {
+        let doc = fixture_doc();
+        let overlay = fixture_heuristic_overlay(&doc);
+        let mut app = fixture_app(doc, overlay);
+        let workflow_index = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.select_machine(workflow_index);
+        app.machine_section = MachineSection::States;
+        app.machine_item_index = app
+            .machine_items()
+            .iter()
+            .position(|item| matches!(item, MachineItem::State(0)))
+            .expect("draft state should exist");
+        app.focus = Focus::BottomView;
+
+        let text = text_contents(app.detail_text());
+        assert!(text.contains("Switch to heuristic or mixed mode with `m`"));
     }
 
     #[test]
@@ -2914,9 +4028,9 @@ mod tests {
             }],
             Vec::new(),
         );
-        let mut app = InspectorApp::new(doc, overlay, "/tmp/workspace/Cargo.toml".to_owned());
+        let mut app = fixture_app(doc, overlay);
         app.lane_mode = LaneMode::Heuristic;
-        app.focus = Focus::Relations;
+        app.focus = Focus::BottomView;
 
         let text = text_contents(app.detail_text());
         assert!(text.contains("heuristics unavailable"));

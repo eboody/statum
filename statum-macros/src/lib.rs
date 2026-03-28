@@ -10,6 +10,7 @@
 //! - [`state`] for declaring legal lifecycle phases
 //! - [`machine`] for declaring the typed machine and durable context
 //! - [`machine_ref`] for declaring one nominal opaque machine reference type
+//! - [`journeys`] for declaring workspace-level inspector narratives
 //! - [`transition`] for validating legal transition impls
 //! - [`validators`] for rebuilding typed machines from persisted data
 
@@ -24,6 +25,7 @@ moddef::moddef!(
     },
     flat (pub(crate)) mod {
         machine_ref,
+        journeys,
         relation,
         presentation,
         state,
@@ -123,6 +125,16 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
     machine_ref::parse_machine_ref(attr, item)
+}
+
+/// Declare workspace-level journeys for the inspector.
+///
+/// `journeys!` records named entry-to-outcome narratives above the exact
+/// machine graph. These declarations are inspector-facing and do not alter
+/// `MachineIntrospection::GRAPH` or `CodebaseDoc`.
+#[proc_macro]
+pub fn journeys(input: TokenStream) -> TokenStream {
+    journeys::parse_journeys(input)
 }
 
 /// Validate and generate legal transitions for one source state.

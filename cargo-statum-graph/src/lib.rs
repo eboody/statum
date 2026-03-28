@@ -13,6 +13,7 @@ use tempfile::TempDir;
 
 mod heuristics;
 mod inspect;
+mod journeys;
 
 pub use heuristics::{
     collect_heuristic_overlay, HeuristicDiagnostic, HeuristicEvidenceKind,
@@ -246,8 +247,37 @@ pub fn run_inspector(
     doc: CodebaseDoc,
     heuristic: HeuristicOverlay,
     workspace_label: String,
-) -> io::Result<()> {
-    inspect::run(doc, heuristic, workspace_label)
+) -> Result<(), InspectError> {
+    let journeys = journeys::collect_journey_overlay(&doc, &heuristic)
+        .map_err(|source| InspectError::JourneyOverlay(source.to_string()))?;
+    inspect::run(doc, heuristic, journeys, workspace_label).map_err(InspectError::Io)
+}
+
+#[derive(Debug)]
+pub enum InspectError {
+    JourneyOverlay(String),
+    Io(io::Error),
+}
+
+impl fmt::Display for InspectError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::JourneyOverlay(message) => write!(
+                formatter,
+                "failed to resolve inspector journeys: {message}"
+            ),
+            Self::Io(source) => write!(formatter, "{source}"),
+        }
+    }
+}
+
+impl std::error::Error for InspectError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::JourneyOverlay(_) => None,
+            Self::Io(source) => Some(source),
+        }
+    }
 }
 
 fn load_metadata(manifest_path: &Path) -> Result<Metadata, Error> {

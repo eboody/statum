@@ -146,6 +146,12 @@ pub fn parse_validators(
     let source_module_path = syn::LitStr::new(module_path, proc_macro2::Span::call_site());
     let source_type_display =
         syn::LitStr::new(&persisted_type_display, proc_macro2::Span::call_site());
+    let linked_validator_source_type_name_ident = linked_validator_source_type_name_ident(
+        &machine_name,
+        module_path,
+        &persisted_type_display,
+        line_number,
+    );
     let docs = match parse_doc_attrs(&item_impl.attrs) {
         Ok(docs) => docs,
         Err(err) => return err.to_compile_error().into(),
@@ -160,6 +166,11 @@ pub fn parse_validators(
         static #linked_validator_targets_ident: &[&str] = &[#(#validator_target_states),*];
 
         #[doc(hidden)]
+        fn #linked_validator_source_type_name_ident() -> &'static str {
+            ::core::any::type_name::<#struct_ident>()
+        }
+
+        #[doc(hidden)]
         #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_VALIDATOR_ENTRIES)]
         #[linkme(crate = statum::__private::linkme)]
         static #linked_validator_registration_ident: statum::__private::LinkedValidatorEntryDescriptor =
@@ -170,6 +181,7 @@ pub fn parse_validators(
                 },
                 source_module_path: #source_module_path,
                 source_type_display: #source_type_display,
+                resolved_source_type_name: #linked_validator_source_type_name_ident,
                 docs: #linked_docs,
                 target_states: #linked_validator_targets_ident,
             };
@@ -310,6 +322,21 @@ fn linked_validator_targets_ident(
     );
     format_ident!(
         "__STATUM_LINKED_VALIDATOR_TARGETS_{:016X}",
+        stable_hash(&key)
+    )
+}
+
+fn linked_validator_source_type_name_ident(
+    machine_name: &str,
+    module_path: &str,
+    persisted_type_display: &str,
+    line_number: usize,
+) -> Ident {
+    let key = format!(
+        "{machine_name}::validator-source-type::{module_path}::{persisted_type_display}::{line_number}"
+    );
+    format_ident!(
+        "__statum_validator_source_type_name_{:016x}",
         stable_hash(&key)
     )
 }

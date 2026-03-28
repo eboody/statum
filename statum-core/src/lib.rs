@@ -21,6 +21,8 @@ pub mod projection;
 #[doc(hidden)]
 pub use introspection::__STATUM_LINKED_MACHINES;
 #[doc(hidden)]
+pub use introspection::__STATUM_LINKED_JOURNEYS;
+#[doc(hidden)]
 pub use introspection::__STATUM_LINKED_REFERENCE_TYPES;
 #[doc(hidden)]
 pub use introspection::__STATUM_LINKED_RELATIONS;
@@ -32,15 +34,17 @@ pub use introspection::__STATUM_LINKED_VIA_ROUTES;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::{
-        Attested, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
-        LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
-        LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
-        LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachinePresentation,
+        Attested, LinkedJourneyDescriptor, LinkedJourneyStepDescriptor, LinkedMachineGraph,
+        LinkedReferenceTypeDescriptor, LinkedRelationBasis, LinkedRelationDescriptor,
+        LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget, LinkedStateDescriptor,
+        LinkedTransitionDescriptor, LinkedTransitionInventory, LinkedValidatorEntryDescriptor,
+        LinkedViaRouteDescriptor, MachinePresentation,
         MachinePresentationDescriptor, MachineReference, MachineReferenceTarget, RebuildAttempt,
         RebuildReport, StateFamily, StateFamilyMember, StatePresentation,
         StaticMachineLinkDescriptor, TransitionPresentation, TransitionPresentationInventory,
-        __STATUM_LINKED_MACHINES, __STATUM_LINKED_REFERENCE_TYPES, __STATUM_LINKED_RELATIONS,
-        __STATUM_LINKED_VALIDATOR_ENTRIES, __STATUM_LINKED_VIA_ROUTES,
+        __STATUM_LINKED_JOURNEYS, __STATUM_LINKED_MACHINES, __STATUM_LINKED_REFERENCE_TYPES,
+        __STATUM_LINKED_RELATIONS, __STATUM_LINKED_VALIDATOR_ENTRIES,
+        __STATUM_LINKED_VIA_ROUTES,
     };
     pub use futures;
     pub use linkme;
@@ -68,14 +72,16 @@ pub mod __private {
 }
 
 pub use introspection::{
-    linked_machines, linked_reference_types, linked_relations, linked_validator_entries,
-    linked_via_routes, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
-    LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
-    LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
-    LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachineDescriptor, MachineGraph,
-    MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
-    MachineTransitionRecorder, RecordedTransition, StateDescriptor, StatePresentation,
-    StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory, TransitionPresentation,
+    linked_journeys, linked_machines, linked_reference_types, linked_relations,
+    linked_validator_entries, linked_via_routes, LinkedJourneyDescriptor,
+    LinkedJourneyStepDescriptor, LinkedMachineGraph, LinkedReferenceTypeDescriptor,
+    LinkedRelationBasis, LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource,
+    LinkedRelationTarget, LinkedStateDescriptor, LinkedTransitionDescriptor,
+    LinkedTransitionInventory, LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor,
+    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
+    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
+    RecordedTransition, StateDescriptor, StatePresentation, StaticMachineLinkDescriptor,
+    TransitionDescriptor, TransitionInventory, TransitionPresentation,
     TransitionPresentationInventory,
 };
 
