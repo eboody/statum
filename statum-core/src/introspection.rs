@@ -607,6 +607,11 @@ pub enum LinkedRelationTarget {
     DirectMachine {
         /// Exact machine path segments resolved from the source type.
         machine_path: &'static [&'static str],
+        /// Compiler-resolved concrete machine type identity. The codebase
+        /// export strips the state generic and uses the remaining machine
+        /// family path as the exact join key, even when the source syntax
+        /// names a public re-export like `flows::task::Flow`.
+        resolved_machine_type_name: fn() -> &'static str,
         /// Target state marker name.
         state: &'static str,
     },
@@ -621,12 +626,21 @@ pub enum LinkedRelationTarget {
         via_module_path: &'static str,
         /// Human-facing attested route name, such as `Capture`.
         route_name: &'static str,
+        /// Compiler-resolved route marker type identity. This is the exact
+        /// join key across producer registrations and consumer declarations,
+        /// even when the consumer names a public re-export path.
+        resolved_route_type_name: fn() -> &'static str,
         /// Stable route id used to join consumer declarations with producer
         /// attested transition metadata.
         route_id: u64,
         /// Exact target machine path segments carried by the attested inner
         /// machine type.
         machine_path: &'static [&'static str],
+        /// Compiler-resolved concrete target machine type identity for the
+        /// attested inner machine. The codebase export strips the state
+        /// generic and uses the remaining machine family path as the exact
+        /// join key.
+        resolved_machine_type_name: fn() -> &'static str,
         /// Target state marker name carried by the attested inner machine type.
         state: &'static str,
     },
@@ -638,13 +652,19 @@ impl PartialEq for LinkedRelationTarget {
             (
                 Self::DirectMachine {
                     machine_path: left_machine_path,
+                    resolved_machine_type_name: left_type_name,
                     state: left_state,
                 },
                 Self::DirectMachine {
                     machine_path: right_machine_path,
+                    resolved_machine_type_name: right_type_name,
                     state: right_state,
                 },
-            ) => left_machine_path == right_machine_path && left_state == right_state,
+            ) => {
+                left_machine_path == right_machine_path
+                    && left_type_name() == right_type_name()
+                    && left_state == right_state
+            }
             (
                 Self::DeclaredReferenceType {
                     resolved_type_name: left_name,
@@ -657,22 +677,28 @@ impl PartialEq for LinkedRelationTarget {
                 Self::AttestedRoute {
                     via_module_path: left_module_path,
                     route_name: left_route_name,
+                    resolved_route_type_name: left_type_name,
                     route_id: left_route_id,
                     machine_path: left_machine_path,
+                    resolved_machine_type_name: left_machine_type_name,
                     state: left_state,
                 },
                 Self::AttestedRoute {
                     via_module_path: right_module_path,
                     route_name: right_route_name,
+                    resolved_route_type_name: right_type_name,
                     route_id: right_route_id,
                     machine_path: right_machine_path,
+                    resolved_machine_type_name: right_machine_type_name,
                     state: right_state,
                 },
             ) => {
                 left_module_path == right_module_path
                     && left_route_name == right_route_name
+                    && left_type_name() == right_type_name()
                     && left_route_id == right_route_id
                     && left_machine_path == right_machine_path
+                    && left_machine_type_name() == right_machine_type_name()
                     && left_state == right_state
             }
             _ => false,
@@ -728,7 +754,7 @@ pub struct LinkedRelationDescriptor {
 }
 
 /// One producer transition that can generate an attested route value.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct LinkedViaRouteDescriptor {
     /// Rust-facing identity of the producer machine family.
     pub machine: MachineDescriptor,
@@ -736,6 +762,9 @@ pub struct LinkedViaRouteDescriptor {
     pub via_module_path: &'static str,
     /// Human-facing route name, such as `Capture`.
     pub route_name: &'static str,
+    /// Compiler-resolved route marker type identity used to join producer
+    /// inventories with consumer `#[via(...)]` declarations.
+    pub resolved_route_type_name: fn() -> &'static str,
     /// Stable route id shared with `LinkedRelationTarget::AttestedRoute`.
     pub route_id: u64,
     /// Rust transition method name on the producer machine.
@@ -746,6 +775,21 @@ pub struct LinkedViaRouteDescriptor {
     pub target_state: &'static str,
 }
 
+impl PartialEq for LinkedViaRouteDescriptor {
+    fn eq(&self, other: &Self) -> bool {
+        self.machine == other.machine
+            && self.via_module_path == other.via_module_path
+            && self.route_name == other.route_name
+            && (self.resolved_route_type_name)() == (other.resolved_route_type_name)()
+            && self.route_id == other.route_id
+            && self.transition == other.transition
+            && self.source_state == other.source_state
+            && self.target_state == other.target_state
+    }
+}
+
+impl Eq for LinkedViaRouteDescriptor {}
+
 /// One declared reference type carried by the linked build inventory.
 #[derive(Clone, Copy, Debug)]
 pub struct LinkedReferenceTypeDescriptor {
@@ -755,6 +799,9 @@ pub struct LinkedReferenceTypeDescriptor {
     pub resolved_type_name: fn() -> &'static str,
     /// Exact machine path segments resolved from the declaration target.
     pub to_machine_path: &'static [&'static str],
+    /// Compiler-resolved concrete machine type identity for the declared
+    /// target machine.
+    pub resolved_target_machine_type_name: fn() -> &'static str,
     /// Target state marker name written in the declaration.
     pub to_state: &'static str,
 }
@@ -764,6 +811,8 @@ impl PartialEq for LinkedReferenceTypeDescriptor {
         self.rust_type_path == other.rust_type_path
             && (self.resolved_type_name)() == (other.resolved_type_name)()
             && self.to_machine_path == other.to_machine_path
+            && (self.resolved_target_machine_type_name)()
+                == (other.resolved_target_machine_type_name)()
             && self.to_state == other.to_state
     }
 }

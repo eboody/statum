@@ -220,6 +220,7 @@ impl<T, Via> Attested<T, Via> {
     }
 
     /// Borrows the attested inner value.
+    #[allow(clippy::should_implement_trait)]
     pub fn as_ref(&self) -> &T {
         &self.inner
     }
@@ -232,7 +233,7 @@ impl<T, Via> Attested<T, Via> {
 
 impl<T, Via> AsRef<T> for Attested<T, Via> {
     fn as_ref(&self) -> &T {
-        self.as_ref()
+        &self.inner
     }
 }
 

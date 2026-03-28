@@ -118,7 +118,15 @@ macro layer. In v1, exact direct-type relations recurse only through canonical
 absolute carrier paths such as `::core::option::Option<...>` and
 `::core::result::Result<..., E>`, and direct machine targets must use explicit
 `crate::`, `self::`, `super::`, or absolute paths rather than imported aliases
-or bare prelude names. `#[machine_ref(...)]` is trait-backed and supports
+or bare prelude names. The linked codebase export resolves transition-parameter
+direct targets, `#[via(...)]` inner machine targets, and `#[machine_ref(...)]`
+declaration targets by compiler-resolved concrete machine type identity, then
+matches that back to the machine family path after stripping the state generic.
+State-payload and machine-field direct targets still rely on the canonical
+linked path surface instead of a separate type-identity helper, so those
+surfaces do not currently promote public machine re-exports into exact
+relations. `#[machine_ref(...)]`
+is trait-backed and supports
 nominal structs and tuple structs only; plain type aliases are rejected.
 Use it when a stable artifact or handoff type should count as an exact
 cross-machine reference without repeating that relationship at every field or
@@ -225,8 +233,11 @@ The authority surface here is still explicit and fail-closed:
   explicit `#[via(...)]` declarations and generated attested-route inventories
 - supported in v1: direct single-target producer transitions and at most one
   `#[via(...)]` parameter per consumer transition
-- producer route names are machine-scoped and must stay unique; duplicate
-  attested route names fail closed in `CodebaseDoc::linked()`
+- attested producer routes join consumers by compiler-resolved route marker
+  type identity, so one route name can legally map to multiple compatible
+  producer transitions when those producers emit distinct route marker types
+- `CodebaseDoc::linked()` groups those compatible producers deterministically
+  and keeps unsupported duplicate producer records fail-closed
 - unsupported cases: contribute no exact attested relation or fail with a macro
   diagnostic rather than exporting guessed provenance
 

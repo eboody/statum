@@ -24,6 +24,10 @@ mod task {
     }
 }
 
+mod task_api {
+    pub use super::task::{Machine as Flow, Running};
+}
+
 mod shadowed {
     pub struct Option<T>(pub T);
 }
@@ -74,11 +78,18 @@ mod opaque {
     #[machine_ref(super::task::Machine<super::task::Running>)]
     pub struct TaskId(u64);
 
+    #[machine_ref(super::task_api::Flow<super::task_api::Running>)]
+    pub struct ReexportedTaskId(u64);
+
     pub struct PlainTaskId(u64);
 
     #[state]
     pub enum State {
-        Draft { child: TaskId, plain: PlainTaskId },
+        Draft {
+            child: TaskId,
+            alias_child: ReexportedTaskId,
+            plain: PlainTaskId,
+        },
         Ready,
         Done,
     }
@@ -86,13 +97,20 @@ mod opaque {
     #[machine]
     pub struct Machine<State> {
         selected: ::core::option::Option<TaskId>,
+        alias_selected: ::core::option::Option<ReexportedTaskId>,
         ignored: ::core::option::Option<PlainTaskId>,
     }
 
     #[transition]
     impl Machine<Draft> {
-        fn attach(self, task: TaskId, ignored: PlainTaskId) -> Machine<Ready> {
+        fn attach(
+            self,
+            task: TaskId,
+            alias_task: ReexportedTaskId,
+            ignored: PlainTaskId,
+        ) -> Machine<Ready> {
             let _ = task.0;
+            let _ = alias_task.0;
             let _ = ignored.0;
             self.transition()
         }
@@ -150,7 +168,7 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
         .all(|state| state.direct_construction_available));
 
     assert_eq!(doc.links().len(), 1);
-    assert_eq!(doc.relations().len(), 6);
+    assert_eq!(doc.relations().len(), 9);
 
     let workflow_transition = workflow
         .transitions
@@ -251,6 +269,47 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
     assert_eq!(opaque_field_relation.target_machine, task.index);
     assert_eq!(opaque_field_relation.target_state, running_state.index);
 
+    let opaque_alias_state_relation = doc
+        .relations()
+        .iter()
+        .find(|relation| {
+            relation.kind == CodebaseRelationKind::StatePayload
+                && relation.basis == CodebaseRelationBasis::DeclaredReferenceType
+                && matches!(
+                    relation.source,
+                    CodebaseRelationSource::StatePayload {
+                        machine,
+                        field_name: Some("alias_child"),
+                        ..
+                    } if machine == opaque.index
+                )
+        })
+        .expect("opaque alias state payload relation");
+    assert_eq!(opaque_alias_state_relation.target_machine, task.index);
+    assert_eq!(opaque_alias_state_relation.target_state, running_state.index);
+    assert!(opaque_alias_state_relation
+        .declared_reference_type
+        .is_some_and(|path| path.ends_with("opaque::ReexportedTaskId")));
+
+    let opaque_alias_field_relation = doc
+        .relations()
+        .iter()
+        .find(|relation| {
+            relation.kind == CodebaseRelationKind::MachineField
+                && relation.basis == CodebaseRelationBasis::DeclaredReferenceType
+                && matches!(
+                    relation.source,
+                    CodebaseRelationSource::MachineField {
+                        machine,
+                        field_name: Some("alias_selected"),
+                        ..
+                    } if machine == opaque.index
+                )
+        })
+        .expect("opaque alias machine field relation");
+    assert_eq!(opaque_alias_field_relation.target_machine, task.index);
+    assert_eq!(opaque_alias_field_relation.target_state, running_state.index);
+
     let opaque_transition = opaque
         .transitions
         .iter()
@@ -275,6 +334,26 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
         .expect("opaque transition relation");
     assert_eq!(opaque_transition_relation.target_machine, task.index);
     assert_eq!(opaque_transition_relation.target_state, running_state.index);
+
+    let opaque_alias_transition_relation = doc
+        .relations()
+        .iter()
+        .find(|relation| {
+            relation.kind == CodebaseRelationKind::TransitionParam
+                && relation.basis == CodebaseRelationBasis::DeclaredReferenceType
+                && matches!(
+                    relation.source,
+                    CodebaseRelationSource::TransitionParam {
+                        machine,
+                        transition,
+                        param_name: Some("alias_task"),
+                        ..
+                    } if machine == opaque.index && transition == opaque_transition.index
+                )
+        })
+        .expect("opaque alias transition relation");
+    assert_eq!(opaque_alias_transition_relation.target_machine, task.index);
+    assert_eq!(opaque_alias_transition_relation.target_state, running_state.index);
 
     let opaque_generic_transition = opaque
         .transitions
@@ -370,7 +449,7 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
         .iter()
         .find(|group| group.from_machine == opaque.index && group.to_machine == task.index)
         .expect("opaque exact group");
-    assert_eq!(opaque_group.relation_indices.len(), 3);
+    assert_eq!(opaque_group.relation_indices.len(), 6);
     assert_eq!(
         opaque_group
             .counts
@@ -378,9 +457,9 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
             .map(|count| count.display_label())
             .collect::<Vec<_>>(),
         vec![
-            "payload [ref]".to_string(),
-            "field [ref]".to_string(),
-            "param [ref]".to_string()
+            "payload [ref] x2".to_string(),
+            "field [ref] x2".to_string(),
+            "param [ref] x2".to_string()
         ]
     );
 
@@ -388,7 +467,7 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
         doc.outbound_relations_for_machine(workflow.index).count(),
         workflow_group.relation_indices.len()
     );
-    assert_eq!(doc.inbound_relations_for_machine(task.index).count(), 6);
+    assert_eq!(doc.inbound_relations_for_machine(task.index).count(), 9);
     assert_eq!(
         doc.outbound_relations_for_state(workflow.index, workflow_in_progress.index)
             .count(),
@@ -397,7 +476,7 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
     assert_eq!(
         doc.inbound_relations_for_state(task.index, task_running.index)
             .count(),
-        6
+        9
     );
     assert_eq!(
         doc.outbound_relations_for_transition(workflow.index, workflow_start.index)

@@ -3,6 +3,10 @@
 This file tracks the remaining inspector work after the exact codebase viewer
 and heuristic overlay shipped.
 
+The next blocker is not replay. The next blocker is exact relationship display
+across real downstreams that now use `#[via(...)]` and `#[machine_ref(...)]`
+surfaces.
+
 ## Current Shipping Surface
 
 Today `cargo statum-graph inspect /path/to/workspace` already provides:
@@ -21,6 +25,15 @@ Today `cargo statum-graph inspect /path/to/workspace` already provides:
 
 The exact lane remains the only authoritative lane. The heuristic lane stays
 useful but non-authoritative and TUI-only.
+
+## Dependency
+
+Before replay work moves back to the front, the exact relationship-display
+milestone in [relationship-display-plan.md](relationship-display-plan.md)
+needs to land fully. The attested-route export blocker is fixed, but real
+downstreams such as Citacell still need more exact relationship promotion on
+their nominal artifact and handoff types before the heuristic lane stops
+carrying important cross-machine couplings.
 
 ## Authority Contract
 
@@ -54,7 +67,28 @@ Runtime lane:
 
 ## Remaining Phases
 
-### Phase 1: Replay MVP
+### Phase 1: Exact Relationship Display
+
+Deliverables:
+
+- align attested-route identity across macros, linked inventories, and
+  `CodebaseDoc`
+- unblock exact relationship rendering for real downstreams using compatible
+  `#[via(...)]` route reuse
+- keep exact graph files, CLI export, and inspector exact lane on one
+  canonical relationship surface
+
+Success criteria:
+
+- exact relationship display works end-to-end on downstreams such as Citacell
+- replay is no longer blocked behind an exact export mismatch
+
+Status:
+
+- in progress
+- see [relationship-display-plan.md](relationship-display-plan.md)
+
+### Phase 2: Replay MVP
 
 Deliverables:
 
@@ -67,7 +101,7 @@ Success criteria:
 
 - exact executed paths are replayable without snapshots
 
-### Phase 2: Snapshot Support
+### Phase 3: Snapshot Support
 
 Deliverables:
 
@@ -80,7 +114,7 @@ Success criteria:
 
 - data changes are inspectable when provided and visibly unavailable when not
 
-### Phase 3: Composition Tree
+### Phase 4: Composition Tree
 
 Deliverables:
 
@@ -92,7 +126,7 @@ Success criteria:
 
 - users can step into and out of sub-machines without losing context
 
-### Phase 4: Adapter Ergonomics And Polish
+### Phase 5: Adapter Ergonomics And Polish
 
 Deliverables:
 
@@ -135,6 +169,8 @@ Adversarial tests:
 
 ## Checklist
 
+- [ ] Land the exact relationship-display milestone from
+      [relationship-display-plan.md](relationship-display-plan.md)
 - [ ] Add replay session model
 - [ ] Add timeline stepping
 - [ ] Add snapshot protocol and generic structural diffing
@@ -154,6 +190,8 @@ The shipped inspector already answers:
 
 This roadmap is complete when the inspector can also answer:
 
+- what exact cross-machine relationships exist in real downstreams that use
+  `#[via(...)]` and `#[machine_ref(...)]`
 - what executed at runtime
 - what data changed
 - where a machine sits in a parent and child runtime tree

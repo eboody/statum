@@ -22,6 +22,8 @@ mod payment {
             self.transition()
         }
     }
+
+    pub use machine::via;
 }
 
 mod fulfillment {
@@ -40,7 +42,7 @@ mod fulfillment {
     impl Machine<ReadyToShip> {
         fn start_shipping(
             self,
-            #[via(crate::payment::machine::via::Capture)] payment: crate::payment::Machine<
+            #[via(crate::payment::via::Capture)] payment: crate::payment::Machine<
                 crate::payment::Captured,
             >,
         ) -> Machine<Shipping> {
@@ -128,12 +130,16 @@ fn linked_codebase_exports_attested_via_relations() {
     assert_eq!(via_relation.target_machine, payment.index);
     assert_eq!(via_relation.target_state, captured.index);
 
-    let attested = via_relation.attested_via.expect("attested route");
-    assert_eq!(attested.machine, payment.index);
-    assert_eq!(attested.state, authorized.index);
-    assert_eq!(attested.transition, payment_capture.index);
-    assert!(attested.via_module_path.ends_with("payment::machine::via"));
+    let attested = via_relation
+        .attested_via
+        .as_ref()
+        .expect("attested route");
+    assert_eq!(attested.producers.len(), 1);
+    assert!(attested.via_module_path.ends_with("payment::via"));
     assert_eq!(attested.route_name, "Capture");
+    assert_eq!(attested.producers[0].machine, payment.index);
+    assert_eq!(attested.producers[0].state, authorized.index);
+    assert_eq!(attested.producers[0].transition, payment_capture.index);
 
     let groups = doc.machine_relation_groups();
     let group = groups
@@ -183,5 +189,10 @@ fn linked_codebase_exports_attested_via_relations() {
             .attested_via_machine
             .map(|machine| machine.rust_type_path),
         Some(payment.rust_type_path)
+    );
+    assert_eq!(detail.attested_via_producers.len(), 1);
+    assert_eq!(
+        detail.attested_via_producers[0].transition.method_name,
+        "capture"
     );
 }

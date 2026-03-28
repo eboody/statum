@@ -95,6 +95,8 @@ Exact lane:
 - consumes the linked compiled `CodebaseDoc` surface directly
 - is the only lane backed by Mermaid, DOT, PlantUML, and JSON export
 - is where `#[via(...)]` relations appear with exact producer-route detail
+- fails closed on malformed exact relation inventories instead of writing a
+  partial graph bundle or inspector view
 
 Heuristic lane:
 

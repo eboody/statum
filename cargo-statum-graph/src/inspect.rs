@@ -352,7 +352,7 @@ enum RelationItem {
     Heuristic(usize),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 enum RelationDetailSelection<'a> {
     Exact(CodebaseRelationDetail<'a>),
     Heuristic {
@@ -1670,7 +1670,7 @@ impl InspectorApp {
                 .unwrap_or_default()
                 .to_owned(),
         ];
-        if let Some(attested_via) = detail.relation.attested_via {
+        if let Some(attested_via) = detail.relation.attested_via.as_ref() {
             candidates.push(attested_via.via_module_path.to_owned());
             candidates.push(attested_via.route_name.to_owned());
         }
@@ -1699,6 +1699,16 @@ impl InspectorApp {
         if let Some(transition) = detail.attested_via_transition {
             candidates.push(render_transition_label(transition).to_owned());
             candidates.push(transition.method_name.to_owned());
+        }
+        for producer in &detail.attested_via_producers {
+            candidates.push(render_machine_label(producer.machine).to_owned());
+            candidates.push(producer.machine.rust_type_path.to_owned());
+            candidates.push(render_state_label(producer.state));
+            candidates.push(producer.state.rust_name.to_owned());
+            candidates.push(render_transition_label(producer.transition).to_owned());
+            candidates.push(producer.transition.method_name.to_owned());
+            candidates.push(producer.transition.description.unwrap_or_default().to_owned());
+            candidates.push(producer.transition.docs.unwrap_or_default().to_owned());
         }
 
         Self::query_matches_any(query, candidates)
@@ -2029,29 +2039,44 @@ fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
     if let Some(reference_type) = detail.relation.declared_reference_type {
         lines.push(Line::from(format!("declared ref type: {reference_type}")));
     }
-    if let Some(attested_via) = detail.relation.attested_via {
+    if let Some(attested_via) = detail.relation.attested_via.as_ref() {
         lines.push(Line::from(format!(
             "attested via: {}::{}",
             attested_via.via_module_path, attested_via.route_name
         )));
     }
-    if let Some(machine) = detail.attested_via_machine {
+    if detail.attested_via_producers.len() == 1 {
+        if let Some(machine) = detail.attested_via_machine {
+            lines.push(Line::from(format!(
+                "producer machine: {}",
+                render_machine_label(machine)
+            )));
+        }
+        if let Some(state) = detail.attested_via_state {
+            lines.push(Line::from(format!(
+                "producer state: {}",
+                render_state_label(state)
+            )));
+        }
+        if let Some(transition) = detail.attested_via_transition {
+            lines.push(Line::from(format!(
+                "producer transition: {}",
+                render_transition_label(transition)
+            )));
+        }
+    } else if !detail.attested_via_producers.is_empty() {
         lines.push(Line::from(format!(
-            "producer machine: {}",
-            render_machine_label(machine)
+            "producer transitions: {}",
+            detail.attested_via_producers.len()
         )));
-    }
-    if let Some(state) = detail.attested_via_state {
-        lines.push(Line::from(format!(
-            "producer state: {}",
-            render_state_label(state)
-        )));
-    }
-    if let Some(transition) = detail.attested_via_transition {
-        lines.push(Line::from(format!(
-            "producer transition: {}",
-            render_transition_label(transition)
-        )));
+        for producer in &detail.attested_via_producers {
+            lines.push(Line::from(format!(
+                "  - {} / {} / {}",
+                render_machine_label(producer.machine),
+                render_state_label(producer.state),
+                render_transition_label(producer.transition)
+            )));
+        }
     }
 
     append_named_description_and_docs(
@@ -2088,29 +2113,53 @@ fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
         detail.target_state.description,
         detail.target_state.docs,
     );
-    if let Some(machine) = detail.attested_via_machine {
-        append_named_description_and_docs(
-            &mut lines,
-            "producer machine",
-            machine.description,
-            machine.docs,
-        );
-    }
-    if let Some(state) = detail.attested_via_state {
-        append_named_description_and_docs(
-            &mut lines,
-            "producer state",
-            state.description,
-            state.docs,
-        );
-    }
-    if let Some(transition) = detail.attested_via_transition {
-        append_named_description_and_docs(
-            &mut lines,
-            "producer transition",
-            transition.description,
-            transition.docs,
-        );
+    if detail.attested_via_producers.len() == 1 {
+        if let Some(machine) = detail.attested_via_machine {
+            append_named_description_and_docs(
+                &mut lines,
+                "producer machine",
+                machine.description,
+                machine.docs,
+            );
+        }
+        if let Some(state) = detail.attested_via_state {
+            append_named_description_and_docs(
+                &mut lines,
+                "producer state",
+                state.description,
+                state.docs,
+            );
+        }
+        if let Some(transition) = detail.attested_via_transition {
+            append_named_description_and_docs(
+                &mut lines,
+                "producer transition",
+                transition.description,
+                transition.docs,
+            );
+        }
+    } else {
+        for (index, producer) in detail.attested_via_producers.iter().enumerate() {
+            let prefix = format!("producer {}", index + 1);
+            append_named_description_and_docs(
+                &mut lines,
+                &format!("{prefix} machine"),
+                producer.machine.description,
+                producer.machine.docs,
+            );
+            append_named_description_and_docs(
+                &mut lines,
+                &format!("{prefix} state"),
+                producer.state.description,
+                producer.state.docs,
+            );
+            append_named_description_and_docs(
+                &mut lines,
+                &format!("{prefix} transition"),
+                producer.transition.description,
+                producer.transition.docs,
+            );
+        }
     }
 
     Text::from(lines)

@@ -25,7 +25,13 @@ v1, exact direct-type relations recurse only through canonical absolute carrier
 paths such as `::core::option::Option<...>` and
 `::core::result::Result<..., E>`, and direct machine targets must use explicit
 `crate::`, `self::`, `super::`, or absolute paths instead of imported aliases
-or bare names.
+or bare names. Transition-parameter direct targets, `#[via(...)]` inner
+targets, and `#[machine_ref(...)]` declarations resolve against the linked
+codebase view through compiler-resolved concrete machine type identity, so
+public machine re-exports remain exact there instead of depending on
+source-path guessing. State-payload and machine-field direct targets still rely
+on the canonical linked path surface, so those surfaces do not currently
+promote public machine re-exports into exact relations.
 
 ## Install
 
@@ -291,7 +297,14 @@ v1, `#[machine_ref(...)]` supports nominal structs and tuple structs only;
 plain type aliases are rejected. Exact direct-type relations recurse only
 through canonical absolute carrier paths such as `::core::option::Option<...>`
 and `::core::result::Result<..., E>`, and direct machine targets must use
-explicit `crate::`, `self::`, `super::`, or absolute paths. Validator-entry
+explicit `crate::`, `self::`, `super::`, or absolute paths. Exact target
+resolution for transition-parameter direct targets, `#[via(...)]` inner
+targets, and `#[machine_ref(...)]` declarations uses compiler-resolved
+concrete machine type identity, so public machine re-exports still join the
+right machine family in `CodebaseDoc`. State-payload and machine-field direct
+targets still rely on the canonical linked path surface, so those surfaces do
+not currently promote public machine re-exports into exact relations.
+Validator-entry
 nodes come only from compiled `#[validators]` impls and represent declared
 rebuild surfaces such as `DbRow::into_machine()`, not runtime match outcomes.
 All exact surfaces fail closed on malformed or ambiguous linked metadata.
@@ -308,6 +321,10 @@ on this exact child transition route.” For example, if one transition takes
 - the parent transition can depend on `PaymentMachine<Authorized>::capture`
 
 This improves exact relation detail without inferring a protocol-stage graph.
+Compatible same-name attested producer routes are grouped deterministically
+when they emit distinct route marker types, and the exact relation detail
+surfaces the matching producer transition list instead of rejecting that shape
+outright.
 For a runnable example that also asserts the linked relation basis, see
 [`statum-examples/src/toy_demos/17-attested-composition.rs`](../statum-examples/src/toy_demos/17-attested-composition.rs).
 Graph backends mark directly constructible states with a ` [build]` suffix and

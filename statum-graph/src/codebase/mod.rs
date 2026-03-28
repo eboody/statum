@@ -248,15 +248,38 @@ impl CodebaseDoc {
             .and_then(|transition| source_machine.transition(transition));
         let target_machine = self.machine(relation.target_machine)?;
         let target_state = target_machine.state(relation.target_state)?;
-        let attested_via_machine = relation
+        let attested_via_producers = relation
             .attested_via
-            .and_then(|route| self.machine(route.machine));
-        let attested_via_state = relation
-            .attested_via
-            .and_then(|route| attested_via_machine.and_then(|machine| machine.state(route.state)));
-        let attested_via_transition = relation.attested_via.and_then(|route| {
-            attested_via_machine.and_then(|machine| machine.transition(route.transition))
-        });
+            .as_ref()
+            .map(|route| {
+                route
+                    .producers
+                    .iter()
+                    .filter_map(|producer| {
+                        let machine = self.machine(producer.machine)?;
+                        let state = machine.state(producer.state)?;
+                        let transition = machine.transition(producer.transition)?;
+                        Some(CodebaseAttestedProducerDetail {
+                            producer,
+                            machine,
+                            state,
+                            transition,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let (attested_via_machine, attested_via_state, attested_via_transition) =
+            if attested_via_producers.len() == 1 {
+                let producer = &attested_via_producers[0];
+                (
+                    Some(producer.machine),
+                    Some(producer.state),
+                    Some(producer.transition),
+                )
+            } else {
+                (None, None, None)
+            };
 
         Some(CodebaseRelationDetail {
             relation,
@@ -268,6 +291,7 @@ impl CodebaseDoc {
             attested_via_machine,
             attested_via_state,
             attested_via_transition,
+            attested_via_producers,
         })
     }
 }
@@ -530,7 +554,7 @@ impl CodebaseRelationSource {
 }
 
 /// One resolved exact relation in the codebase export surface.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CodebaseRelation {
     /// Stable codebase-local relation index.
     pub index: usize,
@@ -578,19 +602,27 @@ impl CodebaseRelation {
     }
 }
 
-/// One resolved producer route attached to a `#[via(...)]` exact relation.
+/// One exact producer transition reachable through an attested route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-pub struct CodebaseAttestedRoute {
+pub struct CodebaseAttestedProducer {
     /// Stable producer machine index.
     pub machine: usize,
     /// Stable producer source-state index.
     pub state: usize,
     /// Stable producer transition index.
     pub transition: usize,
+}
+
+/// One resolved producer route attached to a `#[via(...)]` exact relation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CodebaseAttestedRoute {
     /// Machine-module path that owns the attested route namespace.
     pub via_module_path: &'static str,
     /// Human-facing route name such as `Capture`.
     pub route_name: &'static str,
+    /// Exact producer transitions that can attest this route and still satisfy
+    /// the resolved consumer target state.
+    pub producers: Vec<CodebaseAttestedProducer>,
 }
 
 /// One grouped machine-to-machine view derived from exact relations.
@@ -650,6 +682,18 @@ impl CodebaseRelationCount {
 
 /// One typed resolved view of an exact relation for downstream consumers.
 #[derive(Clone, Copy, Debug)]
+pub struct CodebaseAttestedProducerDetail<'a> {
+    /// The exact producer record itself.
+    pub producer: &'a CodebaseAttestedProducer,
+    /// The resolved producer machine.
+    pub machine: &'a CodebaseMachine,
+    /// The resolved producer source state.
+    pub state: &'a CodebaseState,
+    /// The resolved producer transition.
+    pub transition: &'a CodebaseTransition,
+}
+
+#[derive(Debug)]
 pub struct CodebaseRelationDetail<'a> {
     /// The exact relation record itself.
     pub relation: &'a CodebaseRelation,
@@ -671,8 +715,11 @@ pub struct CodebaseRelationDetail<'a> {
     /// one attested route declaration.
     pub attested_via_state: Option<&'a CodebaseState>,
     /// The resolved producer transition when this exact relation came from one
-    /// attested route declaration.
+    /// attested route declaration and exactly one producer matched.
     pub attested_via_transition: Option<&'a CodebaseTransition>,
+    /// All resolved producer transitions when this exact relation came from an
+    /// attested route declaration.
+    pub attested_via_producers: Vec<CodebaseAttestedProducerDetail<'a>>,
 }
 
 type ResolvedRelationTarget = (usize, usize, Option<&'static str>);
@@ -1306,11 +1353,18 @@ struct ResolvedReferenceTypeTarget {
 }
 
 #[derive(Clone, Copy)]
-struct ResolvedViaRoute {
+struct ResolvedViaProducer {
     machine: usize,
     state: usize,
     transition: usize,
     target_state_name: &'static str,
+}
+
+#[derive(Clone)]
+struct ResolvedViaRoute {
+    via_module_path: &'static str,
+    route_name: &'static str,
+    producers: Vec<ResolvedViaProducer>,
 }
 
 fn resolve_relations(
@@ -1389,14 +1443,15 @@ fn resolve_relations(
         let (resolved_target, attested_via) = match relation.target {
             LinkedRelationTarget::DirectMachine {
                 machine_path,
+                resolved_machine_type_name,
                 state,
             } => (
                 resolve_optional_target_machine(
                     machines,
+                    resolved_machine_type_name(),
                     machine_path,
                     state,
                     &relation_summary(&relation),
-                    true,
                 )?,
                 None,
             ),
@@ -1416,43 +1471,59 @@ fn resolve_relations(
             LinkedRelationTarget::AttestedRoute {
                 via_module_path,
                 route_name,
-                route_id,
+                resolved_route_type_name,
+                route_id: _,
                 machine_path,
+                resolved_machine_type_name,
                 state,
             } => {
                 let relation_label = relation_summary(&relation);
                 let resolved_target = resolve_optional_target_machine(
                     machines,
+                    resolved_machine_type_name(),
                     machine_path,
                     state,
                     &relation_label,
-                    true,
                 )?;
                 let resolved_route = via_routes
-                    .get(&(via_module_path, route_id))
-                    .copied()
+                    .get(resolved_route_type_name())
                     .ok_or_else(|| CodebaseDocError::MissingRelationViaRoute {
                         relation: relation_label.clone(),
                         via_module_path,
                         route_name,
                     })?;
-                if resolved_route.target_state_name != state {
+                let matched_producers = resolved_route
+                    .producers
+                    .iter()
+                    .filter(|producer| producer.target_state_name == state)
+                    .copied()
+                    .collect::<Vec<_>>();
+                if matched_producers.is_empty() {
                     return Err(CodebaseDocError::MismatchedRelationViaTarget {
                         relation: relation_label,
                         via_module_path,
                         route_name,
                         declared_target_state: state,
-                        producer_target_state: resolved_route.target_state_name,
+                        producer_target_state: resolved_route
+                            .producers
+                            .first()
+                            .map(|producer| producer.target_state_name)
+                            .unwrap_or("<missing-producer-target>"),
                     });
                 }
                 (
                     resolved_target,
                     Some(CodebaseAttestedRoute {
-                        machine: resolved_route.machine,
-                        state: resolved_route.state,
-                        transition: resolved_route.transition,
                         via_module_path,
                         route_name,
+                        producers: matched_producers
+                            .into_iter()
+                            .map(|producer| CodebaseAttestedProducer {
+                                machine: producer.machine,
+                                state: producer.state,
+                                transition: producer.transition,
+                            })
+                            .collect(),
                     }),
                 )
             }
@@ -1479,7 +1550,7 @@ fn resolve_relations(
 fn resolve_via_routes(
     machines: &[CodebaseMachine],
     via_routes: &'static [LinkedViaRouteDescriptor],
-) -> Result<HashMap<(&'static str, u64), ResolvedViaRoute>, CodebaseDocError> {
+) -> Result<HashMap<&'static str, ResolvedViaRoute>, CodebaseDocError> {
     let exact_machine_positions = machines
         .iter()
         .map(|machine| (machine.rust_type_path, machine.index))
@@ -1487,12 +1558,6 @@ fn resolve_via_routes(
     let mut resolved = HashMap::with_capacity(via_routes.len());
 
     for route in via_routes {
-        if resolved.contains_key(&(route.via_module_path, route.route_id)) {
-            return Err(CodebaseDocError::DuplicateViaRoute {
-                via_module_path: route.via_module_path,
-                route_name: route.route_name,
-            });
-        }
         let machine_index = resolve_relation_source_machine(
             machines,
             &exact_machine_positions,
@@ -1517,15 +1582,52 @@ fn resolve_via_routes(
                 transition: route.transition,
                 relation: format!("{}::{}", route.via_module_path, route.route_name),
             })?;
-        resolved.insert(
-            (route.via_module_path, route.route_id),
-            ResolvedViaRoute {
-                machine: machine.index,
-                state,
-                transition,
-                target_state_name: route.target_state,
-            },
-        );
+        let producer = ResolvedViaProducer {
+            machine: machine.index,
+            state,
+            transition,
+            target_state_name: route.target_state,
+        };
+        let resolved_route_type_name = (route.resolved_route_type_name)();
+        match resolved.entry(resolved_route_type_name) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(ResolvedViaRoute {
+                    via_module_path: route.via_module_path,
+                    route_name: route.route_name,
+                    producers: vec![producer],
+                });
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let resolved_route = entry.get_mut();
+                if resolved_route.via_module_path != route.via_module_path
+                    || resolved_route.route_name != route.route_name
+                {
+                    return Err(CodebaseDocError::DuplicateViaRoute {
+                        via_module_path: route.via_module_path,
+                        route_name: route.route_name,
+                    });
+                }
+                if resolved_route.producers.iter().any(|existing| {
+                    existing.machine == producer.machine
+                        && existing.state == producer.state
+                        && existing.transition == producer.transition
+                        && existing.target_state_name == producer.target_state_name
+                }) {
+                    return Err(CodebaseDocError::DuplicateViaRoute {
+                        via_module_path: route.via_module_path,
+                        route_name: route.route_name,
+                    });
+                }
+                resolved_route.producers.push(producer);
+                resolved_route.producers.sort_by(|left, right| {
+                    left.machine
+                        .cmp(&right.machine)
+                        .then(left.state.cmp(&right.state))
+                        .then(left.transition.cmp(&right.transition))
+                        .then(left.target_state_name.cmp(right.target_state_name))
+                });
+            }
+        }
     }
 
     Ok(resolved)
@@ -1550,6 +1652,7 @@ fn resolve_reference_type_targets(
 
         let target = resolve_required_target_machine(
             machines,
+            (reference_type.resolved_target_machine_type_name)(),
             reference_type.to_machine_path,
             reference_type.to_state,
             |target_machine_path, target_state| {
@@ -1569,7 +1672,6 @@ fn resolve_reference_type_targets(
                 target_machine_path,
                 target_state,
             },
-            true,
         )?;
 
         resolved.insert(
@@ -1616,12 +1718,12 @@ fn resolve_relation_source_machine(
 
 fn resolve_optional_target_machine(
     machines: &[CodebaseMachine],
+    resolved_machine_type_name: &str,
     machine_path: &'static [&'static str],
     state: &'static str,
     relation: &str,
-    exact: bool,
 ) -> Result<Option<ResolvedRelationTarget>, CodebaseDocError> {
-    let candidates = target_candidates(machines, machine_path, state, exact);
+    let candidates = target_candidates(machines, resolved_machine_type_name, machine_path, state);
     match candidates.as_slice() {
         [] => Ok(None),
         [(machine_index, state_index)] => Ok(Some((*machine_index, *state_index, None))),
@@ -1635,12 +1737,12 @@ fn resolve_optional_target_machine(
 
 fn resolve_required_target_machine<FMissingMachine, FMissingState, FAmbiguous>(
     machines: &[CodebaseMachine],
+    resolved_machine_type_name: &str,
     machine_path: &'static [&'static str],
     state: &'static str,
     missing_machine: FMissingMachine,
     missing_state: FMissingState,
     ambiguous: FAmbiguous,
-    exact: bool,
 ) -> Result<(usize, usize), CodebaseDocError>
 where
     FMissingMachine: FnOnce(String, &'static str) -> CodebaseDocError,
@@ -1650,7 +1752,13 @@ where
     let machine_path_string = machine_path.join("::");
     let matching_machines = machines
         .iter()
-        .filter(|candidate| machine_path_matches(candidate.rust_type_path, machine_path, exact))
+        .filter(|candidate| {
+            machine_path_matches(
+                candidate.rust_type_path,
+                resolved_machine_type_name,
+                machine_path,
+            )
+        })
         .collect::<Vec<_>>();
     if matching_machines.is_empty() {
         return Err(missing_machine(machine_path_string, state));
@@ -1674,14 +1782,18 @@ where
 
 fn target_candidates(
     machines: &[CodebaseMachine],
+    resolved_machine_type_name: &str,
     machine_path: &'static [&'static str],
     state: &'static str,
-    exact: bool,
 ) -> Vec<(usize, usize)> {
     machines
         .iter()
         .filter_map(|candidate| {
-            if !machine_path_matches(candidate.rust_type_path, machine_path, exact) {
+            if !machine_path_matches(
+                candidate.rust_type_path,
+                resolved_machine_type_name,
+                machine_path,
+            ) {
                 return None;
             }
 
@@ -1692,12 +1804,13 @@ fn target_candidates(
         .collect()
 }
 
-fn machine_path_matches(candidate: &str, path: &[&'static str], exact: bool) -> bool {
-    if exact {
-        return candidate.split("::").eq(path.iter().copied());
-    }
-
-    path_suffix_matches(candidate, path)
+fn machine_path_matches(
+    candidate: &str,
+    resolved_machine_type_name: &str,
+    path: &[&'static str],
+) -> bool {
+    machine_family_path_suffix_matches(resolved_machine_type_name, candidate)
+        || path_suffix_matches(candidate, path)
 }
 
 fn map_relation_kind(kind: LinkedRelationKind) -> CodebaseRelationKind {
@@ -1724,6 +1837,10 @@ fn compare_reference_types(
         .cmp((right.resolved_type_name)())
         .then_with(|| left.rust_type_path.cmp(right.rust_type_path))
         .then_with(|| left.to_machine_path.cmp(right.to_machine_path))
+        .then_with(|| {
+            (left.resolved_target_machine_type_name)()
+                .cmp((right.resolved_target_machine_type_name)())
+        })
         .then_with(|| left.to_state.cmp(right.to_state))
 }
 
@@ -1803,14 +1920,17 @@ fn compare_relation_targets(
         (
             LinkedRelationTarget::DirectMachine {
                 machine_path: left_path,
+                resolved_machine_type_name: left_type_name,
                 state: left_state,
             },
             LinkedRelationTarget::DirectMachine {
                 machine_path: right_path,
+                resolved_machine_type_name: right_type_name,
                 state: right_state,
             },
         ) => left_path
             .cmp(right_path)
+            .then_with(|| left_type_name().cmp(right_type_name()))
             .then_with(|| left_state.cmp(right_state)),
         (
             LinkedRelationTarget::DeclaredReferenceType {
@@ -1824,22 +1944,28 @@ fn compare_relation_targets(
             LinkedRelationTarget::AttestedRoute {
                 via_module_path: left_module_path,
                 route_name: left_route_name,
+                resolved_route_type_name: left_type_name,
                 route_id: left_route_id,
                 machine_path: left_machine_path,
+                resolved_machine_type_name: left_machine_type_name,
                 state: left_state,
             },
             LinkedRelationTarget::AttestedRoute {
                 via_module_path: right_module_path,
                 route_name: right_route_name,
+                resolved_route_type_name: right_type_name,
                 route_id: right_route_id,
                 machine_path: right_machine_path,
+                resolved_machine_type_name: right_machine_type_name,
                 state: right_state,
             },
         ) => left_module_path
             .cmp(right_module_path)
             .then_with(|| left_route_name.cmp(right_route_name))
+            .then_with(|| left_type_name().cmp(right_type_name()))
             .then_with(|| left_route_id.cmp(right_route_id))
             .then_with(|| left_machine_path.cmp(right_machine_path))
+            .then_with(|| left_machine_type_name().cmp(right_machine_type_name()))
             .then_with(|| left_state.cmp(right_state)),
         (left, right) => linked_relation_target_rank(left).cmp(&linked_relation_target_rank(right)),
     }
@@ -2044,4 +2170,12 @@ fn path_string_suffix_matches(candidate: &str, suffix: &str) -> bool {
 
     let candidate = candidate.split("::").collect::<Vec<_>>();
     candidate.ends_with(&suffix)
+}
+
+fn machine_family_path_suffix_matches(resolved_machine_type_name: &str, machine_path: &str) -> bool {
+    let family_path = resolved_machine_type_name
+        .split_once('<')
+        .map(|(family_path, _)| family_path)
+        .unwrap_or(resolved_machine_type_name);
+    path_string_suffix_matches(family_path, machine_path)
 }

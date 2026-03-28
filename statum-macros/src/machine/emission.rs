@@ -2490,7 +2490,18 @@ fn relation_registrations_for_targets(
                 RelationTargetCandidate::DirectMachine {
                     machine_path,
                     state_name,
+                    ty: _,
                 } => {
+                    let helper_machine_path = machine_path.join("::");
+                    let helper_machine_path_lit =
+                        LitStr::new(&helper_machine_path, Span::call_site());
+                    let helper_ident = format_ident!(
+                        "__statum_relation_machine_type_name_{:016x}",
+                        stable_hash(&format!(
+                            "{key_prefix}::{index}::{}",
+                            helper_machine_path
+                        ))
+                    );
                     let machine_path = machine_path.iter().map(|segment| {
                         let segment = LitStr::new(segment, Span::call_site());
                         quote! { #segment }
@@ -2501,10 +2512,16 @@ fn relation_registrations_for_targets(
                         quote! {
                             statum::__private::LinkedRelationTarget::DirectMachine {
                                 machine_path: &[#(#machine_path),*],
+                                resolved_machine_type_name: #helper_ident,
                                 state: #state_name,
                             }
                         },
-                        quote! {},
+                        quote! {
+                            #[doc(hidden)]
+                            fn #helper_ident() -> &'static str {
+                                #helper_machine_path_lit
+                            }
+                        },
                     )
                 }
                 RelationTargetCandidate::DeclaredReferenceType { ty } => {

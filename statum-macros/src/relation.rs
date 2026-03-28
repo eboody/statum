@@ -10,6 +10,7 @@ pub(crate) enum RelationTargetCandidate {
     DirectMachine {
         machine_path: Vec<String>,
         state_name: String,
+        ty: Box<Type>,
     },
     DeclaredReferenceType {
         ty: Box<Type>,
@@ -95,6 +96,7 @@ fn collect_path_targets(
             RelationTargetCandidate::DirectMachine {
                 machine_path: candidate.machine_path,
                 state_name: candidate.state_name,
+                ty: Box::new(Type::Path(type_path.clone())),
             },
         );
         return;
@@ -150,10 +152,12 @@ fn same_target(left: &RelationTargetCandidate, right: &RelationTargetCandidate) 
             RelationTargetCandidate::DirectMachine {
                 machine_path: left_machine,
                 state_name: left_state,
+                ty: _,
             },
             RelationTargetCandidate::DirectMachine {
                 machine_path: right_machine,
                 state_name: right_state,
+                ty: _,
             },
         ) => left_machine == right_machine && left_state == right_state,
         (
@@ -295,7 +299,10 @@ fn exact_path_segments(
     let mut index = 0;
     match raw_segments.first()?.as_str() {
         "crate" => {
-            resolved.push(module_segments.first()?.clone());
+            let crate_root = module_segments.first()?.clone();
+            if raw_segments.get(1) != Some(&crate_root) {
+                resolved.push(crate_root);
+            }
             index = 1;
         }
         "self" => {
@@ -392,6 +399,7 @@ mod tests {
             RelationTargetCandidate::DirectMachine {
                 machine_path,
                 state_name,
+                ty: _,
             } => {
                 assert_eq!(
                     machine_path,
@@ -494,5 +502,31 @@ mod tests {
         let targets = collect_relation_targets(&ty, "workspace::workflow");
 
         assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn crate_qualified_paths_do_not_duplicate_root_like_first_module_segment() {
+        let ty = parse_type("crate::flows::result_intake::Flow<crate::flows::result_intake::WriteBackReady>");
+        let targets = collect_relation_targets(&ty, "flows::broker::machine");
+
+        assert_eq!(targets.len(), 1);
+        match &targets[0] {
+            RelationTargetCandidate::DirectMachine {
+                machine_path,
+                state_name,
+                ty: _,
+            } => {
+                assert_eq!(
+                    machine_path,
+                    &vec![
+                        "flows".to_string(),
+                        "result_intake".to_string(),
+                        "Flow".to_string()
+                    ]
+                );
+                assert_eq!(state_name, "WriteBackReady");
+            }
+            other => panic!("unexpected target: {:?}", core::mem::discriminant(other)),
+        }
     }
 }

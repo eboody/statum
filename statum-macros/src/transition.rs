@@ -385,7 +385,10 @@ fn explicit_path_segments(path: &Path, source_module_path: &str) -> Option<Vec<S
     let mut index = 0;
     match raw_segments.first()?.as_str() {
         "crate" => {
-            resolved.push(module_segments.first()?.clone());
+            let crate_root = module_segments.first()?.clone();
+            if raw_segments.get(1) != Some(&crate_root) {
+                resolved.push(crate_root);
+            }
             index = 1;
         }
         "self" => {
@@ -610,6 +613,7 @@ pub fn generate_transition_impl(
             tr_impl,
             function,
             idx,
+            &machine_module_path,
             &relation_machine_module_path,
             &relation_machine_rust_type_path,
             &cfg_attrs,
@@ -740,6 +744,7 @@ fn attested_route_registration(
     tr_impl: &TransitionImpl,
     function: &TransitionFn,
     function_index: usize,
+    machine_module_path: &Path,
     relation_machine_module_path: &LitStr,
     relation_machine_rust_type_path: &LitStr,
     cfg_attrs: &[syn::Attribute],
@@ -750,12 +755,16 @@ fn attested_route_registration(
 
     let unique_suffix = transition_site_unique_suffix(tr_impl, function, function_index);
     let registration_ident = format_ident!("__STATUM_LINKED_VIA_ROUTE_{}", unique_suffix);
+    let route_type_name_ident =
+        format_ident!("__STATUM_LINKED_VIA_ROUTE_TYPE_NAME_{}", unique_suffix);
     let route_name = route_marker_name(&function.name.to_string());
     let route_name_lit = LitStr::new(&route_name, function.name.span());
     let route_id = stable_hash(&route_name);
     let method_name = LitStr::new(&function.name.to_string(), function.name.span());
     let source_state = LitStr::new(&tr_impl.source_state, function.name.span());
     let target_state = LitStr::new(&target_state, function.name.span());
+    let route_type: Type =
+        syn::parse_quote! { #machine_module_path::via::Route<{ #route_id }> };
     let via_module_path = LitStr::new(
         &format!(
             "{}::{}::via",
@@ -766,6 +775,11 @@ fn attested_route_registration(
     );
 
     quote! {
+        #[doc(hidden)]
+        fn #route_type_name_ident() -> &'static str {
+            ::core::any::type_name::<#route_type>()
+        }
+
         #(#cfg_attrs)*
         #[doc(hidden)]
         #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_VIA_ROUTES)]
@@ -778,6 +792,7 @@ fn attested_route_registration(
                 },
                 via_module_path: #via_module_path,
                 route_name: #route_name_lit,
+                resolved_route_type_name: #route_type_name_ident,
                 route_id: #route_id,
                 transition: #method_name,
                 source_state: #source_state,
@@ -797,9 +812,7 @@ fn generate_attested_companion_methods(
         .functions
         .iter()
         .filter_map(|function| {
-            let Some(_target_state) = direct_return_state(function, target_type) else {
-                return None;
-            };
+            let _target_state = direct_return_state(function, target_type)?;
             let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
             let return_type = function.return_type.as_ref()?;
             let route_name = route_marker_name(&function.name.to_string());
@@ -1339,29 +1352,55 @@ fn transition_param_relation_registrations(
             &generic_param_names,
         ));
 
-        if let Some((target_machine_path, target_state)) =
+        if let Some((target_machine_path, target_state, target_machine_type)) =
             exact_direct_machine_target(&param.ty, &tr_impl.module_path)
         {
             for (route_index, route) in param.via_routes.iter().enumerate() {
+                let route_key_prefix = format!(
+                    "{}::{}::{}::{}::param::{param_index}::route::{route_index}",
+                    tr_impl.module_path,
+                    tr_impl.machine_name,
+                    tr_impl.source_state,
+                    function.name,
+                );
                 let registration_ident = format_ident!(
                     "__STATUM_LINKED_RELATION_{:016X}",
-                    stable_hash(&format!(
-                        "{}::{}::{}::{}::param::{param_index}::route::{route_index}",
-                        tr_impl.module_path,
-                        tr_impl.machine_name,
-                        tr_impl.source_state,
-                        function.name,
-                    ))
+                    stable_hash(&route_key_prefix)
                 );
                 let route_name = LitStr::new(&route.route_name, function.name.span());
                 let via_module_path = LitStr::new(&route.via_module_path, function.name.span());
+                let route_type = &route.route_type;
                 let route_id = route.route_id;
+                let helper_ident = format_ident!(
+                    "__statum_transition_relation_via_type_name_{:016x}",
+                    stable_hash(&format!(
+                        "{route_key_prefix}::route-type::{}",
+                        route_type.to_token_stream()
+                    ))
+                );
+                let machine_type_name_ident = format_ident!(
+                    "__statum_transition_relation_target_machine_type_name_{:016x}",
+                    stable_hash(&format!(
+                        "{route_key_prefix}::machine-type::{}",
+                        target_machine_type.to_token_stream()
+                    ))
+                );
                 let target_machine_path_tokens = target_machine_path.iter().map(|segment| {
                     let segment = LitStr::new(segment, function.name.span());
                     quote! { #segment }
                 });
                 let target_state = LitStr::new(&target_state, function.name.span());
                 registrations.push(quote! {
+                    #[doc(hidden)]
+                    fn #helper_ident() -> &'static str {
+                        ::core::any::type_name::<#route_type>()
+                    }
+
+                    #[doc(hidden)]
+                    fn #machine_type_name_ident() -> &'static str {
+                        ::core::any::type_name::<#target_machine_type>()
+                    }
+
                     #(#cfg_attrs)*
                     #[doc(hidden)]
                     #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_RELATIONS)]
@@ -1378,8 +1417,10 @@ fn transition_param_relation_registrations(
                             target: statum::__private::LinkedRelationTarget::AttestedRoute {
                                 via_module_path: #via_module_path,
                                 route_name: #route_name,
+                                resolved_route_type_name: #helper_ident,
                                 route_id: #route_id,
                                 machine_path: &[#(#target_machine_path_tokens),*],
+                                resolved_machine_type_name: #machine_type_name_ident,
                                 state: #target_state,
                             },
                         };
@@ -1394,12 +1435,13 @@ fn transition_param_relation_registrations(
 fn exact_direct_machine_target(
     ty: &Type,
     source_module_path: &str,
-) -> Option<(Vec<String>, String)> {
+) -> Option<(Vec<String>, String, Box<Type>)> {
     match collect_relation_targets(ty, source_module_path).as_slice() {
         [RelationTargetCandidate::DirectMachine {
             machine_path,
             state_name,
-        }] => Some((machine_path.clone(), state_name.clone())),
+            ty,
+        }] => Some((machine_path.clone(), state_name.clone(), ty.clone())),
         _ => None,
     }
 }
@@ -1426,7 +1468,15 @@ fn relation_registrations_for_targets(
                 RelationTargetCandidate::DirectMachine {
                     machine_path,
                     state_name,
+                    ty,
                 } => {
+                    let helper_ident = format_ident!(
+                        "__statum_transition_relation_machine_type_name_{:016x}",
+                        stable_hash(&format!(
+                            "{key_prefix}::{index}::{}",
+                            ty.to_token_stream()
+                        ))
+                    );
                     let machine_path = machine_path.iter().map(|segment| {
                         let segment = LitStr::new(segment, Span::call_site());
                         quote! { #segment }
@@ -1437,10 +1487,16 @@ fn relation_registrations_for_targets(
                         quote! {
                             statum::__private::LinkedRelationTarget::DirectMachine {
                                 machine_path: &[#(#machine_path),*],
+                                resolved_machine_type_name: #helper_ident,
                                 state: #state_name,
                             }
                         },
-                        quote! {},
+                        quote! {
+                            #[doc(hidden)]
+                            fn #helper_ident() -> &'static str {
+                                ::core::any::type_name::<#ty>()
+                            }
+                        },
                     )
                 }
                 RelationTargetCandidate::DeclaredReferenceType { ty } => {
@@ -1818,10 +1874,10 @@ fn extract_generic_type_refs(args: &PathArguments) -> Option<Vec<&Type>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_machine_and_states, extract_impl_machine_and_state, parse_machine_and_state,
-        parse_primary_machine_and_state,
+        collect_machine_and_states, explicit_path_segments, extract_impl_machine_and_state,
+        parse_machine_and_state, parse_primary_machine_and_state,
     };
-    use syn::Type;
+    use syn::{Path, Type};
 
     fn parse_type(source: &str) -> Type {
         syn::parse_str(source).expect("valid type")
@@ -1953,5 +2009,21 @@ mod tests {
     fn impl_target_rejects_qualified_state_paths() {
         let ty = parse_type("Machine<crate::Draft>");
         assert!(extract_impl_machine_and_state(&ty).is_none());
+    }
+
+    #[test]
+    fn via_paths_do_not_duplicate_root_like_first_module_segment() {
+        let path: Path =
+            syn::parse_str("crate::flows::result_intake::via::PrepareWriteBack").expect("path");
+
+        assert_eq!(
+            explicit_path_segments(&path, "flows::broker::machine"),
+            Some(vec![
+                "flows".to_string(),
+                "result_intake".to_string(),
+                "via".to_string(),
+                "PrepareWriteBack".to_string(),
+            ])
+        );
     }
 }
