@@ -2179,3 +2179,157 @@ fn machine_family_path_suffix_matches(resolved_machine_type_name: &str, machine_
         .unwrap_or(resolved_machine_type_name);
     path_string_suffix_matches(family_path, machine_path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use statum::{
+        LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
+        LinkedTransitionInventory, MachineDescriptor,
+    };
+
+    static PRODUCER_STATES: [LinkedStateDescriptor; 2] = [
+        LinkedStateDescriptor {
+            rust_name: "Authorized",
+            label: None,
+            description: None,
+            docs: None,
+            has_data: false,
+            direct_construction_available: false,
+        },
+        LinkedStateDescriptor {
+            rust_name: "Captured",
+            label: None,
+            description: None,
+            docs: None,
+            has_data: false,
+            direct_construction_available: false,
+        },
+    ];
+    static PRODUCER_TRANSITIONS: [LinkedTransitionDescriptor; 1] = [LinkedTransitionDescriptor {
+        method_name: "capture",
+        label: None,
+        description: None,
+        docs: None,
+        from: "Authorized",
+        to: &["Captured"],
+    }];
+    static PRODUCER_MACHINE: LinkedMachineGraph = LinkedMachineGraph {
+        machine: MachineDescriptor {
+            module_path: "crate::payment",
+            rust_type_path: "crate::payment::Machine",
+        },
+        label: None,
+        description: None,
+        docs: None,
+        states: &PRODUCER_STATES,
+        transitions: LinkedTransitionInventory::new(producer_transitions),
+        static_links: &[],
+    };
+
+    static CONSUMER_STATES: [LinkedStateDescriptor; 2] = [
+        LinkedStateDescriptor {
+            rust_name: "Draft",
+            label: None,
+            description: None,
+            docs: None,
+            has_data: false,
+            direct_construction_available: false,
+        },
+        LinkedStateDescriptor {
+            rust_name: "Done",
+            label: None,
+            description: None,
+            docs: None,
+            has_data: false,
+            direct_construction_available: false,
+        },
+    ];
+    static CONSUMER_TRANSITIONS: [LinkedTransitionDescriptor; 1] = [LinkedTransitionDescriptor {
+        method_name: "finish",
+        label: None,
+        description: None,
+        docs: None,
+        from: "Draft",
+        to: &["Done"],
+    }];
+    static CONSUMER_MACHINE: LinkedMachineGraph = LinkedMachineGraph {
+        machine: MachineDescriptor {
+            module_path: "crate::audit",
+            rust_type_path: "crate::audit::Machine",
+        },
+        label: None,
+        description: None,
+        docs: None,
+        states: &CONSUMER_STATES,
+        transitions: LinkedTransitionInventory::new(consumer_transitions),
+        static_links: &[],
+    };
+
+    static LINKED_MACHINES: [LinkedMachineGraph; 2] = [PRODUCER_MACHINE, CONSUMER_MACHINE];
+    static CONFLICTING_VIA_ROUTES: [LinkedViaRouteDescriptor; 2] = [
+        LinkedViaRouteDescriptor {
+            machine: MachineDescriptor {
+                module_path: "crate::payment",
+                rust_type_path: "crate::payment::Machine",
+            },
+            via_module_path: "crate::payment::via",
+            route_name: "Capture",
+            resolved_route_type_name: capture_route_type_name,
+            route_id: 1,
+            transition: "capture",
+            source_state: "Authorized",
+            target_state: "Captured",
+        },
+        LinkedViaRouteDescriptor {
+            machine: MachineDescriptor {
+                module_path: "crate::payment",
+                rust_type_path: "crate::payment::Machine",
+            },
+            via_module_path: "crate::receipts::via",
+            route_name: "Release",
+            resolved_route_type_name: capture_route_type_name,
+            route_id: 2,
+            transition: "capture",
+            source_state: "Authorized",
+            target_state: "Captured",
+        },
+    ];
+
+    #[test]
+    fn conflicting_attested_route_identities_fail_closed() {
+        let err = CodebaseDoc::try_from_linked_with_inventories(
+            &LINKED_MACHINES,
+            &[],
+            &[],
+            &CONFLICTING_VIA_ROUTES,
+            &[],
+        )
+        .expect_err("conflicting route identities should fail closed");
+
+        assert_eq!(
+            err,
+            CodebaseDocError::DuplicateViaRoute {
+                via_module_path: "crate::receipts::via",
+                route_name: "Release",
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "linked attested route `crate::receipts::via::Release` appears more than once in the producer inventory"
+        );
+    }
+
+    fn producer_transitions() -> &'static [LinkedTransitionDescriptor] {
+        &PRODUCER_TRANSITIONS
+    }
+
+    fn consumer_transitions() -> &'static [LinkedTransitionDescriptor] {
+        &CONSUMER_TRANSITIONS
+    }
+
+    fn capture_route_type_name() -> &'static str {
+        "crate::payment::machine::via::Capture"
+    }
+}

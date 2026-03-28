@@ -133,6 +133,8 @@ Status:
 - partly done
 - graph bundle, CLI export, and inspector exact lane now agree on Citacell's
   broker -> outbound_release and broker -> result_intake relationships
+- unsupported multi-producer attested-route identities now have direct
+  fail-closed regression coverage at the `CodebaseDoc` layer
 - remaining exact downstream coverage depends on downstream
   `#[machine_ref(...)]` adoption for nominal artifact and handoff types
 
@@ -153,6 +155,15 @@ Required validation:
   - broker -> outbound_release
   - broker -> result_intake
   - write_back -> correlation
+
+Current validation state:
+
+- rerun against the current Citacell workspace succeeds for `codebase` and
+  `inspect`
+- the exact lane now shows broker -> outbound_release and
+  broker -> result_intake through the real CLI path
+- `write_back -> correlation` is still heuristic-only because Citacell has not
+  yet promoted its nominal handoff/artifact types with `#[machine_ref(...)]`
 
 Secondary validation:
 
@@ -178,14 +189,14 @@ Add or update tests for:
 - [x] Align macro, linked inventory, and `CodebaseDoc` behavior with that
       contract
 - [x] Remove the current `DuplicateViaRoute` blocker for supported downstreams
-- [ ] Keep unsupported attested-route shapes fail-closed
+- [x] Keep unsupported attested-route shapes fail-closed
 - [x] Ensure graph backends project the canonical exact relationship set
 - [x] Ensure `cargo statum-graph codebase` and `inspect` consume the same exact
       relationship substrate
 - [x] Add or update exact relation detail for multi-producer attested routes
 - [ ] Validate the end-to-end flow against Citacell
-- [ ] Keep heuristic discovery separate and unchanged in exported files
-- [ ] Update README and introspection docs once the contract is implemented
+- [x] Keep heuristic discovery separate and unchanged in exported files
+- [x] Update README and introspection docs once the contract is implemented
 
 ## Acceptance Criteria
 
