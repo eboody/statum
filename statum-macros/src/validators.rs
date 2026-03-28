@@ -127,6 +127,7 @@ pub fn parse_validators(
         diagnostic_machine.module_path.as_ref(),
         proc_macro2::Span::call_site(),
     );
+    let machine_module_tokens = format_ident!("{}", crate::to_snake_case(&machine_name));
     let machine_rust_type_path = syn::LitStr::new(
         &format!("{}::{}", diagnostic_machine.module_path, machine_name),
         proc_macro2::Span::call_site(),
@@ -178,6 +179,7 @@ pub fn parse_validators(
                 machine: statum::MachineDescriptor {
                     module_path: #machine_module_path,
                     rust_type_path: #machine_rust_type_path,
+                    role: #machine_module_tokens::MACHINE_ROLE,
                 },
                 source_module_path: #source_module_path,
                 source_type_display: #source_type_display,

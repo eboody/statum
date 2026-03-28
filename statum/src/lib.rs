@@ -289,7 +289,7 @@ pub use statum_core::{
     LinkedRelationBasis, LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource,
     LinkedRelationTarget, LinkedStateDescriptor, LinkedTransitionDescriptor,
     LinkedTransitionInventory, LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor,
-    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
+    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation, MachineRole,
     MachinePresentationDescriptor, MachineReference, MachineReferenceTarget, MachineStateIdentity,
     MachineTransitionRecorder, RebuildAttempt, RebuildReport, RecordedTransition, Rejection,
     Result, StateDescriptor, StateMarker, StatePresentation, StaticMachineLinkDescriptor,
@@ -342,6 +342,10 @@ pub use statum_macros::state;
 /// - a machine-scoped `machine::SomeState` enum for matching rebuilt machines
 /// - a compatibility alias `machine::State = machine::SomeState`
 /// - a machine-scoped `machine::Fields` struct for heterogeneous batch rebuilds
+///
+/// By default a machine has the `protocol` role. Use
+/// `#[machine(role = composition)]` when the machine exists to orchestrate
+/// other machines or exact detached handoff evidence into a higher-level flow.
 ///
 /// If you need derives, place them below `#[machine]`.
 ///

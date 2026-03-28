@@ -296,6 +296,22 @@ impl CodebaseDoc {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodebaseMachineRole {
+    Protocol,
+    Composition,
+}
+
+impl From<statum::MachineRole> for CodebaseMachineRole {
+    fn from(value: statum::MachineRole) -> Self {
+        match value {
+            statum::MachineRole::Protocol => Self::Protocol,
+            statum::MachineRole::Composition => Self::Composition,
+        }
+    }
+}
+
 /// One machine family in the codebase export surface.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CodebaseMachine {
@@ -305,6 +321,9 @@ pub struct CodebaseMachine {
     pub module_path: &'static str,
     /// Fully qualified Rust type path for the machine family.
     pub rust_type_path: &'static str,
+    /// Whether this machine is a local protocol machine or a composition
+    /// machine.
+    pub role: CodebaseMachineRole,
     /// Optional human-facing machine label.
     pub label: Option<&'static str>,
     /// Optional human-facing machine description.
@@ -1261,6 +1280,7 @@ fn build_machine(
             index: machine_index,
             module_path: linked.machine.module_path,
             rust_type_path: linked.machine.rust_type_path,
+            role: linked.machine.role.into(),
             label: linked.label,
             description: linked.description,
             docs: linked.docs,
@@ -2224,6 +2244,7 @@ mod tests {
         machine: MachineDescriptor {
             module_path: "crate::payment",
             rust_type_path: "crate::payment::Machine",
+            role: statum::MachineRole::Protocol,
         },
         label: None,
         description: None,
@@ -2263,6 +2284,7 @@ mod tests {
         machine: MachineDescriptor {
             module_path: "crate::audit",
             rust_type_path: "crate::audit::Machine",
+            role: statum::MachineRole::Protocol,
         },
         label: None,
         description: None,
@@ -2278,6 +2300,7 @@ mod tests {
             machine: MachineDescriptor {
                 module_path: "crate::payment",
                 rust_type_path: "crate::payment::Machine",
+                role: statum::MachineRole::Protocol,
             },
             via_module_path: "crate::payment::via",
             route_name: "Capture",
@@ -2291,6 +2314,7 @@ mod tests {
             machine: MachineDescriptor {
                 module_path: "crate::payment",
                 rust_type_path: "crate::payment::Machine",
+                role: statum::MachineRole::Protocol,
             },
             via_module_path: "crate::receipts::via",
             route_name: "Release",

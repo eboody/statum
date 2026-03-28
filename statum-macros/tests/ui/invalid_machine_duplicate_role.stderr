@@ -1,0 +1,5 @@
+error: Error: duplicate `role` in `#[machine(...)]`.
+  --> tests/ui/invalid_machine_duplicate_role.rs:19:31
+   |
+19 | #[machine(role = composition, role = protocol)]
+   |                               ^^^^

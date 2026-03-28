@@ -4,6 +4,7 @@ use macro_registry::callsite::{
 use macro_registry::query;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
+use syn::parse::Parser;
 use syn::{Generics, Ident, ItemStruct, LitStr, Type, Visibility};
 
 use crate::{
@@ -16,6 +17,78 @@ use crate::{
 use super::extra_type_arguments_tokens;
 
 pub type MachinePath = ModulePath;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+pub enum MachineRoleAttr {
+    #[default]
+    Protocol,
+    Composition,
+}
+
+impl MachineRoleAttr {
+    pub(crate) fn tokens(self) -> TokenStream {
+        match self {
+            Self::Protocol => quote! { statum::__private::MachineRole::Protocol },
+            Self::Composition => quote! { statum::__private::MachineRole::Composition },
+        }
+    }
+}
+
+pub(crate) fn parse_machine_attr_tokens(tokens: TokenStream) -> syn::Result<MachineRoleAttr> {
+    if tokens.is_empty() {
+        return Ok(MachineRoleAttr::Protocol);
+    }
+
+    let mut role = None;
+    let parser = syn::meta::parser(|meta| {
+        let path = meta.path.clone();
+        let Some(ident) = path.get_ident() else {
+            return Err(syn::Error::new_spanned(
+                &path,
+                "Error: `#[machine(...)]` keys must be simple identifiers like `role = composition`.",
+            ));
+        };
+
+        match ident.to_string().as_str() {
+            "role" => {
+                if role.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        ident,
+                        "Error: duplicate `role` in `#[machine(...)]`.",
+                    ));
+                }
+
+                let value = meta.value()?;
+                let role_ident: Ident = value.parse()?;
+                role = Some(match role_ident.to_string().as_str() {
+                    "protocol" => MachineRoleAttr::Protocol,
+                    "composition" => MachineRoleAttr::Composition,
+                    _ => {
+                        return Err(syn::Error::new_spanned(
+                            role_ident,
+                            "Error: unsupported `#[machine(role = ...)]` value.\nSupported values: `protocol`, `composition`.",
+                        ));
+                    }
+                });
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    ident,
+                    "Error: unknown `#[machine(...)]` key.\nSupported keys: `role`.",
+                ));
+            }
+        }
+
+        Ok(())
+    });
+
+    parser.parse2(tokens)?;
+    Ok(role.unwrap_or(MachineRoleAttr::Protocol))
+}
+
+pub fn parse_machine_attr(attr: proc_macro::TokenStream) -> syn::Result<MachineRoleAttr> {
+    parse_machine_attr_tokens(attr.into())
+}
 
 #[derive(Clone)]
 pub struct MachineInfo {
@@ -30,6 +103,7 @@ pub struct MachineInfo {
     pub line_number: usize,
     pub generics: String,
     pub state_generic_name: Option<String>,
+    pub role: MachineRoleAttr,
     pub file_path: Option<String>,
     pub crate_root: Option<String>,
     pub file_fingerprint: Option<SourceFingerprint>,
@@ -79,7 +153,7 @@ impl MachineInfo {
         state_enum.map_err(|failure| missing_state_enum_error(self, failure))
     }
 
-    pub fn from_item_struct(item: &ItemStruct) -> syn::Result<Self> {
+    pub fn from_item_struct(item: &ItemStruct, role: MachineRoleAttr) -> syn::Result<Self> {
         let span = item.ident.span();
         let Some((file_path, line_number)) = source_info_for_span_or_callsite(span) else {
             return Err(syn::Error::new(
@@ -121,6 +195,7 @@ impl MachineInfo {
             fields,
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
+            role,
             file_path: Some(file_path),
             crate_root,
             file_fingerprint,
@@ -155,6 +230,7 @@ impl MachineInfo {
             line_number,
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
+            role: MachineRoleAttr::Protocol,
             crate_root: file_path
                 .as_deref()
                 .and_then(crate_root_for_file),
@@ -371,10 +447,11 @@ fn same_named_state_candidates_elsewhere(
 
 #[cfg(test)]
 mod tests {
-    use quote::ToTokens;
+    use proc_macro2::TokenStream;
+    use quote::{ToTokens, quote};
     use syn::parse_quote;
 
-    use super::{MachineInfo, MachinePath};
+    use super::{MachineInfo, MachinePath, MachineRoleAttr, parse_machine_attr_tokens};
 
     #[test]
     fn parse_round_trips_machine_shape() {
@@ -403,5 +480,17 @@ mod tests {
         );
         assert_eq!(parsed.fields[1].ident.to_string(), "priority");
         assert_eq!(parsed.fields[1].vis.to_token_stream().to_string(), "");
+    }
+
+    #[test]
+    fn parse_machine_attr_defaults_to_protocol() {
+        let role = parse_machine_attr_tokens(TokenStream::new()).expect("machine attr");
+        assert_eq!(role, MachineRoleAttr::Protocol);
+    }
+
+    #[test]
+    fn parse_machine_attr_accepts_composition_role() {
+        let role = parse_machine_attr_tokens(quote! { role = composition }).expect("machine attr");
+        assert_eq!(role, MachineRoleAttr::Composition);
     }
 }

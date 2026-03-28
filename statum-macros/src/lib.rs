@@ -91,14 +91,18 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// alias `machine::State = machine::SomeState`, and helper items such as
 /// `machine::Fields` for heterogeneous batch rebuilds.
 #[proc_macro_attribute]
-pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn machine(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as Item);
     let input = match input {
         Item::Struct(item_struct) => item_struct,
         other => return invalid_machine_target_error(&other).into(),
     };
+    let role = match parse_machine_attr(attr) {
+        Ok(role) => role,
+        Err(err) => return err.to_compile_error().into(),
+    };
 
-    let machine_info = match MachineInfo::from_item_struct(&input) {
+    let machine_info = match MachineInfo::from_item_struct(&input, role) {
         Ok(info) => info,
         Err(err) => return err.to_compile_error().into(),
     };

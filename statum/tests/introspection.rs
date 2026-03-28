@@ -2,7 +2,8 @@
 
 use statum::{
     machine, state, transition, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
+    MachinePresentationDescriptor, MachineRole, MachineStateIdentity,
+    MachineTransitionRecorder,
     StatePresentation, TransitionPresentation, TransitionPresentationInventory,
 };
 
@@ -101,6 +102,17 @@ struct BetaMachine<SharedState> {}
 #[transition]
 impl BetaMachine<Draft> {
     fn finish(self) -> BetaMachine<Rejected> {
+        self.transition()
+    }
+}
+
+#[machine(role = composition)]
+struct CompositionFlow<SharedState> {}
+
+#[transition]
+impl CompositionFlow<Draft> {
+    fn begin(self, child: Flow<Review>) -> CompositionFlow<Review> {
+        let _ = child;
         self.transition()
     }
 }
@@ -370,6 +382,15 @@ fn graph_collection_is_scoped_per_machine() {
     assert_eq!(
         beta_graph.legal_targets(beta_finish.id).unwrap(),
         &[beta_machine::StateId::Rejected]
+    );
+}
+
+#[test]
+fn machine_graph_exposes_machine_role() {
+    assert_eq!(flow::GRAPH.machine.role, MachineRole::Protocol);
+    assert_eq!(
+        composition_flow::GRAPH.machine.role,
+        MachineRole::Composition
     );
 }
 

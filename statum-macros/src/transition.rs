@@ -605,6 +605,7 @@ pub fn generate_transition_impl(
             tr_impl,
             function,
             idx,
+            &machine_module_path,
             &relation_machine_module_path,
             &relation_machine_rust_type_path,
             &cfg_attrs,
@@ -789,6 +790,7 @@ fn attested_route_registration(
                 machine: statum::MachineDescriptor {
                     module_path: #relation_machine_module_path,
                     rust_type_path: #relation_machine_rust_type_path,
+                    role: #machine_module_path::MACHINE_ROLE,
                 },
                 via_module_path: #via_module_path,
                 route_name: #route_name_lit,
@@ -1308,6 +1310,7 @@ fn transition_param_relation_registrations(
     tr_impl: &TransitionImpl,
     function: &TransitionFn,
     function_index: usize,
+    machine_module_tokens: &Path,
     machine_module_path: &LitStr,
     machine_rust_type_path: &LitStr,
     cfg_attrs: &[syn::Attribute],
@@ -1336,20 +1339,24 @@ fn transition_param_relation_registrations(
                 param_name: #param_name_tokens,
             }
         };
+        let key_prefix = format!(
+            "{}::{}::{}::{}::param::{param_index}::function::{function_index}",
+            tr_impl.module_path,
+            tr_impl.machine_name,
+            tr_impl.source_state,
+            function.name
+        );
         registrations.extend(relation_registrations_for_targets(
             targets,
             source_tokens.clone(),
-            machine_module_path,
-            machine_rust_type_path,
-            cfg_attrs,
-            &format!(
-                "{}::{}::{}::{}::param::{param_index}::function::{function_index}",
-                tr_impl.module_path,
-                tr_impl.machine_name,
-                tr_impl.source_state,
-                function.name
-            ),
-            &generic_param_names,
+            RelationRegistrationContext {
+                machine_module_tokens,
+                machine_module_path,
+                machine_rust_type_path,
+                cfg_attrs,
+                key_prefix: &key_prefix,
+                generic_param_names: &generic_param_names,
+            },
         ));
 
         if let Some((target_machine_path, target_state, target_machine_type)) =
@@ -1410,6 +1417,7 @@ fn transition_param_relation_registrations(
                             machine: statum::MachineDescriptor {
                                 module_path: #machine_module_path,
                                 rust_type_path: #machine_rust_type_path,
+                                role: #machine_module_tokens::MACHINE_ROLE,
                             },
                             kind: statum::__private::LinkedRelationKind::TransitionParam,
                             source: #source_tokens,
@@ -1446,23 +1454,32 @@ fn exact_direct_machine_target(
     }
 }
 
+struct RelationRegistrationContext<'a> {
+    machine_module_tokens: &'a Path,
+    machine_module_path: &'a LitStr,
+    machine_rust_type_path: &'a LitStr,
+    cfg_attrs: &'a [syn::Attribute],
+    key_prefix: &'a str,
+    generic_param_names: &'a HashSet<String>,
+}
+
 fn relation_registrations_for_targets(
     targets: Vec<RelationTargetCandidate>,
     source_tokens: TokenStream,
-    machine_module_path: &LitStr,
-    machine_rust_type_path: &LitStr,
-    cfg_attrs: &[syn::Attribute],
-    key_prefix: &str,
-    generic_param_names: &HashSet<String>,
+    ctx: RelationRegistrationContext<'_>,
 ) -> Vec<TokenStream> {
     targets
         .into_iter()
-        .filter(|target| !references_generic_param(target, generic_param_names))
+        .filter(|target| !references_generic_param(target, ctx.generic_param_names))
         .enumerate()
         .map(|(index, target)| {
+            let machine_module_tokens = ctx.machine_module_tokens;
+            let machine_module_path = ctx.machine_module_path;
+            let machine_rust_type_path = ctx.machine_rust_type_path;
+            let cfg_attrs = ctx.cfg_attrs;
             let registration_ident = format_ident!(
                 "__STATUM_LINKED_RELATION_{:016X}",
-                stable_hash(&format!("{key_prefix}::{index}::registration"))
+                stable_hash(&format!("{}::{index}::registration", ctx.key_prefix))
             );
             let (basis_tokens, target_tokens, helper_tokens) = match target {
                 RelationTargetCandidate::DirectMachine {
@@ -1473,7 +1490,8 @@ fn relation_registrations_for_targets(
                     let helper_ident = format_ident!(
                         "__statum_transition_relation_machine_type_name_{:016x}",
                         stable_hash(&format!(
-                            "{key_prefix}::{index}::{}",
+                            "{}::{index}::{}",
+                            ctx.key_prefix,
                             ty.to_token_stream()
                         ))
                     );
@@ -1503,7 +1521,8 @@ fn relation_registrations_for_targets(
                     let helper_ident = format_ident!(
                         "__statum_transition_relation_type_name_{:016x}",
                         stable_hash(&format!(
-                            "{key_prefix}::{index}::{}",
+                            "{}::{index}::{}",
+                            ctx.key_prefix,
                             ty.to_token_stream()
                         ))
                     );
@@ -1536,6 +1555,7 @@ fn relation_registrations_for_targets(
                         machine: statum::MachineDescriptor {
                             module_path: #machine_module_path,
                             rust_type_path: #machine_rust_type_path,
+                            role: #machine_module_tokens::MACHINE_ROLE,
                         },
                         kind: statum::__private::LinkedRelationKind::TransitionParam,
                         source: #source_tokens,

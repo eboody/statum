@@ -6,10 +6,10 @@ use std::path::Path;
 
 use statum::{
     LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
-    LinkedTransitionInventory, LinkedValidatorEntryDescriptor, MachineDescriptor,
+    LinkedTransitionInventory, LinkedValidatorEntryDescriptor, MachineDescriptor, MachineRole,
     StaticMachineLinkDescriptor,
 };
-use statum_graph::{codebase::render, CodebaseDoc};
+use statum_graph::{codebase::{render, CodebaseMachineRole}, CodebaseDoc};
 
 fn broken_row_type_name() -> &'static str {
     "broken::BrokenRow"
@@ -108,7 +108,7 @@ mod workflow {
     }
 
     /// Coordinates workflow progress around task execution.
-    #[machine]
+    #[machine(role = composition)]
     #[present(
         label = "Workflow Machine",
         description = "Tracks workflow progress across task execution."
@@ -217,6 +217,7 @@ fn linked_codebase_doc_collects_machines_and_links() {
         .iter()
         .find(|machine| machine.rust_type_path.ends_with("workflow::Machine"))
         .expect("workflow machine");
+    assert_eq!(workflow.role, CodebaseMachineRole::Composition);
     assert_eq!(workflow.label, Some("Workflow Machine"));
     assert_eq!(
         workflow.description,
@@ -404,6 +405,7 @@ fn builder_markers_only_render_for_directly_constructible_states() {
         machine: MachineDescriptor {
             module_path: "builder_markers",
             rust_type_path: "builder_markers::Machine",
+            role: MachineRole::Protocol,
         },
         label: None,
         description: None,
@@ -472,6 +474,7 @@ fn malformed_inventory_rejects_missing_transition_source_before_sort() {
         machine: MachineDescriptor {
             module_path: "broken",
             rust_type_path: "broken::Machine",
+            role: MachineRole::Protocol,
         },
         label: None,
         description: None,
@@ -513,6 +516,7 @@ fn malformed_inventory_rejects_missing_static_link_source_state() {
         machine: MachineDescriptor {
             module_path: "broken",
             rust_type_path: "broken::Machine",
+            role: MachineRole::Protocol,
         },
         label: None,
         description: None,
@@ -536,6 +540,7 @@ fn malformed_inventory_rejects_missing_validator_machine() {
         machine: MachineDescriptor {
             module_path: "broken",
             rust_type_path: "broken::Machine",
+            role: MachineRole::Protocol,
         },
         source_module_path: "broken",
         source_type_display: "BrokenRow",
@@ -570,6 +575,7 @@ fn malformed_inventory_rejects_missing_validator_target_state() {
         machine: MachineDescriptor {
             module_path: "workflow",
             rust_type_path: "workflow::Machine",
+            role: MachineRole::Protocol,
         },
         label: None,
         description: None,
@@ -582,6 +588,7 @@ fn malformed_inventory_rejects_missing_validator_target_state() {
         machine: MachineDescriptor {
             module_path: "workflow",
             rust_type_path: "workflow::Machine",
+            role: MachineRole::Protocol,
         },
         source_module_path: "workflow",
         source_type_display: "DbRow",
@@ -616,6 +623,7 @@ fn malformed_inventory_rejects_empty_validator_target_set() {
         machine: MachineDescriptor {
             module_path: "workflow",
             rust_type_path: "workflow::Machine",
+            role: MachineRole::Protocol,
         },
         label: None,
         description: None,
@@ -628,6 +636,7 @@ fn malformed_inventory_rejects_empty_validator_target_set() {
         machine: MachineDescriptor {
             module_path: "workflow",
             rust_type_path: "workflow::Machine",
+            role: MachineRole::Protocol,
         },
         source_module_path: "workflow",
         source_type_display: "DbRow",
@@ -662,6 +671,7 @@ fn malformed_inventory_rejects_duplicate_validator_target_state() {
         machine: MachineDescriptor {
             module_path: "workflow",
             rust_type_path: "workflow::Machine",
+            role: MachineRole::Protocol,
         },
         label: None,
         description: None,
@@ -674,6 +684,7 @@ fn malformed_inventory_rejects_duplicate_validator_target_state() {
         machine: MachineDescriptor {
             module_path: "workflow",
             rust_type_path: "workflow::Machine",
+            role: MachineRole::Protocol,
         },
         source_module_path: "workflow",
         source_type_display: "DbRow",
@@ -708,6 +719,7 @@ fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
         machine: MachineDescriptor {
             module_path: "workflow",
             rust_type_path: "workflow::Machine",
+            role: MachineRole::Protocol,
         },
         label: None,
         description: None,
@@ -721,6 +733,7 @@ fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
             machine: MachineDescriptor {
                 module_path: "workflow",
                 rust_type_path: "workflow::Machine",
+                role: MachineRole::Protocol,
             },
             source_module_path: "workflow",
             source_type_display: "DbRow",
@@ -732,6 +745,7 @@ fn malformed_inventory_rejects_duplicate_validator_entry_identity() {
             machine: MachineDescriptor {
                 module_path: "workflow",
                 rust_type_path: "workflow::Machine",
+                role: MachineRole::Protocol,
             },
             source_module_path: "workflow",
             source_type_display: "DbRow",

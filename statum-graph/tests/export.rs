@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use statum::{
     MachineDescriptor, MachineGraph, MachinePresentation, MachinePresentationDescriptor,
-    StateDescriptor, StatePresentation, TransitionDescriptor, TransitionInventory,
+    MachineRole, StateDescriptor, StatePresentation, TransitionDescriptor, TransitionInventory,
     TransitionPresentation, TransitionPresentationInventory,
 };
 use statum_graph::{render, ExportDocError, MachineDoc, MachineDocError};
@@ -638,6 +638,7 @@ static INVALID_SOURCE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> =
     machine: MachineDescriptor {
         module_path: "tests::invalid_source",
         rust_type_path: "tests::invalid_source::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(invalid_source_transitions),
@@ -647,6 +648,7 @@ static INVALID_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> =
     machine: MachineDescriptor {
         module_path: "tests::invalid_target",
         rust_type_path: "tests::invalid_target::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(invalid_target_transitions),
@@ -656,6 +658,7 @@ static DUPLICATE_STATE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> 
     machine: MachineDescriptor {
         module_path: "tests::duplicate_state",
         rust_type_path: "tests::duplicate_state::Flow",
+        role: MachineRole::Protocol,
     },
     states: &DUPLICATE_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(invalid_target_transitions),
@@ -665,6 +668,7 @@ static PIPE_LABEL_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = Mac
     machine: MachineDescriptor {
         module_path: "tests::pipe_label",
         rust_type_path: "tests::pipe_label::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(pipe_label_transitions),
@@ -675,6 +679,7 @@ static DUPLICATE_TRANSITION_ID_GRAPH: MachineGraph<InvalidStateId, InvalidTransi
         machine: MachineDescriptor {
             module_path: "tests::duplicate_transition_id",
             rust_type_path: "tests::duplicate_transition_id::Flow",
+            role: MachineRole::Protocol,
         },
         states: &VALID_STATE_DESCRIPTORS,
         transitions: TransitionInventory::new(duplicate_transition_id_transitions),
@@ -684,6 +689,7 @@ static DUPLICATE_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId>
     machine: MachineDescriptor {
         module_path: "tests::duplicate_target",
         rust_type_path: "tests::duplicate_target::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(duplicate_target_transitions),
@@ -694,6 +700,7 @@ static DUPLICATE_TRANSITION_SITE_GRAPH: MachineGraph<InvalidStateId, InvalidTran
         machine: MachineDescriptor {
             module_path: "tests::duplicate_transition_site",
             rust_type_path: "tests::duplicate_transition_site::Flow",
+            role: MachineRole::Protocol,
         },
         states: &VALID_STATE_DESCRIPTORS,
         transitions: TransitionInventory::new(duplicate_transition_site_transitions),
@@ -741,6 +748,7 @@ static FLAKY_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineG
     machine: MachineDescriptor {
         module_path: "tests::flaky_inventory",
         rust_type_path: "tests::flaky_inventory::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(flaky_transitions),
@@ -750,6 +758,7 @@ static EMPTY_STATE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = Ma
     machine: MachineDescriptor {
         module_path: "tests::empty_state_list",
         rust_type_path: "tests::empty_state_list::Flow",
+        role: MachineRole::Protocol,
     },
     states: &EMPTY_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(|| &EMPTY_TRANSITIONS),
@@ -759,6 +768,7 @@ static EMPTY_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = M
     machine: MachineDescriptor {
         module_path: "tests::empty_target_set",
         rust_type_path: "tests::empty_target_set::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(empty_target_transitions),
@@ -768,6 +778,7 @@ static VALID_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineG
     machine: MachineDescriptor {
         module_path: "tests::valid_presentation",
         rust_type_path: "tests::valid_presentation::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(valid_transitions),

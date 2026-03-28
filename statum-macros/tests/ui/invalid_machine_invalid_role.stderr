@@ -1,0 +1,6 @@
+error: Error: unsupported `#[machine(role = ...)]` value.
+       Supported values: `protocol`, `composition`.
+  --> tests/ui/invalid_machine_invalid_role.rs:19:18
+   |
+19 | #[machine(role = orchestration)]
+   |                  ^^^^^^^^^^^^^

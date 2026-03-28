@@ -509,6 +509,17 @@ impl LinkedMachineGraph {
     }
 }
 
+/// Whether one machine family is a local protocol machine or a higher-level
+/// composition machine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MachineRole {
+    /// Ordinary local protocol machine.
+    Protocol,
+    /// Higher-level machine that composes other machines or exact handoff
+    /// evidence into one workspace flow.
+    Composition,
+}
+
 /// Rust-facing identity for a machine family.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MachineDescriptor {
@@ -516,6 +527,8 @@ pub struct MachineDescriptor {
     pub module_path: &'static str,
     /// Fully qualified Rust type path for the machine family.
     pub rust_type_path: &'static str,
+    /// Whether this machine is a protocol machine or a composition machine.
+    pub role: MachineRole,
 }
 
 /// Static descriptor for one generated state id.
@@ -971,7 +984,7 @@ mod tests {
     use super::{
         LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
         LinkedTransitionInventory, LinkedValidatorEntryDescriptor, MachineDescriptor, MachineGraph,
-        MachineIntrospection, MachinePresentation, MachinePresentationDescriptor,
+        MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineRole,
         MachineStateIdentity, MachineTransitionRecorder, RecordedTransition, StateDescriptor,
         StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
         TransitionPresentation, TransitionPresentationInventory,
@@ -1161,6 +1174,7 @@ mod tests {
             machine: MachineDescriptor {
                 module_path: "workflow",
                 rust_type_path: "workflow::Machine",
+                role: MachineRole::Protocol,
             },
             states: &STATES,
             transitions: TransitionInventory::new(|| &TRANSITIONS),
@@ -1185,6 +1199,7 @@ mod tests {
             machine: MachineDescriptor {
                 module_path: "workflow",
                 rust_type_path: "workflow::Machine",
+                role: MachineRole::Protocol,
             },
             states: &STATES,
             transitions: TransitionInventory::new(|| &TRANSITIONS),
@@ -1227,6 +1242,7 @@ mod tests {
                 MachineDescriptor {
                     module_path: "workflow",
                     rust_type_path: "workflow::Machine",
+                    role: MachineRole::Protocol,
                 },
                 StateId::Draft,
                 SUBMIT_FROM_DRAFT,
@@ -1350,6 +1366,7 @@ mod tests {
             machine: MachineDescriptor {
                 module_path: "workflow",
                 rust_type_path: "workflow::Machine",
+                role: MachineRole::Protocol,
             },
             label: Some("Workflow"),
             description: None,
@@ -1387,6 +1404,7 @@ mod tests {
             machine: MachineDescriptor {
                 module_path: "workflow",
                 rust_type_path: "workflow::Machine",
+                role: MachineRole::Protocol,
             },
             source_module_path: "workflow::rows",
             source_type_display: "DbRow",

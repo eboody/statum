@@ -1,0 +1,6 @@
+error: Error: unknown `#[machine(...)]` key.
+       Supported keys: `role`.
+  --> tests/ui/invalid_machine_unknown_attr.rs:19:11
+   |
+19 | #[machine(flavor = composition)]
+   |           ^^^^^^

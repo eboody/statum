@@ -64,6 +64,9 @@ fn test_invalid_machine_usage() {
     t.compile_fail("tests/ui/invalid_machine_missing_state_derive.rs");
     t.compile_fail("tests/ui/invalid_machine_plain_enum_missing_state_attr.rs");
     t.compile_fail("tests/ui/invalid_machine_declared_before_state.rs");
+    t.compile_fail("tests/ui/invalid_machine_unknown_attr.rs");
+    t.compile_fail("tests/ui/invalid_machine_invalid_role.rs");
+    t.compile_fail("tests/ui/invalid_machine_duplicate_role.rs");
 }
 
 #[test]

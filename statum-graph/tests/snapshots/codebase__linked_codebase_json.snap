@@ -1,5 +1,6 @@
 ---
 source: statum-graph/tests/codebase.rs
+assertion_line: 328
 expression: "render::json(&doc)"
 ---
 {
@@ -8,6 +9,7 @@ expression: "render::json(&doc)"
       "index": 0,
       "module_path": "codebase::detached",
       "rust_type_path": "codebase::detached::Machine",
+      "role": "protocol",
       "label": null,
       "description": null,
       "docs": null,
@@ -30,6 +32,7 @@ expression: "render::json(&doc)"
       "index": 1,
       "module_path": "codebase::named_holder",
       "rust_type_path": "codebase::named_holder::Machine",
+      "role": "protocol",
       "label": null,
       "description": null,
       "docs": null,
@@ -74,6 +77,7 @@ expression: "render::json(&doc)"
       "index": 2,
       "module_path": "codebase::task",
       "rust_type_path": "codebase::task::Machine",
+      "role": "protocol",
       "label": "Task Machine",
       "description": "Owns the exact task execution lifecycle.",
       "docs": "Handles the task lifecycle from idle to done.",
@@ -151,6 +155,7 @@ expression: "render::json(&doc)"
       "index": 3,
       "module_path": "codebase::workflow",
       "rust_type_path": "codebase::workflow::Machine",
+      "role": "composition",
       "label": "Workflow Machine",
       "description": "Tracks workflow progress across task execution.",
       "docs": "Coordinates workflow progress around task execution.",
