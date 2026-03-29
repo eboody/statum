@@ -346,6 +346,9 @@ pub use statum_macros::state;
 /// By default a machine has the `protocol` role. Use
 /// `#[machine(role = composition)]` when the machine exists to orchestrate
 /// other machines or exact detached handoff evidence into a higher-level flow.
+/// When a composition machine directly carries child machines in state
+/// payloads, machine fields, or transition parameters, Statum exports those as
+/// composition-owned exact relations for graph export and inspector views.
 ///
 /// If you need derives, place them below `#[machine]`.
 ///
@@ -389,7 +392,10 @@ pub use statum_macros::machine_ref;
 /// render without changing `MachineIntrospection::GRAPH` or the exact codebase
 /// export model. Use it for domain-level stories that span multiple machines,
 /// especially when some bridges are semantic handoffs rather than exact static
-/// machine relations.
+/// machine relations. When the flow is real cross-machine protocol
+/// orchestration, prefer `#[machine(role = composition)]` and direct child
+/// machines first; `journeys!` is the fallback narrative layer above that
+/// exact graph.
 pub use statum_macros::journeys;
 
 /// Validate and generate legal transitions for one source state.

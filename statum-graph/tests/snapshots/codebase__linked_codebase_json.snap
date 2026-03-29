@@ -1,6 +1,5 @@
 ---
 source: statum-graph/tests/codebase.rs
-assertion_line: 328
 expression: "render::json(&doc)"
 ---
 {
@@ -253,6 +252,7 @@ expression: "render::json(&doc)"
       "index": 0,
       "kind": "StatePayload",
       "basis": "DirectTypeSyntax",
+      "semantic": "exact",
       "source": {
         "StatePayload": {
           "machine": 1,
@@ -269,6 +269,7 @@ expression: "render::json(&doc)"
       "index": 1,
       "kind": "StatePayload",
       "basis": "DirectTypeSyntax",
+      "semantic": "composition_direct_child",
       "source": {
         "StatePayload": {
           "machine": 3,
@@ -285,6 +286,7 @@ expression: "render::json(&doc)"
       "index": 2,
       "kind": "TransitionParam",
       "basis": "DirectTypeSyntax",
+      "semantic": "composition_direct_child",
       "source": {
         "TransitionParam": {
           "machine": 3,

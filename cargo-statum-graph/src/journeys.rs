@@ -133,6 +133,7 @@ impl JourneySegmentKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum JourneySegmentBasis {
     SameMachine,
+    CompositionMachineRelation,
     ExactMachineRelation,
     DeclaredBridge,
     HeuristicMachineRelation,
@@ -143,6 +144,7 @@ impl JourneySegmentBasis {
     pub(crate) fn display_label(self) -> &'static str {
         match self {
             Self::SameMachine => "same machine",
+            Self::CompositionMachineRelation => "composition machine relation",
             Self::ExactMachineRelation => "exact machine relation",
             Self::DeclaredBridge => "declared bridge",
             Self::HeuristicMachineRelation => "heuristic machine relation",
@@ -160,6 +162,7 @@ pub(crate) struct ResolvedJourneySegment {
     pub(crate) to_machine: Option<usize>,
     pub(crate) declared_bridge: bool,
     pub(crate) same_machine: bool,
+    pub(crate) exact_is_composition_owned: bool,
     pub(crate) exact_label: Option<String>,
     pub(crate) exact_count: usize,
     pub(crate) heuristic_label: Option<String>,
@@ -184,6 +187,8 @@ impl ResolvedJourneySegment {
             JourneySegmentBasis::DeclaredBridge
         } else if self.same_machine {
             JourneySegmentBasis::SameMachine
+        } else if self.exact_count > 0 && self.exact_is_composition_owned {
+            JourneySegmentBasis::CompositionMachineRelation
         } else if self.exact_count > 0 {
             JourneySegmentBasis::ExactMachineRelation
         } else if shows_heuristic && self.heuristic_count > 0 {
@@ -552,12 +557,18 @@ fn build_segment(
     let same_machine =
         matches!((from_machine, to_machine), (Some(left), Some(right)) if left == right);
 
-    let (exact_count, exact_label) = match (from_machine, to_machine) {
+    let (exact_count, exact_label, exact_is_composition_owned) = match (from_machine, to_machine) {
         (Some(from_machine), Some(to_machine)) if !declared_bridge => exact_groups
             .get(&(from_machine, to_machine))
-            .map(|group| (group.relation_indices.len(), Some(group.display_label())))
-            .unwrap_or((0, None)),
-        _ => (0, None),
+            .map(|group| {
+                (
+                    group.relation_indices.len(),
+                    Some(group.display_label()),
+                    group.is_composition_owned(),
+                )
+            })
+            .unwrap_or((0, None, false)),
+        _ => (0, None, false),
     };
     let (heuristic_count, heuristic_label) = match (from_machine, to_machine) {
         (Some(from_machine), Some(to_machine)) if !declared_bridge => heuristic_groups
@@ -575,6 +586,7 @@ fn build_segment(
         to_machine,
         declared_bridge,
         same_machine,
+        exact_is_composition_owned,
         exact_label,
         exact_count,
         heuristic_label,

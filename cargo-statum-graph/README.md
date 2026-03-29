@@ -66,6 +66,9 @@ surface shows:
   narratives
 - machine view with states, transitions, validator entries, and summary edges
   that default to `Summary` when a machine has visible relationships
+- composition machines surfaced from `#[machine(role = composition)]`, with
+  composition-owned direct child-machine edges labeled as `composition refs`
+  instead of generic exact references
 - journey view with ordered entry-to-outcome cards and exact, declared,
   heuristic, or missing segment coverage
 - relation pane with inbound and outbound exact relations plus optional
@@ -80,8 +83,10 @@ surface shows:
   `#[present(description = ...)]` text and source rustdoc (`///`) when
   available. For `#[via(...)]` relations, the detail pane also shows the
   attested route, producer machine, producer source state, and producer
-  transition. Journey detail also shows bridge types, machine-ref targets,
-  and exact, declared, heuristic, or missing segment coverage.
+  transition. Composition-owned exact relations also show their composition
+  semantics and source/target machine roles. Journey detail also shows bridge
+  types, machine-ref targets, and exact, declared, heuristic, or missing
+  segment coverage.
 
 If declared journeys exist, the inspector opens on `Journeys` first. If none
 exist, it keeps the current machine-first behavior.
@@ -108,6 +113,8 @@ Exact lane:
 - consumes the linked compiled `CodebaseDoc` surface directly
 - is the only lane backed by Mermaid, DOT, PlantUML, and JSON export
 - is where `#[via(...)]` relations appear with exact producer-route detail
+- is where direct child-machine references on `#[machine(role = composition)]`
+  machines appear as composition-owned exact relations
 - fails closed on malformed exact relation inventories instead of writing a
   partial graph bundle or inspector view
 

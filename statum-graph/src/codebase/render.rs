@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::codebase::{CodebaseDoc, CodebaseState};
+use crate::codebase::{CodebaseDoc, CodebaseMachine, CodebaseState};
 use crate::render::{bundle_output_path, validate_output_stem};
 
 /// One built-in renderer output format for codebase documents.
@@ -85,7 +85,7 @@ pub fn mermaid(doc: &CodebaseDoc) -> String {
         lines.push(format!(
             "    subgraph {}[\"{}\"]",
             machine.cluster_id(),
-            escape_mermaid_label(&machine.display_label())
+            escape_mermaid_label(&render_machine_cluster_label(machine))
         ));
         for state in &machine.states {
             lines.push(format!(
@@ -203,7 +203,7 @@ pub fn dot(doc: &CodebaseDoc) -> String {
         ));
         lines.push(format!(
             "        label=\"{}\";",
-            escape_dot_label(&machine.display_label())
+            escape_dot_label(&render_machine_cluster_label(machine))
         ));
         for state in &machine.states {
             lines.push(format!(
@@ -327,7 +327,7 @@ pub fn plantuml(doc: &CodebaseDoc) -> String {
     for machine in doc.machines() {
         lines.push(format!(
             "state \"{}\" as {} {{",
-            escape_plantuml_label(&machine.display_label()),
+            escape_plantuml_label(&render_machine_cluster_label(machine)),
             machine.cluster_id()
         ));
         for state in &machine.states {
@@ -465,6 +465,14 @@ fn render_state_label(state: &CodebaseState) -> String {
         format!("{base} [build]")
     } else {
         base.into_owned()
+    }
+}
+
+fn render_machine_cluster_label(machine: &CodebaseMachine) -> String {
+    if machine.role.is_composition() {
+        format!("{} [composition]", machine.display_label())
+    } else {
+        machine.display_label().into_owned()
     }
 }
 

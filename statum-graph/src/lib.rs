@@ -9,7 +9,11 @@
 //! validator-entry surfaces emitted by compiled `#[validators]` impls, direct
 //! construction availability per state, legacy direct payload links, and exact
 //! static relations inferred from supported type syntax plus nominal
-//! `#[machine_ref(...)]` declarations. Validator node labels use the impl self
+//! `#[machine_ref(...)]` declarations. When the source machine is marked
+//! `role = composition` and the exact relation comes from direct child-machine
+//! type syntax, the codebase export also classifies it as composition-owned
+//! direct-child semantics for renderer and inspector projection. Validator
+//! node labels use the impl self
 //! type as written in source, so they are display syntax rather than canonical
 //! Rust type identity. Method-level `#[cfg]` and `#[cfg_attr]` on validator
 //! methods are rejected at the macro layer. `include!()`-generated validator
@@ -40,9 +44,10 @@ pub mod render;
 
 pub use codebase::{
     CodebaseAttestedRoute, CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine,
-    CodebaseMachineRelationGroup, CodebaseRelation, CodebaseRelationBasis, CodebaseRelationCount,
-    CodebaseRelationDetail, CodebaseRelationKind, CodebaseRelationSource, CodebaseState,
-    CodebaseTransition, CodebaseValidatorEntry,
+    CodebaseMachineRelationGroup, CodebaseMachineRelationGroupSemantic, CodebaseRelation,
+    CodebaseRelationBasis, CodebaseRelationCount, CodebaseRelationDetail, CodebaseRelationKind,
+    CodebaseRelationSemantic, CodebaseRelationSource, CodebaseState, CodebaseTransition,
+    CodebaseValidatorEntry,
 };
 pub use export::{
     ExportDoc, ExportDocError, ExportMachine, ExportSource, ExportState, ExportTransition,

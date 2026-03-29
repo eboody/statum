@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 
 use statum_graph::{
-    CodebaseDoc, CodebaseRelationBasis, CodebaseRelationKind, CodebaseRelationSource,
+    CodebaseDoc, CodebaseMachineRelationGroupSemantic, CodebaseRelationBasis, CodebaseRelationKind,
+    CodebaseRelationSemantic, CodebaseRelationSource,
 };
 
 mod task {
@@ -43,7 +44,7 @@ mod workflow {
         Done,
     }
 
-    #[machine]
+    #[machine(role = composition)]
     pub struct Machine<State> {
         current: ::core::option::Option<super::task::Machine<super::task::Running>>,
         ambiguous_current: task::Machine<task::Running>,
@@ -66,6 +67,39 @@ mod workflow {
 
     #[transition]
     impl Machine<InProgress> {
+        fn finish(self) -> Machine<Done> {
+            self.transition()
+        }
+    }
+}
+
+mod holder {
+    use statum::{machine, state, transition};
+
+    #[state]
+    pub enum State {
+        Draft,
+        Attached(super::task::Machine<super::task::Running>),
+        Done,
+    }
+
+    #[machine]
+    pub struct Machine<State> {
+        current: ::core::option::Option<super::task::Machine<super::task::Running>>,
+    }
+
+    #[transition]
+    impl Machine<Draft> {
+        fn attach(
+            self,
+            task: super::task::Machine<super::task::Running>,
+        ) -> Machine<Attached> {
+            self.transition_with(task)
+        }
+    }
+
+    #[transition]
+    impl Machine<Attached> {
         fn finish(self) -> Machine<Done> {
             self.transition()
         }
@@ -147,6 +181,11 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
         .iter()
         .find(|machine| machine.rust_type_path.ends_with("workflow::Machine"))
         .expect("workflow machine");
+    let holder = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("holder::Machine"))
+        .expect("holder machine");
     let opaque = doc
         .machines()
         .iter()
@@ -167,8 +206,8 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
         .iter()
         .all(|state| state.direct_construction_available));
 
-    assert_eq!(doc.links().len(), 1);
-    assert_eq!(doc.relations().len(), 9);
+    assert_eq!(doc.links().len(), 2);
+    assert_eq!(doc.relations().len(), 12);
 
     let workflow_transition = workflow
         .transitions
@@ -192,6 +231,10 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
                 )
         })
         .expect("workflow transition relation");
+    assert_eq!(
+        workflow_relation.semantic,
+        CodebaseRelationSemantic::CompositionDirectChild
+    );
     assert_eq!(workflow_relation.target_machine, task.index);
     assert_eq!(workflow_relation.target_state, running_state.index);
     assert_eq!(workflow_relation.declared_reference_type, None);
@@ -212,6 +255,10 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
                 )
         })
         .expect("workflow machine field relation");
+    assert_eq!(
+        workflow_field_relation.semantic,
+        CodebaseRelationSemantic::CompositionDirectChild
+    );
     assert_eq!(workflow_field_relation.target_machine, task.index);
     assert_eq!(workflow_field_relation.target_state, running_state.index);
     assert!(
@@ -227,6 +274,24 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
         }),
         "ambiguous direct-machine syntax and same-name wrapper lookalikes should not create exact machine field relations"
     );
+
+    let holder_relation = doc
+        .relations()
+        .iter()
+        .find(|relation| {
+            relation.kind == CodebaseRelationKind::TransitionParam
+                && relation.basis == CodebaseRelationBasis::DirectTypeSyntax
+                && matches!(
+                    relation.source,
+                    CodebaseRelationSource::TransitionParam {
+                        machine,
+                        param_name: Some("task"),
+                        ..
+                    } if machine == holder.index
+                )
+        })
+        .expect("holder transition relation");
+    assert_eq!(holder_relation.semantic, CodebaseRelationSemantic::Exact);
 
     let opaque_state_relation = doc
         .relations()
@@ -403,6 +468,11 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
         .iter()
         .find(|machine| machine.rust_type_path.ends_with("workflow::Machine"))
         .expect("workflow machine");
+    let holder = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("holder::Machine"))
+        .expect("holder machine");
     let opaque = doc
         .machines()
         .iter()
@@ -425,12 +495,17 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
         .expect("task running state");
 
     let groups = doc.machine_relation_groups();
-    assert_eq!(groups.len(), 2);
+    assert_eq!(groups.len(), 3);
+    assert_eq!(doc.composition_relation_groups().len(), 1);
 
     let workflow_group = groups
         .iter()
         .find(|group| group.from_machine == workflow.index && group.to_machine == task.index)
         .expect("workflow exact group");
+    assert_eq!(
+        workflow_group.semantic,
+        CodebaseMachineRelationGroupSemantic::CompositionDirectChild
+    );
     assert_eq!(workflow_group.relation_indices.len(), 3);
     assert_eq!(
         workflow_group
@@ -444,11 +519,17 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
             "param".to_string()
         ]
     );
+    assert_eq!(workflow_group.display_label(), "composition refs: payload, field, param");
+    assert_eq!(
+        doc.composition_relation_groups()[0].display_label(),
+        "composition refs: payload, field, param"
+    );
 
     let opaque_group = groups
         .iter()
         .find(|group| group.from_machine == opaque.index && group.to_machine == task.index)
         .expect("opaque exact group");
+    assert_eq!(opaque_group.semantic, CodebaseMachineRelationGroupSemantic::Exact);
     assert_eq!(opaque_group.relation_indices.len(), 6);
     assert_eq!(
         opaque_group
@@ -462,12 +543,26 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
             "param [ref] x2".to_string()
         ]
     );
+    assert_eq!(
+        opaque_group.display_label(),
+        "exact refs: payload [ref] x2, field [ref] x2, param [ref] x2"
+    );
+
+    let holder_group = groups
+        .iter()
+        .find(|group| group.from_machine == holder.index && group.to_machine == task.index)
+        .expect("holder exact group");
+    assert_eq!(holder_group.semantic, CodebaseMachineRelationGroupSemantic::Exact);
+    assert_eq!(
+        holder_group.display_label(),
+        "exact refs: payload, field, param"
+    );
 
     assert_eq!(
         doc.outbound_relations_for_machine(workflow.index).count(),
         workflow_group.relation_indices.len()
     );
-    assert_eq!(doc.inbound_relations_for_machine(task.index).count(), 9);
+    assert_eq!(doc.inbound_relations_for_machine(task.index).count(), 12);
     assert_eq!(
         doc.outbound_relations_for_state(workflow.index, workflow_in_progress.index)
             .count(),
@@ -476,7 +571,7 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
     assert_eq!(
         doc.inbound_relations_for_state(task.index, task_running.index)
             .count(),
-        9
+        12
     );
     assert_eq!(
         doc.outbound_relations_for_transition(workflow.index, workflow_start.index)

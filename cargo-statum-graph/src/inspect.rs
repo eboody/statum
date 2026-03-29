@@ -13,9 +13,10 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap};
 use ratatui::{Frame, Terminal};
 use statum_graph::{
-    CodebaseDoc, CodebaseMachine, CodebaseMachineRelationGroup, CodebaseRelation,
-    CodebaseRelationBasis, CodebaseRelationCount, CodebaseRelationDetail, CodebaseRelationKind,
-    CodebaseRelationSource, CodebaseState, CodebaseTransition, CodebaseValidatorEntry,
+    CodebaseDoc, CodebaseMachine, CodebaseMachineRelationGroup,
+    CodebaseMachineRelationGroupSemantic, CodebaseRelation, CodebaseRelationBasis,
+    CodebaseRelationCount, CodebaseRelationDetail, CodebaseRelationKind, CodebaseRelationSource,
+    CodebaseState, CodebaseTransition, CodebaseValidatorEntry,
 };
 
 use crate::heuristics::{
@@ -1168,18 +1169,26 @@ impl InspectorApp {
 
             let mut counts =
                 BTreeMap::<(CodebaseRelationKind, CodebaseRelationBasis), usize>::new();
+            let mut composition_owned_relations = 0usize;
             for relation_index in &relation_indices {
                 let relation = self
                     .doc
                     .relation(*relation_index)
                     .expect("filtered relation index should resolve");
                 *counts.entry((relation.kind, relation.basis)).or_default() += 1;
+                if relation.is_composition_owned() {
+                    composition_owned_relations += 1;
+                }
             }
 
             filtered.push(CodebaseMachineRelationGroup {
                 index: filtered.len(),
                 from_machine: group.from_machine,
                 to_machine: group.to_machine,
+                semantic: classify_group_semantic(
+                    composition_owned_relations,
+                    relation_indices.len(),
+                ),
                 relation_indices,
                 counts: counts
                     .into_iter()
@@ -2318,6 +2327,7 @@ impl InspectorApp {
         let mut candidates = vec![
             detail.relation.kind.display_label().to_owned(),
             detail.relation.basis.display_label().to_owned(),
+            detail.relation.semantic.display_label().to_owned(),
             source_specific,
             render_machine_label(detail.source_machine).to_owned(),
             detail.source_machine.rust_type_path.to_owned(),
@@ -2630,8 +2640,13 @@ fn exact_covers_heuristic_relation(
 }
 
 fn render_relation_label(detail: &CodebaseRelationDetail<'_>) -> String {
+    let prefix = if detail.relation.is_composition_owned() {
+        "[exact][composition]"
+    } else {
+        "[exact]"
+    };
     format!(
-        "[exact] {} ({}) -> {} :: {}",
+        "{prefix} {} ({}) -> {} :: {}",
         detail.relation.kind.display_label(),
         detail.relation.basis.display_label(),
         render_machine_label(detail.target_machine),
@@ -2652,6 +2667,7 @@ fn machine_detail_text(machine: &CodebaseMachine, doc: &CodebaseDoc) -> Text<'st
     let mut lines = vec![
         Line::from(format!("machine: {}", render_machine_label(machine))),
         Line::from(format!("path: {}", machine.rust_type_path)),
+        Line::from(format!("role: {}", machine.role.display_label())),
         Line::from(format!("states: {}", machine.states.len())),
         Line::from(format!("transitions: {}", machine.transitions.len())),
         Line::from(format!("validators: {}", machine.validator_entries.len())),
@@ -2925,6 +2941,7 @@ fn summary_detail_text(summary: &SummaryItem, doc: &CodebaseDoc) -> Text<'static
         Line::from(format!("{direction_label} {lane_label} summary edge")),
         Line::from(format!("from: {}", render_machine_label(source_machine))),
         Line::from(format!("to: {}", render_machine_label(target_machine))),
+        Line::from(format!("semantic: {}", summary_group_semantic(summary))),
         Line::from(format!("label: {label}")),
         Line::from(format!("relation count: {relation_count}")),
     ];
@@ -2981,8 +2998,16 @@ fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
         Line::from(format!("kind: {}", detail.relation.kind.display_label())),
         Line::from(format!("basis: {}", detail.relation.basis.display_label())),
         Line::from(format!(
+            "semantic: {}",
+            detail.relation.semantic.display_label()
+        )),
+        Line::from(format!(
             "source machine: {}",
             render_machine_label(detail.source_machine)
+        )),
+        Line::from(format!(
+            "source machine role: {}",
+            detail.source_machine.role.display_label()
         )),
         Line::from(format!("source: {source}")),
     ];
@@ -3002,6 +3027,10 @@ fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
     lines.push(Line::from(format!(
         "target machine: {}",
         render_machine_label(detail.target_machine)
+    )));
+    lines.push(Line::from(format!(
+        "target machine role: {}",
+        detail.target_machine.role.display_label()
     )));
     lines.push(Line::from(format!(
         "target state: {}",
@@ -3134,6 +3163,26 @@ fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
     }
 
     Text::from(lines)
+}
+
+fn classify_group_semantic(
+    composition_owned_relations: usize,
+    total_relations: usize,
+) -> CodebaseMachineRelationGroupSemantic {
+    if composition_owned_relations == 0 {
+        CodebaseMachineRelationGroupSemantic::Exact
+    } else if composition_owned_relations == total_relations {
+        CodebaseMachineRelationGroupSemantic::CompositionDirectChild
+    } else {
+        CodebaseMachineRelationGroupSemantic::Mixed
+    }
+}
+
+fn summary_group_semantic(summary: &SummaryItem) -> &'static str {
+    match summary {
+        SummaryItem::Exact(summary) => summary.group.semantic.display_label(),
+        SummaryItem::Heuristic(_) => "heuristic",
+    }
 }
 
 fn heuristic_relation_detail_text(
@@ -3337,7 +3386,7 @@ mod tests {
         }
 
         /// Coordinates multi-step workflow progress.
-        #[machine]
+        #[machine(role = composition)]
         #[present(
             label = "Workflow Machine",
             description = "Tracks workflow progress across task execution."
@@ -3586,6 +3635,7 @@ mod tests {
                 to_machine: None,
                 declared_bridge: false,
                 same_machine: false,
+                exact_is_composition_owned: false,
                 exact_label: None,
                 exact_count: 0,
                 heuristic_label: Some("heuristic refs: body".to_owned()),
@@ -3598,6 +3648,29 @@ mod tests {
 
         let mixed_text = text_contents(journey_detail_text(&journey, true));
         assert!(mixed_text.contains("coverage: 0 exact, 0 declared, 1 heuristic, 0 missing"));
+    }
+
+    #[test]
+    fn journey_segments_prefer_composition_exact_basis() {
+        let segment = ResolvedJourneySegment {
+            index: 0,
+            from_node: 0,
+            to_node: 1,
+            from_machine: Some(0),
+            to_machine: Some(1),
+            declared_bridge: false,
+            same_machine: false,
+            exact_is_composition_owned: true,
+            exact_label: Some("composition refs: payload".to_owned()),
+            exact_count: 1,
+            heuristic_label: None,
+            heuristic_count: 0,
+        };
+
+        assert_eq!(
+            segment.visible_basis(false),
+            crate::journeys::JourneySegmentBasis::CompositionMachineRelation
+        );
     }
 
     #[test]
@@ -3748,7 +3821,10 @@ mod tests {
         assert_eq!(app.summary_items().len(), 1);
         match &app.summary_items()[0] {
             SummaryItem::Exact(item) => {
-                assert_eq!(item.group.display_label(), "exact refs: payload, param");
+                assert_eq!(
+                    item.group.display_label(),
+                    "composition refs: payload, param"
+                );
             }
             SummaryItem::Heuristic(_) => panic!("expected exact summary item"),
         }
@@ -3757,7 +3833,7 @@ mod tests {
         assert_eq!(app.summary_items().len(), 1);
         match &app.summary_items()[0] {
             SummaryItem::Exact(item) => {
-                assert_eq!(item.group.display_label(), "exact refs: param");
+                assert_eq!(item.group.display_label(), "composition refs: param");
             }
             SummaryItem::Heuristic(_) => panic!("expected exact summary item"),
         }
@@ -3835,6 +3911,7 @@ mod tests {
         });
 
         let machine_detail = text_contents(machine_detail_text(workflow, &doc));
+        assert!(machine_detail.contains("role: composition"));
         assert!(machine_detail.contains("Description"));
         assert!(machine_detail.contains("Tracks workflow progress across task execution."));
         assert!(machine_detail.contains("Docs"));
@@ -3860,12 +3937,15 @@ mod tests {
         );
 
         let relation_text = text_contents(relation_detail_text(relation_detail));
+        assert!(relation_text.contains("semantic: composition direct child"));
+        assert!(relation_text.contains("source machine role: composition"));
         assert!(relation_text.contains("source machine Description"));
         assert!(relation_text.contains("source machine Docs"));
         assert!(relation_text.contains("target machine Description"));
         assert!(relation_text.contains("target machine Docs"));
 
         let summary_text = text_contents(summary_detail_text(&summary_item, &doc));
+        assert!(summary_text.contains("semantic: composition direct child"));
         assert!(summary_text.contains("source machine Description"));
         assert!(summary_text.contains("source machine Docs"));
         assert!(summary_text.contains("target machine Description"));

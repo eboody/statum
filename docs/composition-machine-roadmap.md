@@ -80,6 +80,8 @@ Leaf mechanics:
 
 Checklist: [Phase 1 checklist](./checklists/composition-phase-1-foundation.md)
 
+Status: complete
+
 Goal:
 
 - make composition a first-class exact concept without changing the normal
@@ -106,6 +108,8 @@ Exit criteria:
 
 Checklist:
 [Phase 2 checklist](./checklists/composition-phase-2-direct-composition.md)
+
+Status: complete
 
 Goal:
 

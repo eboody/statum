@@ -16,7 +16,7 @@ graph TD
         m2_s1["Running [build]"]
         m2_s2["Done [build]"]
     end
-    subgraph m3["Workflow Machine"]
+    subgraph m3["Workflow Machine [composition]"]
         m3_s0["Draft [build]"]
         m3_s1["In Progress [build]"]
         m3_s2["Complete [build]"]
@@ -32,7 +32,7 @@ graph TD
     m3_s1 -->|finish| m3_s2
 
     m1 ==>|exact refs: payload| m2
-    m3 ==>|exact refs: payload, param| m2
+    m3 ==>|composition refs: payload, param| m2
 
     m1_s0 -.->|child| m2_s2
     m3_s1 -.->|state_data| m2_s1

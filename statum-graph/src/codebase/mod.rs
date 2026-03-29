@@ -137,17 +137,25 @@ impl CodebaseDoc {
             .map(|(index, ((from_machine, to_machine), relation_indices))| {
                 let mut counts =
                     BTreeMap::<(CodebaseRelationKind, CodebaseRelationBasis), usize>::new();
+                let mut composition_owned_relations = 0usize;
                 for relation_index in &relation_indices {
                     let relation = self
                         .relation(*relation_index)
                         .expect("grouped relation index should resolve");
                     *counts.entry((relation.kind, relation.basis)).or_default() += 1;
+                    if relation.is_composition_owned() {
+                        composition_owned_relations += 1;
+                    }
                 }
 
                 CodebaseMachineRelationGroup {
                     index,
                     from_machine,
                     to_machine,
+                    semantic: CodebaseMachineRelationGroupSemantic::from_relation_counts(
+                        composition_owned_relations,
+                        relation_indices.len(),
+                    ),
                     relation_indices,
                     counts: counts
                         .into_iter()
@@ -155,6 +163,14 @@ impl CodebaseDoc {
                         .collect(),
                 }
             })
+            .collect()
+    }
+
+    /// Groups exact relations that are owned by composition machines.
+    pub fn composition_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
+        self.machine_relation_groups()
+            .into_iter()
+            .filter(|group| group.is_composition_owned() && group.from_machine != group.to_machine)
             .collect()
     }
 
@@ -301,6 +317,21 @@ impl CodebaseDoc {
 pub enum CodebaseMachineRole {
     Protocol,
     Composition,
+}
+
+impl CodebaseMachineRole {
+    /// Human-facing machine-role label for inspector and renderer detail.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::Protocol => "protocol",
+            Self::Composition => "composition",
+        }
+    }
+
+    /// Whether this machine participates as a composition machine.
+    pub const fn is_composition(self) -> bool {
+        matches!(self, Self::Composition)
+    }
 }
 
 impl From<statum::MachineRole> for CodebaseMachineRole {
@@ -527,6 +558,30 @@ impl CodebaseRelationBasis {
     }
 }
 
+/// Higher-level exact semantics for one relation after machine-role
+/// classification.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodebaseRelationSemantic {
+    Exact,
+    CompositionDirectChild,
+}
+
+impl CodebaseRelationSemantic {
+    /// Human-facing semantic label for relation detail and search.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::CompositionDirectChild => "composition direct child",
+        }
+    }
+
+    /// Whether this exact relation comes from direct child-machine composition.
+    pub const fn is_composition_owned(self) -> bool {
+        matches!(self, Self::CompositionDirectChild)
+    }
+}
+
 /// One exact relation source in the codebase export surface.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum CodebaseRelationSource {
@@ -585,6 +640,8 @@ pub struct CodebaseRelation {
     pub kind: CodebaseRelationKind,
     /// Why Statum considered this relation exact.
     pub basis: CodebaseRelationBasis,
+    /// Higher-level exact semantics after machine-role classification.
+    pub semantic: CodebaseRelationSemantic,
     /// Exact source location for this relation.
     pub source: CodebaseRelationSource,
     /// Resolved target machine index.
@@ -623,6 +680,12 @@ impl CodebaseRelation {
     pub const fn target_transition(&self) -> Option<usize> {
         None
     }
+
+    /// Whether this exact relation is owned by one composition machine through
+    /// direct child-machine composition.
+    pub const fn is_composition_owned(&self) -> bool {
+        self.semantic.is_composition_owned()
+    }
 }
 
 /// One exact producer transition reachable through an attested route.
@@ -657,10 +720,58 @@ pub struct CodebaseMachineRelationGroup {
     pub from_machine: usize,
     /// Target machine index shared by the grouped relations.
     pub to_machine: usize,
+    /// Higher-level group semantics derived from the grouped exact relations.
+    pub semantic: CodebaseMachineRelationGroupSemantic,
     /// Stable exact relation indices included in this group.
     pub relation_indices: Vec<usize>,
     /// Stable grouped counts by relation kind and basis.
     pub counts: Vec<CodebaseRelationCount>,
+}
+
+/// Higher-level exact semantics for one grouped machine relation summary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodebaseMachineRelationGroupSemantic {
+    Exact,
+    CompositionDirectChild,
+    Mixed,
+}
+
+impl CodebaseMachineRelationGroupSemantic {
+    const fn from_relation_counts(
+        composition_owned_relations: usize,
+        total_relations: usize,
+    ) -> Self {
+        if composition_owned_relations == 0 {
+            Self::Exact
+        } else if composition_owned_relations == total_relations {
+            Self::CompositionDirectChild
+        } else {
+            Self::Mixed
+        }
+    }
+
+    /// Human-facing semantic label for grouped relation detail.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::CompositionDirectChild => "composition direct child",
+            Self::Mixed => "composition + exact",
+        }
+    }
+
+    const fn summary_prefix(self) -> &'static str {
+        match self {
+            Self::Exact => "exact refs",
+            Self::CompositionDirectChild => "composition refs",
+            Self::Mixed => "composition + exact refs",
+        }
+    }
+
+    /// Whether this group includes any composition-owned exact relations.
+    pub const fn is_composition_owned(self) -> bool {
+        !matches!(self, Self::Exact)
+    }
 }
 
 impl CodebaseMachineRelationGroup {
@@ -672,7 +783,13 @@ impl CodebaseMachineRelationGroup {
             .map(CodebaseRelationCount::display_label)
             .collect::<Vec<_>>()
             .join(", ");
-        format!("exact refs: {counts}")
+        format!("{}: {counts}", self.semantic.summary_prefix())
+    }
+
+    /// Whether this grouped summary includes composition-owned exact
+    /// relations.
+    pub const fn is_composition_owned(&self) -> bool {
+        self.semantic.is_composition_owned()
     }
 }
 
@@ -1555,11 +1672,14 @@ fn resolve_relations(
         let Some((target_machine, target_state, declared_reference_type)) = resolved_target else {
             continue;
         };
+        let basis = map_relation_basis(relation.basis);
+        let semantic = classify_relation_semantic(machine.role, basis, machine.index, target_machine);
 
         exported.push(CodebaseRelation {
             index: exported.len(),
             kind: map_relation_kind(relation.kind),
-            basis: map_relation_basis(relation.basis),
+            basis,
+            semantic,
             source,
             target_machine,
             target_state,
@@ -1850,6 +1970,22 @@ fn map_relation_basis(basis: LinkedRelationBasis) -> CodebaseRelationBasis {
         LinkedRelationBasis::DirectTypeSyntax => CodebaseRelationBasis::DirectTypeSyntax,
         LinkedRelationBasis::DeclaredReferenceType => CodebaseRelationBasis::DeclaredReferenceType,
         LinkedRelationBasis::ViaDeclaration => CodebaseRelationBasis::ViaDeclaration,
+    }
+}
+
+fn classify_relation_semantic(
+    source_role: CodebaseMachineRole,
+    basis: CodebaseRelationBasis,
+    source_machine: usize,
+    target_machine: usize,
+) -> CodebaseRelationSemantic {
+    if source_role == CodebaseMachineRole::Composition
+        && basis == CodebaseRelationBasis::DirectTypeSyntax
+        && source_machine != target_machine
+    {
+        CodebaseRelationSemantic::CompositionDirectChild
+    } else {
+        CodebaseRelationSemantic::Exact
     }
 }
 
@@ -2347,6 +2483,37 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "linked attested route `crate::receipts::via::Release` appears more than once in the producer inventory"
+        );
+    }
+
+    #[test]
+    fn composition_semantics_require_cross_machine_direct_targets() {
+        assert_eq!(
+            classify_relation_semantic(
+                CodebaseMachineRole::Composition,
+                CodebaseRelationBasis::DirectTypeSyntax,
+                1,
+                2,
+            ),
+            CodebaseRelationSemantic::CompositionDirectChild
+        );
+        assert_eq!(
+            classify_relation_semantic(
+                CodebaseMachineRole::Composition,
+                CodebaseRelationBasis::DirectTypeSyntax,
+                1,
+                1,
+            ),
+            CodebaseRelationSemantic::Exact
+        );
+        assert_eq!(
+            classify_relation_semantic(
+                CodebaseMachineRole::Composition,
+                CodebaseRelationBasis::DeclaredReferenceType,
+                1,
+                2,
+            ),
+            CodebaseRelationSemantic::Exact
         );
     }
 

@@ -9,7 +9,10 @@ use statum::{
     LinkedTransitionInventory, LinkedValidatorEntryDescriptor, MachineDescriptor, MachineRole,
     StaticMachineLinkDescriptor,
 };
-use statum_graph::{codebase::{render, CodebaseMachineRole}, CodebaseDoc};
+use statum_graph::{
+    codebase::{render, CodebaseMachineRelationGroupSemantic, CodebaseMachineRole},
+    CodebaseDoc,
+};
 
 fn broken_row_type_name() -> &'static str {
     "broken::BrokenRow"
@@ -316,6 +319,29 @@ fn linked_codebase_doc_collects_machines_and_links() {
         target_machine.validator_entries[0].docs,
         Some("Rebuilds task machines from persisted task rows.")
     );
+
+    let relation_groups = doc.machine_relation_groups();
+    let workflow_group = relation_groups
+        .iter()
+        .find(|group| group.from_machine == workflow.index && group.to_machine == target_machine.index)
+        .expect("workflow composition group");
+    assert_eq!(
+        workflow_group.semantic,
+        CodebaseMachineRelationGroupSemantic::CompositionDirectChild
+    );
+    assert_eq!(workflow_group.display_label(), "composition refs: payload, param");
+
+    let named_holder = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("named_holder::Machine"))
+        .expect("named holder machine");
+    let named_group = relation_groups
+        .iter()
+        .find(|group| group.from_machine == named_holder.index && group.to_machine == target_machine.index)
+        .expect("named holder exact group");
+    assert_eq!(named_group.semantic, CodebaseMachineRelationGroupSemantic::Exact);
+    assert_eq!(named_group.display_label(), "exact refs: payload");
 }
 
 #[test]
