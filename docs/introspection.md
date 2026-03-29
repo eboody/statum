@@ -209,6 +209,21 @@ In that example:
 - `.from_capture(...)` is generated from the `#[via(...)]` declaration and
   forwards into the one authored `start_shipping(...)` method
 
+The same producer provenance now works when the consumer boundary is a detached
+artifact instead of the child machine value itself:
+
+```rust
+let receipt = PaymentMachine::<Authorized>::builder()
+    .build()
+    .capture_and_attest()
+    .map_inner(Receipt::from);
+
+let shipping = FulfillmentMachine::<ReadyToShip>::builder()
+    .build()
+    .from_capture(receipt)
+    .start_shipping();
+```
+
 If you also want the plain machine parameter to contribute a direct-type exact
 relation, write that machine parameter with an explicit `crate::`, `self::`,
 `super::`, or absolute path instead of a bare type name.
@@ -218,6 +233,19 @@ transition-parameter relations with producer machine, producer source state,
 producer transition, and target child state detail. That lets the inspector say
 not only “this transition takes `PaymentMachine<Captured>`,” but also “it can
 depend on `PaymentMachine<Authorized>::capture` specifically.”
+
+Composition machines can now carry that same detached provenance exactly
+through:
+
+- transition parameters declared with `#[via(...)]`
+- canonical raw `::statum::Attested<_, Route>` state payloads
+- canonical raw `::statum::Attested<_, Route>` machine fields
+
+For the raw attested wrapper path, the current exact scanner reads the real
+generated route marker type, such as
+`crate::payment_machine::machine::via::Route<{ ID }>`, not the ergonomic
+`#[via(...)]` shorthand path. The shorthand remains the intended consumer
+surface for transition parameters and generated binders.
 
 The machine graph is still just the machine's own states and transitions.
 `#[via(...)]` enriches the linked codebase relation graph and inspector detail;
@@ -230,14 +258,19 @@ In v1, most callers should stay on the generated `*_and_attest()` and
 The authority surface here is still explicit and fail-closed:
 
 - observation point: macro-expanded, cfg-pruned `#[transition]` signatures plus
-  explicit `#[via(...)]` declarations and generated attested-route inventories
-- supported in v1: direct single-target producer transitions and at most one
-  `#[via(...)]` parameter per consumer transition
+  explicit `#[via(...)]` declarations, canonical raw `::statum::Attested<_, Route>`
+  wrappers, and generated attested-route inventories
+- supported in v1: direct single-target producer transitions; at most one
+  `#[via(...)]` parameter per consumer transition; and canonical raw
+  `::statum::Attested<_, Route>` wrappers in state payloads, machine fields,
+  and transition parameters
 - attested producer routes join consumers by compiler-resolved route marker
   type identity, so one route name can legally map to multiple compatible
   producer transitions when those producers emit distinct route marker types
 - `CodebaseDoc::linked()` groups those compatible producers deterministically
   and keeps unsupported duplicate producer records fail-closed
+- producer route identities that disagree on target state are rejected
+  fail-closed instead of being approximated
 - unsupported cases: contribute no exact attested relation or fail with a macro
   diagnostic rather than exporting guessed provenance
 

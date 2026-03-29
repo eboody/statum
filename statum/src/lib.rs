@@ -349,6 +349,9 @@ pub use statum_macros::state;
 /// When a composition machine directly carries child machines in state
 /// payloads, machine fields, or transition parameters, Statum exports those as
 /// composition-owned exact relations for graph export and inspector views.
+/// The same composition-owned exact relation surface now covers detached
+/// attested handoffs carried through `statum::Attested<_, Route>` wrappers or
+/// `#[via(...)]` consumer parameters.
 ///
 /// If you need derives, place them below `#[machine]`.
 ///
@@ -413,6 +416,13 @@ pub use statum_macros::journeys;
 /// - `self.transition_with(data)` for data-bearing target states
 /// - `self.transition_map(|current| next_data)` when the next payload is built
 ///   from the current payload
+///
+/// Direct single-target transitions also get generated `*_and_attest()`
+/// companions. Use those when another machine needs exact producer
+/// provenance. If the consumer boundary is a detached artifact instead of the
+/// child machine value, map the attested machine once with
+/// `.map_inner(Artifact::from)` and keep the same `#[via(...)]` consumer
+/// binder.
 ///
 /// ```rust
 /// use statum::{machine, state, transition};

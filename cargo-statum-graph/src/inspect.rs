@@ -3945,7 +3945,7 @@ mod tests {
         assert!(relation_text.contains("target machine Docs"));
 
         let summary_text = text_contents(summary_detail_text(&summary_item, &doc));
-        assert!(summary_text.contains("semantic: composition direct child"));
+        assert!(summary_text.contains("semantic: composition-owned"));
         assert!(summary_text.contains("source machine Description"));
         assert!(summary_text.contains("source machine Docs"));
         assert!(summary_text.contains("target machine Description"));

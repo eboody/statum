@@ -304,8 +304,26 @@ single-target transitions get generated `*_and_attest()` companions returning
 `statum::Attested<Machine<NextState>, Via>`. On the consumer side, annotate one
 machine parameter with `#[via(...)]`, and Statum generates binders like
 `.from_capture(...).start_shipping()` while exporting that dependency into the
-linked relation metadata and inspector detail. This improves exact relation
-graphs; it does not infer a workflow or protocol-stage graph for you.
+linked relation metadata and inspector detail. If the boundary is a detached
+artifact instead of a child machine, keep the same producer provenance and map
+the attested machine into the artifact once:
+
+```rust,ignore
+let receipt = PaymentMachine::<Authorized>::builder()
+    .build()
+    .capture_and_attest()
+    .map_inner(Receipt::from);
+
+let shipping = FulfillmentMachine::<ReadyToShip>::builder()
+    .build()
+    .from_capture(receipt)
+    .start_shipping();
+```
+
+That same exact route metadata now flows through composition-machine state
+payloads, machine fields, and transition parameters when they carry attested
+handoffs. This improves exact relation graphs; it does not infer a workflow or
+protocol-stage graph for you.
 
 ## Core Rules
 
@@ -335,6 +353,9 @@ graphs; it does not infer a workflow or protocol-stage graph for you.
 - To require exact child-transition provenance in another transition, annotate
   one machine parameter with `#[via(...)]`; Statum then generates `from_*`
   binders such as `.from_capture(...).start_shipping()`.
+- If the consumer boundary is a detached artifact instead of a child machine,
+  use `*_and_attest().map_inner(...)` on the producer side and keep the same
+  `#[via(...)]` binder on the consumer side.
 
 `#[validators]`
 

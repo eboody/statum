@@ -1359,32 +1359,37 @@ fn transition_param_relation_registrations(
             },
         ));
 
-        if let Some((target_machine_path, target_state, target_machine_type)) =
-            exact_direct_machine_target(&param.ty, &tr_impl.module_path)
-        {
-            for (route_index, route) in param.via_routes.iter().enumerate() {
-                let route_key_prefix = format!(
-                    "{}::{}::{}::{}::param::{param_index}::route::{route_index}",
-                    tr_impl.module_path,
-                    tr_impl.machine_name,
-                    tr_impl.source_state,
-                    function.name,
-                );
-                let registration_ident = format_ident!(
-                    "__STATUM_LINKED_RELATION_{:016X}",
-                    stable_hash(&route_key_prefix)
-                );
-                let route_name = LitStr::new(&route.route_name, function.name.span());
-                let via_module_path = LitStr::new(&route.via_module_path, function.name.span());
-                let route_type = &route.route_type;
-                let route_id = route.route_id;
-                let helper_ident = format_ident!(
-                    "__statum_transition_relation_via_type_name_{:016x}",
-                    stable_hash(&format!(
-                        "{route_key_prefix}::route-type::{}",
-                        route_type.to_token_stream()
-                    ))
-                );
+        let direct_machine_target = exact_direct_machine_target(&param.ty, &tr_impl.module_path);
+        for (route_index, route) in param.via_routes.iter().enumerate() {
+            let route_key_prefix = format!(
+                "{}::{}::{}::{}::param::{param_index}::route::{route_index}",
+                tr_impl.module_path,
+                tr_impl.machine_name,
+                tr_impl.source_state,
+                function.name,
+            );
+            let registration_ident = format_ident!(
+                "__STATUM_LINKED_RELATION_{:016X}",
+                stable_hash(&route_key_prefix)
+            );
+            let route_name = LitStr::new(&route.route_name, function.name.span());
+            let via_module_path = LitStr::new(&route.via_module_path, function.name.span());
+            let route_type = &route.route_type;
+            let route_id = route.route_id;
+            let helper_ident = format_ident!(
+                "__statum_transition_relation_via_type_name_{:016x}",
+                stable_hash(&format!(
+                    "{route_key_prefix}::route-type::{}",
+                    route_type.to_token_stream()
+                ))
+            );
+
+            let (target_tokens, extra_helper_tokens) = if let Some((
+                target_machine_path,
+                target_state,
+                target_machine_type,
+            )) = &direct_machine_target
+            {
                 let machine_type_name_ident = format_ident!(
                     "__statum_transition_relation_target_machine_type_name_{:016x}",
                     stable_hash(&format!(
@@ -1396,44 +1401,65 @@ fn transition_param_relation_registrations(
                     let segment = LitStr::new(segment, function.name.span());
                     quote! { #segment }
                 });
-                let target_state = LitStr::new(&target_state, function.name.span());
-                registrations.push(quote! {
-                    #[doc(hidden)]
-                    fn #helper_ident() -> &'static str {
-                        ::core::any::type_name::<#route_type>()
-                    }
+                let target_state = LitStr::new(target_state, function.name.span());
+                (
+                    quote! {
+                        statum::__private::LinkedRelationTarget::AttestedRoute {
+                            via_module_path: #via_module_path,
+                            route_name: #route_name,
+                            resolved_route_type_name: #helper_ident,
+                            route_id: #route_id,
+                            machine_path: &[#(#target_machine_path_tokens),*],
+                            resolved_machine_type_name: #machine_type_name_ident,
+                            state: #target_state,
+                        }
+                    },
+                    quote! {
+                        #[doc(hidden)]
+                        fn #machine_type_name_ident() -> &'static str {
+                            ::core::any::type_name::<#target_machine_type>()
+                        }
+                    },
+                )
+            } else {
+                (
+                    quote! {
+                        statum::__private::LinkedRelationTarget::AttestedProducerRoute {
+                            via_module_path: #via_module_path,
+                            route_name: #route_name,
+                            resolved_route_type_name: #helper_ident,
+                            route_id: #route_id,
+                        }
+                    },
+                    quote! {},
+                )
+            };
 
-                    #[doc(hidden)]
-                    fn #machine_type_name_ident() -> &'static str {
-                        ::core::any::type_name::<#target_machine_type>()
-                    }
+            registrations.push(quote! {
+                #[doc(hidden)]
+                fn #helper_ident() -> &'static str {
+                    ::core::any::type_name::<#route_type>()
+                }
 
-                    #(#cfg_attrs)*
-                    #[doc(hidden)]
-                    #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_RELATIONS)]
-                    #[linkme(crate = statum::__private::linkme)]
-                    static #registration_ident: statum::__private::LinkedRelationDescriptor =
-                        statum::__private::LinkedRelationDescriptor {
-                            machine: statum::MachineDescriptor {
-                                module_path: #machine_module_path,
-                                rust_type_path: #machine_rust_type_path,
-                                role: #machine_module_tokens::MACHINE_ROLE,
-                            },
-                            kind: statum::__private::LinkedRelationKind::TransitionParam,
-                            source: #source_tokens,
-                            basis: statum::__private::LinkedRelationBasis::ViaDeclaration,
-                            target: statum::__private::LinkedRelationTarget::AttestedRoute {
-                                via_module_path: #via_module_path,
-                                route_name: #route_name,
-                                resolved_route_type_name: #helper_ident,
-                                route_id: #route_id,
-                                machine_path: &[#(#target_machine_path_tokens),*],
-                                resolved_machine_type_name: #machine_type_name_ident,
-                                state: #target_state,
-                            },
-                        };
-                });
-            }
+                #extra_helper_tokens
+
+                #(#cfg_attrs)*
+                #[doc(hidden)]
+                #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_RELATIONS)]
+                #[linkme(crate = statum::__private::linkme)]
+                static #registration_ident: statum::__private::LinkedRelationDescriptor =
+                    statum::__private::LinkedRelationDescriptor {
+                        machine: statum::MachineDescriptor {
+                            module_path: #machine_module_path,
+                            rust_type_path: #machine_rust_type_path,
+                            role: #machine_module_tokens::MACHINE_ROLE,
+                        },
+                        kind: statum::__private::LinkedRelationKind::TransitionParam,
+                        source: #source_tokens,
+                        basis: statum::__private::LinkedRelationBasis::ViaDeclaration,
+                        target: #target_tokens,
+                    };
+            });
         }
     }
 
@@ -1513,6 +1539,41 @@ fn relation_registrations_for_targets(
                             #[doc(hidden)]
                             fn #helper_ident() -> &'static str {
                                 ::core::any::type_name::<#ty>()
+                            }
+                        },
+                    )
+                }
+                RelationTargetCandidate::AttestedProducerRoute {
+                    via_module_path,
+                    route_name,
+                    route_ty,
+                } => {
+                    let route_ty_tokens = route_ty.to_token_stream().to_string();
+                    let helper_ident = format_ident!(
+                        "__statum_transition_relation_attested_route_type_name_{:016x}",
+                        stable_hash(&format!(
+                            "{}::{index}::{}",
+                            ctx.key_prefix,
+                            route_ty_tokens
+                        ))
+                    );
+                    let via_module_path = LitStr::new(&via_module_path, Span::call_site());
+                    let route_name = LitStr::new(&route_name, Span::call_site());
+                    let route_id = stable_hash(&route_ty_tokens);
+                    (
+                        quote! { statum::__private::LinkedRelationBasis::AttestedTypeSyntax },
+                        quote! {
+                            statum::__private::LinkedRelationTarget::AttestedProducerRoute {
+                                via_module_path: #via_module_path,
+                                route_name: #route_name,
+                                resolved_route_type_name: #helper_ident,
+                                route_id: #route_id,
+                            }
+                        },
+                        quote! {
+                            #[doc(hidden)]
+                            fn #helper_ident() -> &'static str {
+                                ::core::any::type_name::<#route_ty>()
                             }
                         },
                     )

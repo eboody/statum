@@ -142,9 +142,9 @@ Goal:
 
 Deliver:
 
-- producer-side handoff declaration on real transition sites
+- producer-side detached provenance reusing exact attested transition sites
 - exact joining of detached artifacts from producer transition to composition
-  consumer
+  consumer across state payloads, machine fields, and transition parameters
 - continued support for `#[machine_ref(...)]` on opaque references
 - exact compiler warnings for high-confidence typed orchestration smells
 - inspector or CLI suggestions for weaker composition candidates
@@ -152,6 +152,8 @@ Deliver:
 Exit criteria:
 
 - detached handoffs participate in exact composition relations
+- detached handoff route identities fail closed when producer metadata drifts on
+  target state
 - diagnostics push users toward composition modeling without weakening the
   exactness story
 

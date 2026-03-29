@@ -618,6 +618,9 @@ pub enum LinkedRelationKind {
 pub enum LinkedRelationBasis {
     /// The target was visible directly in the scanned type syntax.
     DirectTypeSyntax,
+    /// The target came from a canonical `statum::Attested<_, Route>` wrapper
+    /// visible directly in the scanned type syntax.
+    AttestedTypeSyntax,
     /// The scanned type resolved through one declared reference type.
     DeclaredReferenceType,
     /// The target was declared explicitly through `#[via(...)]`.
@@ -643,6 +646,22 @@ pub enum LinkedRelationTarget {
     DeclaredReferenceType {
         /// Compiler-resolved type identity getter for the named reference type.
         resolved_type_name: fn() -> &'static str,
+    },
+    /// One exact producer route carried through a canonical
+    /// `statum::Attested<_, Route>` wrapper or declared through `#[via(...)]`
+    /// without a direct machine target at the consumer site.
+    AttestedProducerRoute {
+        /// Machine module path that owns the attested route namespace.
+        via_module_path: &'static str,
+        /// Human-facing attested route name, such as `Capture`.
+        route_name: &'static str,
+        /// Compiler-resolved route marker type identity. This is the exact join
+        /// key across producer registrations and consumer declarations, even
+        /// when the consumer names a public re-export path.
+        resolved_route_type_name: fn() -> &'static str,
+        /// Stable route id used to join consumer declarations with producer
+        /// attested transition metadata.
+        route_id: u64,
     },
     /// An attested route declared through `#[via(...)]`.
     AttestedRoute {
@@ -697,6 +716,25 @@ impl PartialEq for LinkedRelationTarget {
                     resolved_type_name: right_name,
                 },
             ) => left_name() == right_name(),
+            (
+                Self::AttestedProducerRoute {
+                    via_module_path: left_module_path,
+                    route_name: left_route_name,
+                    resolved_route_type_name: left_type_name,
+                    route_id: left_route_id,
+                },
+                Self::AttestedProducerRoute {
+                    via_module_path: right_module_path,
+                    route_name: right_route_name,
+                    resolved_route_type_name: right_type_name,
+                    route_id: right_route_id,
+                },
+            ) => {
+                left_module_path == right_module_path
+                    && left_route_name == right_route_name
+                    && left_type_name() == right_type_name()
+                    && left_route_id == right_route_id
+            }
             (
                 Self::AttestedRoute {
                     via_module_path: left_module_path,

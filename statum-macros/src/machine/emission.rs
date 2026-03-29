@@ -2530,6 +2530,40 @@ fn relation_registrations_for_targets(
                         },
                     )
                 }
+                RelationTargetCandidate::AttestedProducerRoute {
+                    via_module_path,
+                    route_name,
+                    route_ty,
+                } => {
+                    let route_ty_tokens = route_ty.to_token_stream().to_string();
+                    let helper_ident = format_ident!(
+                        "__statum_relation_attested_route_type_name_{:016x}",
+                        stable_hash(&format!(
+                            "{key_prefix}::{index}::{}",
+                            route_ty_tokens
+                        ))
+                    );
+                    let via_module_path = LitStr::new(&via_module_path, Span::call_site());
+                    let route_name = LitStr::new(&route_name, Span::call_site());
+                    let route_id = stable_hash(&route_ty_tokens);
+                    (
+                        quote! { statum::__private::LinkedRelationBasis::AttestedTypeSyntax },
+                        quote! {
+                            statum::__private::LinkedRelationTarget::AttestedProducerRoute {
+                                via_module_path: #via_module_path,
+                                route_name: #route_name,
+                                resolved_route_type_name: #helper_ident,
+                                route_id: #route_id,
+                            }
+                        },
+                        quote! {
+                            #[doc(hidden)]
+                            fn #helper_ident() -> &'static str {
+                                ::core::any::type_name::<#route_ty>()
+                            }
+                        },
+                    )
+                }
                 RelationTargetCandidate::DeclaredReferenceType { ty } => {
                     let helper_ident = format_ident!(
                         "__statum_relation_type_name_{:016x}",
