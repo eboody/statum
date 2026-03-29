@@ -383,17 +383,6 @@ pub fn linked_reference_types() -> &'static [LinkedReferenceTypeDescriptor] {
     &__STATUM_LINKED_REFERENCE_TYPES
 }
 
-/// Linked declared workspace journeys visible to the current build.
-#[doc(hidden)]
-#[linkme::distributed_slice]
-pub static __STATUM_LINKED_JOURNEYS: [LinkedJourneyDescriptor];
-
-/// Returns every linked declared workspace journey visible to the current
-/// build.
-pub fn linked_journeys() -> &'static [LinkedJourneyDescriptor] {
-    &__STATUM_LINKED_JOURNEYS
-}
-
 /// Structural machine graph emitted from macro-generated metadata.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MachineGraph<S: 'static, T: 'static> {
@@ -881,111 +870,6 @@ impl PartialEq for LinkedReferenceTypeDescriptor {
 
 impl Eq for LinkedReferenceTypeDescriptor {}
 
-/// One declared narrative journey carried by the linked build inventory.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct LinkedJourneyDescriptor {
-    /// `module_path!()` for the module that owns the `journeys!` declaration.
-    pub module_path: &'static str,
-    /// Stable journey id within `module_path`.
-    pub id: &'static str,
-    /// Optional short human-facing journey label.
-    pub label: Option<&'static str>,
-    /// Optional longer human-facing journey docs.
-    pub docs: Option<&'static str>,
-    /// Required narrative entry surface.
-    pub entry: LinkedJourneyStepDescriptor,
-    /// Ordered intermediate journey steps.
-    pub steps: &'static [LinkedJourneyStepDescriptor],
-    /// Required narrative outcome surface.
-    pub outcome: LinkedJourneyStepDescriptor,
-}
-
-/// One declared narrative journey step.
-#[derive(Clone, Copy, Debug)]
-pub enum LinkedJourneyStepDescriptor {
-    /// One machine family in the declared journey.
-    Machine {
-        /// Exact machine path segments resolved from the declaration syntax.
-        machine_path: &'static [&'static str],
-    },
-    /// One concrete machine state in the declared journey.
-    State {
-        /// Exact machine path segments resolved from the declaration syntax.
-        machine_path: &'static [&'static str],
-        /// Target state marker name.
-        state: &'static str,
-    },
-    /// One declared validator-entry surface in the journey.
-    Validator {
-        /// Human-facing source syntax for the validator source type as written.
-        source_type_display: &'static str,
-        /// Compiler-resolved source type identity.
-        resolved_source_type_name: fn() -> &'static str,
-        /// Exact machine path segments resolved from the declaration syntax.
-        machine_path: &'static [&'static str],
-    },
-    /// One nominal bridge or handoff type in the journey.
-    Bridge {
-        /// Human-facing Rust syntax for the bridge type as written.
-        type_display: &'static str,
-        /// Compiler-resolved nominal type identity.
-        resolved_type_name: fn() -> &'static str,
-    },
-}
-
-impl PartialEq for LinkedJourneyStepDescriptor {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::Machine {
-                    machine_path: left_machine_path,
-                },
-                Self::Machine {
-                    machine_path: right_machine_path,
-                },
-            ) => left_machine_path == right_machine_path,
-            (
-                Self::State {
-                    machine_path: left_machine_path,
-                    state: left_state,
-                },
-                Self::State {
-                    machine_path: right_machine_path,
-                    state: right_state,
-                },
-            ) => left_machine_path == right_machine_path && left_state == right_state,
-            (
-                Self::Validator {
-                    source_type_display: left_display,
-                    resolved_source_type_name: left_name,
-                    machine_path: left_machine_path,
-                },
-                Self::Validator {
-                    source_type_display: right_display,
-                    resolved_source_type_name: right_name,
-                    machine_path: right_machine_path,
-                },
-            ) => {
-                left_display == right_display
-                    && left_name() == right_name()
-                    && left_machine_path == right_machine_path
-            }
-            (
-                Self::Bridge {
-                    type_display: left_display,
-                    resolved_type_name: left_name,
-                },
-                Self::Bridge {
-                    type_display: right_display,
-                    resolved_type_name: right_name,
-                },
-            ) => left_display == right_display && left_name() == right_name(),
-            _ => false,
-        }
-    }
-}
-
-impl Eq for LinkedJourneyStepDescriptor {}
 
 /// One declared validator-entry surface carried by the linked build inventory.
 #[derive(Clone, Copy, Debug)]

@@ -20,9 +20,9 @@ The target model is:
 - the inspector, CLI, and graph bundle all project the same exact substrate
   while keeping heuristics separate
 
-Current `journeys!`, `#[via(...)]`, and related narrative or attestation
-surfaces stay in place during migration, then get trimmed once composition
-machines reach parity.
+During migration, older narrative and attestation surfaces stayed in place
+until composition machines reached parity. Phase 6 trims that surface back
+down.
 
 ## Locked Decisions
 
@@ -217,6 +217,8 @@ Exit criteria:
 Checklist:
 [Phase 6 checklist](./checklists/composition-phase-6-cleanup.md)
 
+Status: complete
+
 Goal:
 
 - trim Statum down after composition machines and detached handoffs have
@@ -224,8 +226,10 @@ Goal:
 
 Deliver:
 
-- deprecation or removal of stale journey-first surfaces
-- deprecation or removal of superseded attestation helpers and binder APIs
+- removal of stale journey-first surfaces
+- removal of legacy `#[transition(...)]` compatibility
+- trimming of attestation helpers and binder APIs down to the minimum still
+  needed for exact detached handoffs
 - cleanup of compatibility paths kept only for migration
 - pruning of stale docs, examples, and TUI copy
 - updated canonical docs that describe the composition model first

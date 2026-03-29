@@ -1,6 +1,0 @@
-error: Error: journeys do not allow adjacent `bridge!(...)` steps.
-       Fix: place a `machine!(...)` or `state!(...)` step between declared bridges.
-  --> tests/ui/invalid_journeys_adjacent_bridges.rs:28:13
-   |
-28 |     journey broken {
-   |             ^^^^^^

@@ -304,8 +304,8 @@ graph and inspector TUI, see
 [cargo-statum-graph](cargo-statum-graph/README.md).
 
 If the main business flow should itself be exact protocol truth, prefer
-`#[machine(role = composition)]` over describing that story only through
-`journeys!` or heuristics. The migration guide is
+`#[machine(role = composition)]` over leaving that story in heuristics or
+external wiring. The migration guide is
 [docs/composition-migration.md](docs/composition-migration.md).
 
 Statum also supports exact cross-machine transition provenance. Direct

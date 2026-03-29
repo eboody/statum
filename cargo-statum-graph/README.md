@@ -8,8 +8,8 @@ the combined static codebase graph as Mermaid, DOT, PlantUML, and JSON,
 including declared validator-entry nodes from compiled `#[validators]` impls.
 It can also launch an inspector TUI over that same linked compiled
 `CodebaseDoc` surface, with composition machines as the primary workspace flow
-surface, declared workspace journeys as fallback narrative overlays, and a
-separate heuristic lane for broader source-scanned machine coupling hints.
+surface and a separate heuristic lane for broader source-scanned machine
+coupling hints.
 
 ## Install
 
@@ -61,8 +61,7 @@ cargo statum-graph inspect \
 That launches the inspector TUI for the selected workspace. The current
 surface shows:
 
-- workspace sections for `Composition`, `Machines`, `Gaps`, and optional
-  `Journeys`
+- workspace sections for `Composition`, `Machines`, and `Gaps`
 - composition-first home view when any
   `#[machine(role = composition)]` machines exist
 - composition view with the selected flow’s states, transitions, validators,
@@ -76,8 +75,6 @@ surface shows:
 - composition machines surfaced from `#[machine(role = composition)]`, with
   composition-owned direct child-machine edges labeled as `composition refs`
   instead of generic exact references
-- journey view with ordered entry-to-outcome cards and exact, declared,
-  heuristic, or missing segment coverage
 - relation pane with inbound and outbound exact relations plus optional
   heuristic machine-to-machine coupling hints
 - explicit empty-state guidance when the selected state or transition has no
@@ -94,12 +91,10 @@ surface shows:
   semantics and source/target machine roles. Summary and exact relation cards
   now prefer those composition-owned explanations. Machine detail also shows
   composition diagnostics when a protocol machine still looks like a
-  composition candidate. Journey detail also shows bridge types, machine-ref
-  targets, and exact, declared, heuristic, or missing segment coverage.
+  composition candidate.
 
 If composition machines exist, the inspector opens on `Composition` first. If
-none exist, it falls back to `Journeys` when declared journeys exist and to
-`Machines` otherwise.
+none exist, it falls back to `Machines`.
 
 `inspect` requires an interactive terminal on stdin and stdout.
 
@@ -148,18 +143,6 @@ Exact lane:
 - fails closed on malformed exact relation inventories instead of writing a
   partial graph bundle or inspector view
 
-Declared journeys:
-
-- are inspector-only in v1
-- are registered through `statum::journeys!`
-- sit above the exact graph instead of changing it
-- now serve as a fallback narrative surface when composition machines are not
-  enough or are not present yet
-- can reference machines, states, validator entry surfaces, and declared
-  bridge types
-- classify each segment as exact, declared bridge, heuristic cover, or missing
-- do not change Mermaid, DOT, PlantUML, JSON, or `CodebaseDoc`
-
 Heuristic lane:
 
 - is TUI-only
@@ -178,8 +161,8 @@ The heuristic lane is useful but non-authoritative. It does not change
 `codebase` export output. Runtime replay and snapshot inspection are still
 future work.
 
-If you are moving a workspace from fallback journeys or loose cross-machine
-coupling into typed composition flow, start with
+If you are moving a workspace from loose cross-machine coupling into typed
+composition flow, start with
 [docs/composition-migration.md](../docs/composition-migration.md) and the
 composition example in
 [statum-examples/src/toy_demos/example_18_composition_machine.rs](../statum-examples/src/toy_demos/example_18_composition_machine.rs).

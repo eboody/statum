@@ -13,7 +13,6 @@ use tempfile::TempDir;
 
 mod heuristics;
 mod inspect;
-mod journeys;
 mod suggestions;
 
 pub use heuristics::{
@@ -283,24 +282,17 @@ pub fn run_inspector(
     workspace_label: String,
 ) -> Result<(), InspectError> {
     let suggestions = suggestions::collect_composition_suggestions(&doc, &heuristic);
-    let journeys = journeys::collect_journey_overlay(&doc, &heuristic)
-        .map_err(|source| InspectError::JourneyOverlay(source.to_string()))?;
-    inspect::run(doc, heuristic, suggestions, journeys, workspace_label).map_err(InspectError::Io)
+    inspect::run(doc, heuristic, suggestions, workspace_label).map_err(InspectError::Io)
 }
 
 #[derive(Debug)]
 pub enum InspectError {
-    JourneyOverlay(String),
     Io(io::Error),
 }
 
 impl fmt::Display for InspectError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::JourneyOverlay(message) => write!(
-                formatter,
-                "failed to resolve inspector journeys: {message}"
-            ),
             Self::Io(source) => write!(formatter, "{source}"),
         }
     }
@@ -309,7 +301,6 @@ impl fmt::Display for InspectError {
 impl std::error::Error for InspectError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::JourneyOverlay(_) => None,
             Self::Io(source) => Some(source),
         }
     }

@@ -24,10 +24,6 @@ use crate::heuristics::{
     HeuristicRelation, HeuristicRelationCount, HeuristicRelationDetail, HeuristicRelationSource,
     HeuristicStatusKind,
 };
-use crate::journeys::{
-    visible_journey_counts, JourneyNodeReference, JourneyNodeRole, JourneyOverlay,
-    JourneySegmentKind, ResolvedJourney, ResolvedJourneyNode, ResolvedJourneySegment,
-};
 use crate::suggestions::{
     CompositionSuggestion, CompositionSuggestionOverlay, CompositionSuggestionSeverity,
 };
@@ -36,11 +32,10 @@ pub fn run(
     doc: CodebaseDoc,
     heuristic: HeuristicOverlay,
     suggestions: CompositionSuggestionOverlay,
-    journeys: JourneyOverlay,
     workspace_label: String,
 ) -> io::Result<()> {
     let mut terminal = setup_terminal()?;
-    let mut app = InspectorApp::new(doc, heuristic, suggestions, journeys, workspace_label);
+    let mut app = InspectorApp::new(doc, heuristic, suggestions, workspace_label);
 
     let result = (|| -> io::Result<()> {
         loop {
@@ -105,7 +100,6 @@ enum WorkspaceSection {
     Composition,
     Machines,
     Gaps,
-    Journeys,
 }
 
 impl WorkspaceSection {
@@ -114,7 +108,6 @@ impl WorkspaceSection {
             Self::Composition => "Composition",
             Self::Machines => "Machines",
             Self::Gaps => "Gaps",
-            Self::Journeys => "Journeys",
         }
     }
 
@@ -410,16 +403,6 @@ enum MachineItem {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum JourneyNodeItem {
-    Node(usize),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum JourneySegmentItem {
-    Segment(usize),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RelationItem {
     Exact(usize),
     Heuristic(usize),
@@ -439,11 +422,9 @@ struct InspectorApp {
     doc: CodebaseDoc,
     heuristic: HeuristicOverlay,
     suggestions: CompositionSuggestionOverlay,
-    journeys: JourneyOverlay,
     workspace_label: String,
     workspace_section: WorkspaceSection,
     selected_machine: usize,
-    selected_journey: usize,
     selected_gap: usize,
     input_mode: InputMode,
     search_query: String,
@@ -453,7 +434,6 @@ struct InspectorApp {
     focus: Focus,
     machine_section: MachineSection,
     machine_item_index: usize,
-    journey_node_index: usize,
     relation_direction: RelationDirection,
     relation_index: usize,
     path_index: usize,
@@ -465,7 +445,6 @@ impl InspectorApp {
         doc: CodebaseDoc,
         heuristic: HeuristicOverlay,
         suggestions: CompositionSuggestionOverlay,
-        journeys: JourneyOverlay,
         workspace_label: String,
     ) -> Self {
         let has_composition = doc
@@ -474,20 +453,16 @@ impl InspectorApp {
             .any(|machine| machine.role.is_composition());
         let workspace_section = if has_composition {
             WorkspaceSection::Composition
-        } else if journeys.is_empty() {
-            WorkspaceSection::Machines
         } else {
-            WorkspaceSection::Journeys
+            WorkspaceSection::Machines
         };
         let mut app = Self {
             doc,
             heuristic,
             suggestions,
-            journeys,
             workspace_label,
             workspace_section,
             selected_machine: 0,
-            selected_journey: 0,
             selected_gap: 0,
             input_mode: InputMode::Normal,
             search_query: String::new(),
@@ -497,7 +472,6 @@ impl InspectorApp {
             focus: Focus::Workspace,
             machine_section: MachineSection::States,
             machine_item_index: 0,
-            journey_node_index: 0,
             relation_direction: RelationDirection::Outbound,
             relation_index: 0,
             path_index: 0,
@@ -526,9 +500,6 @@ impl InspectorApp {
             (WorkspaceSection::Gaps, Focus::Workspace) => "gaps",
             (WorkspaceSection::Gaps, Focus::MainView) => "gap",
             (WorkspaceSection::Gaps, Focus::BottomView) => "paths",
-            (WorkspaceSection::Journeys, Focus::Workspace) => "journeys",
-            (WorkspaceSection::Journeys, Focus::MainView) => "journey",
-            (WorkspaceSection::Journeys, Focus::BottomView) => "segments",
         }
     }
 
@@ -541,9 +512,6 @@ impl InspectorApp {
         if !self.suggestions.is_empty() {
             sections.push(WorkspaceSection::Gaps);
         }
-        if !self.journeys.is_empty() {
-            sections.push(WorkspaceSection::Journeys);
-        }
         sections
     }
 
@@ -552,36 +520,6 @@ impl InspectorApp {
             .machines()
             .iter()
             .any(|machine| machine.role.is_composition())
-    }
-
-    fn shows_journey_heuristics(&self) -> bool {
-        self.lane_mode.shows_heuristic()
-    }
-
-    fn current_journey(&self) -> Option<&ResolvedJourney> {
-        let visible = self.visible_journey_indices();
-        let journey_index = visible
-            .iter()
-            .find(|journey_index| **journey_index == self.selected_journey)
-            .copied()
-            .or_else(|| visible.first().copied())?;
-        self.journeys.journey(journey_index)
-    }
-
-    fn visible_journey_indices(&self) -> Vec<usize> {
-        let query = self.normalized_query();
-        self.journeys
-            .journeys()
-            .iter()
-            .filter(|journey| self.journey_matches_query(journey, query.as_deref()))
-            .map(|journey| journey.index)
-            .collect()
-    }
-
-    fn select_journey(&mut self, journey_index: usize) {
-        self.selected_journey = journey_index;
-        self.journey_node_index = 0;
-        self.relation_index = 0;
     }
 
     fn visible_gap_indices(&self) -> Vec<usize> {
@@ -609,56 +547,6 @@ impl InspectorApp {
         self.path_index = 0;
     }
 
-    fn journey_node_items(&self) -> Vec<JourneyNodeItem> {
-        let Some(journey) = self.current_journey() else {
-            return Vec::new();
-        };
-        journey
-            .nodes
-            .iter()
-            .filter(|node| {
-                self.journey_node_matches_query(journey, node, self.normalized_query().as_deref())
-            })
-            .map(|node| JourneyNodeItem::Node(node.index))
-            .collect()
-    }
-
-    fn journey_segment_items(&self) -> Vec<JourneySegmentItem> {
-        let Some(journey) = self.current_journey() else {
-            return Vec::new();
-        };
-        journey
-            .segments
-            .iter()
-            .filter(|segment| {
-                self.journey_segment_matches_query(
-                    journey,
-                    segment,
-                    self.normalized_query().as_deref(),
-                )
-            })
-            .map(|segment| JourneySegmentItem::Segment(segment.index))
-            .collect()
-    }
-
-    fn selected_journey_node(&self) -> Option<&ResolvedJourneyNode> {
-        let item = self
-            .journey_node_items()
-            .get(self.journey_node_index)
-            .copied()?;
-        let JourneyNodeItem::Node(index) = item;
-        self.current_journey()?.nodes.get(index)
-    }
-
-    fn selected_journey_segment(&self) -> Option<&ResolvedJourneySegment> {
-        let item = self
-            .journey_segment_items()
-            .get(self.relation_index)
-            .copied()?;
-        let JourneySegmentItem::Segment(index) = item;
-        self.current_journey()?.segments.get(index)
-    }
-
     fn select_machine(&mut self, machine_index: usize) {
         self.selected_machine = machine_index;
         self.machine_section = self.preferred_machine_section(machine_index);
@@ -681,7 +569,7 @@ impl InspectorApp {
         match self.workspace_section {
             WorkspaceSection::Composition => self.visible_composition_machine_indices(),
             WorkspaceSection::Machines => self.visible_machine_indices(),
-            WorkspaceSection::Gaps | WorkspaceSection::Journeys => Vec::new(),
+            WorkspaceSection::Gaps => Vec::new(),
         }
     }
 
@@ -779,7 +667,6 @@ impl InspectorApp {
                     .workspace_section
                     .next(&self.available_workspace_sections());
                 self.machine_item_index = 0;
-                self.journey_node_index = 0;
                 self.relation_index = 0;
                 self.path_index = 0;
             }
@@ -883,36 +770,18 @@ impl InspectorApp {
                         self.select_gap(visible[current_position - 1]);
                     }
                 }
-                WorkspaceSection::Journeys => {
-                    let visible = self.visible_journey_indices();
-                    let Some(current_position) = visible
-                        .iter()
-                        .position(|journey_index| *journey_index == self.selected_journey)
-                    else {
-                        if let Some(&first) = visible.first() {
-                            self.select_journey(first);
-                        }
-                        return;
-                    };
-                    if current_position > 0 {
-                        self.select_journey(visible[current_position - 1]);
-                    }
-                }
             },
             Focus::MainView => match self.workspace_section {
                 WorkspaceSection::Composition | WorkspaceSection::Machines => {
                     self.machine_item_index = self.machine_item_index.saturating_sub(1);
                 }
                 WorkspaceSection::Gaps => {}
-                WorkspaceSection::Journeys => {
-                    self.journey_node_index = self.journey_node_index.saturating_sub(1);
-                }
             },
             Focus::BottomView => match self.workspace_section {
                 WorkspaceSection::Composition | WorkspaceSection::Gaps => {
                     self.path_index = self.path_index.saturating_sub(1);
                 }
-                WorkspaceSection::Machines | WorkspaceSection::Journeys => {
+                WorkspaceSection::Machines => {
                     self.relation_index = self.relation_index.saturating_sub(1);
                 }
             },
@@ -952,36 +821,18 @@ impl InspectorApp {
                         self.select_gap(next);
                     }
                 }
-                WorkspaceSection::Journeys => {
-                    let visible = self.visible_journey_indices();
-                    let Some(current_position) = visible
-                        .iter()
-                        .position(|journey_index| *journey_index == self.selected_journey)
-                    else {
-                        if let Some(&first) = visible.first() {
-                            self.select_journey(first);
-                        }
-                        return;
-                    };
-                    if let Some(&next) = visible.get(current_position + 1) {
-                        self.select_journey(next);
-                    }
-                }
             },
             Focus::MainView => match self.workspace_section {
                 WorkspaceSection::Composition | WorkspaceSection::Machines => {
                     self.machine_item_index = self.machine_item_index.saturating_add(1);
                 }
                 WorkspaceSection::Gaps => {}
-                WorkspaceSection::Journeys => {
-                    self.journey_node_index = self.journey_node_index.saturating_add(1);
-                }
             },
             Focus::BottomView => match self.workspace_section {
                 WorkspaceSection::Composition | WorkspaceSection::Gaps => {
                     self.path_index = self.path_index.saturating_add(1);
                 }
-                WorkspaceSection::Machines | WorkspaceSection::Journeys => {
+                WorkspaceSection::Machines => {
                     self.relation_index = self.relation_index.saturating_add(1);
                 }
             },
@@ -1034,25 +885,6 @@ impl InspectorApp {
                 self.path_index = self
                     .path_index
                     .min(self.path_items().len().saturating_sub(1));
-            }
-            WorkspaceSection::Journeys => {
-                let visible_journeys = self.visible_journey_indices();
-                if visible_journeys.is_empty() {
-                    self.selected_journey = 0;
-                    self.journey_node_index = 0;
-                    self.relation_index = 0;
-                    return;
-                }
-
-                if !visible_journeys.contains(&self.selected_journey) {
-                    self.select_journey(visible_journeys[0]);
-                }
-                self.journey_node_index = self
-                    .journey_node_index
-                    .min(self.journey_node_items().len().saturating_sub(1));
-                self.relation_index = self
-                    .relation_index
-                    .min(self.journey_segment_items().len().saturating_sub(1));
             }
         }
     }
@@ -1197,88 +1029,6 @@ impl InspectorApp {
         }
     }
 
-    fn journey_node_label(&self, journey: &ResolvedJourney, node: &ResolvedJourneyNode) -> String {
-        let role = match node.role {
-            JourneyNodeRole::Entry => "entry",
-            JourneyNodeRole::Step => "step",
-            JourneyNodeRole::Outcome => "outcome",
-        };
-        format!(
-            "[{role}] {}",
-            self.journey_node_subject_label(journey, node)
-        )
-    }
-
-    fn journey_node_subject_label(
-        &self,
-        _journey: &ResolvedJourney,
-        node: &ResolvedJourneyNode,
-    ) -> String {
-        match &node.reference {
-            JourneyNodeReference::Machine { machine } => self
-                .doc
-                .machine(*machine)
-                .map(|machine| render_machine_label(machine).to_owned())
-                .unwrap_or_else(|| "<missing machine>".to_owned()),
-            JourneyNodeReference::State { machine, state } => self
-                .doc
-                .machine(*machine)
-                .and_then(|machine| machine.state(*state).map(|state| (machine, state)))
-                .map(|(machine, state)| {
-                    format!(
-                        "{} :: {}",
-                        render_machine_label(machine),
-                        render_state_label(state)
-                    )
-                })
-                .unwrap_or_else(|| "<missing state>".to_owned()),
-            JourneyNodeReference::Validator {
-                machine,
-                entry,
-                source_type_display,
-            } => self
-                .doc
-                .machine(*machine)
-                .and_then(|machine| {
-                    machine
-                        .validator_entry(*entry)
-                        .map(|entry| (machine, entry))
-                })
-                .map(|(machine, entry)| {
-                    format!(
-                        "{} -> {}",
-                        entry.display_label(),
-                        render_machine_label(machine)
-                    )
-                })
-                .unwrap_or_else(|| format!("{source_type_display}::into_machine()")),
-            JourneyNodeReference::Bridge { type_display, .. } => {
-                format!("bridge {type_display}")
-            }
-        }
-    }
-
-    fn journey_segment_label(
-        &self,
-        journey: &ResolvedJourney,
-        segment: &ResolvedJourneySegment,
-    ) -> String {
-        let kind = segment
-            .visible_kind(self.shows_journey_heuristics())
-            .display_label();
-        let from = journey
-            .nodes
-            .get(segment.from_node)
-            .map(|node| self.journey_node_subject_label(journey, node))
-            .unwrap_or_else(|| "<missing>".to_owned());
-        let to = journey
-            .nodes
-            .get(segment.to_node)
-            .map(|node| self.journey_node_subject_label(journey, node))
-            .unwrap_or_else(|| "<missing>".to_owned());
-        format!("[{kind}] {from} -> {to}")
-    }
-
     fn path_item_label(&self, item: &PathItem) -> String {
         let target = self
             .doc
@@ -1405,7 +1155,7 @@ impl InspectorApp {
                     )
                 })
                 .unwrap_or_default(),
-            WorkspaceSection::Machines | WorkspaceSection::Journeys => Vec::new(),
+            WorkspaceSection::Machines => Vec::new(),
         }
     }
 
@@ -1939,10 +1689,6 @@ impl InspectorApp {
                 self.render_gap_view(frame, center[0]);
                 self.render_paths(frame, center[1]);
             }
-            WorkspaceSection::Journeys => {
-                self.render_journey_view(frame, center[0]);
-                self.render_journey_segments(frame, center[1]);
-            }
         }
         self.render_detail(frame, horizontal[2]);
         self.render_status(frame, vertical[1]);
@@ -1996,9 +1742,6 @@ impl InspectorApp {
             .iter()
             .filter(|machine| machine.role.is_composition())
             .count();
-        let visible_journey_indices = self.visible_journey_indices();
-        let visible_journey_count = visible_journey_indices.len();
-        let total_journey_count = self.journeys.journeys().len();
         let visible_gap_indices = self.visible_gap_indices();
         let visible_gap_count = visible_gap_indices.len();
         let total_gap_count = self.suggestions.suggestions().len();
@@ -2041,9 +1784,6 @@ impl InspectorApp {
                     self.suggestions.suggestion_count()
                 )),
             ],
-            WorkspaceSection::Journeys => vec![Line::from(format!(
-                "journeys: {visible_journey_count}/{total_journey_count}"
-            ))],
         };
         if matches!(
             self.workspace_section,
@@ -2112,27 +1852,6 @@ impl InspectorApp {
                 visible_gap_indices
                     .iter()
                     .position(|gap_index| *gap_index == self.selected_gap),
-            ),
-            WorkspaceSection::Journeys => (
-                visible_journey_indices
-                    .iter()
-                    .filter_map(|journey_index| self.journeys.journey(*journey_index))
-                    .map(|journey| {
-                        let counts =
-                            visible_journey_counts(journey, self.shows_journey_heuristics());
-                        ListItem::new(format!(
-                            "{} [{}e {}d {}h {}m]",
-                            journey.display_label(),
-                            counts.exact,
-                            counts.declared,
-                            counts.heuristic,
-                            counts.missing
-                        ))
-                    })
-                    .collect::<Vec<_>>(),
-                visible_journey_indices
-                    .iter()
-                    .position(|journey_index| *journey_index == self.selected_journey),
             ),
         };
         let mut state = ListState::default().with_selected(selected);
@@ -2326,7 +2045,7 @@ impl InspectorApp {
                     )
                 })
                 .unwrap_or_else(|| "Gap Paths".to_owned()),
-            WorkspaceSection::Machines | WorkspaceSection::Journeys => "Paths".to_owned(),
+            WorkspaceSection::Machines => "Paths".to_owned(),
         };
         let block = titled_block(title, self.focus == Focus::BottomView);
         let inner = block.inner(area);
@@ -2361,97 +2080,6 @@ impl InspectorApp {
             Paragraph::new(self.gap_card_text()).wrap(Wrap { trim: false }),
             inner,
         );
-    }
-
-    fn render_journey_view(&self, frame: &mut Frame, area: Rect) {
-        let title = self
-            .current_journey()
-            .map(|journey| {
-                let counts = visible_journey_counts(journey, self.shows_journey_heuristics());
-                format!(
-                    "Journey {} [{} exact, {} declared, {} heuristic, {} missing]",
-                    journey.display_label(),
-                    counts.exact,
-                    counts.declared,
-                    counts.heuristic,
-                    counts.missing
-                )
-            })
-            .unwrap_or_else(|| "Journey <no matches>".to_owned());
-        let block = titled_block(title, self.focus == Focus::MainView);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        let items = self
-            .current_journey()
-            .map(|journey| {
-                self.journey_node_items()
-                    .iter()
-                    .map(|item| match item {
-                        JourneyNodeItem::Node(index) => journey
-                            .nodes
-                            .get(*index)
-                            .map(|node| ListItem::new(self.journey_node_label(journey, node)))
-                            .unwrap_or_else(|| ListItem::new("<missing journey node>")),
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let empty = items.is_empty();
-        let mut state =
-            ListState::default().with_selected((!empty).then_some(self.journey_node_index));
-        let list = if empty {
-            List::new(vec![ListItem::new(self.empty_list_label())])
-        } else {
-            List::new(items)
-        }
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
-        .highlight_symbol("> ");
-        frame.render_stateful_widget(list, inner, &mut state);
-    }
-
-    fn render_journey_segments(&self, frame: &mut Frame, area: Rect) {
-        let title = self
-            .current_journey()
-            .map(|journey| {
-                format!(
-                    "Journey Segments [{}] {}",
-                    self.lane_mode.label(),
-                    journey.display_label()
-                )
-            })
-            .unwrap_or_else(|| "Journey Segments".to_owned());
-        let block = titled_block(title, self.focus == Focus::BottomView);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        let items = self
-            .current_journey()
-            .map(|journey| {
-                self.journey_segment_items()
-                    .iter()
-                    .map(|item| match item {
-                        JourneySegmentItem::Segment(index) => journey
-                            .segments
-                            .get(*index)
-                            .map(|segment| {
-                                ListItem::new(self.journey_segment_label(journey, segment))
-                            })
-                            .unwrap_or_else(|| ListItem::new("<missing journey segment>")),
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let empty = items.is_empty();
-        let mut state = ListState::default().with_selected((!empty).then_some(self.relation_index));
-        let list = if empty {
-            List::new(vec![ListItem::new(self.empty_list_label())])
-        } else {
-            List::new(items)
-        }
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
-        .highlight_symbol("> ");
-        frame.render_stateful_widget(list, inner, &mut state);
     }
 
     fn render_detail(&self, frame: &mut Frame, area: Rect) {
@@ -2535,10 +2163,6 @@ impl InspectorApp {
                     self.heuristic.diagnostics().len()
                 )));
             }
-        } else if self.workspace_section == WorkspaceSection::Journeys {
-            lines.push(Line::from(
-                "journeys show exact, declared, heuristic, and missing segments per lane",
-            ));
         }
         if self.workspace_section == WorkspaceSection::Composition {
             lines.push(Line::from(
@@ -2597,22 +2221,11 @@ impl InspectorApp {
                     .map(|machine| self.machine_workspace_detail_text(machine))
                     .unwrap_or_else(|| Text::from("<no matches>")),
                 WorkspaceSection::Gaps => self.gaps_workspace_detail_text(),
-                WorkspaceSection::Journeys => self
-                    .current_journey()
-                    .map(|journey| journey_detail_text(journey, self.shows_journey_heuristics()))
-                    .unwrap_or_else(|| Text::from("<no matches>")),
             },
             Focus::MainView => match self.workspace_section {
                 WorkspaceSection::Composition => self.machine_detail_selection_text(),
                 WorkspaceSection::Machines => self.machine_detail_selection_text(),
                 WorkspaceSection::Gaps => self.gap_card_text(),
-                WorkspaceSection::Journeys => self
-                    .selected_journey_node()
-                    .and_then(|node| {
-                        self.current_journey()
-                            .map(|journey| journey_node_detail_text(journey, node, &self.doc))
-                    })
-                    .unwrap_or_else(|| self.empty_journey_node_text()),
             },
             Focus::BottomView => match self.workspace_section {
                 WorkspaceSection::Composition | WorkspaceSection::Gaps => self
@@ -2623,13 +2236,6 @@ impl InspectorApp {
                     .selected_relation_detail()
                     .map(relation_detail_selection_text)
                     .unwrap_or_else(|| self.empty_relation_text()),
-                WorkspaceSection::Journeys => self
-                    .selected_journey_segment()
-                    .and_then(|segment| {
-                        self.current_journey()
-                            .map(|journey| self.journey_segment_detail_text(journey, segment))
-                    })
-                    .unwrap_or_else(|| self.empty_journey_segment_text()),
             },
         }
     }
@@ -2870,46 +2476,12 @@ impl InspectorApp {
                     ])
                 })
                 .unwrap_or_else(|| Text::from(self.empty_list_label())),
-            WorkspaceSection::Machines | WorkspaceSection::Journeys => Text::from(self.empty_list_label()),
+            WorkspaceSection::Machines => Text::from(self.empty_list_label()),
         }
     }
 
     fn path_detail_text(&self, path: &PathItem) -> Text<'static> {
         path_detail_text(path, &self.doc)
-    }
-
-    fn empty_journey_node_text(&self) -> Text<'static> {
-        let Some(journey) = self.current_journey() else {
-            return Text::from(self.empty_list_label());
-        };
-        Text::from(vec![
-            Line::from(format!(
-                "No journey nodes are visible for `{}`.",
-                journey.display_label()
-            )),
-            Line::from("Try clearing search filters or selecting a different journey."),
-        ])
-    }
-
-    fn empty_journey_segment_text(&self) -> Text<'static> {
-        let Some(journey) = self.current_journey() else {
-            return Text::from(self.empty_list_label());
-        };
-        Text::from(vec![
-            Line::from(format!(
-                "No journey segments are visible for `{}`.",
-                journey.display_label()
-            )),
-            Line::from("Try clearing search filters or switching lane mode with `m`."),
-        ])
-    }
-
-    fn journey_segment_detail_text(
-        &self,
-        journey: &ResolvedJourney,
-        segment: &ResolvedJourneySegment,
-    ) -> Text<'static> {
-        journey_segment_detail_text(journey, segment, self.shows_journey_heuristics(), &self.doc)
     }
 
     fn query_matches_any<I, S>(query: Option<&str>, candidates: I) -> bool
@@ -3289,124 +2861,6 @@ impl InspectorApp {
         Self::query_matches_any(query, candidates)
     }
 
-    fn journey_matches_query(&self, journey: &ResolvedJourney, query: Option<&str>) -> bool {
-        if Self::query_matches_any(
-            query,
-            [
-                journey.full_id.clone(),
-                journey.display_label().to_owned(),
-                journey.docs.unwrap_or_default().to_owned(),
-            ],
-        ) {
-            return true;
-        }
-
-        journey
-            .nodes
-            .iter()
-            .any(|node| self.journey_node_matches_query(journey, node, query))
-            || journey
-                .segments
-                .iter()
-                .any(|segment| self.journey_segment_matches_query(journey, segment, query))
-    }
-
-    fn journey_node_matches_query(
-        &self,
-        journey: &ResolvedJourney,
-        node: &ResolvedJourneyNode,
-        query: Option<&str>,
-    ) -> bool {
-        let mut candidates = vec![
-            node.role.display_label().to_owned(),
-            self.journey_node_subject_label(journey, node),
-        ];
-
-        match &node.reference {
-            JourneyNodeReference::Machine { machine } => {
-                if let Some(machine) = self.doc.machine(*machine) {
-                    candidates.push(render_machine_label(machine).to_owned());
-                    candidates.push(machine.rust_type_path.to_owned());
-                    candidates.push(machine.description.unwrap_or_default().to_owned());
-                    candidates.push(machine.docs.unwrap_or_default().to_owned());
-                }
-            }
-            JourneyNodeReference::State { machine, state } => {
-                if let Some((machine, state)) = self
-                    .doc
-                    .machine(*machine)
-                    .and_then(|machine| machine.state(*state).map(|state| (machine, state)))
-                {
-                    candidates.push(render_machine_label(machine).to_owned());
-                    candidates.push(machine.rust_type_path.to_owned());
-                    candidates.push(render_state_label(state));
-                    candidates.push(state.rust_name.to_owned());
-                    candidates.push(state.description.unwrap_or_default().to_owned());
-                    candidates.push(state.docs.unwrap_or_default().to_owned());
-                }
-            }
-            JourneyNodeReference::Validator {
-                machine,
-                entry,
-                source_type_display,
-            } => {
-                candidates.push((*source_type_display).to_owned());
-                if let Some((machine, entry)) = self.doc.machine(*machine).and_then(|machine| {
-                    machine
-                        .validator_entry(*entry)
-                        .map(|entry| (machine, entry))
-                }) {
-                    candidates.push(render_machine_label(machine).to_owned());
-                    candidates.push(machine.rust_type_path.to_owned());
-                    candidates.push(entry.display_label().into_owned());
-                    candidates.push(entry.docs.unwrap_or_default().to_owned());
-                }
-            }
-            JourneyNodeReference::Bridge {
-                type_display,
-                resolved_type_name,
-                ..
-            } => {
-                candidates.push((*type_display).to_owned());
-                candidates.push((*resolved_type_name).to_owned());
-            }
-        }
-
-        Self::query_matches_any(query, candidates)
-    }
-
-    fn journey_segment_matches_query(
-        &self,
-        journey: &ResolvedJourney,
-        segment: &ResolvedJourneySegment,
-        query: Option<&str>,
-    ) -> bool {
-        let mut candidates = vec![
-            segment
-                .visible_kind(self.shows_journey_heuristics())
-                .display_label()
-                .to_owned(),
-            segment
-                .visible_basis(self.shows_journey_heuristics())
-                .display_label()
-                .to_owned(),
-            self.journey_segment_label(journey, segment),
-        ];
-        if let Some(label) = &segment.exact_label {
-            candidates.push(label.clone());
-        }
-        if let Some(label) = &segment.heuristic_label {
-            candidates.push(label.clone());
-        }
-        if let Some(from_node) = journey.nodes.get(segment.from_node) {
-            candidates.push(self.journey_node_subject_label(journey, from_node));
-        }
-        if let Some(to_node) = journey.nodes.get(segment.to_node) {
-            candidates.push(self.journey_node_subject_label(journey, to_node));
-        }
-
-        Self::query_matches_any(query, candidates)
-    }
 }
 
 fn titled_block(title: impl Into<Line<'static>>, focused: bool) -> Block<'static> {
@@ -3533,122 +2987,6 @@ fn machine_detail_text(
     Text::from(lines)
 }
 
-fn journey_detail_text(journey: &ResolvedJourney, shows_heuristic: bool) -> Text<'static> {
-    let counts = visible_journey_counts(journey, shows_heuristic);
-    let mut lines = vec![
-        Line::from(format!("journey: {}", journey.display_label())),
-        Line::from(format!("id: {}", journey.full_id)),
-        Line::from(format!("nodes: {}", journey.nodes.len())),
-        Line::from(format!("segments: {}", journey.segments.len())),
-        Line::from(format!(
-            "coverage: {} exact, {} declared, {} heuristic, {} missing",
-            counts.exact, counts.declared, counts.heuristic, counts.missing
-        )),
-    ];
-    append_description_and_docs(&mut lines, None, journey.docs);
-    Text::from(lines)
-}
-
-fn journey_node_detail_text(
-    journey: &ResolvedJourney,
-    node: &ResolvedJourneyNode,
-    doc: &CodebaseDoc,
-) -> Text<'static> {
-    let mut lines = vec![Line::from(format!(
-        "journey role: {}",
-        node.role.display_label()
-    ))];
-    match &node.reference {
-        JourneyNodeReference::Machine { machine } => {
-            let machine = doc.machine(*machine).expect("journey machine should exist");
-            lines.push(Line::from(format!(
-                "machine: {}",
-                render_machine_label(machine)
-            )));
-            lines.push(Line::from(format!("path: {}", machine.rust_type_path)));
-            append_description_and_docs(&mut lines, machine.description, machine.docs);
-        }
-        JourneyNodeReference::State { machine, state } => {
-            let machine = doc
-                .machine(*machine)
-                .expect("journey state machine should exist");
-            let state = machine.state(*state).expect("journey state should exist");
-            lines.push(Line::from(format!(
-                "machine: {}",
-                render_machine_label(machine)
-            )));
-            lines.push(Line::from(format!("state: {}", render_state_label(state))));
-            append_named_description_and_docs(
-                &mut lines,
-                "machine",
-                machine.description,
-                machine.docs,
-            );
-            append_named_description_and_docs(&mut lines, "state", state.description, state.docs);
-        }
-        JourneyNodeReference::Validator {
-            machine,
-            entry,
-            source_type_display: _,
-        } => {
-            let machine = doc
-                .machine(*machine)
-                .expect("journey validator machine should exist");
-            let entry = machine
-                .validator_entry(*entry)
-                .expect("journey validator entry should exist");
-            lines.push(Line::from(format!("validator: {}", entry.display_label())));
-            lines.push(Line::from(format!(
-                "machine: {}",
-                render_machine_label(machine)
-            )));
-            lines.push(Line::from(format!("module: {}", entry.source_module_path)));
-            lines.push(Line::from(format!(
-                "target states: {:?}",
-                entry.target_states
-            )));
-            append_named_description_and_docs(
-                &mut lines,
-                "machine",
-                machine.description,
-                machine.docs,
-            );
-            append_named_description_and_docs(&mut lines, "validator", None, entry.docs);
-        }
-        JourneyNodeReference::Bridge {
-            type_display,
-            resolved_type_name,
-            declared_reference_target,
-        } => {
-            lines.push(Line::from(format!("bridge type: {type_display}")));
-            lines.push(Line::from(format!("resolved type: {resolved_type_name}")));
-            match declared_reference_target {
-                Some(target) => {
-                    let machine = doc
-                        .machine(target.machine)
-                        .expect("journey bridge machine should exist");
-                    let state = machine
-                        .state(target.state)
-                        .expect("journey bridge state should exist");
-                    lines.push(Line::from("machine_ref: yes"));
-                    lines.push(Line::from(format!(
-                        "machine_ref target: {} :: {}",
-                        render_machine_label(machine),
-                        render_state_label(state)
-                    )));
-                }
-                None => lines.push(Line::from("machine_ref: no")),
-            }
-        }
-    }
-
-    if let Some(journey_docs) = journey.docs {
-        append_named_description_and_docs(&mut lines, "journey", None, Some(journey_docs));
-    }
-
-    Text::from(lines)
-}
-
 fn state_detail_text(state: &CodebaseState) -> Text<'static> {
     let mut lines = vec![
         Line::from(format!("state: {}", render_state_label(state))),
@@ -3661,79 +2999,6 @@ fn state_detail_text(state: &CodebaseState) -> Text<'static> {
         Line::from(format!("graph root: {}", yes_no(state.is_graph_root))),
     ];
     append_description_and_docs(&mut lines, state.description, state.docs);
-    Text::from(lines)
-}
-
-fn journey_segment_detail_text(
-    journey: &ResolvedJourney,
-    segment: &ResolvedJourneySegment,
-    shows_heuristic: bool,
-    doc: &CodebaseDoc,
-) -> Text<'static> {
-    let from = journey
-        .nodes
-        .get(segment.from_node)
-        .expect("journey segment source node should exist");
-    let to = journey
-        .nodes
-        .get(segment.to_node)
-        .expect("journey segment target node should exist");
-    let mut lines = vec![
-        Line::from(format!(
-            "kind: {}",
-            segment.visible_kind(shows_heuristic).display_label()
-        )),
-        Line::from(format!(
-            "basis: {}",
-            segment.visible_basis(shows_heuristic).display_label()
-        )),
-        Line::from(format!("from: {}", from.role.display_label())),
-        Line::from(format!("to: {}", to.role.display_label())),
-    ];
-
-    if let Some(machine_index) = segment.from_machine {
-        let machine = doc.machine(machine_index).expect("journey source machine");
-        lines.push(Line::from(format!(
-            "source machine: {}",
-            render_machine_label(machine)
-        )));
-    }
-    if let Some(machine_index) = segment.to_machine {
-        let machine = doc.machine(machine_index).expect("journey target machine");
-        lines.push(Line::from(format!(
-            "target machine: {}",
-            render_machine_label(machine)
-        )));
-    }
-    if segment.same_machine {
-        lines.push(Line::from("same machine segment: yes"));
-    }
-    if let Some(label) = &segment.exact_label {
-        lines.push(Line::from(format!(
-            "exact cover: {} ({})",
-            segment.exact_count, label
-        )));
-    }
-    if let Some(label) = &segment.heuristic_label {
-        lines.push(Line::from(format!(
-            "heuristic cover: {} ({})",
-            segment.heuristic_count, label
-        )));
-    }
-    if segment.visible_kind(shows_heuristic) == JourneySegmentKind::Missing
-        && segment.heuristic_count > 0
-    {
-        lines.push(Line::from(
-            "heuristic cover exists, but the current lane hides it; switch lane mode with `m`.",
-        ));
-    }
-    if segment.visible_kind(shows_heuristic) == JourneySegmentKind::DeclaredBridge {
-        lines.push(Line::from(
-            "This segment is declared explicitly as a narrative bridge, not inferred from the exact graph.",
-        ));
-    }
-
-    append_named_description_and_docs(&mut lines, "journey", None, journey.docs);
     Text::from(lines)
 }
 
@@ -4518,28 +3783,9 @@ mod tests {
         HeuristicOverlay::from_parts(HeuristicStatusKind::Available, Vec::new(), Vec::new())
     }
 
-    fn empty_journey_overlay() -> JourneyOverlay {
-        JourneyOverlay::default()
-    }
-
-    fn empty_suggestion_overlay() -> CompositionSuggestionOverlay {
-        CompositionSuggestionOverlay::default()
-    }
-
-    fn fixture_journey_overlay(doc: &CodebaseDoc) -> JourneyOverlay {
-        crate::journeys::collect_journey_overlay(doc, &empty_heuristic_overlay())
-            .expect("journey overlay")
-    }
-
     fn fixture_app(doc: CodebaseDoc, heuristic: HeuristicOverlay) -> InspectorApp {
         let suggestions = crate::suggestions::collect_composition_suggestions(&doc, &heuristic);
-        InspectorApp::new(
-            doc,
-            heuristic,
-            suggestions,
-            empty_journey_overlay(),
-            "/tmp/workspace/Cargo.toml".to_owned(),
-        )
+        InspectorApp::new(doc, heuristic, suggestions, "/tmp/workspace/Cargo.toml".to_owned())
     }
 
     fn fixture_heuristic_overlay(doc: &CodebaseDoc) -> HeuristicOverlay {
@@ -4639,109 +3885,6 @@ mod tests {
         assert!(text.contains("Task Machine"));
         assert!(text.contains("Flow Workflow Machine [1 exact edge]"));
         assert!(text.contains("Paths [exact] from Workflow Machine"));
-    }
-
-    #[test]
-    fn app_defaults_to_composition_when_composition_and_journeys_exist() {
-        let doc = fixture_doc();
-        let journeys = fixture_journey_overlay(&doc);
-        let app = InspectorApp::new(
-            doc,
-            empty_heuristic_overlay(),
-            empty_suggestion_overlay(),
-            journeys,
-            "/tmp/workspace/Cargo.toml".to_owned(),
-        );
-
-        assert_eq!(app.workspace_section, WorkspaceSection::Composition);
-        assert_eq!(app.focus, Focus::Workspace);
-        assert_eq!(
-            app.current_machine().map(render_machine_label),
-            Some("Workflow Machine")
-        );
-    }
-
-    #[test]
-    fn journey_detail_pane_shows_bridge_and_segment_explanations() {
-        let doc = fixture_doc();
-        let journeys = fixture_journey_overlay(&doc);
-        let mut app = InspectorApp::new(
-            doc,
-            empty_heuristic_overlay(),
-            empty_suggestion_overlay(),
-            journeys,
-            "/tmp/workspace/Cargo.toml".to_owned(),
-        );
-
-        app.workspace_section = WorkspaceSection::Journeys;
-        app.focus = Focus::MainView;
-        app.journey_node_index = 2;
-        let node_text = text_contents(app.detail_text());
-        assert!(node_text.contains("bridge type:"));
-        assert!(node_text.contains("machine_ref: yes"));
-
-        app.focus = Focus::BottomView;
-        app.relation_index = 1;
-        let segment_text = text_contents(app.detail_text());
-        assert!(segment_text.contains("kind: declared bridge"));
-        assert!(segment_text.contains("basis: declared bridge"));
-        assert!(segment_text.contains("declared explicitly as a narrative bridge"));
-    }
-
-    #[test]
-    fn journey_workspace_detail_respects_lane_visibility() {
-        let journey = ResolvedJourney {
-            index: 0,
-            full_id: "workflow::story".to_owned(),
-            module_path: "workflow",
-            id: "story",
-            label: Some("Story"),
-            docs: None,
-            nodes: Vec::new(),
-            segments: vec![ResolvedJourneySegment {
-                index: 0,
-                from_node: 0,
-                to_node: 0,
-                from_machine: None,
-                to_machine: None,
-                declared_bridge: false,
-                same_machine: false,
-                exact_is_composition_owned: false,
-                exact_label: None,
-                exact_count: 0,
-                heuristic_label: Some("heuristic refs: body".to_owned()),
-                heuristic_count: 1,
-            }],
-        };
-
-        let exact_text = text_contents(journey_detail_text(&journey, false));
-        assert!(exact_text.contains("coverage: 0 exact, 0 declared, 0 heuristic, 1 missing"));
-
-        let mixed_text = text_contents(journey_detail_text(&journey, true));
-        assert!(mixed_text.contains("coverage: 0 exact, 0 declared, 1 heuristic, 0 missing"));
-    }
-
-    #[test]
-    fn journey_segments_prefer_composition_exact_basis() {
-        let segment = ResolvedJourneySegment {
-            index: 0,
-            from_node: 0,
-            to_node: 1,
-            from_machine: Some(0),
-            to_machine: Some(1),
-            declared_bridge: false,
-            same_machine: false,
-            exact_is_composition_owned: true,
-            exact_label: Some("composition refs: payload".to_owned()),
-            exact_count: 1,
-            heuristic_label: None,
-            heuristic_count: 0,
-        };
-
-        assert_eq!(
-            segment.visible_basis(false),
-            crate::journeys::JourneySegmentBasis::CompositionMachineRelation
-        );
     }
 
     #[test]
@@ -5056,7 +4199,6 @@ mod tests {
                 }],
                 heuristic_counts: Vec::new(),
             }]),
-            empty_journey_overlay(),
             "/tmp/workspace/Cargo.toml".to_owned(),
         );
         let workflow = app
@@ -5124,7 +4266,6 @@ mod tests {
                 }],
                 heuristic_counts: Vec::new(),
             }]),
-            empty_journey_overlay(),
             "/tmp/workspace/Cargo.toml".to_owned(),
         );
         app.workspace_section = WorkspaceSection::Gaps;
@@ -5172,7 +4313,6 @@ mod tests {
                 }],
                 heuristic_counts: Vec::new(),
             }]),
-            empty_journey_overlay(),
             "/tmp/workspace/Cargo.toml".to_owned(),
         );
         app.workspace_section = WorkspaceSection::Gaps;

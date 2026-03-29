@@ -262,8 +262,6 @@
 //! - Start with [`state`](macro@state), [`machine`](macro@machine), and
 //!   [`transition`](macro@transition).
 //! - For stored rows and database rebuilds, read [`validators`](macro@validators).
-//! - For workspace-level inspector narratives above the exact graph, use
-//!   [`journeys`](macro@journeys).
 //! - For append-only event logs, use [`projection`] before validator rebuilds.
 //! - The repository README and `docs/` directory contain longer guides and
 //!   showcase applications.
@@ -282,19 +280,18 @@ pub use statum_core::__private;
 pub use statum_core::projection;
 #[doc(inline)]
 pub use statum_core::{
-    linked_journeys, linked_machines, linked_reference_types, linked_relations,
-    linked_validator_entries, linked_via_routes, Attested, Branch, CanTransitionMap,
-    CanTransitionTo, CanTransitionWith, DataState, Error, LinkedJourneyDescriptor,
-    LinkedJourneyStepDescriptor, LinkedMachineGraph, LinkedReferenceTypeDescriptor,
-    LinkedRelationBasis, LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource,
-    LinkedRelationTarget, LinkedStateDescriptor, LinkedTransitionDescriptor,
-    LinkedTransitionInventory, LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor,
-    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation, MachineRole,
-    MachinePresentationDescriptor, MachineReference, MachineReferenceTarget, MachineStateIdentity,
-    MachineTransitionRecorder, RebuildAttempt, RebuildReport, RecordedTransition, Rejection,
-    Result, StateDescriptor, StateMarker, StatePresentation, StaticMachineLinkDescriptor,
-    TransitionDescriptor, TransitionInventory, TransitionPresentation,
-    TransitionPresentationInventory, UnitState, Validation,
+    linked_machines, linked_reference_types, linked_relations, linked_validator_entries,
+    linked_via_routes, Attested, Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith,
+    DataState, Error, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
+    LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
+    LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
+    LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachineDescriptor, MachineGraph,
+    MachineIntrospection, MachinePresentation, MachineRole, MachinePresentationDescriptor,
+    MachineReference, MachineReferenceTarget, MachineStateIdentity, MachineTransitionRecorder,
+    RebuildAttempt, RebuildReport, RecordedTransition, Rejection, Result, StateDescriptor,
+    StateMarker, StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor,
+    TransitionInventory, TransitionPresentation, TransitionPresentationInventory, UnitState,
+    Validation,
 };
 
 /// Define the legal lifecycle phases for a machine.
@@ -388,18 +385,6 @@ pub use statum_macros::machine;
 /// stable artifact or handoff type, point it at the earliest stable producer
 /// state for that artifact instead of a later consumer state.
 pub use statum_macros::machine_ref;
-
-/// Declare workspace-level inspector journeys above the exact machine graph.
-///
-/// `journeys!` records named entry-to-outcome narratives that the inspector can
-/// render without changing `MachineIntrospection::GRAPH` or the exact codebase
-/// export model. Use it for domain-level stories that span multiple machines,
-/// especially when some bridges are semantic handoffs rather than exact static
-/// machine relations. When the flow is real cross-machine protocol
-/// orchestration, prefer `#[machine(role = composition)]` and direct child
-/// machines first; `journeys!` is the fallback narrative layer above that
-/// exact graph.
-pub use statum_macros::journeys;
 
 /// Validate and generate legal transitions for one source state.
 ///

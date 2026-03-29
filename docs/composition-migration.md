@@ -1,9 +1,9 @@
 # Composition Machine Migration
 
 This guide is for codebases that already use exact relation export,
-`#[via(...)]`, `*_and_attest()`, `#[machine_ref(...)]`, or `journeys!`, but
-want the inspector to derive the main workspace story from typed orchestration
-instead of fallback narrative metadata.
+`#[via(...)]`, `*_and_attest()`, or `#[machine_ref(...)]`, but want the
+inspector to derive the main workspace story from typed orchestration instead
+of external narrative scaffolding.
 
 The target model is simple:
 
@@ -12,8 +12,6 @@ The target model is simple:
 - direct child-machine values are the default exact composition surface
 - detached artifacts keep exact provenance through `*_and_attest()` plus
   `#[via(...)]`
-- `journeys!` stays as fallback narrative metadata when the orchestration is
-  not protocol truth yet
 
 ## 1. Start With A Composition Machine
 
@@ -122,17 +120,18 @@ Good fit:
 Do not use `#[machine_ref(...)]` when a direct child machine or `#[via(...)]`
 already says enough.
 
-## 5. Keep `journeys!` As Fallback
+## 5. Delete Old Narrative Overlays
 
-`journeys!` is still useful when:
+If your workspace previously used hand-written journey metadata or other
+inspector-only narrative overlays, remove them once the composition machines
+and detached-handoff surfaces are in place.
 
-- the business story matters before the protocol truth is fully modeled
-- one named narrative should span several exact possibilities
-- the workspace is still being migrated
+The target state is one source of workspace-flow truth:
 
-But when the orchestration itself is protocol truth, prefer a composition
-machine. That keeps the journey in the same type system and transition surface
-as the rest of Statum.
+- composition machines for cross-machine legality
+- direct child machines where possible
+- `#[via(...)]` only where detached exact provenance still matters
+- `#[machine_ref(...)]` only for honest opaque references
 
 ## 6. Validate The Migration
 
