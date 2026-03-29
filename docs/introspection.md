@@ -199,6 +199,13 @@ let shipping = FulfillmentMachine::<ReadyToShip>::builder()
 Runnable version:
 [statum-examples/src/toy_demos/17-attested-composition.rs](../statum-examples/src/toy_demos/17-attested-composition.rs)
 
+If you want the top-level workspace story to come from typed orchestration
+instead of only these lower-level attested edges, pair that evidence with a
+composition machine:
+
+- [statum-examples/src/toy_demos/example_18_composition_machine.rs](../statum-examples/src/toy_demos/example_18_composition_machine.rs)
+- [docs/composition-migration.md](composition-migration.md)
+
 In that example:
 
 - `capture()` still means only “move to `Captured`”

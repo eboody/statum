@@ -244,6 +244,57 @@ fn suggest_command_reports_heuristic_only_composition_candidates() {
     assert!(stdout.contains("heuristic lane"));
 }
 
+#[test]
+fn codebase_command_exports_composition_workflow_for_statum_examples() {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crate should live under workspace root");
+    let examples_dir = workspace_root.join("statum-examples");
+    let out_dir = tempdir().expect("output tempdir");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("codebase")
+        .arg(&examples_dir)
+        .arg("--out-dir")
+        .arg(out_dir.path())
+        .output()
+        .expect("cargo-statum-graph should run against statum-examples");
+    assert!(
+        output.status.success(),
+        "statum-examples codebase export should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let mermaid =
+        fs::read_to_string(out_dir.path().join("codebase.mmd")).expect("mermaid output");
+    let json = fs::read_to_string(out_dir.path().join("codebase.json")).expect("json output");
+
+    assert!(
+        mermaid.contains("DocumentFlow [composition]"),
+        "expected composition machine in mermaid export, got:\n{mermaid}"
+    );
+    assert!(
+        mermaid.contains("composition refs: payload x2, param x2"),
+        "expected direct composition summary edge in mermaid export, got:\n{mermaid}"
+    );
+    assert!(
+        mermaid.contains("composition + exact refs: param, param [via]"),
+        "expected detached-handoff composition summary edge in mermaid export, got:\n{mermaid}"
+    );
+    assert!(
+        json.contains("example_18_composition_machine::DocumentFlow"),
+        "expected composition machine in json export, got:\n{json}"
+    );
+    assert!(
+        json.contains("\"semantic\": \"composition_direct_child\""),
+        "expected composition semantic in json export, got:\n{json}"
+    );
+    assert!(
+        json.contains("\"route_name\": \"Publish\""),
+        "expected detached publication provenance in json export, got:\n{json}"
+    );
+}
+
 fn write_fixture(dir: &Path) {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

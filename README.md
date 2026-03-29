@@ -86,6 +86,8 @@ Example: [statum-examples/src/toy_demos/example_01_setup.rs](statum-examples/src
 - Want the idea quickly: read [What The Compiler Enforces](#what-the-compiler-enforces)
 - Want the flagship feature: jump to [Typed Rehydration](#typed-rehydration)
 - Want graphs and CLI tooling: read [Machine Introspection And Exact Relations](#machine-introspection-and-exact-relations)
+- Want composition-first workspace flow: read
+  [Composition Machine Migration](docs/composition-migration.md)
 - Want a full app-shaped example: go to [Showcases](#showcases) or [docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md)
 
 ## What The Compiler Enforces
@@ -292,12 +294,19 @@ See [docs/introspection.md](docs/introspection.md) for the full guide,
 supported wrapper shapes, and exactness limits. Runnable examples:
 [statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)
 and
-[statum-examples/src/toy_demos/17-attested-composition.rs](statum-examples/src/toy_demos/17-attested-composition.rs).
+[statum-examples/src/toy_demos/17-attested-composition.rs](statum-examples/src/toy_demos/17-attested-composition.rs)
+and
+[statum-examples/src/toy_demos/example_18_composition_machine.rs](statum-examples/src/toy_demos/example_18_composition_machine.rs).
 
 If you want ready-made graph renderers, the workspace also ships
 [statum-graph](statum-graph/README.md). If you want a linked-build codebase
 graph and inspector TUI, see
 [cargo-statum-graph](cargo-statum-graph/README.md).
+
+If the main business flow should itself be exact protocol truth, prefer
+`#[machine(role = composition)]` over describing that story only through
+`journeys!` or heuristics. The migration guide is
+[docs/composition-migration.md](docs/composition-migration.md).
 
 Statum also supports exact cross-machine transition provenance. Direct
 single-target transitions get generated `*_and_attest()` companions returning

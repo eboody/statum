@@ -192,6 +192,8 @@ Exit criteria:
 Checklist:
 [Phase 5 checklist](./checklists/composition-phase-5-migration.md)
 
+Status: complete
+
 Goal:
 
 - prove the model in a real consumer workspace before deleting old surfaces

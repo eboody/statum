@@ -84,3 +84,8 @@ fn example_16_machine_introspection() {
 fn example_17_attested_composition() {
     toy_demos::example_17_attested_composition::run();
 }
+
+#[test]
+fn example_18_composition_machine() {
+    toy_demos::example_18_composition_machine::run();
+}

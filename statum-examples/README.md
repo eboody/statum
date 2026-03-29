@@ -21,10 +21,11 @@ cargo run -p statum-examples --bin tokio-websocket-session
 ## Contents
 
 - Toy demos:
-  - `example_01_setup.rs` through `17-attested-composition.rs`
+  - `example_01_setup.rs` through `example_18_composition_machine.rs`
   - best when you are learning the macros or one helper at a time
   - includes an introspection example that shows exact branch alternatives and runtime transition recording
   - includes an attested-composition example that shows `*_and_attest()`, `#[via(...)]`, generated `.from_*()` binders, and the resulting exact linked relation metadata
+  - includes a composition-machine example that shows how a top-level workflow can be modeled as `#[machine(role = composition)]` with direct child-machine orchestration plus one detached handoff
 - Showcases:
   - `axum-sqlite-review`: HTTP + SQLite + typed rehydration
   - `clap-sqlite-deploy-pipeline`: multi-invocation CLI workflow
@@ -39,3 +40,8 @@ cargo run -p statum-examples --bin tokio-websocket-session
 ## Repository
 
 <https://github.com/eboody/statum>
+
+See also:
+
+- [Composition Machine Migration](../docs/composition-migration.md)
+- [Composition machine toy demo](src/toy_demos/example_18_composition_machine.rs)

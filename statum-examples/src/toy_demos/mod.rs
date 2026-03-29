@@ -31,3 +31,4 @@ pub mod example_15_transition_map;
 pub mod example_16_machine_introspection;
 #[path = "17-attested-composition.rs"]
 pub mod example_17_attested_composition;
+pub mod example_18_composition_machine;

@@ -178,6 +178,12 @@ The heuristic lane is useful but non-authoritative. It does not change
 `codebase` export output. Runtime replay and snapshot inspection are still
 future work.
 
+If you are moving a workspace from fallback journeys or loose cross-machine
+coupling into typed composition flow, start with
+[docs/composition-migration.md](../docs/composition-migration.md) and the
+composition example in
+[statum-examples/src/toy_demos/example_18_composition_machine.rs](../statum-examples/src/toy_demos/example_18_composition_machine.rs).
+
 If a cross-flow artifact or handoff type is stable enough to count as exact,
 promote it with `#[machine_ref(...)]` on the nominal type once instead of
 depending on the heuristic lane. Target the earliest stable producer state for
