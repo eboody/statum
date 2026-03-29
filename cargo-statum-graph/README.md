@@ -84,14 +84,33 @@ surface shows:
   available. For `#[via(...)]` relations, the detail pane also shows the
   attested route, producer machine, producer source state, and producer
   transition. Composition-owned exact relations also show their composition
-  semantics and source/target machine roles. Journey detail also shows bridge
-  types, machine-ref targets, and exact, declared, heuristic, or missing
-  segment coverage.
+  semantics and source/target machine roles. Machine detail also shows
+  composition diagnostics when a protocol machine still looks like a
+  composition candidate. Journey detail also shows bridge types, machine-ref
+  targets, and exact, declared, heuristic, or missing segment coverage.
 
 If declared journeys exist, the inspector opens on `Journeys` first. If none
 exist, it keeps the current machine-first behavior.
 
 `inspect` requires an interactive terminal on stdin and stdout.
+
+## Suggest
+
+```text
+cargo statum-graph suggest \
+  /path/to/workspace
+```
+
+That prints composition diagnostics without launching the TUI.
+
+- `warning` means a protocol machine already exposes exact typed
+  cross-machine orchestration and should likely be marked
+  `#[machine(role = composition)]`.
+- `suggestion` means the coupling is still only visible through the heuristic
+  lane, so the next step is to model it in typed composition state or
+  transition surfaces or promote a detached handoff into the exact lane.
+- The report also prints heuristic collector status so a quiet suggestion list
+  does not hide `partial` or `unavailable` source scanning.
 
 Keybindings:
 

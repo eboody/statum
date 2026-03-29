@@ -189,6 +189,61 @@ fn inspect_command_fails_closed_without_an_interactive_terminal() {
     );
 }
 
+#[test]
+fn suggest_command_reports_exact_typed_orchestration_warnings() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_fixture(fixture_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("suggest")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("cargo-statum-graph should run");
+    assert!(output.status.success(), "suggest should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("composition diagnostics:"),
+        "unexpected suggest stdout:\n{stdout}"
+    );
+    assert!(stdout.contains("warning:"), "unexpected suggest stdout:\n{stdout}");
+    assert!(
+        stdout.contains("workflow::Machine"),
+        "unexpected suggest stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("task::Machine"),
+        "unexpected suggest stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("missing composition role"),
+        "unexpected suggest stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("consider `#[machine(role = composition)]`"),
+        "unexpected suggest stdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn suggest_command_reports_heuristic_only_composition_candidates() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_heuristic_only_fixture(fixture_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("suggest")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("cargo-statum-graph should run");
+    assert!(output.status.success(), "suggest should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("composition diagnostics: 0 warning, 1 suggestion"));
+    assert!(stdout.contains("suggestion: workflow::Machine -> task::Machine"));
+    assert!(stdout.contains("heuristic composition candidate"));
+    assert!(stdout.contains("heuristic lane"));
+}
+
 fn write_fixture(dir: &Path) {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

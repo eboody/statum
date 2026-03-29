@@ -12,10 +12,10 @@ Goal: detached handoffs and diagnostics.
       transition.
 - [x] Decide and document the boundary between detached handoffs and opaque
       machine references.
-- [ ] Add exact compiler warnings for high-confidence typed orchestration
-      smells.
-- [ ] Add inspector or CLI suggestions for weaker composition candidates that
-      are not strong enough for compiler warnings.
+- [x] Add exact `cargo statum-graph suggest` warnings for high-confidence
+      typed orchestration smells.
+- [x] Add inspector and CLI suggestions for weaker composition candidates that
+      are not strong enough for exact warnings.
 - [x] Add adversarial tests for unknown producer machine, source state, target
       state, and transition, plus duplicate declaration pressure.
 - [x] Add migration guidance from `#[via(...)]` and `Attested<T, Via>` toward

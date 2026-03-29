@@ -28,15 +28,19 @@ use crate::journeys::{
     JourneyNodeReference, JourneyNodeRole, JourneyOverlay, JourneySegmentKind, ResolvedJourney,
     ResolvedJourneyNode, ResolvedJourneySegment, visible_journey_counts,
 };
+use crate::suggestions::{
+    CompositionSuggestion, CompositionSuggestionOverlay, CompositionSuggestionSeverity,
+};
 
 pub fn run(
     doc: CodebaseDoc,
     heuristic: HeuristicOverlay,
+    suggestions: CompositionSuggestionOverlay,
     journeys: JourneyOverlay,
     workspace_label: String,
 ) -> io::Result<()> {
     let mut terminal = setup_terminal()?;
-    let mut app = InspectorApp::new(doc, heuristic, journeys, workspace_label);
+    let mut app = InspectorApp::new(doc, heuristic, suggestions, journeys, workspace_label);
 
     let result = (|| -> io::Result<()> {
         loop {
@@ -396,6 +400,7 @@ enum RelationDetailSelection<'a> {
 struct InspectorApp {
     doc: CodebaseDoc,
     heuristic: HeuristicOverlay,
+    suggestions: CompositionSuggestionOverlay,
     journeys: JourneyOverlay,
     workspace_label: String,
     workspace_section: WorkspaceSection,
@@ -419,6 +424,7 @@ impl InspectorApp {
     fn new(
         doc: CodebaseDoc,
         heuristic: HeuristicOverlay,
+        suggestions: CompositionSuggestionOverlay,
         journeys: JourneyOverlay,
         workspace_label: String,
     ) -> Self {
@@ -430,6 +436,7 @@ impl InspectorApp {
         let mut app = Self {
             doc,
             heuristic,
+            suggestions,
             journeys,
             workspace_label,
             workspace_section,
@@ -569,6 +576,17 @@ impl InspectorApp {
         } else {
             MachineSection::States
         }
+    }
+
+    fn machine_suggestions(&self, machine_index: usize) -> Vec<&CompositionSuggestion> {
+        self.suggestions.machine_suggestions(machine_index).collect()
+    }
+
+    fn composition_diagnostic_counts(&self) -> (usize, usize) {
+        (
+            self.suggestions.warning_count(),
+            self.suggestions.suggestion_count(),
+        )
     }
 }
 
@@ -1892,17 +1910,33 @@ impl InspectorApp {
                 self.filters.basis_summary()
             )));
         }
+        if self.workspace_section == WorkspaceSection::Machines {
+            let (warnings, suggestions) = self.composition_diagnostic_counts();
+            lines.push(Line::from(format!(
+                "composition diagnostics {} warning, {} suggestion",
+                warnings, suggestions
+            )));
+            if self.heuristic.status() != HeuristicStatusKind::Available {
+                lines.push(Line::from(format!(
+                    "heuristics {} ({})",
+                    self.heuristic.status().display_label(),
+                    self.heuristic.diagnostics().len()
+                )));
+            }
+        }
         if self.workspace_section == WorkspaceSection::Machines && self.lane_mode.shows_heuristic()
         {
             lines.push(Line::from(format!(
                 "heuristic filters evidence={}",
                 self.heuristic_filters.evidence_summary()
             )));
-            lines.push(Line::from(format!(
-                "heuristics {} ({})",
-                self.heuristic.status().display_label(),
-                self.heuristic.diagnostics().len()
-            )));
+            if self.heuristic.status() == HeuristicStatusKind::Available {
+                lines.push(Line::from(format!(
+                    "heuristics {} ({})",
+                    self.heuristic.status().display_label(),
+                    self.heuristic.diagnostics().len()
+                )));
+            }
         } else if self.workspace_section == WorkspaceSection::Journeys {
             lines.push(Line::from(
                 "journeys show exact, declared, heuristic, and missing segments per lane",
@@ -1952,7 +1986,7 @@ impl InspectorApp {
             Focus::Workspace => match self.workspace_section {
                 WorkspaceSection::Machines => self
                     .current_machine()
-                    .map(|machine| machine_detail_text(machine, &self.doc))
+                    .map(|machine| self.machine_workspace_detail_text(machine))
                     .unwrap_or_else(|| Text::from("<no matches>")),
                 WorkspaceSection::Journeys => self
                     .current_journey()
@@ -1988,28 +2022,36 @@ impl InspectorApp {
                 Some(MachineItem::State(state_index)) => machine
                     .state(state_index)
                     .map(state_detail_text)
-                    .unwrap_or_else(|| machine_detail_text(machine, &self.doc)),
-                _ => machine_detail_text(machine, &self.doc),
+                    .unwrap_or_else(|| self.machine_workspace_detail_text(machine)),
+                _ => self.machine_workspace_detail_text(machine),
             },
             MachineSection::Transitions => match self.selected_machine_item() {
                 Some(MachineItem::Transition(transition_index)) => machine
                     .transition(transition_index)
                     .map(transition_detail_text)
-                    .unwrap_or_else(|| machine_detail_text(machine, &self.doc)),
-                _ => machine_detail_text(machine, &self.doc),
+                    .unwrap_or_else(|| self.machine_workspace_detail_text(machine)),
+                _ => self.machine_workspace_detail_text(machine),
             },
             MachineSection::Validators => match self.selected_machine_item() {
                 Some(MachineItem::Validator(entry_index)) => machine
                     .validator_entry(entry_index)
                     .map(validator_detail_text)
-                    .unwrap_or_else(|| machine_detail_text(machine, &self.doc)),
-                _ => machine_detail_text(machine, &self.doc),
+                    .unwrap_or_else(|| self.machine_workspace_detail_text(machine)),
+                _ => self.machine_workspace_detail_text(machine),
             },
             MachineSection::Summary => match self.selected_machine_item() {
                 Some(MachineItem::Summary(summary)) => summary_detail_text(&summary, &self.doc),
-                _ => machine_detail_text(machine, &self.doc),
+                _ => self.machine_workspace_detail_text(machine),
             },
         }
+    }
+
+    fn machine_workspace_detail_text(&self, machine: &CodebaseMachine) -> Text<'static> {
+        machine_detail_text(
+            machine,
+            &self.doc,
+            &self.machine_suggestions(machine.index),
+        )
     }
 
     fn has_search_query(&self) -> bool {
@@ -2185,6 +2227,36 @@ impl InspectorApp {
                 && self.machine_exact_relations_match_query(machine.index, query))
             || (self.lane_mode.shows_heuristic()
                 && self.machine_heuristic_relations_match_query(machine.index, query))
+            || self.machine_suggestions_match_query(machine.index, query)
+    }
+
+    fn machine_suggestions_match_query(
+        &self,
+        machine_index: usize,
+        query: Option<&str>,
+    ) -> bool {
+        self.machine_suggestions(machine_index).into_iter().any(|suggestion| {
+            let source = suggestion
+                .source_machine(&self.doc)
+                .map(|machine| render_machine_label(machine).to_owned())
+                .unwrap_or_default();
+            let target = suggestion
+                .target_machine(&self.doc)
+                .map(|machine| render_machine_label(machine).to_owned())
+                .unwrap_or_default();
+            Self::query_matches_any(
+                query,
+                [
+                    suggestion.severity.display_label().to_owned(),
+                    suggestion.kind.display_label().to_owned(),
+                    suggestion.counts_label(),
+                    suggestion.help_text().to_owned(),
+                    suggestion.why_text().to_owned(),
+                    source,
+                    target,
+                ],
+            )
+        })
     }
 
     fn machine_exact_relations_match_query(
@@ -2663,7 +2735,11 @@ fn render_heuristic_relation_label(detail: &HeuristicRelationDetail<'_>) -> Stri
     )
 }
 
-fn machine_detail_text(machine: &CodebaseMachine, doc: &CodebaseDoc) -> Text<'static> {
+fn machine_detail_text(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    suggestions: &[&CompositionSuggestion],
+) -> Text<'static> {
     let mut lines = vec![
         Line::from(format!("machine: {}", render_machine_label(machine))),
         Line::from(format!("path: {}", machine.rust_type_path)),
@@ -2680,6 +2756,9 @@ fn machine_detail_text(machine: &CodebaseMachine, doc: &CodebaseDoc) -> Text<'st
             doc.inbound_relations_for_machine(machine.index).count()
         )),
     ];
+    if !suggestions.is_empty() {
+        append_composition_suggestions(&mut lines, suggestions, doc);
+    }
     append_description_and_docs(&mut lines, machine.description, machine.docs);
     Text::from(lines)
 }
@@ -3275,6 +3354,42 @@ fn heuristic_status_text(
     Text::from(lines)
 }
 
+fn append_composition_suggestions(
+    lines: &mut Vec<Line<'static>>,
+    suggestions: &[&CompositionSuggestion],
+    doc: &CodebaseDoc,
+) {
+    let (warnings, suggestions_count) = suggestions.iter().fold((0usize, 0usize), |counts, item| {
+        match item.severity {
+            CompositionSuggestionSeverity::Warning => (counts.0 + 1, counts.1),
+            CompositionSuggestionSeverity::Suggestion => (counts.0, counts.1 + 1),
+        }
+    });
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Composition Diagnostics".to_owned(),
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(format!(
+        "{} warning, {} suggestion",
+        warnings, suggestions_count
+    )));
+
+    for suggestion in suggestions {
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(
+            "{}: {}",
+            suggestion.severity.display_label(),
+            suggestion.summary_label(doc)
+        )));
+        lines.push(Line::from(format!("kind: {}", suggestion.kind.display_label())));
+        lines.push(Line::from(format!("why: {}", suggestion.why_text())));
+        lines.push(Line::from(format!("evidence: {}", suggestion.counts_label())));
+        lines.push(Line::from(format!("help: {}", suggestion.help_text())));
+    }
+}
+
 fn append_description_and_docs(
     lines: &mut Vec<Line<'static>>,
     description: Option<&'static str>,
@@ -3460,15 +3575,21 @@ mod tests {
         JourneyOverlay::default()
     }
 
+    fn empty_suggestion_overlay() -> CompositionSuggestionOverlay {
+        CompositionSuggestionOverlay::default()
+    }
+
     fn fixture_journey_overlay(doc: &CodebaseDoc) -> JourneyOverlay {
         crate::journeys::collect_journey_overlay(doc, &empty_heuristic_overlay())
             .expect("journey overlay")
     }
 
     fn fixture_app(doc: CodebaseDoc, heuristic: HeuristicOverlay) -> InspectorApp {
+        let suggestions = crate::suggestions::collect_composition_suggestions(&doc, &heuristic);
         InspectorApp::new(
             doc,
             heuristic,
+            suggestions,
             empty_journey_overlay(),
             "/tmp/workspace/Cargo.toml".to_owned(),
         )
@@ -3580,6 +3701,7 @@ mod tests {
         let app = InspectorApp::new(
             doc,
             empty_heuristic_overlay(),
+            empty_suggestion_overlay(),
             journeys,
             "/tmp/workspace/Cargo.toml".to_owned(),
         );
@@ -3599,6 +3721,7 @@ mod tests {
         let mut app = InspectorApp::new(
             doc,
             empty_heuristic_overlay(),
+            empty_suggestion_overlay(),
             journeys,
             "/tmp/workspace/Cargo.toml".to_owned(),
         );
@@ -3910,7 +4033,7 @@ mod tests {
             group: summary,
         });
 
-        let machine_detail = text_contents(machine_detail_text(workflow, &doc));
+        let machine_detail = text_contents(machine_detail_text(workflow, &doc, &[]));
         assert!(machine_detail.contains("role: composition"));
         assert!(machine_detail.contains("Description"));
         assert!(machine_detail.contains("Tracks workflow progress across task execution."));
@@ -3950,6 +4073,55 @@ mod tests {
         assert!(summary_text.contains("source machine Docs"));
         assert!(summary_text.contains("target machine Description"));
         assert!(summary_text.contains("target machine Docs"));
+    }
+
+    #[test]
+    fn machine_workspace_detail_shows_composition_diagnostics() {
+        let doc = fixture_doc();
+        let workflow = doc
+            .machines()
+            .iter()
+            .find(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine");
+        let workflow_index = workflow.index;
+        let task = doc
+            .machines()
+            .iter()
+            .find(|machine| machine.label == Some("Task Machine"))
+            .expect("task machine");
+        let task_index = task.index;
+        let app = InspectorApp::new(
+            doc,
+            empty_heuristic_overlay(),
+            CompositionSuggestionOverlay::from_suggestions(vec![CompositionSuggestion {
+                index: 0,
+                severity: CompositionSuggestionSeverity::Warning,
+                kind: crate::suggestions::CompositionSuggestionKind::MissingCompositionRole,
+                source_machine: workflow_index,
+                target_machine: task_index,
+                exact_relation_indices: vec![0],
+                heuristic_relation_indices: Vec::new(),
+                exact_counts: vec![CodebaseRelationCount {
+                    kind: CodebaseRelationKind::TransitionParam,
+                    basis: CodebaseRelationBasis::DirectTypeSyntax,
+                    count: 1,
+                }],
+                heuristic_counts: Vec::new(),
+            }]),
+            empty_journey_overlay(),
+            "/tmp/workspace/Cargo.toml".to_owned(),
+        );
+        let workflow = app
+            .doc
+            .machines()
+            .iter()
+            .find(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine");
+
+        let detail = text_contents(app.machine_workspace_detail_text(workflow));
+        assert!(detail.contains("Composition Diagnostics"));
+        assert!(detail.contains("warning: Workflow Machine -> Task Machine"));
+        assert!(detail.contains("consider `#[machine(role = composition)]`"));
     }
 
     #[test]

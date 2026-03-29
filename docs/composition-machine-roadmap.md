@@ -135,6 +135,8 @@ Exit criteria:
 Checklist:
 [Phase 3 checklist](./checklists/composition-phase-3-detached-handoffs.md)
 
+Status: complete
+
 Goal:
 
 - cover exact cross-machine flow when composition crosses a detached artifact
@@ -146,8 +148,9 @@ Deliver:
 - exact joining of detached artifacts from producer transition to composition
   consumer across state payloads, machine fields, and transition parameters
 - continued support for `#[machine_ref(...)]` on opaque references
-- exact compiler warnings for high-confidence typed orchestration smells
-- inspector or CLI suggestions for weaker composition candidates
+- exact `cargo statum-graph suggest` warnings for high-confidence typed
+  orchestration smells
+- inspector and CLI suggestions for weaker composition candidates
 
 Exit criteria:
 

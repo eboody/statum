@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser};
 
-use cargo_statum_graph::{inspect, run, InspectOptions, Options};
+use cargo_statum_graph::{inspect, run, suggest, InspectOptions, Options, SuggestOptions};
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo-statum-graph")]
@@ -16,6 +16,8 @@ enum Cli {
     Codebase(CodebaseArgs),
     #[command(name = "inspect")]
     Inspect(InspectArgs),
+    #[command(name = "suggest")]
+    Suggest(SuggestArgs),
 }
 
 #[derive(Debug, Args)]
@@ -46,6 +48,18 @@ struct InspectArgs {
     patch_statum_root: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+struct SuggestArgs {
+    #[arg(value_name = "PATH", default_value = ".")]
+    path: PathBuf,
+    #[arg(long)]
+    manifest_path: Option<PathBuf>,
+    #[arg(long)]
+    package: Option<String>,
+    #[arg(long)]
+    patch_statum_root: Option<PathBuf>,
+}
+
 fn main() -> ExitCode {
     match run_main() {
         Ok(()) => ExitCode::SUCCESS,
@@ -60,14 +74,17 @@ fn main() -> ExitCode {
 
 fn run_main() -> Result<(), cargo_statum_graph::Error> {
     let cli = parse_cli_from(std::env::args_os());
-    let written = match cli {
+    let output = match cli {
         Cli::Codebase(args) => run(Options {
             input_path: args.manifest_path.unwrap_or(args.path),
             package: args.package,
             out_dir: args.out_dir,
             stem: args.stem,
             patch_statum_root: args.patch_statum_root,
-        })?,
+        })?
+        .into_iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>(),
         Cli::Inspect(args) => {
             inspect(InspectOptions {
                 input_path: args.manifest_path.unwrap_or(args.path),
@@ -76,10 +93,18 @@ fn run_main() -> Result<(), cargo_statum_graph::Error> {
             })?;
             Vec::new()
         }
+        Cli::Suggest(args) => suggest(SuggestOptions {
+            input_path: args.manifest_path.unwrap_or(args.path),
+            package: args.package,
+            patch_statum_root: args.patch_statum_root,
+        })?
+        .lines()
+        .map(str::to_owned)
+        .collect(),
     };
 
-    for path in written {
-        println!("{}", path.display());
+    for line in output {
+        println!("{line}");
     }
 
     Ok(())
@@ -133,6 +158,16 @@ mod tests {
 
         let Cli::Inspect(args) = cli else {
             panic!("expected inspect subcommand");
+        };
+        assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
+    }
+
+    #[test]
+    fn parse_cli_from_accepts_suggest_subcommand() {
+        let cli = parse_cli_from(["cargo-statum-graph", "suggest", "/tmp/workspace"]);
+
+        let Cli::Suggest(args) = cli else {
+            panic!("expected suggest subcommand");
         };
         assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
     }

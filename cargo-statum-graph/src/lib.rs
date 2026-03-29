@@ -14,11 +14,17 @@ use tempfile::TempDir;
 mod heuristics;
 mod inspect;
 mod journeys;
+mod suggestions;
 
 pub use heuristics::{
     collect_heuristic_overlay, HeuristicDiagnostic, HeuristicEvidenceKind,
     HeuristicMachineRelationGroup, HeuristicOverlay, HeuristicRelation, HeuristicRelationCount,
     HeuristicRelationDetail, HeuristicRelationSource, HeuristicStatusKind, InspectPackageSource,
+};
+pub use suggestions::{
+    collect_composition_suggestions, render_composition_suggestions,
+    CompositionSuggestion, CompositionSuggestionKind, CompositionSuggestionOverlay,
+    CompositionSuggestionSeverity,
 };
 
 const GRAPH_EXTENSIONS: [&str; 4] = ["mmd", "dot", "puml", "json"];
@@ -39,6 +45,13 @@ pub struct Options {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InspectOptions {
+    pub input_path: PathBuf,
+    pub package: Option<String>,
+    pub patch_statum_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SuggestOptions {
     pub input_path: PathBuf,
     pub package: Option<String>,
     pub patch_statum_root: Option<PathBuf>,
@@ -243,14 +256,36 @@ pub fn inspect(options: InspectOptions) -> Result<(), Error> {
     )
 }
 
+pub fn suggest(options: SuggestOptions) -> Result<String, Error> {
+    let prepared = prepare_run(
+        &options.input_path,
+        options.package.as_deref(),
+        options.patch_statum_root.as_deref(),
+    )?;
+    let temp_dir = new_temp_runner_dir()?;
+    write_runner_project(
+        temp_dir.path(),
+        &prepared.selections,
+        RunnerMode::Suggest,
+        prepared.patch_root.as_deref(),
+    )?;
+
+    run_runner_captured(
+        temp_dir.path().join("Cargo.toml"),
+        &prepared.input.manifest_path,
+        "composition suggestion report",
+    )
+}
+
 pub fn run_inspector(
     doc: CodebaseDoc,
     heuristic: HeuristicOverlay,
     workspace_label: String,
 ) -> Result<(), InspectError> {
+    let suggestions = suggestions::collect_composition_suggestions(&doc, &heuristic);
     let journeys = journeys::collect_journey_overlay(&doc, &heuristic)
         .map_err(|source| InspectError::JourneyOverlay(source.to_string()))?;
-    inspect::run(doc, heuristic, journeys, workspace_label).map_err(InspectError::Io)
+    inspect::run(doc, heuristic, suggestions, journeys, workspace_label).map_err(InspectError::Io)
 }
 
 #[derive(Debug)]
@@ -648,6 +683,20 @@ fn build_runner_main(
             ));
             source.push_str("    )?;\n");
         }
+        RunnerMode::Suggest => {
+            source.push_str("    let heuristic = cargo_statum_graph::collect_heuristic_overlay(\n");
+            source.push_str("        &doc,\n");
+            source.push_str("        &[\n");
+            source.push_str(&inspect_package_sources_literal(selections)?);
+            source.push_str("        ],\n");
+            source.push_str("    );\n");
+            source.push_str("    print!(\n");
+            source.push_str("        \"{}\",\n");
+            source.push_str(
+                "        cargo_statum_graph::render_composition_suggestions(&doc, &heuristic),\n",
+            );
+            source.push_str("    );\n");
+        }
     }
     source.push_str("    Ok(())\n");
     source.push_str("}\n");
@@ -684,34 +733,18 @@ fn run_runner(
     operation: &'static str,
     stdio: RunnerStdio,
 ) -> Result<(), Error> {
-    let mut command = Command::new("cargo");
-    command
-        .arg("run")
-        .arg("--quiet")
-        .arg("--manifest-path")
-        .arg(&runner_manifest_path);
-
     match stdio {
         RunnerStdio::Captured => {
-            let output = command.output().map_err(|source| Error::Io {
-                action: "run generated cargo runner",
-                path: runner_manifest_path.clone(),
-                source,
-            })?;
-
-            if output.status.success() {
-                Ok(())
-            } else {
-                Err(Error::RunnerFailed {
-                    operation,
-                    manifest_path: target_manifest_path.to_path_buf(),
-                    status: output.status,
-                    details: normalize_runner_failure_details(&output.stderr, &output.stdout),
-                    diagnostics_reported: false,
-                })
-            }
+            run_runner_captured(runner_manifest_path, target_manifest_path, operation).map(|_| ())
         }
         RunnerStdio::Inherited => {
+            let mut command = Command::new("cargo");
+            command
+                .arg("run")
+                .arg("--quiet")
+                .arg("--manifest-path")
+                .arg(&runner_manifest_path);
+
             let status = command
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())
@@ -735,6 +768,37 @@ fn run_runner(
                 })
             }
         }
+    }
+}
+
+fn run_runner_captured(
+    runner_manifest_path: PathBuf,
+    target_manifest_path: &Path,
+    operation: &'static str,
+) -> Result<String, Error> {
+    let mut command = Command::new("cargo");
+    command
+        .arg("run")
+        .arg("--quiet")
+        .arg("--manifest-path")
+        .arg(&runner_manifest_path);
+
+    let output = command.output().map_err(|source| Error::Io {
+        action: "run generated cargo runner",
+        path: runner_manifest_path.clone(),
+        source,
+    })?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(Error::RunnerFailed {
+            operation,
+            manifest_path: target_manifest_path.to_path_buf(),
+            status: output.status,
+            details: normalize_runner_failure_details(&output.stderr, &output.stdout),
+            diagnostics_reported: false,
+        })
     }
 }
 
@@ -919,6 +983,7 @@ enum RunnerStdio {
 enum RunnerMode<'a> {
     Export { out_dir: &'a Path, stem: &'a str },
     Inspect { workspace_label: &'a str },
+    Suggest,
 }
 
 struct ResolvedInput {
@@ -1023,6 +1088,22 @@ mod tests {
         assert!(source.contains("is_terminal()"));
         assert!(source.contains("/tmp/workspace/Cargo.toml"));
         assert!(!source.contains("write_all_to_dir("));
+    }
+
+    #[test]
+    fn build_runner_main_supports_suggest_mode() {
+        let selections = vec![SelectedPackage {
+            package_name: "app".to_owned(),
+            manifest_dir: PathBuf::from("/tmp/app"),
+            lib_target_path: PathBuf::from("/tmp/app/src/lib.rs"),
+        }];
+
+        let source = build_runner_main(&selections, RunnerMode::Suggest).expect("runner source");
+
+        assert!(source.contains("collect_heuristic_overlay"));
+        assert!(source.contains("InspectPackageSource"));
+        assert!(source.contains("render_composition_suggestions"));
+        assert!(!source.contains("is_terminal()"));
     }
 
     #[test]
