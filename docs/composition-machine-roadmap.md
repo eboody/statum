@@ -165,6 +165,8 @@ Exit criteria:
 Checklist:
 [Phase 4 checklist](./checklists/composition-phase-4-inspector.md)
 
+Status: complete
+
 Goal:
 
 - make composition machines the main way users understand a workspace

@@ -7,9 +7,9 @@ It builds a temporary runner internally, links the selected crate, and writes
 the combined static codebase graph as Mermaid, DOT, PlantUML, and JSON,
 including declared validator-entry nodes from compiled `#[validators]` impls.
 It can also launch an inspector TUI over that same linked compiled
-`CodebaseDoc` surface, with declared workspace journeys above the exact graph
-and a separate heuristic lane for broader source-scanned machine coupling
-hints.
+`CodebaseDoc` surface, with composition machines as the primary workspace flow
+surface, declared workspace journeys as fallback narrative overlays, and a
+separate heuristic lane for broader source-scanned machine coupling hints.
 
 ## Install
 
@@ -61,11 +61,18 @@ cargo statum-graph inspect \
 That launches the inspector TUI for the selected workspace. The current
 surface shows:
 
-- workspace overview with machine count and disconnected groups
-- optional workspace `Journeys` section driven by declared `statum::journeys!`
-  narratives
+- workspace sections for `Composition`, `Machines`, `Gaps`, and optional
+  `Journeys`
+- composition-first home view when any
+  `#[machine(role = composition)]` machines exist
+- composition view with the selected flow’s states, transitions, validators,
+  summary edges, and a bottom-pane path explorer
+- path explorer that prefers composition-owned routes, then raw exact graph
+  routes, then heuristic fallback when the current lane allows it
+- gap view that surfaces composition warnings and heuristic-only suggestions
+  together with the best currently visible path to the suggested target
 - machine view with states, transitions, validator entries, and summary edges
-  that default to `Summary` when a machine has visible relationships
+  for leaf protocol drilldown
 - composition machines surfaced from `#[machine(role = composition)]`, with
   composition-owned direct child-machine edges labeled as `composition refs`
   instead of generic exact references
@@ -84,13 +91,15 @@ surface shows:
   available. For `#[via(...)]` relations, the detail pane also shows the
   attested route, producer machine, producer source state, and producer
   transition. Composition-owned exact relations also show their composition
-  semantics and source/target machine roles. Machine detail also shows
+  semantics and source/target machine roles. Summary and exact relation cards
+  now prefer those composition-owned explanations. Machine detail also shows
   composition diagnostics when a protocol machine still looks like a
   composition candidate. Journey detail also shows bridge types, machine-ref
   targets, and exact, declared, heuristic, or missing segment coverage.
 
-If declared journeys exist, the inspector opens on `Journeys` first. If none
-exist, it keeps the current machine-first behavior.
+If composition machines exist, the inspector opens on `Composition` first. If
+none exist, it falls back to `Journeys` when declared journeys exist and to
+`Machines` otherwise.
 
 `inspect` requires an interactive terminal on stdin and stdout.
 
@@ -115,8 +124,8 @@ That prints composition diagnostics without launching the TUI.
 Keybindings:
 
 - `tab` / `shift-tab`: move focus between panes
-- `w`: toggle the workspace list between `Machines` and `Journeys`
-- `h` / `l`: switch machine tabs or toggle relation direction
+- `w`: cycle available workspace sections
+- `h` / `l`: switch machine tabs or toggle relation direction in `Machines`
 - `j` / `k`: move within the focused list
 - `/`: enter search mode
 - `enter` / `esc`: leave search mode
@@ -131,6 +140,8 @@ Exact lane:
 
 - consumes the linked compiled `CodebaseDoc` surface directly
 - is the only lane backed by Mermaid, DOT, PlantUML, and JSON export
+- drives the composition home view and path explorer before any heuristic
+  fallback is considered
 - is where `#[via(...)]` relations appear with exact producer-route detail
 - is where direct child-machine references on `#[machine(role = composition)]`
   machines appear as composition-owned exact relations
@@ -142,6 +153,8 @@ Declared journeys:
 - are inspector-only in v1
 - are registered through `statum::journeys!`
 - sit above the exact graph instead of changing it
+- now serve as a fallback narrative surface when composition machines are not
+  enough or are not present yet
 - can reference machines, states, validator entry surfaces, and declared
   bridge types
 - classify each segment as exact, declared bridge, heuristic cover, or missing
