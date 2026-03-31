@@ -58,10 +58,12 @@ mod workflow {
     #[state]
     pub enum State {
         Draft,
-        Holding(::statum::Attested<
-            crate::Receipt,
-            crate::publish::machine::via::Route<{ crate::PUBLISH_ROUTE_ID }>,
-        >),
+        Holding(
+            ::statum::Attested<
+                crate::Receipt,
+                crate::publish::machine::via::Route<{ crate::PUBLISH_ROUTE_ID }>,
+            >,
+        ),
         Recorded(crate::Receipt),
     }
 
@@ -231,12 +233,13 @@ fn linked_codebase_exports_detached_handoffs_as_composition_relations() {
 
     let group = doc
         .machine_relation_groups()
-        .into_iter()
+        .iter()
         .find(|group| group.from_machine == workflow.index && group.to_machine == publish.index)
         .expect("workflow -> publish relation group");
     assert!(group.is_composition_owned());
     assert_eq!(
-        group.counts
+        group
+            .counts
             .iter()
             .map(|count| count.display_label())
             .collect::<Vec<_>>(),

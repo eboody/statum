@@ -56,6 +56,86 @@ fn codebase_command_accepts_cargo_style_invocation_from_workspace_root() {
 }
 
 #[test]
+fn codebase_command_reuses_one_cached_runner_home_across_repeated_runs() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_fixture(fixture_dir.path());
+
+    let first = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("codebase")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("first codebase run should execute");
+    assert!(
+        first.status.success(),
+        "first codebase run should succeed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let runner_root = runner_root(fixture_dir.path());
+    let first_entries = runner_entry_names(&runner_root);
+    assert_eq!(first_entries.len(), 1, "expected one cached runner home");
+
+    let second = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("codebase")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("second codebase run should execute");
+    assert!(
+        second.status.success(),
+        "second codebase run should succeed: {}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let second_entries = runner_entry_names(&runner_root);
+    assert_eq!(second_entries, first_entries);
+    assert!(runner_root
+        .join(&second_entries[0])
+        .join("Cargo.toml")
+        .is_file());
+    assert!(runner_root
+        .join(&second_entries[0])
+        .join("src/main.rs")
+        .is_file());
+}
+
+#[test]
+fn codebase_command_uses_distinct_cached_runner_homes_for_different_package_sets() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_fixture(fixture_dir.path());
+
+    let all_packages = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("codebase")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("workspace-wide codebase run should execute");
+    assert!(
+        all_packages.status.success(),
+        "workspace-wide codebase run should succeed: {}",
+        String::from_utf8_lossy(&all_packages.stderr)
+    );
+
+    let app_only = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("codebase")
+        .arg(fixture_dir.path())
+        .arg("--package")
+        .arg("fixture-app")
+        .output()
+        .expect("package-scoped codebase run should execute");
+    assert!(
+        app_only.status.success(),
+        "package-scoped codebase run should succeed: {}",
+        String::from_utf8_lossy(&app_only.stderr)
+    );
+
+    let entries = runner_entry_names(&runner_root(fixture_dir.path()));
+    assert_eq!(
+        entries.len(),
+        2,
+        "expected one cached runner per package set"
+    );
+}
+
+#[test]
 fn codebase_command_fails_closed_for_duplicate_machine_paths_across_workspace_members() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_duplicate_machine_path_fixture(fixture_dir.path());
@@ -206,7 +286,10 @@ fn suggest_command_reports_exact_typed_orchestration_warnings() {
         stdout.contains("composition diagnostics:"),
         "unexpected suggest stdout:\n{stdout}"
     );
-    assert!(stdout.contains("warning:"), "unexpected suggest stdout:\n{stdout}");
+    assert!(
+        stdout.contains("warning:"),
+        "unexpected suggest stdout:\n{stdout}"
+    );
     assert!(
         stdout.contains("workflow::Machine"),
         "unexpected suggest stdout:\n{stdout}"
@@ -265,8 +348,7 @@ fn codebase_command_exports_composition_workflow_for_statum_examples() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let mermaid =
-        fs::read_to_string(out_dir.path().join("codebase.mmd")).expect("mermaid output");
+    let mermaid = fs::read_to_string(out_dir.path().join("codebase.mmd")).expect("mermaid output");
     let json = fs::read_to_string(out_dir.path().join("codebase.json")).expect("json output");
 
     assert!(
@@ -317,6 +399,25 @@ fn write_fixture(dir: &Path) {
     fs::write(dir.join("crates/domain/src/lib.rs"), domain_lib).expect("fixture domain lib");
     fs::write(dir.join("crates/app/Cargo.toml"), app_manifest).expect("fixture app cargo manifest");
     fs::write(dir.join("crates/app/src/lib.rs"), app_lib).expect("fixture app lib");
+}
+
+fn runner_root(workspace_dir: &Path) -> std::path::PathBuf {
+    workspace_dir.join("target/statum-graph/runner")
+}
+
+fn runner_entry_names(runner_root: &Path) -> Vec<String> {
+    let mut entries = fs::read_dir(runner_root)
+        .expect("cached runner root should exist")
+        .map(|entry| {
+            entry
+                .expect("runner entry")
+                .file_name()
+                .into_string()
+                .expect("runner dir name should be UTF-8")
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+    entries
 }
 
 fn write_duplicate_machine_path_fixture(dir: &Path) {

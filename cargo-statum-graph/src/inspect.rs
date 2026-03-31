@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
+use std::rc::Rc;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -417,6 +419,28 @@ enum RelationDetailSelection<'a> {
     },
 }
 
+#[derive(Debug, Default)]
+struct InspectorSessionCache {
+    visible_machine_indices: Option<Rc<[usize]>>,
+    visible_composition_machine_indices: Option<Rc<[usize]>>,
+    visible_gap_indices: Option<Rc<[usize]>>,
+    filtered_machine_relation_groups: Option<Rc<[CodebaseMachineRelationGroup]>>,
+    filtered_heuristic_machine_relation_groups: Option<Rc<[HeuristicMachineRelationGroup]>>,
+    visible_machine_relation_groups: Option<Rc<[CodebaseMachineRelationGroup]>>,
+    visible_heuristic_machine_relation_groups: Option<Rc<[HeuristicMachineRelationGroup]>>,
+    machine_items: Option<Rc<[MachineItem]>>,
+    summary_items: Option<Rc<[SummaryItem]>>,
+    relation_items: Option<Rc<[RelationItem]>>,
+    path_items: Option<Rc<[PathItem]>>,
+    disconnected_group_count: Option<usize>,
+}
+
+impl InspectorSessionCache {
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
 #[derive(Debug)]
 struct InspectorApp {
     doc: CodebaseDoc,
@@ -438,6 +462,7 @@ struct InspectorApp {
     relation_index: usize,
     path_index: usize,
     should_quit: bool,
+    cache: RefCell<InspectorSessionCache>,
 }
 
 impl InspectorApp {
@@ -476,6 +501,7 @@ impl InspectorApp {
             relation_index: 0,
             path_index: 0,
             should_quit: false,
+            cache: RefCell::new(InspectorSessionCache::default()),
         };
         app.clamp_indices();
         if matches!(
@@ -522,14 +548,22 @@ impl InspectorApp {
             .any(|machine| machine.role.is_composition())
     }
 
-    fn visible_gap_indices(&self) -> Vec<usize> {
+    fn visible_gap_indices(&self) -> Rc<[usize]> {
+        if let Some(cached) = self.cache.borrow().visible_gap_indices.clone() {
+            return cached;
+        }
+
         let query = self.normalized_query();
-        self.suggestions
+        let computed: Rc<[usize]> = self
+            .suggestions
             .suggestions()
             .iter()
             .filter(|suggestion| self.suggestion_matches_query(suggestion, query.as_deref()))
             .map(|suggestion| suggestion.index)
-            .collect()
+            .collect::<Vec<_>>()
+            .into();
+        self.cache.borrow_mut().visible_gap_indices = Some(computed.clone());
+        computed
     }
 
     fn current_gap(&self) -> Option<&CompositionSuggestion> {
@@ -545,6 +579,7 @@ impl InspectorApp {
     fn select_gap(&mut self, gap_index: usize) {
         self.selected_gap = gap_index;
         self.path_index = 0;
+        self.invalidate_cache();
     }
 
     fn select_machine(&mut self, machine_index: usize) {
@@ -553,6 +588,7 @@ impl InspectorApp {
         self.machine_item_index = 0;
         self.relation_index = 0;
         self.path_index = 0;
+        self.invalidate_cache();
     }
 
     fn current_machine(&self) -> Option<&CodebaseMachine> {
@@ -565,33 +601,54 @@ impl InspectorApp {
         self.doc.machine(machine_index)
     }
 
-    fn visible_workspace_machine_indices(&self) -> Vec<usize> {
+    fn visible_workspace_machine_indices(&self) -> Rc<[usize]> {
         match self.workspace_section {
             WorkspaceSection::Composition => self.visible_composition_machine_indices(),
             WorkspaceSection::Machines => self.visible_machine_indices(),
-            WorkspaceSection::Gaps => Vec::new(),
+            WorkspaceSection::Gaps => Rc::from(Vec::new()),
         }
     }
 
-    fn visible_machine_indices(&self) -> Vec<usize> {
+    fn visible_machine_indices(&self) -> Rc<[usize]> {
+        if let Some(cached) = self.cache.borrow().visible_machine_indices.clone() {
+            return cached;
+        }
+
         let query = self.normalized_query();
-        self.doc
+        let computed: Rc<[usize]> = self
+            .doc
             .machines()
             .iter()
             .filter(|machine| self.machine_matches_query(machine, query.as_deref()))
             .map(|machine| machine.index)
-            .collect()
+            .collect::<Vec<_>>()
+            .into();
+        self.cache.borrow_mut().visible_machine_indices = Some(computed.clone());
+        computed
     }
 
-    fn visible_composition_machine_indices(&self) -> Vec<usize> {
+    fn visible_composition_machine_indices(&self) -> Rc<[usize]> {
+        if let Some(cached) = self
+            .cache
+            .borrow()
+            .visible_composition_machine_indices
+            .clone()
+        {
+            return cached;
+        }
+
         let query = self.normalized_query();
-        self.doc
+        let computed: Rc<[usize]> = self
+            .doc
             .machines()
             .iter()
             .filter(|machine| machine.role.is_composition())
             .filter(|machine| self.machine_matches_query(machine, query.as_deref()))
             .map(|machine| machine.index)
-            .collect()
+            .collect::<Vec<_>>()
+            .into();
+        self.cache.borrow_mut().visible_composition_machine_indices = Some(computed.clone());
+        computed
     }
 
     fn preferred_machine_section(&self, machine_index: usize) -> MachineSection {
@@ -614,12 +671,17 @@ impl InspectorApp {
             self.suggestions.suggestion_count(),
         )
     }
+
+    fn invalidate_cache(&mut self) {
+        self.cache.get_mut().clear();
+    }
 }
 
 impl InspectorApp {
     fn handle_key(&mut self, key: KeyEvent) {
         if self.input_mode == InputMode::Search {
             self.handle_search_key(key);
+            self.invalidate_cache();
             self.clamp_indices();
             return;
         }
@@ -679,6 +741,7 @@ impl InspectorApp {
             _ => {}
         }
 
+        self.invalidate_cache();
         self.clamp_indices();
     }
 
@@ -840,6 +903,7 @@ impl InspectorApp {
     }
 
     fn clamp_indices(&mut self) {
+        self.invalidate_cache();
         match self.workspace_section {
             WorkspaceSection::Composition | WorkspaceSection::Machines => {
                 let visible_machines = self.visible_workspace_machine_indices();
@@ -892,7 +956,7 @@ impl InspectorApp {
     fn machine_visible_summary_counts(&self, machine_index: usize) -> (usize, usize) {
         let exact = if self.lane_mode.shows_exact() {
             self.filtered_machine_relation_groups()
-                .into_iter()
+                .iter()
                 .filter(|group| {
                     group.from_machine != group.to_machine
                         && (group.from_machine == machine_index
@@ -904,7 +968,7 @@ impl InspectorApp {
         };
         let heuristic = if self.lane_mode.shows_heuristic() {
             self.filtered_heuristic_machine_relation_groups()
-                .into_iter()
+                .iter()
                 .filter(|group| {
                     group.from_machine != group.to_machine
                         && (group.from_machine == machine_index
@@ -920,7 +984,7 @@ impl InspectorApp {
     fn machine_has_any_heuristic_summary(&self, machine_index: usize) -> bool {
         self.heuristic
             .machine_relation_groups()
-            .into_iter()
+            .iter()
             .any(|group| {
                 group.from_machine != group.to_machine
                     && (group.from_machine == machine_index || group.to_machine == machine_index)
@@ -947,37 +1011,48 @@ impl InspectorApp {
         }
     }
 
-    fn machine_items(&self) -> Vec<MachineItem> {
+    fn machine_items(&self) -> Rc<[MachineItem]> {
+        if let Some(cached) = self.cache.borrow().machine_items.clone() {
+            return cached;
+        }
+
         let Some(machine) = self.current_machine() else {
-            return Vec::new();
+            return Rc::from(Vec::new());
         };
         let query = self.normalized_query();
-        match self.machine_section {
+        let computed: Rc<[MachineItem]> = match self.machine_section {
             MachineSection::States => machine
                 .states
                 .iter()
                 .filter(|state| self.state_matches_query(state, query.as_deref()))
                 .map(|state| MachineItem::State(state.index))
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
             MachineSection::Transitions => machine
                 .transitions
                 .iter()
                 .filter(|transition| self.transition_matches_query(transition, query.as_deref()))
                 .map(|transition| MachineItem::Transition(transition.index))
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
             MachineSection::Validators => machine
                 .validator_entries
                 .iter()
                 .filter(|entry| self.validator_matches_query(entry, query.as_deref()))
                 .map(|entry| MachineItem::Validator(entry.index))
-                .collect(),
+                .collect::<Vec<_>>()
+                .into(),
             MachineSection::Summary => self
                 .summary_items()
-                .into_iter()
+                .iter()
                 .filter(|item| self.summary_item_matches_query(item, query.as_deref()))
+                .cloned()
                 .map(MachineItem::Summary)
-                .collect(),
-        }
+                .collect::<Vec<_>>()
+                .into(),
+        };
+        self.cache.borrow_mut().machine_items = Some(computed.clone());
+        computed
     }
 
     fn machine_item_label(&self, machine: &CodebaseMachine, item: &MachineItem) -> String {
@@ -1044,30 +1119,34 @@ impl InspectorApp {
         )
     }
 
-    fn summary_items(&self) -> Vec<SummaryItem> {
+    fn summary_items(&self) -> Rc<[SummaryItem]> {
+        if let Some(cached) = self.cache.borrow().summary_items.clone() {
+            return cached;
+        }
+
         let Some(machine) = self.current_machine() else {
-            return Vec::new();
+            return Rc::from(Vec::new());
         };
         let mut items = Vec::new();
 
         if self.lane_mode.shows_exact() {
             items.extend(
                 self.filtered_machine_relation_groups()
-                    .into_iter()
+                    .iter()
                     .filter_map(|group| {
                         if group.from_machine == machine.index
                             && group.from_machine != group.to_machine
                         {
                             Some(SummaryItem::Exact(ExactSummaryItem {
                                 direction: SummaryDirection::Outbound,
-                                group,
+                                group: group.clone(),
                             }))
                         } else if group.to_machine == machine.index
                             && group.from_machine != group.to_machine
                         {
                             Some(SummaryItem::Exact(ExactSummaryItem {
                                 direction: SummaryDirection::Inbound,
-                                group,
+                                group: group.clone(),
                             }))
                         } else {
                             None
@@ -1079,21 +1158,21 @@ impl InspectorApp {
         if self.lane_mode.shows_heuristic() {
             items.extend(
                 self.filtered_heuristic_machine_relation_groups()
-                    .into_iter()
+                    .iter()
                     .filter_map(|group| {
                         if group.from_machine == machine.index
                             && group.from_machine != group.to_machine
                         {
                             Some(SummaryItem::Heuristic(HeuristicSummaryItem {
                                 direction: SummaryDirection::Outbound,
-                                group,
+                                group: group.clone(),
                             }))
                         } else if group.to_machine == machine.index
                             && group.from_machine != group.to_machine
                         {
                             Some(SummaryItem::Heuristic(HeuristicSummaryItem {
                                 direction: SummaryDirection::Inbound,
-                                group,
+                                group: group.clone(),
                             }))
                         } else {
                             None
@@ -1102,7 +1181,9 @@ impl InspectorApp {
             );
         }
 
-        items
+        let computed: Rc<[SummaryItem]> = items.into();
+        self.cache.borrow_mut().summary_items = Some(computed.clone());
+        computed
     }
 
     fn selected_machine_item(&self) -> Option<MachineItem> {
@@ -1138,25 +1219,29 @@ impl InspectorApp {
         }
     }
 
-    fn path_items(&self) -> Vec<PathItem> {
+    fn path_items(&self) -> Rc<[PathItem]> {
+        if let Some(cached) = self.cache.borrow().path_items.clone() {
+            return cached;
+        }
+
         let query = self.normalized_query();
-        match self.workspace_section {
+        let computed: Rc<[PathItem]> = match self.workspace_section {
             WorkspaceSection::Composition => self
                 .current_machine()
                 .map(|machine| self.path_items_from_source(machine.index, None, query.as_deref()))
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .into(),
             WorkspaceSection::Gaps => self
                 .current_gap()
                 .map(|gap| {
-                    self.path_items_from_source(
-                        gap.source_machine,
-                        Some(gap.target_machine),
-                        None,
-                    )
+                    self.path_items_from_source(gap.source_machine, Some(gap.target_machine), None)
                 })
-                .unwrap_or_default(),
-            WorkspaceSection::Machines => Vec::new(),
-        }
+                .unwrap_or_default()
+                .into(),
+            WorkspaceSection::Machines => Rc::from(Vec::new()),
+        };
+        self.cache.borrow_mut().path_items = Some(computed.clone());
+        computed
     }
 
     fn selected_path_item(&self) -> Option<PathItem> {
@@ -1241,7 +1326,7 @@ impl InspectorApp {
     ) -> BTreeMap<usize, Vec<PathStep>> {
         let mut adjacency = BTreeMap::<usize, Vec<PathStep>>::new();
 
-        for group in self.filtered_machine_relation_groups() {
+        for group in self.filtered_machine_relation_groups().iter() {
             if group.from_machine == group.to_machine {
                 continue;
             }
@@ -1267,7 +1352,7 @@ impl InspectorApp {
         }
 
         if include_heuristic {
-            for group in self.filtered_heuristic_machine_relation_groups() {
+            for group in self.filtered_heuristic_machine_relation_groups().iter() {
                 if group.from_machine == group.to_machine {
                     continue;
                 }
@@ -1323,10 +1408,14 @@ impl InspectorApp {
         Self::query_matches_any(query, candidates)
     }
 
-    fn relation_items(&self) -> Vec<RelationItem> {
+    fn relation_items(&self) -> Rc<[RelationItem]> {
+        if let Some(cached) = self.cache.borrow().relation_items.clone() {
+            return cached;
+        }
+
         let query = self.normalized_query();
         let Some(subject) = self.relation_subject() else {
-            return Vec::new();
+            return Rc::from(Vec::new());
         };
 
         let mut items = Vec::new();
@@ -1344,10 +1433,16 @@ impl InspectorApp {
                     .map(RelationItem::Heuristic),
             );
         }
-        items
+        let computed: Rc<[RelationItem]> = items.into();
+        self.cache.borrow_mut().relation_items = Some(computed.clone());
+        computed
     }
 
-    fn filtered_machine_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
+    fn filtered_machine_relation_groups(&self) -> Rc<[CodebaseMachineRelationGroup]> {
+        if let Some(cached) = self.cache.borrow().filtered_machine_relation_groups.clone() {
+            return cached;
+        }
+
         let mut filtered = Vec::new();
         for group in self.doc.machine_relation_groups() {
             let relation_indices = group
@@ -1393,10 +1488,21 @@ impl InspectorApp {
                     .collect(),
             });
         }
-        filtered
+        let computed: Rc<[CodebaseMachineRelationGroup]> = filtered.into();
+        self.cache.borrow_mut().filtered_machine_relation_groups = Some(computed.clone());
+        computed
     }
 
-    fn filtered_heuristic_machine_relation_groups(&self) -> Vec<HeuristicMachineRelationGroup> {
+    fn filtered_heuristic_machine_relation_groups(&self) -> Rc<[HeuristicMachineRelationGroup]> {
+        if let Some(cached) = self
+            .cache
+            .borrow()
+            .filtered_heuristic_machine_relation_groups
+            .clone()
+        {
+            return cached;
+        }
+
         let mut filtered = Vec::new();
         for group in self.heuristic.machine_relation_groups() {
             let relation_indices = group
@@ -1439,7 +1545,11 @@ impl InspectorApp {
                     .collect(),
             });
         }
-        filtered
+        let computed: Rc<[HeuristicMachineRelationGroup]> = filtered.into();
+        self.cache
+            .borrow_mut()
+            .filtered_heuristic_machine_relation_groups = Some(computed.clone());
+        computed
     }
 
     fn should_hide_shadowed_heuristic_relation(&self, relation: &HeuristicRelation) -> bool {
@@ -1462,32 +1572,59 @@ impl InspectorApp {
             .any(|exact| exact_covers_heuristic_relation(exact, relation))
     }
 
-    fn visible_machine_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
+    fn visible_machine_relation_groups(&self) -> Rc<[CodebaseMachineRelationGroup]> {
+        if let Some(cached) = self.cache.borrow().visible_machine_relation_groups.clone() {
+            return cached;
+        }
+
         let visible_machine_indices = self
             .visible_machine_indices()
-            .into_iter()
+            .iter()
+            .copied()
             .collect::<BTreeSet<_>>();
-        self.filtered_machine_relation_groups()
-            .into_iter()
+        let computed: Rc<[CodebaseMachineRelationGroup]> = self
+            .filtered_machine_relation_groups()
+            .iter()
             .filter(|group| {
                 visible_machine_indices.contains(&group.from_machine)
                     && visible_machine_indices.contains(&group.to_machine)
             })
-            .collect()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        self.cache.borrow_mut().visible_machine_relation_groups = Some(computed.clone());
+        computed
     }
 
-    fn visible_heuristic_machine_relation_groups(&self) -> Vec<HeuristicMachineRelationGroup> {
+    fn visible_heuristic_machine_relation_groups(&self) -> Rc<[HeuristicMachineRelationGroup]> {
+        if let Some(cached) = self
+            .cache
+            .borrow()
+            .visible_heuristic_machine_relation_groups
+            .clone()
+        {
+            return cached;
+        }
+
         let visible_machine_indices = self
             .visible_machine_indices()
-            .into_iter()
+            .iter()
+            .copied()
             .collect::<BTreeSet<_>>();
-        self.filtered_heuristic_machine_relation_groups()
-            .into_iter()
+        let computed: Rc<[HeuristicMachineRelationGroup]> = self
+            .filtered_heuristic_machine_relation_groups()
+            .iter()
             .filter(|group| {
                 visible_machine_indices.contains(&group.from_machine)
                     && visible_machine_indices.contains(&group.to_machine)
             })
-            .collect()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        self.cache
+            .borrow_mut()
+            .visible_heuristic_machine_relation_groups = Some(computed.clone());
+        computed
     }
 
     fn selected_relation_detail(&self) -> Option<RelationDetailSelection<'_>> {
@@ -1610,6 +1747,10 @@ impl InspectorApp {
     }
 
     fn disconnected_group_count(&self) -> usize {
+        if let Some(cached) = self.cache.borrow().disconnected_group_count {
+            return cached;
+        }
+
         let visible_machine_indices = self.visible_machine_indices();
         if visible_machine_indices.is_empty() {
             return 0;
@@ -1617,7 +1758,7 @@ impl InspectorApp {
 
         let mut adjacency = vec![Vec::new(); self.doc.machines().len()];
         if self.lane_mode.shows_exact() {
-            for group in self.visible_machine_relation_groups() {
+            for group in self.visible_machine_relation_groups().iter() {
                 if group.from_machine == group.to_machine {
                     continue;
                 }
@@ -1626,7 +1767,7 @@ impl InspectorApp {
             }
         }
         if self.lane_mode.shows_heuristic() {
-            for group in self.visible_heuristic_machine_relation_groups() {
+            for group in self.visible_heuristic_machine_relation_groups().iter() {
                 if group.from_machine == group.to_machine {
                     continue;
                 }
@@ -1637,7 +1778,7 @@ impl InspectorApp {
 
         let mut seen = vec![false; self.doc.machines().len()];
         let mut groups = 0;
-        for machine_index in visible_machine_indices {
+        for machine_index in visible_machine_indices.iter().copied() {
             if seen[machine_index] {
                 continue;
             }
@@ -1654,6 +1795,7 @@ impl InspectorApp {
             }
         }
 
+        self.cache.borrow_mut().disconnected_group_count = Some(groups);
         groups
     }
 
@@ -1747,12 +1889,12 @@ impl InspectorApp {
         let total_gap_count = self.suggestions.suggestions().len();
         let visible_exact_summary_edges = self
             .visible_machine_relation_groups()
-            .into_iter()
+            .iter()
             .filter(|group| group.from_machine != group.to_machine)
             .count();
         let visible_heuristic_summary_edges = self
             .visible_heuristic_machine_relation_groups()
-            .into_iter()
+            .iter()
             .filter(|group| group.from_machine != group.to_machine)
             .count();
         let search_status = if self.has_search_query() {
@@ -1994,7 +2136,8 @@ impl InspectorApp {
 
         let relation_labels = self
             .relation_items()
-            .into_iter()
+            .iter()
+            .copied()
             .map(|relation| {
                 let label = match relation {
                     RelationItem::Exact(index) => self
@@ -2053,8 +2196,8 @@ impl InspectorApp {
 
         let items = self
             .path_items()
-            .into_iter()
-            .map(|item| ListItem::new(self.path_item_label(&item)))
+            .iter()
+            .map(|item| ListItem::new(self.path_item_label(item)))
             .collect::<Vec<_>>();
         let empty = items.is_empty();
         let mut state = ListState::default().with_selected((!empty).then_some(self.path_index));
@@ -2281,12 +2424,12 @@ impl InspectorApp {
         let visible = self.visible_composition_machine_indices();
         let exact_edges = self
             .visible_machine_relation_groups()
-            .into_iter()
+            .iter()
             .filter(|group| group.from_machine != group.to_machine)
             .count();
         let heuristic_edges = self
             .visible_heuristic_machine_relation_groups()
-            .into_iter()
+            .iter()
             .filter(|group| group.from_machine != group.to_machine)
             .count();
         Text::from(vec![
@@ -2860,7 +3003,6 @@ impl InspectorApp {
 
         Self::query_matches_any(query, candidates)
     }
-
 }
 
 fn titled_block(title: impl Into<Line<'static>>, focused: bool) -> Block<'static> {
@@ -3785,7 +3927,12 @@ mod tests {
 
     fn fixture_app(doc: CodebaseDoc, heuristic: HeuristicOverlay) -> InspectorApp {
         let suggestions = crate::suggestions::collect_composition_suggestions(&doc, &heuristic);
-        InspectorApp::new(doc, heuristic, suggestions, "/tmp/workspace/Cargo.toml".to_owned())
+        InspectorApp::new(
+            doc,
+            heuristic,
+            suggestions,
+            "/tmp/workspace/Cargo.toml".to_owned(),
+        )
     }
 
     fn fixture_heuristic_overlay(doc: &CodebaseDoc) -> HeuristicOverlay {
@@ -4011,11 +4158,34 @@ mod tests {
 
         let labels = app
             .visible_machine_indices()
-            .into_iter()
+            .iter()
+            .copied()
             .filter_map(|machine_index| app.doc.machine(machine_index))
             .map(render_machine_label)
             .collect::<Vec<_>>();
         assert_eq!(labels, vec!["Task Machine", "Workflow Machine"]);
+    }
+
+    #[test]
+    fn app_reuses_cached_visible_and_relation_views_until_invalidated() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        app.select_machine(0);
+        app.machine_section = MachineSection::Summary;
+        app.clamp_indices();
+
+        let visible_first = app.visible_machine_indices();
+        let visible_second = app.visible_machine_indices();
+        assert!(Rc::ptr_eq(&visible_first, &visible_second));
+
+        let summary_first = app.summary_items();
+        let summary_second = app.summary_items();
+        assert!(Rc::ptr_eq(&summary_first, &summary_second));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+
+        let summary_after_filter = app.summary_items();
+        assert!(!Rc::ptr_eq(&summary_first, &summary_after_filter));
     }
 
     #[test]
@@ -4053,6 +4223,7 @@ mod tests {
         }
 
         app.machine_section = MachineSection::States;
+        app.invalidate_cache();
         app.machine_item_index = app
             .machine_items()
             .iter()
@@ -4061,6 +4232,7 @@ mod tests {
         assert!(app.relation_items().is_empty());
 
         app.machine_section = MachineSection::Transitions;
+        app.invalidate_cache();
         app.machine_item_index = app
             .machine_items()
             .iter()
@@ -4116,12 +4288,12 @@ mod tests {
             .expect("workflow relation detail");
         let summary = doc
             .machine_relation_groups()
-            .into_iter()
+            .iter()
             .find(|group| group.from_machine == workflow.index)
             .expect("workflow summary");
         let summary_item = SummaryItem::Exact(ExactSummaryItem {
             direction: SummaryDirection::Outbound,
-            group: summary,
+            group: summary.clone(),
         });
 
         let machine_detail = text_contents(machine_detail_text(workflow, &doc, &[]));

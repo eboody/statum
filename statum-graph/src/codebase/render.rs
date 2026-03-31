@@ -454,8 +454,9 @@ fn cross_machine_relation_groups(
     doc: &CodebaseDoc,
 ) -> Vec<crate::codebase::CodebaseMachineRelationGroup> {
     doc.machine_relation_groups()
-        .into_iter()
+        .iter()
         .filter(|group| group.from_machine != group.to_machine)
+        .cloned()
         .collect()
 }
 

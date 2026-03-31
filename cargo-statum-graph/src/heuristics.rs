@@ -188,6 +188,7 @@ pub struct HeuristicOverlay {
     status: HeuristicStatusKind,
     diagnostics: Vec<HeuristicDiagnostic>,
     relations: Vec<HeuristicRelation>,
+    machine_relation_groups: Vec<HeuristicMachineRelationGroup>,
 }
 
 impl HeuristicOverlay {
@@ -207,42 +208,8 @@ impl HeuristicOverlay {
         self.relations.get(index)
     }
 
-    pub fn machine_relation_groups(&self) -> Vec<HeuristicMachineRelationGroup> {
-        let mut groups = BTreeMap::<(usize, usize), Vec<usize>>::new();
-        for relation in &self.relations {
-            groups
-                .entry((relation.source.machine(), relation.target_machine))
-                .or_default()
-                .push(relation.index);
-        }
-
-        groups
-            .into_iter()
-            .enumerate()
-            .map(|(index, ((from_machine, to_machine), relation_indices))| {
-                let mut counts = BTreeMap::<HeuristicEvidenceKind, usize>::new();
-                for relation_index in &relation_indices {
-                    let relation = self
-                        .relation(*relation_index)
-                        .expect("grouped heuristic relation index should resolve");
-                    *counts.entry(relation.evidence_kind).or_default() += 1;
-                }
-
-                HeuristicMachineRelationGroup {
-                    index,
-                    from_machine,
-                    to_machine,
-                    relation_indices,
-                    counts: counts
-                        .into_iter()
-                        .map(|(evidence_kind, count)| HeuristicRelationCount {
-                            evidence_kind,
-                            count,
-                        })
-                        .collect(),
-                }
-            })
-            .collect()
+    pub fn machine_relation_groups(&self) -> &[HeuristicMachineRelationGroup] {
+        &self.machine_relation_groups
     }
 
     pub fn outbound_relations_for_machine(
@@ -325,10 +292,12 @@ impl HeuristicOverlay {
         diagnostics: Vec<HeuristicDiagnostic>,
         relations: Vec<HeuristicRelation>,
     ) -> Self {
+        let machine_relation_groups = build_machine_relation_groups(&relations);
         Self {
             status,
             diagnostics,
             relations,
+            machine_relation_groups,
         }
     }
 }
@@ -931,9 +900,48 @@ impl<'a> OverlayCollector<'a> {
         HeuristicOverlay {
             status,
             diagnostics: self.diagnostics,
+            machine_relation_groups: build_machine_relation_groups(&relations),
             relations,
         }
     }
+}
+
+fn build_machine_relation_groups(
+    relations: &[HeuristicRelation],
+) -> Vec<HeuristicMachineRelationGroup> {
+    let mut groups = BTreeMap::<(usize, usize), Vec<usize>>::new();
+    for relation in relations {
+        groups
+            .entry((relation.source.machine(), relation.target_machine))
+            .or_default()
+            .push(relation.index);
+    }
+
+    groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, ((from_machine, to_machine), relation_indices))| {
+            let mut counts = BTreeMap::<HeuristicEvidenceKind, usize>::new();
+            for relation_index in &relation_indices {
+                let relation = &relations[*relation_index];
+                *counts.entry(relation.evidence_kind).or_default() += 1;
+            }
+
+            HeuristicMachineRelationGroup {
+                index,
+                from_machine,
+                to_machine,
+                relation_indices,
+                counts: counts
+                    .into_iter()
+                    .map(|(evidence_kind, count)| HeuristicRelationCount {
+                        evidence_kind,
+                        count,
+                    })
+                    .collect(),
+            }
+        })
+        .collect()
 }
 
 struct MachineInventory<'a> {

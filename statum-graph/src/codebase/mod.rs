@@ -16,6 +16,10 @@ pub struct CodebaseDoc {
     machines: Vec<CodebaseMachine>,
     links: Vec<CodebaseLink>,
     relations: Vec<CodebaseRelation>,
+    #[serde(skip)]
+    relation_groups: Vec<CodebaseMachineRelationGroup>,
+    #[serde(skip)]
+    relation_index: CodebaseRelationIndex,
 }
 
 impl CodebaseDoc {
@@ -82,6 +86,8 @@ impl CodebaseDoc {
             resolve_validator_entries(&mut machines, validator_entries)?;
         let links = resolve_static_links(&machines, &static_links)?;
         let relations = resolve_relations(&machines, relations, via_routes, reference_types)?;
+        let relation_groups = build_machine_relation_groups(&relations);
+        let relation_index = CodebaseRelationIndex::new(&machines, &relations);
 
         debug_assert_eq!(
             resolved_validator_entries,
@@ -92,6 +98,8 @@ impl CodebaseDoc {
             machines,
             links,
             relations,
+            relation_groups,
+            relation_index,
         })
     }
 
@@ -122,55 +130,16 @@ impl CodebaseDoc {
 
     /// Groups exact relations by source and target machine for renderer and
     /// inspector use.
-    pub fn machine_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
-        let mut groups = BTreeMap::<(usize, usize), Vec<usize>>::new();
-        for relation in &self.relations {
-            groups
-                .entry((relation.source_machine(), relation.target_machine))
-                .or_default()
-                .push(relation.index);
-        }
-
-        groups
-            .into_iter()
-            .enumerate()
-            .map(|(index, ((from_machine, to_machine), relation_indices))| {
-                let mut counts =
-                    BTreeMap::<(CodebaseRelationKind, CodebaseRelationBasis), usize>::new();
-                let mut composition_owned_relations = 0usize;
-                for relation_index in &relation_indices {
-                    let relation = self
-                        .relation(*relation_index)
-                        .expect("grouped relation index should resolve");
-                    *counts.entry((relation.kind, relation.basis)).or_default() += 1;
-                    if relation.is_composition_owned() {
-                        composition_owned_relations += 1;
-                    }
-                }
-
-                CodebaseMachineRelationGroup {
-                    index,
-                    from_machine,
-                    to_machine,
-                    semantic: CodebaseMachineRelationGroupSemantic::from_relation_counts(
-                        composition_owned_relations,
-                        relation_indices.len(),
-                    ),
-                    relation_indices,
-                    counts: counts
-                        .into_iter()
-                        .map(|((kind, basis), count)| CodebaseRelationCount { kind, basis, count })
-                        .collect(),
-                }
-            })
-            .collect()
+    pub fn machine_relation_groups(&self) -> &[CodebaseMachineRelationGroup] {
+        &self.relation_groups
     }
 
     /// Groups exact relations that are owned by composition machines.
     pub fn composition_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
         self.machine_relation_groups()
-            .into_iter()
+            .iter()
             .filter(|group| group.is_composition_owned() && group.from_machine != group.to_machine)
+            .cloned()
             .collect()
     }
 
@@ -179,9 +148,10 @@ impl CodebaseDoc {
         &self,
         machine_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations
+        self.relation_index
+            .outbound_machine(machine_index)
             .iter()
-            .filter(move |relation| relation.source_machine() == machine_index)
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Exact relations whose target belongs to `machine_index`.
@@ -189,9 +159,10 @@ impl CodebaseDoc {
         &self,
         machine_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations
+        self.relation_index
+            .inbound_machine(machine_index)
             .iter()
-            .filter(move |relation| relation.target_machine == machine_index)
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Exact relations whose source belongs to one exported state.
@@ -200,12 +171,10 @@ impl CodebaseDoc {
         machine_index: usize,
         state_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations.iter().filter(move |relation| {
-            relation.source_machine() == machine_index
-                && relation
-                    .source_state()
-                    .is_some_and(|state| state == state_index)
-        })
+        self.relation_index
+            .outbound_state(machine_index, state_index)
+            .iter()
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Exact relations whose target belongs to one exported state.
@@ -214,9 +183,10 @@ impl CodebaseDoc {
         machine_index: usize,
         state_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations.iter().filter(move |relation| {
-            relation.target_machine == machine_index && relation.target_state == state_index
-        })
+        self.relation_index
+            .inbound_state(machine_index, state_index)
+            .iter()
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Exact relations whose source belongs to one exported transition site.
@@ -225,12 +195,10 @@ impl CodebaseDoc {
         machine_index: usize,
         transition_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations.iter().filter(move |relation| {
-            relation.source_machine() == machine_index
-                && relation
-                    .source_transition()
-                    .is_some_and(|transition| transition == transition_index)
-        })
+        self.relation_index
+            .outbound_transition(machine_index, transition_index)
+            .iter()
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Exact relations whose target belongs to one exported transition site.
@@ -243,12 +211,10 @@ impl CodebaseDoc {
         machine_index: usize,
         transition_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations.iter().filter(move |relation| {
-            relation.target_machine == machine_index
-                && relation
-                    .target_transition()
-                    .is_some_and(|transition| transition == transition_index)
-        })
+        self.relation_index
+            .inbound_transition(machine_index, transition_index)
+            .iter()
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Resolves one exact relation into typed source and target references for
@@ -708,7 +674,7 @@ pub struct CodebaseAttestedProducer {
     pub transition: usize,
 }
 
-    /// One resolved producer route attached to one exact attested relation.
+/// One resolved producer route attached to one exact attested relation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CodebaseAttestedRoute {
     /// Machine-module path that owns the attested route namespace.
@@ -869,6 +835,152 @@ pub struct CodebaseRelationDetail<'a> {
     /// All resolved producer transitions when this exact relation came from an
     /// attested route declaration.
     pub attested_via_producers: Vec<CodebaseAttestedProducerDetail<'a>>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct CodebaseRelationIndex {
+    outbound_machine: Vec<Vec<usize>>,
+    inbound_machine: Vec<Vec<usize>>,
+    outbound_state: Vec<Vec<Vec<usize>>>,
+    inbound_state: Vec<Vec<Vec<usize>>>,
+    outbound_transition: Vec<Vec<Vec<usize>>>,
+    inbound_transition: Vec<Vec<Vec<usize>>>,
+}
+
+impl CodebaseRelationIndex {
+    fn new(machines: &[CodebaseMachine], relations: &[CodebaseRelation]) -> Self {
+        let machine_count = machines.len();
+        let mut index = Self {
+            outbound_machine: vec![Vec::new(); machine_count],
+            inbound_machine: vec![Vec::new(); machine_count],
+            outbound_state: machines
+                .iter()
+                .map(|machine| vec![Vec::new(); machine.states.len()])
+                .collect(),
+            inbound_state: machines
+                .iter()
+                .map(|machine| vec![Vec::new(); machine.states.len()])
+                .collect(),
+            outbound_transition: machines
+                .iter()
+                .map(|machine| vec![Vec::new(); machine.transitions.len()])
+                .collect(),
+            inbound_transition: machines
+                .iter()
+                .map(|machine| vec![Vec::new(); machine.transitions.len()])
+                .collect(),
+        };
+
+        for (position, relation) in relations.iter().enumerate() {
+            debug_assert_eq!(relation.index, position);
+
+            index.outbound_machine[relation.source_machine()].push(position);
+            index.inbound_machine[relation.target_machine].push(position);
+            if let Some(state) = relation.source_state() {
+                index.outbound_state[relation.source_machine()][state].push(position);
+            }
+            index.inbound_state[relation.target_machine][relation.target_state].push(position);
+            if let Some(transition) = relation.source_transition() {
+                index.outbound_transition[relation.source_machine()][transition].push(position);
+            }
+            if let Some(transition) = relation.target_transition() {
+                index.inbound_transition[relation.target_machine][transition].push(position);
+            }
+        }
+
+        index
+    }
+
+    fn outbound_machine(&self, machine_index: usize) -> &[usize] {
+        self.outbound_machine
+            .get(machine_index)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn inbound_machine(&self, machine_index: usize) -> &[usize] {
+        self.inbound_machine
+            .get(machine_index)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn outbound_state(&self, machine_index: usize, state_index: usize) -> &[usize] {
+        self.outbound_state
+            .get(machine_index)
+            .and_then(|states| states.get(state_index))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn inbound_state(&self, machine_index: usize, state_index: usize) -> &[usize] {
+        self.inbound_state
+            .get(machine_index)
+            .and_then(|states| states.get(state_index))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn outbound_transition(&self, machine_index: usize, transition_index: usize) -> &[usize] {
+        self.outbound_transition
+            .get(machine_index)
+            .and_then(|transitions| transitions.get(transition_index))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn inbound_transition(&self, machine_index: usize, transition_index: usize) -> &[usize] {
+        self.inbound_transition
+            .get(machine_index)
+            .and_then(|transitions| transitions.get(transition_index))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
+
+fn build_machine_relation_groups(
+    relations: &[CodebaseRelation],
+) -> Vec<CodebaseMachineRelationGroup> {
+    let mut groups = BTreeMap::<(usize, usize), Vec<usize>>::new();
+    for (position, relation) in relations.iter().enumerate() {
+        debug_assert_eq!(relation.index, position);
+        groups
+            .entry((relation.source_machine(), relation.target_machine))
+            .or_default()
+            .push(position);
+    }
+
+    groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, ((from_machine, to_machine), relation_indices))| {
+            let mut counts =
+                BTreeMap::<(CodebaseRelationKind, CodebaseRelationBasis), usize>::new();
+            let mut composition_owned_relations = 0usize;
+            for relation_index in &relation_indices {
+                let relation = &relations[*relation_index];
+                *counts.entry((relation.kind, relation.basis)).or_default() += 1;
+                if relation.is_composition_owned() {
+                    composition_owned_relations += 1;
+                }
+            }
+
+            CodebaseMachineRelationGroup {
+                index,
+                from_machine,
+                to_machine,
+                semantic: CodebaseMachineRelationGroupSemantic::from_relation_counts(
+                    composition_owned_relations,
+                    relation_indices.len(),
+                ),
+                relation_indices,
+                counts: counts
+                    .into_iter()
+                    .map(|((kind, basis), count)| CodebaseRelationCount { kind, basis, count })
+                    .collect(),
+            }
+        })
+        .collect()
 }
 
 type ResolvedRelationTarget = (usize, usize, Option<&'static str>);
@@ -1660,12 +1772,13 @@ fn resolve_relations(
                 route_id: _,
             } => {
                 let relation_label = relation_summary(&relation);
-                let resolved_route = via_routes
-                    .get(resolved_route_type_name())
-                    .ok_or_else(|| CodebaseDocError::MissingRelationViaRoute {
-                        relation: relation_label.clone(),
-                        via_module_path,
-                        route_name,
+                let resolved_route =
+                    via_routes.get(resolved_route_type_name()).ok_or_else(|| {
+                        CodebaseDocError::MissingRelationViaRoute {
+                            relation: relation_label.clone(),
+                            via_module_path,
+                            route_name,
+                        }
                     })?;
                 (
                     Some((
@@ -1705,12 +1818,13 @@ fn resolve_relations(
                     state,
                     &relation_label,
                 )?;
-                let resolved_route = via_routes
-                    .get(resolved_route_type_name())
-                    .ok_or_else(|| CodebaseDocError::MissingRelationViaRoute {
-                        relation: relation_label.clone(),
-                        via_module_path,
-                        route_name,
+                let resolved_route =
+                    via_routes.get(resolved_route_type_name()).ok_or_else(|| {
+                        CodebaseDocError::MissingRelationViaRoute {
+                            relation: relation_label.clone(),
+                            via_module_path,
+                            route_name,
+                        }
                     })?;
                 let matched_producers = resolved_route
                     .producers
@@ -2091,13 +2205,12 @@ fn classify_relation_semantic(
     target_machine: usize,
     target: LinkedRelationTarget,
 ) -> CodebaseRelationSemantic {
-    if source_role == CodebaseMachineRole::Composition
-        && source_machine != target_machine
-    {
+    if source_role == CodebaseMachineRole::Composition && source_machine != target_machine {
         match (basis, target) {
-            (CodebaseRelationBasis::DirectTypeSyntax, LinkedRelationTarget::DirectMachine { .. }) => {
-                CodebaseRelationSemantic::CompositionDirectChild
-            }
+            (
+                CodebaseRelationBasis::DirectTypeSyntax,
+                LinkedRelationTarget::DirectMachine { .. },
+            ) => CodebaseRelationSemantic::CompositionDirectChild,
             (
                 CodebaseRelationBasis::AttestedTypeSyntax | CodebaseRelationBasis::ViaDeclaration,
                 LinkedRelationTarget::AttestedProducerRoute { .. },
@@ -2478,7 +2591,10 @@ fn path_string_suffix_matches(candidate: &str, suffix: &str) -> bool {
     candidate.ends_with(&suffix)
 }
 
-fn machine_family_path_suffix_matches(resolved_machine_type_name: &str, machine_path: &str) -> bool {
+fn machine_family_path_suffix_matches(
+    resolved_machine_type_name: &str,
+    machine_path: &str,
+) -> bool {
     let family_path = resolved_machine_type_name
         .split_once('<')
         .map(|(family_path, _)| family_path)
@@ -2744,6 +2860,102 @@ mod tests {
             ),
             CodebaseRelationSemantic::CompositionDetachedHandoff
         );
+    }
+
+    #[test]
+    fn cached_relation_indices_follow_stable_export_order() {
+        let machines = vec![
+            CodebaseMachine {
+                index: 0,
+                module_path: "crate::producer",
+                rust_type_path: "crate::producer::Machine",
+                role: CodebaseMachineRole::Protocol,
+                label: None,
+                description: None,
+                docs: None,
+                states: vec![CodebaseState {
+                    index: 0,
+                    rust_name: "Idle",
+                    label: None,
+                    description: None,
+                    docs: None,
+                    has_data: false,
+                    direct_construction_available: false,
+                    is_graph_root: true,
+                }],
+                transitions: vec![CodebaseTransition {
+                    index: 0,
+                    method_name: "start",
+                    label: None,
+                    description: None,
+                    docs: None,
+                    from: 0,
+                    to: vec![0],
+                }],
+                validator_entries: Vec::new(),
+            },
+            CodebaseMachine {
+                index: 1,
+                module_path: "crate::consumer",
+                rust_type_path: "crate::consumer::Machine",
+                role: CodebaseMachineRole::Composition,
+                label: None,
+                description: None,
+                docs: None,
+                states: vec![CodebaseState {
+                    index: 0,
+                    rust_name: "Done",
+                    label: None,
+                    description: None,
+                    docs: None,
+                    has_data: false,
+                    direct_construction_available: false,
+                    is_graph_root: true,
+                }],
+                transitions: Vec::new(),
+                validator_entries: Vec::new(),
+            },
+        ];
+        let relations = vec![
+            CodebaseRelation {
+                index: 0,
+                kind: CodebaseRelationKind::TransitionParam,
+                basis: CodebaseRelationBasis::DirectTypeSyntax,
+                semantic: CodebaseRelationSemantic::CompositionDirectChild,
+                source: CodebaseRelationSource::TransitionParam {
+                    machine: 0,
+                    transition: 0,
+                    param_index: 0,
+                    param_name: None,
+                },
+                target_machine: 1,
+                target_state: 0,
+                declared_reference_type: None,
+                attested_via: None,
+            },
+            CodebaseRelation {
+                index: 1,
+                kind: CodebaseRelationKind::StatePayload,
+                basis: CodebaseRelationBasis::DirectTypeSyntax,
+                semantic: CodebaseRelationSemantic::Exact,
+                source: CodebaseRelationSource::StatePayload {
+                    machine: 0,
+                    state: 0,
+                    field_name: Some("child"),
+                },
+                target_machine: 1,
+                target_state: 0,
+                declared_reference_type: None,
+                attested_via: None,
+            },
+        ];
+
+        let index = CodebaseRelationIndex::new(&machines, &relations);
+        let groups = build_machine_relation_groups(&relations);
+
+        assert_eq!(index.outbound_machine(0), &[0, 1]);
+        assert_eq!(index.inbound_machine(1), &[0, 1]);
+        assert_eq!(groups[0].relation_indices, vec![0, 1]);
     }
 
     fn producer_transitions() -> &'static [LinkedTransitionDescriptor] {

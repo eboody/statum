@@ -2,8 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use statum_graph::{
-    CodebaseDoc, CodebaseMachine, CodebaseRelation, CodebaseRelationBasis,
-    CodebaseRelationCount,
+    CodebaseDoc, CodebaseMachine, CodebaseRelation, CodebaseRelationBasis, CodebaseRelationCount,
 };
 
 use crate::heuristics::{HeuristicOverlay, HeuristicRelationCount};
@@ -138,18 +137,14 @@ impl CompositionSuggestionOverlay {
     pub fn warning_count(&self) -> usize {
         self.suggestions
             .iter()
-            .filter(|suggestion| {
-                suggestion.severity == CompositionSuggestionSeverity::Warning
-            })
+            .filter(|suggestion| suggestion.severity == CompositionSuggestionSeverity::Warning)
             .count()
     }
 
     pub fn suggestion_count(&self) -> usize {
         self.suggestions
             .iter()
-            .filter(|suggestion| {
-                suggestion.severity == CompositionSuggestionSeverity::Suggestion
-            })
+            .filter(|suggestion| suggestion.severity == CompositionSuggestionSeverity::Suggestion)
             .count()
     }
 
@@ -157,7 +152,6 @@ impl CompositionSuggestionOverlay {
     pub(crate) fn from_suggestions(suggestions: Vec<CompositionSuggestion>) -> Self {
         Self { suggestions }
     }
-
 }
 
 pub fn collect_composition_suggestions(
@@ -179,7 +173,8 @@ pub fn collect_composition_suggestions(
         }
 
         let mut candidate_relations = Vec::new();
-        let mut counts = BTreeMap::<(statum_graph::CodebaseRelationKind, CodebaseRelationBasis), usize>::new();
+        let mut counts =
+            BTreeMap::<(statum_graph::CodebaseRelationKind, CodebaseRelationBasis), usize>::new();
         for relation_index in &group.relation_indices {
             let Some(relation) = doc.relation(*relation_index) else {
                 continue;
@@ -261,11 +256,9 @@ pub fn collect_composition_suggestions(
         if source_machine.role.is_composition() {
             continue;
         }
-        if doc
-            .machine_relation_groups()
-            .into_iter()
-            .any(|exact| exact.from_machine == group.from_machine && exact.to_machine == group.to_machine)
-        {
+        if doc.machine_relation_groups().iter().any(|exact| {
+            exact.from_machine == group.from_machine && exact.to_machine == group.to_machine
+        }) {
             continue;
         }
 
@@ -285,10 +278,7 @@ pub fn collect_composition_suggestions(
     CompositionSuggestionOverlay { suggestions }
 }
 
-pub fn render_composition_suggestions(
-    doc: &CodebaseDoc,
-    heuristic: &HeuristicOverlay,
-) -> String {
+pub fn render_composition_suggestions(doc: &CodebaseDoc, heuristic: &HeuristicOverlay) -> String {
     let overlay = collect_composition_suggestions(doc, heuristic);
     let mut output = String::new();
     let _ = writeln!(
@@ -304,7 +294,11 @@ pub fn render_composition_suggestions(
         heuristic.diagnostics().len()
     );
     for diagnostic in heuristic.diagnostics().iter().take(3) {
-        let _ = writeln!(output, "heuristic diagnostic: {}", diagnostic.display_label());
+        let _ = writeln!(
+            output,
+            "heuristic diagnostic: {}",
+            diagnostic.display_label()
+        );
     }
 
     if overlay.is_empty() {
@@ -339,10 +333,7 @@ fn is_high_confidence_typed_orchestration(relation: &CodebaseRelation) -> bool {
 }
 
 fn render_machine_label(machine: &CodebaseMachine) -> String {
-    machine
-        .label
-        .unwrap_or(machine.rust_type_path)
-        .to_owned()
+    machine.label.unwrap_or(machine.rust_type_path).to_owned()
 }
 
 #[cfg(test)]
@@ -420,11 +411,7 @@ mod tests {
         let task = doc
             .machines()
             .iter()
-            .find(|machine| {
-                machine
-                    .rust_type_path
-                    .ends_with("suggestion_task::Machine")
-            })
+            .find(|machine| machine.rust_type_path.ends_with("suggestion_task::Machine"))
             .expect("task");
         let workflow = doc
             .machines()
@@ -450,8 +437,7 @@ mod tests {
                     target_machine: workflow.index,
                     evidence_kind: HeuristicEvidenceKind::Signature,
                     matched_path_text:
-                        "suggestion_workflow::Machine<suggestion_workflow::InProgress>"
-                            .to_owned(),
+                        "suggestion_workflow::Machine<suggestion_workflow::InProgress>".to_owned(),
                     file_path: "/tmp/task.rs".into(),
                     line_number: 10,
                     snippet: None,
