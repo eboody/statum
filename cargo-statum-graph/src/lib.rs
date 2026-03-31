@@ -34,13 +34,16 @@ const NO_TTY_INSPECT_MESSAGE: &str =
     "statum-graph inspect requires an interactive terminal on stdin and stdout.";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Options {
+pub struct ExportOptions {
     pub input_path: PathBuf,
     pub package: Option<String>,
     pub out_dir: Option<PathBuf>,
     pub stem: String,
     pub patch_statum_root: Option<PathBuf>,
 }
+
+#[doc(hidden)]
+pub type Options = ExportOptions;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InspectOptions {
@@ -203,7 +206,7 @@ impl std::error::Error for Error {
     }
 }
 
-pub fn run(options: Options) -> Result<Vec<PathBuf>, Error> {
+pub fn export(options: ExportOptions) -> Result<Vec<PathBuf>, Error> {
     validate_output_stem(&options.stem)?;
     let prepared = prepare_run(
         &options.input_path,
@@ -219,16 +222,21 @@ pub fn run(options: Options) -> Result<Vec<PathBuf>, Error> {
     run_runner(
         &runner.runner,
         &prepared.input.manifest_path,
-        "codebase export",
+        "workspace export",
         RunnerStdio::Captured,
         &[
-            OsString::from("codebase"),
+            OsString::from("export"),
             out_dir.as_os_str().to_owned(),
             OsString::from(options.stem.clone()),
         ],
     )?;
 
     Ok(bundle_paths(&out_dir, &options.stem))
+}
+
+#[doc(hidden)]
+pub fn run(options: Options) -> Result<Vec<PathBuf>, Error> {
+    export(options)
 }
 
 pub fn inspect(options: InspectOptions) -> Result<(), Error> {
@@ -689,12 +697,12 @@ fn build_runner_main(selections: &[SelectedPackage]) -> Result<String, Error> {
         "            cargo_statum_graph::run_inspector(doc, heuristic, workspace_label)?;\n",
     );
     source.push_str("        }\n");
-    source.push_str("        \"codebase\" => {\n");
+    source.push_str("        \"export\" | \"codebase\" => {\n");
     source.push_str(
         "            let out_dir = PathBuf::from(take_os_arg(&mut args, \"output directory\")?);\n",
     );
     source.push_str("            let stem = take_string_arg(&mut args, \"output stem\")?;\n");
-    source.push_str("            ensure_no_extra_args(&mut args, \"codebase\")?;\n");
+    source.push_str("            ensure_no_extra_args(&mut args, \"export\")?;\n");
     source.push_str(
         "            statum_graph::codebase::render::write_all_to_dir(&doc, &out_dir, &stem)?;\n",
     );
@@ -1244,6 +1252,7 @@ mod tests {
         assert!(source.contains("cargo_statum_graph::run_inspector"));
         assert!(source.contains("is_terminal()"));
         assert!(source.contains("\"inspect\""));
+        assert!(source.contains("\"export\" | \"codebase\""));
         assert!(source.contains("\"codebase\""));
         assert!(source.contains("\"suggest\""));
         assert!(source.contains("write_all_to_dir(&doc, &out_dir, &stem)?;"));

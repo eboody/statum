@@ -8,7 +8,8 @@
 
 ### Changes
 - Added exact composition-machine roles, direct child-machine composition semantics, detached handoff composition relations, and composition-first inspector workflows.
-- Added stable cached runner homes for `cargo statum-graph inspect`, `codebase`, and `suggest`, plus session-local inspector caching for large-workspace navigation.
+- Renamed `cargo statum-graph codebase` to `cargo statum-graph export` and kept `codebase` as a compatibility alias for this release.
+- Added stable cached runner homes for `cargo statum-graph inspect`, `export`, and `suggest`, plus session-local inspector caching for large-workspace navigation.
 - Tightened linked exact codebase export around composition semantics and cached exact relation indexing without changing the runtime authority boundary.
 
 ## v0.6.7 (2026-03-23)

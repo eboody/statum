@@ -4,16 +4,16 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser};
 
-use cargo_statum_graph::{inspect, run, suggest, InspectOptions, Options, SuggestOptions};
+use cargo_statum_graph::{export, inspect, suggest, ExportOptions, InspectOptions, SuggestOptions};
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo-statum-graph")]
 #[command(
-    about = "Generate static Statum graph bundles and launch the exact inspector for existing crates"
+    about = "Export exact Statum workspace bundles and launch Statum Inspector for existing crates"
 )]
 enum Cli {
-    #[command(name = "codebase")]
-    Codebase(CodebaseArgs),
+    #[command(name = "export", visible_alias = "codebase")]
+    Export(ExportArgs),
     #[command(name = "inspect")]
     Inspect(InspectArgs),
     #[command(name = "suggest")]
@@ -21,7 +21,7 @@ enum Cli {
 }
 
 #[derive(Debug, Args)]
-struct CodebaseArgs {
+struct ExportArgs {
     #[arg(value_name = "PATH", default_value = ".")]
     path: PathBuf,
     #[arg(long)]
@@ -75,7 +75,7 @@ fn main() -> ExitCode {
 fn run_main() -> Result<(), cargo_statum_graph::Error> {
     let cli = parse_cli_from(std::env::args_os());
     let output = match cli {
-        Cli::Codebase(args) => run(Options {
+        Cli::Export(args) => export(ExportOptions {
             input_path: args.manifest_path.unwrap_or(args.path),
             package: args.package,
             out_dir: args.out_dir,
@@ -128,11 +128,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_cli_from_accepts_direct_binary_shape() {
-        let cli = parse_cli_from(["cargo-statum-graph", "codebase", "/tmp/workspace"]);
+    fn parse_cli_from_accepts_export_subcommand() {
+        let cli = parse_cli_from(["cargo-statum-graph", "export", "/tmp/workspace"]);
 
-        let Cli::Codebase(args) = cli else {
-            panic!("expected codebase subcommand");
+        let Cli::Export(args) = cli else {
+            panic!("expected export subcommand");
         };
         assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
     }
@@ -142,12 +142,37 @@ mod tests {
         let cli = parse_cli_from([
             "cargo-statum-graph",
             "statum-graph",
+            "export",
+            "/tmp/workspace",
+        ]);
+
+        let Cli::Export(args) = cli else {
+            panic!("expected export subcommand");
+        };
+        assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
+    }
+
+    #[test]
+    fn parse_cli_from_accepts_legacy_codebase_alias() {
+        let cli = parse_cli_from(["cargo-statum-graph", "codebase", "/tmp/workspace"]);
+
+        let Cli::Export(args) = cli else {
+            panic!("expected export subcommand");
+        };
+        assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
+    }
+
+    #[test]
+    fn parse_cli_from_accepts_cargo_injected_legacy_codebase_alias() {
+        let cli = parse_cli_from([
+            "cargo-statum-graph",
+            "statum-graph",
             "codebase",
             "/tmp/workspace",
         ]);
 
-        let Cli::Codebase(args) = cli else {
-            panic!("expected codebase subcommand");
+        let Cli::Export(args) = cli else {
+            panic!("expected export subcommand");
         };
         assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
     }

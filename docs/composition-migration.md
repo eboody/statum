@@ -140,7 +140,7 @@ Use the tooling in this order:
 1. `cargo statum-graph suggest /path/to/workspace`
    - find typed orchestration that should likely become
      `#[machine(role = composition)]`
-2. `cargo statum-graph codebase /path/to/workspace`
+2. `cargo statum-graph export /path/to/workspace`
    - verify the exact bundle now shows composition-owned workflow edges
 3. `cargo statum-graph inspect /path/to/workspace`
    - verify `Composition` becomes the useful top-level home view

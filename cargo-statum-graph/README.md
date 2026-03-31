@@ -1,13 +1,13 @@
 # cargo-statum-graph
 
-`cargo-statum-graph` is the zero-touch CLI for codebase-level Statum graph
-export and inspector TUI workflows.
+`cargo-statum-graph` is the zero-touch CLI package for exact Statum workspace
+export and the Statum Inspector TUI.
 
 It materializes a stable generated runner under the target workspace's
 `target/statum-graph/runner/<key>/`, links the selected crate inside that
-workspace context, and writes the combined static codebase graph as Mermaid,
+workspace context, and writes the combined exact workspace graph as Mermaid,
 DOT, PlantUML, and JSON, including declared validator-entry nodes from
-compiled `#[validators]` impls. `inspect` and `codebase` reuse that cached
+compiled `#[validators]` impls. `inspect` and `export` reuse that cached
 runner home across invocations, and `suggest` now uses that same cached
 runner path too, but `CodebaseDoc::linked()` still executes fresh at runtime
 on every run. It can also launch an inspector TUI over that same linked
@@ -21,10 +21,10 @@ machine coupling hints.
 cargo install cargo-statum-graph
 ```
 
-## Usage
+## Export
 
 ```text
-cargo statum-graph codebase \
+cargo statum-graph export \
   /path/to/workspace
 ```
 
@@ -38,7 +38,7 @@ That writes:
 If you want a different output directory:
 
 ```text
-cargo statum-graph codebase \
+cargo statum-graph export \
   /path/to/workspace \
   --out-dir /tmp/codebase-graph
 ```
@@ -47,10 +47,13 @@ If you want to narrow export to one library package inside a multi-package
 workspace:
 
 ```text
-cargo statum-graph codebase \
+cargo statum-graph export \
   /path/to/workspace \
   --package app
 ```
+
+`codebase` still works as a compatibility alias in this release, but `export`
+is now the primary command name.
 
 For local development against an unreleased Statum checkout, add
 `--patch-statum-root /path/to/statum`.
@@ -162,7 +165,7 @@ Heuristic lane:
   the same source machine/state-or-transition and target machine
 
 The heuristic lane is useful but non-authoritative. It does not change
-`codebase` export output. Runtime replay and snapshot inspection are still
+`export` output. Runtime replay and snapshot inspection are still
 future work.
 
 If you are moving a workspace from loose cross-machine coupling into typed

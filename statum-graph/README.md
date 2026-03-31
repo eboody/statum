@@ -340,7 +340,7 @@ If you do not want to hand-write a runner crate, install
 `cargo-statum-graph` and point it at an existing library package:
 
 ```text
-cargo statum-graph codebase \
+cargo statum-graph export \
   /path/to/workspace
 ```
 

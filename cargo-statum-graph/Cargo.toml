@@ -16,7 +16,7 @@ tempfile = "3"
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]
 categories = ["development-tools", "command-line-utilities"]
-description = "Cargo subcommand for zero-touch Statum graph export"
+description = "Cargo subcommand for exact Statum workspace export and inspection"
 documentation = "https://docs.rs/cargo-statum-graph"
 edition = "2021"
 keywords = [

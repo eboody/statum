@@ -15,7 +15,7 @@ Goal: downstream validation and migration.
       review and one detached attested publication handoff.
 - [x] Verify the exact graph bundle shows more of the main workflow than the
       current journey-plus-heuristic story.
-      `cargo statum-graph codebase statum-examples` now exports composition
+      `cargo statum-graph export statum-examples` now exports composition
       summary edges for both direct child-machine and detached-handoff paths.
 - [x] Verify the inspector composition view is materially more useful than the
       old journey-first view.

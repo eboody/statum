@@ -5,12 +5,12 @@ use std::process::Command;
 use tempfile::tempdir;
 
 #[test]
-fn codebase_command_accepts_workspace_dir_and_writes_bundle_into_workspace_root() {
+fn export_command_accepts_workspace_dir_and_writes_bundle_into_workspace_root() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_fixture(fixture_dir.path());
 
     let status = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+        .arg("export")
         .arg(fixture_dir.path())
         .status()
         .expect("cargo-statum-graph should run");
@@ -37,14 +37,14 @@ fn codebase_command_accepts_workspace_dir_and_writes_bundle_into_workspace_root(
 }
 
 #[test]
-fn codebase_command_accepts_cargo_style_invocation_from_workspace_root() {
+fn export_command_accepts_cargo_style_invocation_from_workspace_root() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_fixture(fixture_dir.path());
 
     let status = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
         .current_dir(fixture_dir.path())
         .arg("statum-graph")
-        .arg("codebase")
+        .arg("export")
         .status()
         .expect("cargo-style invocation should run");
     assert!(status.success(), "cargo-style invocation should succeed");
@@ -56,18 +56,33 @@ fn codebase_command_accepts_cargo_style_invocation_from_workspace_root() {
 }
 
 #[test]
-fn codebase_command_reuses_one_cached_runner_home_across_repeated_runs() {
+fn legacy_codebase_alias_still_exports_workspace_bundle() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_fixture(fixture_dir.path());
+
+    let status = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("codebase")
+        .arg(fixture_dir.path())
+        .status()
+        .expect("legacy codebase alias should run");
+    assert!(status.success(), "legacy codebase alias should succeed");
+
+    assert!(fixture_dir.path().join("codebase.mmd").is_file());
+}
+
+#[test]
+fn export_command_reuses_one_cached_runner_home_across_repeated_runs() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_fixture(fixture_dir.path());
 
     let first = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+        .arg("export")
         .arg(fixture_dir.path())
         .output()
-        .expect("first codebase run should execute");
+        .expect("first export run should execute");
     assert!(
         first.status.success(),
-        "first codebase run should succeed: {}",
+        "first export run should succeed: {}",
         String::from_utf8_lossy(&first.stderr)
     );
 
@@ -76,13 +91,13 @@ fn codebase_command_reuses_one_cached_runner_home_across_repeated_runs() {
     assert_eq!(first_entries.len(), 1, "expected one cached runner home");
 
     let second = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+        .arg("export")
         .arg(fixture_dir.path())
         .output()
-        .expect("second codebase run should execute");
+        .expect("second export run should execute");
     assert!(
         second.status.success(),
-        "second codebase run should succeed: {}",
+        "second export run should succeed: {}",
         String::from_utf8_lossy(&second.stderr)
     );
 
@@ -99,7 +114,7 @@ fn codebase_command_reuses_one_cached_runner_home_across_repeated_runs() {
 }
 
 #[test]
-fn suggest_command_reuses_the_same_cached_runner_home_as_codebase() {
+fn suggest_command_reuses_the_same_cached_runner_home_as_export() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_fixture(fixture_dir.path());
 
@@ -118,47 +133,47 @@ fn suggest_command_reuses_the_same_cached_runner_home_as_codebase() {
     let suggest_entries = runner_entry_names(&runner_root);
     assert_eq!(suggest_entries.len(), 1, "expected one cached runner home");
 
-    let codebase = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+    let export = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("export")
         .arg(fixture_dir.path())
         .output()
-        .expect("codebase run should execute");
+        .expect("export run should execute");
     assert!(
-        codebase.status.success(),
-        "codebase run should succeed: {}",
-        String::from_utf8_lossy(&codebase.stderr)
+        export.status.success(),
+        "export run should succeed: {}",
+        String::from_utf8_lossy(&export.stderr)
     );
 
-    let codebase_entries = runner_entry_names(&runner_root);
-    assert_eq!(codebase_entries, suggest_entries);
+    let export_entries = runner_entry_names(&runner_root);
+    assert_eq!(export_entries, suggest_entries);
 }
 
 #[test]
-fn codebase_command_uses_distinct_cached_runner_homes_for_different_package_sets() {
+fn export_command_uses_distinct_cached_runner_homes_for_different_package_sets() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_fixture(fixture_dir.path());
 
     let all_packages = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+        .arg("export")
         .arg(fixture_dir.path())
         .output()
-        .expect("workspace-wide codebase run should execute");
+        .expect("workspace-wide export run should execute");
     assert!(
         all_packages.status.success(),
-        "workspace-wide codebase run should succeed: {}",
+        "workspace-wide export run should succeed: {}",
         String::from_utf8_lossy(&all_packages.stderr)
     );
 
     let app_only = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+        .arg("export")
         .arg(fixture_dir.path())
         .arg("--package")
         .arg("fixture-app")
         .output()
-        .expect("package-scoped codebase run should execute");
+        .expect("package-scoped export run should execute");
     assert!(
         app_only.status.success(),
-        "package-scoped codebase run should succeed: {}",
+        "package-scoped export run should succeed: {}",
         String::from_utf8_lossy(&app_only.stderr)
     );
 
@@ -171,12 +186,12 @@ fn codebase_command_uses_distinct_cached_runner_homes_for_different_package_sets
 }
 
 #[test]
-fn codebase_command_fails_closed_for_duplicate_machine_paths_across_workspace_members() {
+fn export_command_fails_closed_for_duplicate_machine_paths_across_workspace_members() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_duplicate_machine_path_fixture(fixture_dir.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+        .arg("export")
         .arg(fixture_dir.path())
         .output()
         .expect("cargo-statum-graph should run");
@@ -197,12 +212,12 @@ fn codebase_command_fails_closed_for_duplicate_machine_paths_across_workspace_me
 }
 
 #[test]
-fn codebase_command_rejects_invalid_output_stem_before_runner_build() {
+fn export_command_rejects_invalid_output_stem_before_runner_build() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_fixture(fixture_dir.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+        .arg("export")
         .arg(fixture_dir.path())
         .arg("--stem")
         .arg("../escape")
@@ -219,12 +234,12 @@ fn codebase_command_rejects_invalid_output_stem_before_runner_build() {
 }
 
 #[test]
-fn codebase_command_fails_closed_when_no_linked_machines_are_found() {
+fn export_command_fails_closed_when_no_linked_machines_are_found() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_no_machine_fixture(fixture_dir.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+        .arg("export")
         .arg(fixture_dir.path())
         .output()
         .expect("cargo-statum-graph should run");
@@ -249,12 +264,12 @@ fn codebase_command_fails_closed_when_no_linked_machines_are_found() {
 }
 
 #[test]
-fn codebase_command_does_not_leak_heuristic_only_relations_into_exact_bundle() {
+fn export_command_does_not_leak_heuristic_only_relations_into_exact_bundle() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_heuristic_only_fixture(fixture_dir.path());
 
     let status = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+        .arg("export")
         .arg(fixture_dir.path())
         .status()
         .expect("cargo-statum-graph should run");
@@ -363,7 +378,7 @@ fn suggest_command_reports_heuristic_only_composition_candidates() {
 }
 
 #[test]
-fn codebase_command_exports_composition_workflow_for_statum_examples() {
+fn export_command_exports_composition_workflow_for_statum_examples() {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("crate should live under workspace root");
@@ -371,7 +386,7 @@ fn codebase_command_exports_composition_workflow_for_statum_examples() {
     let out_dir = tempdir().expect("output tempdir");
 
     let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
-        .arg("codebase")
+        .arg("export")
         .arg(&examples_dir)
         .arg("--out-dir")
         .arg(out_dir.path())
@@ -379,7 +394,7 @@ fn codebase_command_exports_composition_workflow_for_statum_examples() {
         .expect("cargo-statum-graph should run against statum-examples");
     assert!(
         output.status.success(),
-        "statum-examples codebase export should succeed: {}",
+        "statum-examples export should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 
