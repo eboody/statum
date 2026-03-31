@@ -10,7 +10,6 @@ use std::process::{Command, ExitStatus, Stdio};
 
 use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
 use statum_graph::CodebaseDoc;
-use tempfile::TempDir;
 
 mod heuristics;
 mod inspect;
@@ -259,19 +258,18 @@ pub fn suggest(options: SuggestOptions) -> Result<String, Error> {
         options.package.as_deref(),
         options.patch_statum_root.as_deref(),
     )?;
-    let temp_dir = new_temp_runner_dir()?;
-    write_suggest_runner_project(
-        temp_dir.path(),
+    let runner = materialize_cached_runner(
+        &prepared.target_directory,
         &prepared.selections,
         prepared.patch_root.as_deref(),
     )?;
 
     run_runner_captured(
-        temp_dir.path().join("Cargo.toml"),
+        runner.runner.manifest_path,
         &prepared.target_directory,
         &prepared.input.manifest_path,
         "composition suggestion report",
-        &[],
+        &[OsString::from("suggest")],
     )
 }
 
@@ -545,39 +543,6 @@ fn materialize_cached_runner(
     })
 }
 
-fn write_suggest_runner_project(
-    runner_dir: &Path,
-    selections: &[SelectedPackage],
-    patch_root: Option<&Path>,
-) -> Result<(), Error> {
-    let src_dir = runner_dir.join("src");
-    fs::create_dir_all(&src_dir).map_err(|source| Error::Io {
-        action: "create runner source directory",
-        path: src_dir.clone(),
-        source,
-    })?;
-
-    let manifest_path = runner_dir.join("Cargo.toml");
-    fs::write(
-        &manifest_path,
-        build_runner_manifest(selections, patch_root)?,
-    )
-    .map_err(|source| Error::Io {
-        action: "write generated runner manifest",
-        path: manifest_path.clone(),
-        source,
-    })?;
-
-    let main_path = src_dir.join("main.rs");
-    fs::write(&main_path, build_suggest_runner_main(selections)?).map_err(|source| Error::Io {
-        action: "write generated runner source",
-        path: main_path.clone(),
-        source,
-    })?;
-
-    Ok(())
-}
-
 fn build_runner_manifest(
     selections: &[SelectedPackage],
     patch_root: Option<&Path>,
@@ -734,6 +699,21 @@ fn build_runner_main(selections: &[SelectedPackage]) -> Result<String, Error> {
         "            statum_graph::codebase::render::write_all_to_dir(&doc, &out_dir, &stem)?;\n",
     );
     source.push_str("        }\n");
+    source.push_str("        \"suggest\" => {\n");
+    source.push_str("            ensure_no_extra_args(&mut args, \"suggest\")?;\n");
+    source.push_str("            let heuristic = cargo_statum_graph::collect_heuristic_overlay(\n");
+    source.push_str("                &doc,\n");
+    source.push_str("                &[\n");
+    source.push_str(&inspect_package_sources_literal(&selections)?);
+    source.push_str("                ],\n");
+    source.push_str("            );\n");
+    source.push_str("            print!(\n");
+    source.push_str("                \"{}\",\n");
+    source.push_str(
+        "                cargo_statum_graph::render_composition_suggestions(&doc, &heuristic),\n",
+    );
+    source.push_str("            );\n");
+    source.push_str("        }\n");
     source.push_str("        other => {\n");
     source.push_str(
         "            return Err(std::io::Error::other(format!(\"unknown runner command `{other}`\")).into());\n",
@@ -770,48 +750,6 @@ fn build_runner_main(selections: &[SelectedPackage]) -> Result<String, Error> {
     source.push_str("    } else {\n");
     source.push_str("        Ok(())\n");
     source.push_str("    }\n");
-    source.push_str("}\n");
-    Ok(source)
-}
-
-fn build_suggest_runner_main(selections: &[SelectedPackage]) -> Result<String, Error> {
-    let selections = normalized_runner_selections(selections);
-    let mut source = String::from("#[allow(unused_imports)]\n");
-    for (index, selection) in selections.iter().enumerate() {
-        source.push_str(&format!(
-            "use {} as _;\n",
-            selection.dependency_alias(index)
-        ));
-    }
-    source.push_str("\nfn main() -> std::process::ExitCode {\n");
-    source.push_str("    match run() {\n");
-    source.push_str("        Ok(()) => std::process::ExitCode::SUCCESS,\n");
-    source.push_str("        Err(error) => {\n");
-    source.push_str("            eprintln!(\"{}\", error);\n");
-    source.push_str("            std::process::ExitCode::FAILURE\n");
-    source.push_str("        }\n");
-    source.push_str("    }\n");
-    source.push_str("}\n\n");
-    source.push_str("fn run() -> Result<(), Box<dyn std::error::Error>> {\n");
-    source.push_str("    let doc = statum_graph::CodebaseDoc::linked()?;\n");
-    source.push_str("    if doc.machines().is_empty() {\n");
-    source.push_str("        return Err(std::io::Error::other(");
-    source.push_str(&rust_str(NO_LINKED_MACHINES_MESSAGE));
-    source.push_str(").into());\n");
-    source.push_str("    }\n");
-    source.push_str("    let heuristic = cargo_statum_graph::collect_heuristic_overlay(\n");
-    source.push_str("        &doc,\n");
-    source.push_str("        &[\n");
-    source.push_str(&inspect_package_sources_literal(&selections)?);
-    source.push_str("        ],\n");
-    source.push_str("    );\n");
-    source.push_str("    print!(\n");
-    source.push_str("        \"{}\",\n");
-    source.push_str(
-        "        cargo_statum_graph::render_composition_suggestions(&doc, &heuristic),\n",
-    );
-    source.push_str("    );\n");
-    source.push_str("    Ok(())\n");
     source.push_str("}\n");
     Ok(source)
 }
@@ -1193,14 +1131,6 @@ struct ResolvedInput {
     default_output_dir: PathBuf,
 }
 
-fn new_temp_runner_dir() -> Result<TempDir, Error> {
-    TempDir::new().map_err(|source| Error::Io {
-        action: "create temporary runner directory",
-        path: env::temp_dir(),
-        source,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1315,7 +1245,9 @@ mod tests {
         assert!(source.contains("is_terminal()"));
         assert!(source.contains("\"inspect\""));
         assert!(source.contains("\"codebase\""));
+        assert!(source.contains("\"suggest\""));
         assert!(source.contains("write_all_to_dir(&doc, &out_dir, &stem)?;"));
+        assert!(source.contains("render_composition_suggestions(&doc, &heuristic)"));
         assert!(source.contains("take_os_arg"));
         assert!(source.contains("ensure_no_extra_args"));
         assert!(!source.contains("/tmp/workspace/Cargo.toml"));

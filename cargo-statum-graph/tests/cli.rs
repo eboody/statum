@@ -99,6 +99,41 @@ fn codebase_command_reuses_one_cached_runner_home_across_repeated_runs() {
 }
 
 #[test]
+fn suggest_command_reuses_the_same_cached_runner_home_as_codebase() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_fixture(fixture_dir.path());
+
+    let suggest = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("suggest")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("suggest run should execute");
+    assert!(
+        suggest.status.success(),
+        "suggest run should succeed: {}",
+        String::from_utf8_lossy(&suggest.stderr)
+    );
+
+    let runner_root = runner_root(fixture_dir.path());
+    let suggest_entries = runner_entry_names(&runner_root);
+    assert_eq!(suggest_entries.len(), 1, "expected one cached runner home");
+
+    let codebase = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("codebase")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("codebase run should execute");
+    assert!(
+        codebase.status.success(),
+        "codebase run should succeed: {}",
+        String::from_utf8_lossy(&codebase.stderr)
+    );
+
+    let codebase_entries = runner_entry_names(&runner_root);
+    assert_eq!(codebase_entries, suggest_entries);
+}
+
+#[test]
 fn codebase_command_uses_distinct_cached_runner_homes_for_different_package_sets() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_fixture(fixture_dir.path());

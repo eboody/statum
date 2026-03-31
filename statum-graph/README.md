@@ -37,8 +37,8 @@ promote public machine re-exports into exact relations.
 
 ```toml
 [dependencies]
-statum = "0.6.9"
-statum-graph = "0.6.9"
+statum = "0.7.0"
+statum-graph = "0.7.0"
 ```
 
 ## Example

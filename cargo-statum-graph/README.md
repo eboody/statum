@@ -8,11 +8,12 @@ It materializes a stable generated runner under the target workspace's
 workspace context, and writes the combined static codebase graph as Mermaid,
 DOT, PlantUML, and JSON, including declared validator-entry nodes from
 compiled `#[validators]` impls. `inspect` and `codebase` reuse that cached
-runner home across invocations, but `CodebaseDoc::linked()` still executes
-fresh at runtime on every run. It can also launch an inspector TUI over that
-same linked compiled `CodebaseDoc` surface, with composition machines as the
-primary workspace flow surface and a separate heuristic lane for broader
-source-scanned machine coupling hints.
+runner home across invocations, and `suggest` now uses that same cached
+runner path too, but `CodebaseDoc::linked()` still executes fresh at runtime
+on every run. It can also launch an inspector TUI over that same linked
+compiled `CodebaseDoc` surface, with composition machines as the primary
+workspace flow surface and a separate heuristic lane for broader source-scanned
+machine coupling hints.
 
 ## Install
 
