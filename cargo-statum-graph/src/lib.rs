@@ -28,6 +28,14 @@ pub use suggestions::{
 const GRAPH_EXTENSIONS: [&str; 4] = ["mmd", "dot", "puml", "json"];
 const GRAPH_PACKAGE_NAME: &str = "statum-graph";
 const HELPER_PACKAGE_NAME: &str = "cargo-statum-graph";
+const STATUM_WORKSPACE_PACKAGES: [&str; 6] = [
+    "macro_registry",
+    "module_path_extractor",
+    "statum",
+    "statum-core",
+    "statum-graph",
+    "statum-macros",
+];
 const RUNNER_SCHEMA_VERSION: u32 = 1;
 const NO_LINKED_MACHINES_MESSAGE: &str = "statum-graph: no linked state machines were found in the target workspace. This can mean the workspace has no Statum machines, or that it depends on incompatible `statum`, `statum-core`, or `statum-graph` versions so linked inventories do not unify. If you expected machines here, ensure those crates use compatible versions.";
 const NO_TTY_INSPECT_MESSAGE: &str =
@@ -74,6 +82,10 @@ pub enum Error {
     PackageHasNoLibrary {
         manifest_path: PathBuf,
         package: String,
+    },
+    AmbiguousPatchStatumRoots {
+        manifest_path: PathBuf,
+        candidates: Vec<PathBuf>,
     },
     InvalidStem {
         stem: String,
@@ -138,6 +150,19 @@ impl fmt::Display for Error {
                 "package `{package}` from manifest `{}` does not expose a library target",
                 manifest_path.display()
             ),
+            Self::AmbiguousPatchStatumRoots {
+                manifest_path,
+                candidates,
+            } => write!(
+                formatter,
+                "manifest `{}` reaches multiple local Statum workspace roots; use --patch-statum-root to choose one: {}",
+                manifest_path.display(),
+                candidates
+                    .iter()
+                    .map(|candidate| candidate.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             Self::InvalidStem { stem } => write!(
                 formatter,
                 "invalid output stem `{stem}`: expected a simple file name without path separators"
@@ -199,6 +224,7 @@ impl std::error::Error for Error {
             Self::PackageNotFound { .. }
             | Self::AmbiguousPackage { .. }
             | Self::PackageHasNoLibrary { .. }
+            | Self::AmbiguousPatchStatumRoots { .. }
             | Self::InvalidStem { .. }
             | Self::NonUtf8Path { .. }
             | Self::RunnerFailed { .. } => None,
@@ -315,6 +341,13 @@ fn load_metadata(manifest_path: &Path) -> Result<Metadata, Error> {
     MetadataCommand::new()
         .manifest_path(manifest_path)
         .no_deps()
+        .exec()
+        .map_err(Error::Metadata)
+}
+
+fn load_metadata_with_deps(manifest_path: &Path) -> Result<Metadata, Error> {
+    MetadataCommand::new()
+        .manifest_path(manifest_path)
         .exec()
         .map_err(Error::Metadata)
 }
@@ -446,7 +479,9 @@ fn prepare_run(
     let target_directory = normalize_absolute_path(metadata.target_directory.as_std_path());
     let patch_root = match patch_statum_root {
         Some(path) => Some(absolutize(path).map_err(Error::CurrentDir)?),
-        None => detect_patch_root(),
+        None => detect_patch_root().or(detect_patch_root_from_target_workspace(
+            &input.manifest_path,
+        )?),
     };
 
     Ok(PreparedRun {
@@ -477,6 +512,59 @@ fn looks_like_statum_workspace(path: &Path) -> bool {
     ]
     .into_iter()
     .all(|relative| path.join(relative).is_file())
+}
+
+fn detect_patch_root_from_target_workspace(manifest_path: &Path) -> Result<Option<PathBuf>, Error> {
+    let metadata = load_metadata_with_deps(manifest_path)?;
+    let manifest_dirs = metadata
+        .packages
+        .iter()
+        .filter(|package| is_statum_workspace_package(package.name.as_ref()))
+        .filter_map(|package| {
+            package
+                .manifest_path
+                .as_std_path()
+                .parent()
+                .map(normalize_absolute_path)
+        })
+        .collect::<Vec<_>>();
+    detect_patch_root_from_manifest_dirs(manifest_path, manifest_dirs)
+}
+
+fn is_statum_workspace_package(package_name: &str) -> bool {
+    STATUM_WORKSPACE_PACKAGES.contains(&package_name)
+}
+
+fn detect_patch_root_from_manifest_dirs(
+    manifest_path: &Path,
+    manifest_dirs: impl IntoIterator<Item = PathBuf>,
+) -> Result<Option<PathBuf>, Error> {
+    let mut candidates = manifest_dirs
+        .into_iter()
+        .filter_map(|manifest_dir| {
+            manifest_dir
+                .parent()
+                .map(normalize_absolute_path)
+                .and_then(|root| {
+                    if looks_like_statum_workspace(&root) {
+                        Some(root)
+                    } else {
+                        None
+                    }
+                })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.dedup();
+
+    match candidates.as_slice() {
+        [] => Ok(None),
+        [root] => Ok(Some(root.clone())),
+        _ => Err(Error::AmbiguousPatchStatumRoots {
+            manifest_path: manifest_path.to_path_buf(),
+            candidates,
+        }),
+    }
 }
 
 fn resolve_input(path: &Path) -> ResolvedInput {
@@ -1242,6 +1330,50 @@ mod tests {
     }
 
     #[test]
+    fn detect_patch_root_from_target_workspace_finds_local_statum_checkout_dependency() {
+        let temp = tempfile::tempdir().expect("fixture tempdir");
+        let statum_root = temp.path().join("local-statum");
+        write_fake_statum_workspace(&statum_root);
+
+        let consumer_root = temp.path().join("consumer");
+        fs::create_dir_all(consumer_root.join("src")).expect("consumer src dir");
+        fs::write(
+            consumer_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"consumer\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nstatum = {{ path = {:?} }}\n",
+                statum_root.join("statum")
+            ),
+        )
+        .expect("consumer manifest");
+        fs::write(consumer_root.join("src/lib.rs"), "pub fn marker() {}\n").expect("consumer lib");
+
+        let detected = detect_patch_root_from_target_workspace(&consumer_root.join("Cargo.toml"))
+            .expect("patch root detection should succeed");
+
+        assert_eq!(detected, Some(statum_root));
+    }
+
+    #[test]
+    fn detect_patch_root_from_manifest_dirs_rejects_multiple_local_statum_roots() {
+        let temp = tempfile::tempdir().expect("fixture tempdir");
+        let root_a = temp.path().join("statum-a");
+        let root_b = temp.path().join("statum-b");
+        write_fake_statum_workspace(&root_a);
+        write_fake_statum_workspace(&root_b);
+
+        let error = detect_patch_root_from_manifest_dirs(
+            Path::new("/tmp/consumer/Cargo.toml"),
+            [root_a.join("statum"), root_b.join("statum")],
+        )
+        .expect_err("multiple local statum roots should fail closed");
+
+        let Error::AmbiguousPatchStatumRoots { candidates, .. } = error else {
+            panic!("expected ambiguous local statum root error");
+        };
+        assert_eq!(candidates, vec![root_a, root_b]);
+    }
+
+    #[test]
     fn build_runner_main_supports_generic_runtime_commands() {
         let selections = vec![sample_selection("app")];
 
@@ -1311,6 +1443,29 @@ mod tests {
             package_name: package_name.to_owned(),
             manifest_dir: PathBuf::from(format!("/tmp/{package_name}")),
             lib_target_path: PathBuf::from(format!("/tmp/{package_name}/src/lib.rs")),
+        }
+    }
+
+    fn write_fake_statum_workspace(root: &Path) {
+        fs::create_dir_all(root).expect("fake statum root");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nresolver = \"2\"\nmembers = [\"macro_registry\", \"module_path_extractor\", \"statum\", \"statum-core\", \"statum-graph\", \"statum-macros\"]\n",
+        )
+        .expect("fake statum workspace manifest");
+
+        for package in STATUM_WORKSPACE_PACKAGES {
+            let package_dir = root.join(package);
+            fs::create_dir_all(package_dir.join("src")).expect("fake package src dir");
+            fs::write(
+                package_dir.join("Cargo.toml"),
+                format!(
+                    "[package]\nname = \"{package}\"\nversion = \"0.7.0\"\nedition = \"2021\"\n"
+                ),
+            )
+            .expect("fake package manifest");
+            fs::write(package_dir.join("src/lib.rs"), "pub fn marker() {}\n")
+                .expect("fake package lib");
         }
     }
 }

@@ -58,6 +58,11 @@ is now the primary command name.
 For local development against an unreleased Statum checkout, add
 `--patch-statum-root /path/to/statum`.
 
+If the target workspace already depends on a local Statum checkout through
+path dependencies, the runner detects that local Statum workspace and patches
+to the same root automatically so linked inventories do not split across
+different `statum-core` copies.
+
 ## Inspect
 
 ```text

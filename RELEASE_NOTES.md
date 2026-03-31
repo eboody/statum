@@ -1,5 +1,11 @@
 # Release Notes
 
+## v0.7.1 (2026-03-31)
+
+### Changes
+- Fixed `cargo-statum-graph` runner preparation so installed `inspect`, `export`, and `suggest` commands auto-detect a local path-based Statum checkout from the target workspace dependency graph and patch the generated runner to that same root.
+- Added fail-closed handling for workspaces that reach multiple distinct local Statum roots and regression coverage for both the local-checkout detection path and the ambiguity case.
+
 ## v0.7.0 (2026-03-31)
 
 ### Breaking Changes
