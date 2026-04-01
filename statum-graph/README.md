@@ -115,6 +115,33 @@ graph TD
 The output is deterministic for one validated `MachineDoc`, so it works well
 for snapshot tests, generated docs, and CLI output.
 
+For native Mermaid state diagrams, use `render::mermaid_state`:
+
+```rust
+# use statum::{machine, state, transition};
+# use statum_graph::{render, MachineDoc};
+# #[state]
+# enum FlowState {
+#     Draft,
+#     Done,
+# }
+# #[machine]
+# struct Flow<FlowState> {}
+# #[transition]
+# impl Flow<Draft> {
+#     fn finish(self) -> Flow<Done> {
+#         self.transition()
+#     }
+# }
+let doc = MachineDoc::from_machine::<Flow<Draft>>();
+let mermaid = render::mermaid_state(&doc);
+
+assert!(mermaid.contains("stateDiagram-v2"));
+assert!(mermaid.contains("[*] --> s0"));
+assert!(mermaid.contains("s0 --> s1 : finish"));
+assert!(mermaid.contains("s1 --> [*]"));
+```
+
 ## Canonical Export Model
 
 `MachineDoc` is the validated typed graph surface. `ExportDoc` is the stable
@@ -288,6 +315,27 @@ assert_eq!(paths.len(), 4);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+For exact Mermaid machine-state and relation-sequence diagrams over the linked
+codebase surface, use the dedicated codebase renderers:
+
+```rust
+# use statum_graph::{CodebaseDoc, codebase::render};
+# let doc = CodebaseDoc::linked()?;
+let workflow = doc
+    .machines()
+    .iter()
+    .find(|machine| machine.rust_type_path.ends_with("workflow::Machine"))
+    .expect("workflow machine");
+let relation = doc.relations().first().expect("one exact relation");
+
+let machine_state = render::mermaid_machine_state(&doc, workflow.index)?;
+let relation_sequence = render::mermaid_relation_sequence(&doc, relation.index)?;
+
+assert!(machine_state.contains("stateDiagram-v2"));
+assert!(relation_sequence.contains("sequenceDiagram"));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 The codebase view is based on the linked compiled build, not a source scan.
 Legacy `links()` come only from direct machine-like payload types written in
 state data, including named fields. The richer exact `relations()` surface also
@@ -335,6 +383,17 @@ re-deriving relation semantics. The codebase surface also carries source
 rustdoc separately as `docs` on machines, states, transitions, and validator
 entries. Use `#[present(description = ...)]` for concise UI copy and outer
 rustdoc comments (`///`) for fuller inspector and `codebase.json` detail.
+
+Authority boundary for those exact Mermaid exports:
+
+- `render::mermaid_state` is authoritative for one machine-local topology from
+  `MachineIntrospection::GRAPH`.
+- `codebase::render::mermaid_machine_state` is authoritative for one linked
+  machine family inside `CodebaseDoc`.
+- `codebase::render::mermaid_relation_sequence` is authoritative for one exact
+  linked relation record, including `#[via(...)]` producer routes when present.
+- These exports do not claim whole-workspace runtime chronology or full nested
+  child-slot hierarchy inside composition states.
 
 If you do not want to hand-write a runner crate, install
 `cargo-statum-graph` and point it at an existing library package:

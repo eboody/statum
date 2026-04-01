@@ -870,7 +870,6 @@ impl PartialEq for LinkedReferenceTypeDescriptor {
 
 impl Eq for LinkedReferenceTypeDescriptor {}
 
-
 /// One declared validator-entry surface carried by the linked build inventory.
 #[derive(Clone, Copy, Debug)]
 pub struct LinkedValidatorEntryDescriptor {

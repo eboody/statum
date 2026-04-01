@@ -2,8 +2,7 @@
 
 use statum::{
     machine, state, transition, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineRole, MachineStateIdentity,
-    MachineTransitionRecorder,
+    MachinePresentationDescriptor, MachineRole, MachineStateIdentity, MachineTransitionRecorder,
     StatePresentation, TransitionPresentation, TransitionPresentationInventory,
 };
 

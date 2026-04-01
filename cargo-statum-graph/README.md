@@ -1,7 +1,8 @@
 # cargo-statum-graph
 
 `cargo-statum-graph` is the zero-touch CLI package for exact Statum workspace
-export and the Statum Inspector TUI.
+export, exact Mermaid state and sequence diagram generation, and the Statum
+Inspector TUI.
 
 It materializes a stable generated runner under the target workspace's
 `target/statum-graph/runner/<key>/`, links the selected crate inside that
@@ -63,6 +64,51 @@ path dependencies, the runner detects that local Statum workspace and patches
 to the same root automatically so linked inventories do not split across
 different `statum-core` copies.
 
+## State Diagram
+
+```text
+cargo statum-graph state-diagram \
+  /path/to/workspace \
+  --machine workflow::Machine
+```
+
+That prints one exact Mermaid `stateDiagram-v2` for the selected linked
+machine.
+
+- Selection accepts the exact linked Rust type path or one unique suffix such
+  as `workflow::Machine`.
+- If there is exactly one linked machine, `--machine` can be omitted.
+- If more than one linked machine matches, the command fails closed and lists
+  the available machine paths.
+
+## Sequence Diagram
+
+```text
+cargo statum-graph sequence-diagram \
+  /path/to/workspace \
+  --relation 3
+```
+
+That prints one exact Mermaid `sequenceDiagram` for the selected exact linked
+relation.
+
+You can also select by machine pair when the pair is unique:
+
+```text
+cargo statum-graph sequence-diagram \
+  /path/to/workspace \
+  --from DocumentFlow \
+  --to publication::Machine
+```
+
+- `--relation` is the most direct selector when you already know the exact
+  relation index from export or inspection.
+- `--from` and `--to` resolve by exact linked path or unique suffix.
+- If a machine pair maps to more than one exact relation, the command fails
+  closed and prints the matching relation summaries instead of guessing.
+- Sequence export is relation-centric today. Exact composition-path sequence
+  export is still future work.
+
 ## Inspect
 
 ```text
@@ -73,17 +119,19 @@ cargo statum-graph inspect \
 That launches the inspector TUI for the selected workspace. The current
 surface shows:
 
-- workspace sections for `Composition`, `Machines`, and `Gaps`
-- composition-first home view when any
+- workspace sections for `Workspace`, `Machine`, and `Gaps`
+- diagram-first workspace home when any
   `#[machine(role = composition)]` machines exist
-- composition view with the selected flow’s states, transitions, validators,
-  summary edges, and a bottom-pane path explorer
+- workspace home that renders the exact linked workspace Mermaid flowchart in
+  the center pane instead of leading with text cards
+- machine overview that renders the selected machine as an exact Mermaid
+  `stateDiagram-v2`
 - path explorer that prefers composition-owned routes, then raw exact graph
   routes, then heuristic fallback when the current lane allows it
 - gap view that surfaces composition warnings and heuristic-only suggestions
   together with the best currently visible path to the suggested target
-- machine view with states, transitions, validator entries, and summary edges
-  for leaf protocol drilldown
+- machine view with states, transitions, validator entries, relations, and
+  paths for leaf protocol drilldown
 - composition machines surfaced from `#[machine(role = composition)]`, with
   composition-owned direct child-machine edges labeled as `composition refs`
   instead of generic exact references
@@ -103,10 +151,15 @@ surface shows:
   semantics and source/target machine roles. Summary and exact relation cards
   now prefer those composition-owned explanations. Machine detail also shows
   composition diagnostics when a protocol machine still looks like a
-  composition candidate.
+  composition candidate. The detail tabs also include a `Diagram` preview for
+  exact machine and exact relation selections. The inspector prefers
+  `STATUM_TERMAID_BIN`, then an adjacent
+  `../termaid/target/release/termaid`, then `termaid` on `PATH`. If no
+  renderer is available or preview rendering fails, the pane falls back to
+  raw Mermaid source and states why.
 
-If composition machines exist, the inspector opens on `Composition` first. If
-none exist, it falls back to `Machines`.
+If composition machines exist, the inspector opens on `Workspace` first. If
+none exist, it falls back to `Machine`.
 
 `inspect` requires an interactive terminal on stdin and stdout.
 
@@ -132,15 +185,19 @@ Keybindings:
 
 - `tab` / `shift-tab`: move focus between panes
 - `w`: cycle available workspace sections
-- `h` / `l`: switch machine tabs or toggle relation direction in `Machines`
-- `j` / `k`: move within the focused list
+- `[` / `]`: switch center or detail tabs
+- `j` / `k`: move within the focused list, or scroll the center diagram when
+  the main view is on `Workspace` or `Diagram`
 - `/`: enter search mode
 - `enter` / `esc`: leave search mode
-- `m`: cycle exact, heuristic, and mixed lanes
-- `1` / `2` / `3`: toggle payload, field, and param relation filters
-- `4` / `5`: toggle direct-type and declared-reference relation-basis filters
-- `6` / `7`: toggle heuristic type-surface and body evidence filters
+- `s`: change search scope
+- `e` / `m` / `h`: exact, mixed, and heuristic lane selection
+- `p` / `f` / `t`: toggle payload, field, and param relation filters
+- `d` / `n`: toggle direct-type and declared-reference relation-basis filters
+- `g` / `b`: toggle heuristic type-surface and body evidence filters
+- `o` / `i`: outbound and inbound relation selection in `Relations`
 - `0`: clear relation filters
+- `?`: help
 - `q`: quit
 
 Exact lane:

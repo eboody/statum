@@ -71,11 +71,21 @@ fn linked_codebase_exports_attested_via_relations() {
         .iter()
         .find(|state| state.rust_name == "Captured")
         .expect("payment captured state");
+    let captured_label = if captured.direct_construction_available {
+        format!("{} [build]", captured.display_label())
+    } else {
+        captured.display_label().into_owned()
+    };
     let authorized = payment
         .states
         .iter()
         .find(|state| state.rust_name == "Authorized")
         .expect("payment authorized state");
+    let authorized_label = if authorized.direct_construction_available {
+        format!("{} [build]", authorized.display_label())
+    } else {
+        authorized.display_label().into_owned()
+    };
     let payment_capture = payment
         .transitions
         .iter()
@@ -130,10 +140,7 @@ fn linked_codebase_exports_attested_via_relations() {
     assert_eq!(via_relation.target_machine, payment.index);
     assert_eq!(via_relation.target_state, captured.index);
 
-    let attested = via_relation
-        .attested_via
-        .as_ref()
-        .expect("attested route");
+    let attested = via_relation.attested_via.as_ref().expect("attested route");
     assert_eq!(attested.producers.len(), 1);
     assert!(attested.via_module_path.ends_with("payment::via"));
     assert_eq!(attested.route_name, "Capture");
@@ -195,4 +202,25 @@ fn linked_codebase_exports_attested_via_relations() {
         detail.attested_via_producers[0].transition.method_name,
         "capture"
     );
+
+    let mermaid =
+        statum_graph::codebase::render::mermaid_relation_sequence(&doc, via_relation_index)
+            .expect("attested relation sequence");
+    assert!(mermaid.contains("sequenceDiagram"));
+    assert!(mermaid.contains(&format!(
+        "participant m{} as {}",
+        payment.index, payment.rust_type_path
+    )));
+    assert!(mermaid.contains(&format!(
+        "participant m{} as {}",
+        fulfillment.index, fulfillment.rust_type_path
+    )));
+    assert!(mermaid.contains(&format!(
+        "Note over m{}: producer capture from {} to {}",
+        payment.index, authorized_label, captured_label
+    )));
+    assert!(mermaid.contains(&format!(
+        "m{}->>m{}: {} via Capture",
+        payment.index, fulfillment.index, captured_label
+    )));
 }

@@ -3,8 +3,8 @@
 use statum_graph::{CodebaseDoc, CodebaseRelationBasis, CodebaseRelationSource};
 
 mod outbound_release {
-    pub use machine::{Flow, Released};
     pub use machine::flow::via;
+    pub use machine::{Flow, Released};
 
     mod machine {
         use statum::{machine, state, transition};
@@ -43,8 +43,9 @@ mod broker {
     impl Flow<Declared> {
         pub fn await_inbound(
             self,
-            #[via(crate::outbound_release::via::Release)]
-            release: crate::outbound_release::Flow<crate::outbound_release::Released>,
+            #[via(crate::outbound_release::via::Release)] release: crate::outbound_release::Flow<
+                crate::outbound_release::Released,
+            >,
         ) -> Flow<AwaitingInbound> {
             let _ = release;
             self.transition()
@@ -64,7 +65,11 @@ fn linked_codebase_resolves_reexported_machine_targets_exactly() {
     let outbound_release = doc
         .machines()
         .iter()
-        .find(|machine| machine.rust_type_path.ends_with("outbound_release::machine::Flow"))
+        .find(|machine| {
+            machine
+                .rust_type_path
+                .ends_with("outbound_release::machine::Flow")
+        })
         .expect("outbound release flow");
     let released = outbound_release
         .states

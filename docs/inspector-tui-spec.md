@@ -1,63 +1,72 @@
 # Statum Inspector TUI Spec
 
-This file is the concrete product and implementation spec for the next
-inspector TUI.
+This file is the concrete product spec for the next inspector TUI.
 
-It replaces ad hoc inspector discussion with one derive-first design:
+It supersedes the earlier atlas-first, story-card-first inspector direction
+with a diagram-first design:
 
 - exact structure comes from compiled Statum metadata
-- the inspector derives as much as possible from that structure
-- heuristics stay visible but clearly weaker
-- source-local metadata is optional enrichment, not the primary content model
-- external inspector-only config is out of scope by default
+- the inspector derives Mermaid from that exact structure
+- `termaid` renders Mermaid in the terminal
+- the diagram is the main UI surface
+- lists, docs, and explanations support the diagram instead of replacing it
 
 ## Goals
 
-- Make the inspector update when code changes, without a parallel handwritten
-  graph file.
-- Make composition machines the default workspace story when they exist.
-- Keep exact and heuristic lanes visibly separate.
-- Reduce modal navigation and make the TUI learnable on first use.
-- Make drilldown useful for both architecture and code navigation.
+- Make `cargo statum-graph inspect /path/to/workspace` immediately useful on a
+  real workspace like `citacell`.
+- Make the center pane a visual representation of the exact Statum surface,
+  not a text summary of it.
+- Keep exact and heuristic data visibly separate.
+- Keep the default UX zero-touch: no handwritten graph files and no required
+  extra export step.
+- Make drilldown feel like moving through diagrams, not switching between
+  unrelated lists.
 
 ## Non-Goals
 
-- No runtime replay or runtime truth claims in this spec.
-- No manual journey DSL.
-- No external workspace-owned overlay file by default.
-- No heuristic data in exported exact JSON, Mermaid, DOT, or PlantUML output.
+- No runtime replay or runtime chronology claims.
+- No manual narrative overlay file.
+- No heuristic data in exact Mermaid, DOT, PlantUML, or JSON export.
+- No claim of exact nested child-protocol hierarchy until Statum exports that
+  truth surface.
 
 ## Authority Model
 
-This section is the semantic boundary for the inspector.
-
 ### Claimed Authority Surface
 
-- Exact lane: exact within the linked compiled Statum surface used by
-  `CodebaseDoc::linked()`.
-- Heuristic lane: suggestive only, never exact.
-- Presentation lane: optional source-local labels, descriptions, typed
-  metadata, and rustdoc attached to exact items.
+- exact workspace overview diagrams:
+  exact within the linked compiled `CodebaseDoc` surface
+- exact machine diagrams:
+  exact within the linked machine topology surface
+- exact handoff diagrams:
+  exact for supported exact relations and later supported exact composition
+  paths
+- heuristic views:
+  suggestive only, never exact
 
 ### Observation Points
 
-- Exact structure:
+- exact structure:
   macro-expanded, cfg-pruned linked compiled inventories collected into
-  `CodebaseDoc`.
-- Heuristic discovery:
-  raw source scan over reachable library module trees, limited to already-known
-  exact machines.
-- Source-local presentation:
-  `#[present(...)]`, `#[presentation_types(...)]`, and outer rustdoc on
-  compiled items.
+  `CodebaseDoc`
+- machine-local structure:
+  `MachineIntrospection::GRAPH` and `ExportDoc`
+- heuristic discovery:
+  raw source scan over reachable module trees, limited to already-known exact
+  machines
+- source-local presentation:
+  `#[present(...)]`, `#[presentation_types(...)]`, and rustdoc on compiled
+  items
 
 ### Support Policy
 
-- Exact lane unsupported cases must fail closed.
-- Heuristic lane may be partial or unavailable, but it must say so explicitly.
-- Heuristic results must never be merged into exact truth.
-- If a detail is not present in the exact or source-local extracted surface,
-  the inspector must omit it or label it heuristic. It must not guess.
+- Exact diagrams fail closed when the exact surface is missing.
+- Heuristic diagrams do not exist in the exact lane.
+- If a detail is not present in the exact or extracted source-local surface,
+  the inspector omits it or labels it heuristic.
+- `termaid` is presentation-only. It does not strengthen a weaker semantic
+  surface.
 
 ## Layering
 
@@ -65,338 +74,237 @@ This spec uses four layers.
 
 ### Narrative Layer
 
-The user-facing inspector surfaces:
+User-facing inspector modes:
 
-- `Story`
+- `Workspace`
 - `Machine`
-- `Gaps`
-- `Source`
-- `Explain`
-
-This layer tells the workspace story, but does not redefine graph legality.
+- `Handoff`
+- support tabs for `Summary`, `Docs`, `Source`, `Mermaid`, and `Explain`
 
 ### Session Layer
 
 Session-only derived behavior:
 
+- semantic selection
+- diagram selection
 - search scope
 - lane selection
-- mixed-lane overlap suppression
-- path ranking
-- machine ranking
-- focus state
-- selection state
-
-This layer combines exact truth with optional heuristic overlays.
+- mixed-lane suppression
+- viewport scroll state
+- pane focus
 
 ### Protocol-Truth Layer
 
 Authoritative data surfaces:
 
 - linked `CodebaseDoc`
-- exact relation groups
-- composition diagnostics built from exact plus heuristic analysis
-- validator-entry inventories
-- attested route provenance
-
-This layer owns exact legality and exact exported structure.
+- machine-local graph export
+- exact relation detail
+- exact composition ownership
+- exact attested route provenance
 
 ### Leaf Layer
 
 Local mechanics only:
 
 - ratatui rendering
+- `termaid` invocation
+- viewport scrolling
 - text formatting
 - key dispatch
-- sorting
-- highlight rendering
-- snippet display
 
-## Data Sources
+## Primary Product Shape
 
-The next inspector should consume these sources in priority order.
+The next inspector should have three primary modes.
 
-### Exact Derived Data
-
-- machines
-- states
-- transitions
-- machine roles
-- validator entries
-- exact relations
-- grouped machine summary edges
-- direct-construction availability
-- attested producer route detail
-- exact path graph
-
-### Heuristic Derived Data
-
-- heuristic machine-to-machine couplings
-- source snippets
-- file and line evidence
-- heuristic-only gap suggestions
-
-### Optional Source-Local Enrichment
-
-- `#[present(label = ...)]`
-- `#[present(description = ...)]`
-- typed `#[presentation_types(...)]` metadata
-- rustdoc on machines, states, transitions, and validator impls
-
-### Not Derived By Default
-
-These are not part of the default inspector data model unless Statum later
-extracts them from source-local typed metadata:
-
-- owner/team
-- runbook
-- pager
-- SLA or timeout semantics
-- business criticality
-- side effects not represented in typed machine structure
-
-## Derivation Rules
-
-These rules define how the inspector should turn extracted data into the TUI.
-
-### Home View Selection
-
-1. If any composition machines exist, open in `Story`.
-2. Rank story entries by:
-   composition root status,
-   outbound exact cross-machine degree,
-   total exact cross-machine degree,
-   stable machine path.
-3. If no composition machines exist, open in `Machine`.
-
-### Label Selection
-
-1. `#[present(label = ...)]`
-2. existing human-facing display label derived by Statum
-3. Rust type path or Rust item name
-
-### Summary Copy Selection
-
-1. `#[present(description = ...)]` for short copy
-2. rustdoc for long-form detail
-3. deterministic generated summary from exact structure
-
-### Path Ranking
-
-1. composition-owned exact paths
-2. non-composition exact paths
-3. heuristic fallback paths when the lane allows them
-
-Within each class:
-
-1. shortest hop count
-2. stable target-machine path
-3. stable path label
-
-### Mixed-Lane Suppression
-
-- If an exact relation covers the same source machine, optional source
-  state-or-transition, and target machine, hide the heuristic duplicate in
-  mixed mode.
-- Mixed mode may annotate that hidden heuristic evidence existed, but it must
-  not replace the exact card.
-
-### Diagnostics
-
-- Exact warning:
-  protocol machine already exposes exact typed orchestration and likely wants
-  `role = composition`.
-- Heuristic suggestion:
-  source scan shows coupling not yet modeled in exact composition surfaces.
-
-## Top-Level Views
-
-The next inspector should have three stable top-level views.
-
-### Story
+### `Workspace`
 
 Purpose:
-top-level workspace story derived from composition machines.
+show the exact workspace shape first.
 
-Left pane:
+Primary diagram:
 
-- story outline of composition machines
-- exact edge count
-- heuristic edge count
-- gap badge count
+- exact workspace `flowchart`
 
-Center pane:
+Default opening:
 
-- overview card for the selected composition machine
-- preferred outgoing paths
-- summary edges
-- state and transition preview list
-- diagnostics badges
+- if composition machines exist, bias selection and ranking toward them
+- otherwise show the exact linked workspace overview
 
-Right pane tabs:
+Drilldown:
 
-- `Summary`
-- `Docs`
-- `Source`
-- `Explain`
+- selecting a machine opens `Machine`
+- selecting an exact cross-machine handoff opens `Handoff`
 
-Default selection:
-
-- selected composition machine
-- `Summary` tab
-
-### Machine
+### `Machine`
 
 Purpose:
-leaf protocol drilldown for one machine.
+show one machine's exact legality.
 
-Left pane:
+Primary diagram:
 
-- machine outline
-- machine search result list
+- exact `stateDiagram-v2`
 
-Center pane tabs:
+Applies to:
 
-- `Overview`
-- `States`
-- `Transitions`
-- `Validators`
-- `Relations`
-- `Paths`
-- `Diagnostics`
+- protocol machines
+- composition machines as outer workflow truth
 
-Right pane tabs:
+Drilldown:
 
-- `Summary`
-- `Docs`
-- `Source`
-- `Explain`
+- selected state
+- selected transition
+- validator details
+- exact relation and path affordances that can open `Handoff`
 
-Rules:
-
-- `Overview` is the default tab.
-- `Relations` shows exact, heuristic, or mixed data according to lane.
-- `Paths` shows best visible paths from the selected machine.
-- `Diagnostics` shows machine-local composition warnings or suggestions.
-
-### Gaps
+### `Handoff`
 
 Purpose:
-triage view for what still relies on heuristics or weaker exact modeling.
+show one exact cross-machine interaction.
 
-Left pane:
+Primary diagram:
 
-- gap list
-- severity
-- source machine
-- target machine
+- exact `sequenceDiagram` for one exact relation
+- later, exact `sequenceDiagram` for one exact composition path
 
-Center pane:
+Drilldown:
 
-- gap card
-- best currently visible path to target
-- evidence counts
+- source kind
+- attested producer provenance
+- target machine and target state
+- route identity
+- source locations when available
 
-Right pane tabs:
+## Secondary Product Shape
 
-- `Summary`
-- `Docs`
-- `Source`
-- `Explain`
+These are required, but secondary:
 
-Rules:
+- raw Mermaid source
+- source locations
+- deterministic explanation text
+- docs and rustdoc
+- diagnostics and heuristic evidence
 
-- `Gaps` is secondary. Story view should already surface badge-level gap
-  signals without requiring a mode switch.
+`Gaps` should stop being a primary top-level mode. Diagnostic and heuristic
+surfaces should still exist, but as support views within the current semantic
+selection.
 
-## Pane Contract
-
-The pane roles should stay stable across views.
+## Layout Contract
 
 ### Left Pane
 
+Owns:
+
 - outline
-- current list
-- search result list
+- search
 - filters
+- semantic selection list
+- diagnostic badges
+
+It answers:
+
+- what can I inspect next
 
 ### Center Pane
 
-- active content view
-- tabs within the selected top-level view
+Owns:
+
+- diagram viewport
+- exactness badge
+- diagram title
+- raw Mermaid fallback view
+
+It answers:
+
+- what exact diagram am I looking at
 
 ### Right Pane
 
-Inspector tabs for the current selection:
+Owns support tabs:
 
-- `Summary`:
-  deterministic structured facts
-- `Docs`:
-  description plus rustdoc
-- `Source`:
-  source locations, snippets, route provenance, and jump targets
-- `Explain`:
-  deterministic plain-language explanation generated from exact structure
+- `Summary`
+- `Docs`
+- `Source`
+- `Mermaid`
+- `Explain`
+
+It answers:
+
+- what does the selected semantic item mean
 
 ### Bottom Bar
 
-- current view
-- current lane
-- current search scope
-- current filter summary
-- key hints for the current mode
+Owns:
 
-The bottom bar must not become a major content pane.
+- mode
+- exactness
+- search scope
+- viewport hints
+- short key help
 
-## Navigation Spec
+It must not become a content pane.
 
-The next inspector should remove cycle-heavy navigation.
+## Selection Model
 
-### Global Rules
+The inspector should separate three things.
 
-- `q`: quit
-- `?`: open help overlay
-- `/`: open search
-- `esc`: back out of the current modal state or clear search
-- `enter`: drill into the selected item
-- `tab` and `shift-tab`: move between panes
+### Semantic Selection
 
-### Direct Top-Level Selection
+Examples:
 
-- `1`: `Story`
-- `2`: `Machine`
-- `3`: `Gaps`
+- selected machine
+- selected exact relation
+- selected exact composition path
+- selected state or transition support item
 
-### Direct Lane Selection
+### Diagram Selection
 
-- `e`: exact
-- `m`: mixed
-- `h`: heuristic
+Examples:
 
-### List Navigation
+- workspace flowchart for current scope
+- machine state diagram for one machine
+- relation sequence diagram for one relation
 
-- arrow keys
-- `j` and `k`
-- `home` and `end`
-- `pageup` and `pagedown`
+### Viewport State
 
-### Tab Navigation
+Examples:
 
-- `[` previous tab
-- `]` next tab
+- horizontal scroll
+- vertical scroll
+- future fit mode or zoom mode
 
-## Search Spec
+The TUI should not derive diagram identity indirectly from ad hoc list state.
 
-Search should become scoped and legible.
+## Home View Rules
 
-### Default Scope
+### Startup
 
-- names
-- labels
-- short descriptions
+1. Link the target workspace.
+2. Build the exact workspace diagram surface.
+3. Rank initial machine selection.
+4. Open in `Workspace`.
 
-### Optional Scopes
+### Ranking
 
+If composition machines exist, rank by:
+
+1. composition role
+2. exact cross-machine degree
+3. stable machine path
+
+Otherwise rank by:
+
+1. exact cross-machine degree
+2. stable machine path
+
+## Search And Filters
+
+Search still matters, but it should support diagram selection rather than act
+as the main UI.
+
+### Search Scopes
+
+- `primary`
 - `docs`
 - `relations`
 - `paths`
@@ -404,43 +312,81 @@ Search should become scoped and legible.
 
 ### Search Rules
 
-- The active scope must stay visible while searching.
-- The selected row must show why it matched.
-- Search must not silently widen itself to all scopes.
-- Empty search result states should explain whether the miss came from query,
-  lane, or active filters.
+- active scope stays visible
+- selected outline rows show why they matched
+- search never silently widens itself
+- empty states say whether the miss came from query, lane, or filters
 
-## Filters
+### Filter Rules
 
-Filters should stay explicit and lane-aware.
-
-### Exact Filters
+Exact filters may include:
 
 - relation kind
 - relation basis
-- composition-only toggle
-- inbound-only toggle
-- outbound-only toggle
+- composition-only
+- inbound-only
+- outbound-only
 
-### Heuristic Filters
+Heuristic filters may include:
 
 - signature evidence
 - body evidence
 - shadowed-by-exact visibility
 
-### Filter Rules
+Filter state must remain visible but compact.
 
-- Filter state must remain visible in the bottom bar.
-- `0` may still clear filters, but direct filter toggles must also be
-  discoverable from the help overlay.
+## Viewport Rules
 
-## Source Tab
+The diagram viewport is the product center, so it needs explicit rules.
 
-The `Source` tab is required for the next inspector.
+### Default Render Path
 
-### Exact Items
+1. derive exact Mermaid in memory
+2. send Mermaid to `termaid`
+3. render terminal output in the viewport
+4. if rendering fails, show raw Mermaid with an explicit reason
 
-Show, when available:
+### Viewport Behavior
+
+- support vertical scrolling
+- support horizontal scrolling
+- keep semantic selection stable while scrolling
+- do not rebuild semantic selection from scroll position
+
+### Fallback Behavior
+
+- if Mermaid generation fails closed, say why
+- if `termaid` is unavailable, say why
+- if `termaid` cannot render the Mermaid subset, show raw Mermaid
+- do not silently down-convert one exact surface into a weaker approximate
+  diagram
+
+## Support Tabs
+
+### `Summary`
+
+Deterministic structured facts for the selected semantic item.
+
+Examples:
+
+- machine role
+- state count
+- transition count
+- relation source kind
+- attested route identity
+- exactness label
+
+### `Docs`
+
+Source-local enrichment:
+
+- `#[present(description = ...)]`
+- rustdoc
+- other extracted source-local presentation data
+
+### `Source`
+
+Exact items should show, when available:
 
 - machine path
 - state name
@@ -448,11 +394,8 @@ Show, when available:
 - exact relation source kind
 - attested route identity
 - source file and line for exact relation records
-- future machine, state, and transition definition locations once extracted
 
-### Heuristic Items
-
-Show:
+Heuristic items should show:
 
 - file path
 - line
@@ -460,152 +403,127 @@ Show:
 - matched path text
 - snippet
 
-### Source Tab Rules
+### `Mermaid`
 
-- Do not claim a jump target that the extracted surface does not provide.
-- If an exact item has no extracted location yet, say `source location not
-  available`.
+Always show the raw Mermaid source that underlies the current diagram plan.
 
-## Explain Tab
+This is required even when `termaid` preview works.
 
-`Explain` is deterministic generated prose from exact structure. It is not
-hand-authored narrative and it is not an LLM feature.
+### `Explain`
 
-Examples:
-
-- `WorkflowMachine is a composition machine with 4 states, 3 transitions, 2
-  outbound exact cross-machine edges, and 1 composition warning.`
-- `start_shipping accepts an attested handoff from PaymentMachine::capture and
-  targets FulfillmentState::Shipping.`
+Deterministic generated prose from exact structure.
 
 Rules:
 
-- Prefer counts, roles, paths, and attested provenance.
-- Do not invent business intent not present in the structure or source-local
-  metadata.
-- If the current lane is heuristic, say so.
+- grounded in structure
+- grounded in source-local metadata when present
+- no invented business intent
+- if the current lane is heuristic, say so
+
+## Citacell Acceptance Story
+
+For `/home/eran/code/citacell`, the target experience is:
+
+1. run `cargo statum-graph inspect /home/eran/code/citacell/`
+2. see an exact workspace flowchart immediately
+3. select the most important machine from the outline
+4. see that machine's exact `stateDiagram-v2`
+5. select an exact handoff
+6. see an exact `sequenceDiagram`
+7. inspect raw Mermaid or source only when needed
+
+If the user still has to reconstruct the architecture from text rows before
+seeing the graph, the product is missing the point.
 
 ## Source-Local Metadata Policy
 
-Source-local metadata is allowed and useful, but optional.
+Source-local metadata is useful, but optional.
 
-### Supported Metadata
+Supported:
 
 - `#[present(label = ...)]`
 - `#[present(description = ...)]`
 - typed `#[presentation_types(...)]` metadata
 - rustdoc
 
-### Policy
+Policy:
 
-- The inspector must remain useful when none of this metadata exists.
-- Metadata should enrich exact items, not gate the base UX.
-- The next implementation should not require a separate inspector-only config
-  file to become useful.
+- the inspector remains useful without it
+- metadata enriches exact items
+- metadata does not gate the diagram-first UX
+- no separate inspector-only config file is required
 
-## Out of Scope For This Spec
+## Out Of Scope For This Spec
 
 - runtime replay integration
 - persistence snapshots
 - external operational runbooks
 - team ownership dashboards
 - alerts and timers not modeled in source-local typed metadata
+- exact nested child-slot hierarchy until Statum exports it as a first-class
+  truth surface
 
 ## Acceptance Criteria
 
-- A user can understand the top-level workspace story from `Story` without
-  starting in a leaf-machine list.
-- A user can tell which facts are exact, heuristic, or source-local metadata.
-- A user can search without guessing what scope is active.
-- A user can inspect an exact relation and see route provenance plus source
-  location status.
-- The inspector remains useful with zero manual inspector-only annotations.
+- A user can understand the workspace shape from the initial `Workspace`
+  diagram.
+- A user can move from workspace to machine to handoff without losing
+  orientation.
+- A user can tell which surfaces are exact, heuristic, or source-local.
+- A user can inspect raw Mermaid and exact source status without leaving the
+  current semantic selection.
+- The inspector remains useful when source-local metadata is sparse or absent.
 
 ## Implementation Checklist
 
 ### Authority And Data Surface
 
-- [ ] Document exact, heuristic, and source-local observation points in code
-      and user docs.
-- [ ] Keep exact export and exact inspector cards backed only by linked
-      compiled `CodebaseDoc`.
-- [ ] Keep heuristic evidence TUI-only.
-- [ ] Add explicit source-location fields for exact relation records in the
-      TUI model where missing.
-- [ ] Add extracted definition locations for machines, states, and transitions
-      if the current linked surface does not expose them yet.
+- [ ] keep exact diagrams backed only by linked compiled exact surfaces
+- [ ] keep heuristic evidence out of exact Mermaid
+- [ ] fail closed for unsupported exact diagrams
+- [ ] document exact, heuristic, and presentation observation points in code
+      and docs
 
 ### View Model
 
-- [ ] Add stable top-level views: `Story`, `Machine`, `Gaps`.
-- [ ] Add stable right-pane tabs: `Summary`, `Docs`, `Source`, `Explain`.
-- [ ] Add machine-center tabs: `Overview`, `States`, `Transitions`,
-      `Validators`, `Relations`, `Paths`, `Diagnostics`.
-- [ ] Make `Story` the default when composition machines exist.
-- [ ] Keep `Machine` as the fallback default when composition machines do not
-      exist.
+- [ ] add primary modes: `Workspace`, `Machine`, `Handoff`
+- [ ] add support tabs: `Summary`, `Docs`, `Source`, `Mermaid`, `Explain`
+- [ ] separate semantic selection, diagram selection, and viewport state
+- [ ] keep diagnostics secondary instead of top-level
 
-### Derivation Rules
+### Diagram Viewport
 
-- [ ] Implement story ranking from composition roots and exact cross-machine
-      degree.
-- [ ] Implement deterministic path ranking with
-      composition > exact > heuristic precedence.
-- [ ] Keep mixed-lane heuristic suppression tied to exact cover.
-- [ ] Generate deterministic `Explain` copy from structure and metadata.
+- [ ] make the center pane a real diagram viewport
+- [ ] support `termaid` preview with raw Mermaid fallback
+- [ ] add scroll behavior for larger diagrams
+- [ ] keep semantic selection stable while scrolling
+
+### Diagram Selection
+
+- [ ] add exact workspace flowchart home view
+- [ ] add exact machine `stateDiagram-v2` drilldown
+- [ ] add exact relation `sequenceDiagram` drilldown
+- [ ] add exact composition-path `sequenceDiagram` later
 
 ### Navigation
 
-- [ ] Remove global `Esc` quit behavior.
-- [ ] Make `q` the only direct quit key.
-- [ ] Add help overlay on `?`.
-- [ ] Add direct top-level view selection.
-- [ ] Add direct lane selection.
-- [ ] Keep pane focus movement stable across views.
-
-### Search And Filters
-
-- [ ] Add visible search scope.
-- [ ] Add match-reason rendering for the selected result.
-- [ ] Keep filter state visible in the bottom bar.
-- [ ] Separate exact filters from heuristic filters in the UI.
-- [ ] Improve empty-state copy so it names the active blockers:
-      query, lane, or filters.
-
-### Story View
-
-- [ ] Build story outline from composition machines.
-- [ ] Show exact edge counts, heuristic edge counts, and gap badges in the
-      outline.
-- [ ] Show preferred outgoing paths and summary edges in the center pane.
-- [ ] Surface machine-local diagnostics without forcing a switch to `Gaps`.
-
-### Machine View
-
-- [ ] Make `Overview` the default machine tab.
-- [ ] Keep states, transitions, validators, relations, paths, and diagnostics
-      as direct drilldown tabs.
-- [ ] Ensure exact and heuristic relation views stay visually distinct.
-- [ ] Keep machine view useful even without source-local metadata.
-
-### Gaps View
-
-- [ ] Keep `Gaps` as a focused triage screen rather than the primary home.
-- [ ] Show best visible path to the target machine.
-- [ ] Show evidence counts and why-text.
-- [ ] Make gap badges discoverable from `Story`.
+- [ ] keep `q` as the direct quit key
+- [ ] keep `?` help
+- [ ] keep search scoped and legible
+- [ ] make mode switches diagram-oriented instead of pane-tab oriented
+- [ ] keep viewport controls discoverable in help and bottom chrome
 
 ### Source And Docs
 
-- [ ] Show source file and line for heuristic evidence.
-- [ ] Show source location status for exact items.
-- [ ] Show attested route provenance in `Source` and `Summary`.
-- [ ] Keep docs rendering separate from structured summaries.
+- [ ] keep source file and line for heuristic evidence
+- [ ] surface exact source location status where available
+- [ ] keep attested route provenance visible in `Summary` and `Source`
+- [ ] keep raw Mermaid always available in `Mermaid`
 
 ### Documentation
 
-- [x] Link this spec from the inspector plan pointer page.
-- [ ] Update `cargo-statum-graph/README.md` after implementation so public
-      keybindings and pane descriptions match the shipped UI.
-- [ ] Narrow any wording that promises more authority than the implemented
-      observation point supports.
+- [ ] keep this spec aligned with the Mermaid plan
+- [ ] keep the inspector plan pointer aligned with this spec
+- [ ] update `cargo-statum-graph/README.md` only when shipped behavior changes
+- [ ] narrow any wording that promises more authority than the implementation
+      can justify

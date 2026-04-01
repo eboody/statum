@@ -323,13 +323,18 @@ fn linked_codebase_doc_collects_machines_and_links() {
     let relation_groups = doc.machine_relation_groups();
     let workflow_group = relation_groups
         .iter()
-        .find(|group| group.from_machine == workflow.index && group.to_machine == target_machine.index)
+        .find(|group| {
+            group.from_machine == workflow.index && group.to_machine == target_machine.index
+        })
         .expect("workflow composition group");
     assert_eq!(
         workflow_group.semantic,
         CodebaseMachineRelationGroupSemantic::CompositionDirectChild
     );
-    assert_eq!(workflow_group.display_label(), "composition refs: payload, param");
+    assert_eq!(
+        workflow_group.display_label(),
+        "composition refs: payload, param"
+    );
 
     let named_holder = doc
         .machines()
@@ -338,9 +343,14 @@ fn linked_codebase_doc_collects_machines_and_links() {
         .expect("named holder machine");
     let named_group = relation_groups
         .iter()
-        .find(|group| group.from_machine == named_holder.index && group.to_machine == target_machine.index)
+        .find(|group| {
+            group.from_machine == named_holder.index && group.to_machine == target_machine.index
+        })
         .expect("named holder exact group");
-    assert_eq!(named_group.semantic, CodebaseMachineRelationGroupSemantic::Exact);
+    assert_eq!(
+        named_group.semantic,
+        CodebaseMachineRelationGroupSemantic::Exact
+    );
     assert_eq!(named_group.display_label(), "exact refs: payload");
 }
 
@@ -352,6 +362,92 @@ fn linked_codebase_renderers_are_stable() {
     insta::assert_snapshot!("linked_codebase_dot", render::dot(&doc));
     insta::assert_snapshot!("linked_codebase_plantuml", render::plantuml(&doc));
     insta::assert_snapshot!("linked_codebase_json", render::json(&doc));
+}
+
+#[test]
+fn linked_codebase_machine_state_diagram_renders_selected_machine() {
+    let doc = CodebaseDoc::linked().expect("linked codebase doc");
+    let workflow = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("workflow::Machine"))
+        .expect("workflow machine");
+    let in_progress = workflow
+        .states
+        .iter()
+        .find(|state| state.rust_name == "InProgress")
+        .expect("workflow in-progress state");
+    let in_progress_label = if in_progress.direct_construction_available {
+        format!("{} [build]", in_progress.display_label())
+    } else {
+        in_progress.display_label().into_owned()
+    };
+
+    let mermaid = render::mermaid_machine_state(&doc, workflow.index)
+        .expect("workflow machine state diagram");
+
+    assert!(mermaid.contains("stateDiagram-v2"));
+    assert!(mermaid.contains("%% Workflow Machine [composition]"));
+    assert!(mermaid.contains(&format!(
+        "state \"{}\" as {}",
+        in_progress_label,
+        workflow.node_id(in_progress.index)
+    )));
+    assert!(mermaid.contains(&format!("[*] --> {}", workflow.node_id(0))));
+    assert!(mermaid.contains(&format!(
+        "{} --> {} : Start Workflow",
+        workflow.node_id(0),
+        workflow.node_id(1)
+    )));
+    assert!(mermaid.contains(&format!("{} --> [*]", workflow.node_id(2))));
+}
+
+#[test]
+fn linked_codebase_relation_sequence_renders_direct_transition_param_handoff() {
+    let doc = CodebaseDoc::linked().expect("linked codebase doc");
+    let task = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("task::Machine"))
+        .expect("task machine");
+    let running = task
+        .states
+        .iter()
+        .find(|state| state.rust_name == "Running")
+        .expect("task running state");
+    let running_label = if running.direct_construction_available {
+        format!("{} [build]", running.display_label())
+    } else {
+        running.display_label().into_owned()
+    };
+    let workflow = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("workflow::Machine"))
+        .expect("workflow machine");
+    let start = workflow
+        .transitions
+        .iter()
+        .find(|transition| transition.method_name == "start")
+        .expect("workflow start transition");
+    let relation = doc
+        .outbound_relations_for_transition(workflow.index, start.index)
+        .find(|relation| relation.attested_via.is_none())
+        .expect("direct transition-param relation");
+
+    let mermaid =
+        render::mermaid_relation_sequence(&doc, relation.index).expect("direct relation sequence");
+
+    assert!(mermaid.contains("sequenceDiagram"));
+    assert!(mermaid.contains(&format!("participant m{} as Task Machine", task.index)));
+    assert!(mermaid.contains(&format!(
+        "participant m{} as Workflow Machine [composition]",
+        workflow.index
+    )));
+    assert!(mermaid.contains(&format!(
+        "m{}->>m{}: {} for Start Workflow",
+        task.index, workflow.index, running_label
+    )));
 }
 
 #[test]

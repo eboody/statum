@@ -90,10 +90,7 @@ mod holder {
 
     #[transition]
     impl Machine<Draft> {
-        fn attach(
-            self,
-            task: super::task::Machine<super::task::Running>,
-        ) -> Machine<Attached> {
+        fn attach(self, task: super::task::Machine<super::task::Running>) -> Machine<Attached> {
             self.transition_with(task)
         }
     }
@@ -351,7 +348,10 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
         })
         .expect("opaque alias state payload relation");
     assert_eq!(opaque_alias_state_relation.target_machine, task.index);
-    assert_eq!(opaque_alias_state_relation.target_state, running_state.index);
+    assert_eq!(
+        opaque_alias_state_relation.target_state,
+        running_state.index
+    );
     assert!(opaque_alias_state_relation
         .declared_reference_type
         .is_some_and(|path| path.ends_with("opaque::ReexportedTaskId")));
@@ -373,7 +373,10 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
         })
         .expect("opaque alias machine field relation");
     assert_eq!(opaque_alias_field_relation.target_machine, task.index);
-    assert_eq!(opaque_alias_field_relation.target_state, running_state.index);
+    assert_eq!(
+        opaque_alias_field_relation.target_state,
+        running_state.index
+    );
 
     let opaque_transition = opaque
         .transitions
@@ -418,7 +421,10 @@ fn linked_codebase_exports_exact_relations_and_builder_metadata() {
         })
         .expect("opaque alias transition relation");
     assert_eq!(opaque_alias_transition_relation.target_machine, task.index);
-    assert_eq!(opaque_alias_transition_relation.target_state, running_state.index);
+    assert_eq!(
+        opaque_alias_transition_relation.target_state,
+        running_state.index
+    );
 
     let opaque_generic_transition = opaque
         .transitions
@@ -519,7 +525,10 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
             "param".to_string()
         ]
     );
-    assert_eq!(workflow_group.display_label(), "composition refs: payload, field, param");
+    assert_eq!(
+        workflow_group.display_label(),
+        "composition refs: payload, field, param"
+    );
     assert_eq!(
         doc.composition_relation_groups()[0].display_label(),
         "composition refs: payload, field, param"
@@ -529,7 +538,10 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
         .iter()
         .find(|group| group.from_machine == opaque.index && group.to_machine == task.index)
         .expect("opaque exact group");
-    assert_eq!(opaque_group.semantic, CodebaseMachineRelationGroupSemantic::Exact);
+    assert_eq!(
+        opaque_group.semantic,
+        CodebaseMachineRelationGroupSemantic::Exact
+    );
     assert_eq!(opaque_group.relation_indices.len(), 6);
     assert_eq!(
         opaque_group
@@ -552,7 +564,10 @@ fn linked_codebase_groups_relations_and_exposes_navigation_helpers() {
         .iter()
         .find(|group| group.from_machine == holder.index && group.to_machine == task.index)
         .expect("holder exact group");
-    assert_eq!(holder_group.semantic, CodebaseMachineRelationGroupSemantic::Exact);
+    assert_eq!(
+        holder_group.semantic,
+        CodebaseMachineRelationGroupSemantic::Exact
+    );
     assert_eq!(
         holder_group.display_label(),
         "exact refs: payload, field, param"

@@ -4,7 +4,10 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser};
 
-use cargo_statum_graph::{export, inspect, suggest, ExportOptions, InspectOptions, SuggestOptions};
+use cargo_statum_graph::{
+    export, inspect, sequence_diagram, state_diagram, suggest, ExportOptions, InspectOptions,
+    SequenceDiagramOptions, StateDiagramOptions, SuggestOptions,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo-statum-graph")]
@@ -16,6 +19,10 @@ enum Cli {
     Export(ExportArgs),
     #[command(name = "inspect")]
     Inspect(InspectArgs),
+    #[command(name = "state-diagram")]
+    StateDiagram(StateDiagramArgs),
+    #[command(name = "sequence-diagram")]
+    SequenceDiagram(SequenceDiagramArgs),
     #[command(name = "suggest")]
     Suggest(SuggestArgs),
 }
@@ -60,6 +67,38 @@ struct SuggestArgs {
     patch_statum_root: Option<PathBuf>,
 }
 
+#[derive(Debug, Args)]
+struct StateDiagramArgs {
+    #[arg(value_name = "PATH", default_value = ".")]
+    path: PathBuf,
+    #[arg(long)]
+    manifest_path: Option<PathBuf>,
+    #[arg(long)]
+    package: Option<String>,
+    #[arg(long)]
+    machine: Option<String>,
+    #[arg(long)]
+    patch_statum_root: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct SequenceDiagramArgs {
+    #[arg(value_name = "PATH", default_value = ".")]
+    path: PathBuf,
+    #[arg(long)]
+    manifest_path: Option<PathBuf>,
+    #[arg(long)]
+    package: Option<String>,
+    #[arg(long, conflicts_with_all = ["from_machine", "to_machine"])]
+    relation: Option<usize>,
+    #[arg(long = "from", requires = "to_machine", conflicts_with = "relation")]
+    from_machine: Option<String>,
+    #[arg(long = "to", requires = "from_machine", conflicts_with = "relation")]
+    to_machine: Option<String>,
+    #[arg(long)]
+    patch_statum_root: Option<PathBuf>,
+}
+
 fn main() -> ExitCode {
     match run_main() {
         Ok(()) => ExitCode::SUCCESS,
@@ -93,6 +132,26 @@ fn run_main() -> Result<(), cargo_statum_graph::Error> {
             })?;
             Vec::new()
         }
+        Cli::StateDiagram(args) => state_diagram(StateDiagramOptions {
+            input_path: args.manifest_path.unwrap_or(args.path),
+            package: args.package,
+            machine: args.machine,
+            patch_statum_root: args.patch_statum_root,
+        })?
+        .lines()
+        .map(str::to_owned)
+        .collect(),
+        Cli::SequenceDiagram(args) => sequence_diagram(SequenceDiagramOptions {
+            input_path: args.manifest_path.unwrap_or(args.path),
+            package: args.package,
+            relation: args.relation,
+            from_machine: args.from_machine,
+            to_machine: args.to_machine,
+            patch_statum_root: args.patch_statum_root,
+        })?
+        .lines()
+        .map(str::to_owned)
+        .collect(),
         Cli::Suggest(args) => suggest(SuggestOptions {
             input_path: args.manifest_path.unwrap_or(args.path),
             package: args.package,
@@ -193,6 +252,26 @@ mod tests {
 
         let Cli::Suggest(args) = cli else {
             panic!("expected suggest subcommand");
+        };
+        assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
+    }
+
+    #[test]
+    fn parse_cli_from_accepts_state_diagram_subcommand() {
+        let cli = parse_cli_from(["cargo-statum-graph", "state-diagram", "/tmp/workspace"]);
+
+        let Cli::StateDiagram(args) = cli else {
+            panic!("expected state-diagram subcommand");
+        };
+        assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
+    }
+
+    #[test]
+    fn parse_cli_from_accepts_sequence_diagram_subcommand() {
+        let cli = parse_cli_from(["cargo-statum-graph", "sequence-diagram", "/tmp/workspace"]);
+
+        let Cli::SequenceDiagram(args) = cli else {
+            panic!("expected sequence-diagram subcommand");
         };
         assert_eq!(args.path, PathBuf::from("/tmp/workspace"));
     }

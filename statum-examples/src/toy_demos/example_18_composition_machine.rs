@@ -92,8 +92,9 @@ impl DocumentFlow<Approved> {
     /// Records the detached publication handoff on the composition machine.
     fn record_publication(
         self,
-        #[via(self::publication::machine::via::Publish)]
-        publication: self::publication::Machine<self::publication::Published>,
+        #[via(self::publication::machine::via::Publish)] publication: self::publication::Machine<
+            self::publication::Published,
+        >,
     ) -> DocumentFlow<Published> {
         let _ = publication;
         self.transition()
@@ -238,7 +239,10 @@ pub fn run() {
                     .machine
                     .module_path
                     .ends_with("toy_demos::example_18_composition_machine::publication")
-                && route.machine.rust_type_path.ends_with("publication::Machine")
+                && route
+                    .machine
+                    .rust_type_path
+                    .ends_with("publication::Machine")
                 && route.transition == "publish"
                 && route.source_state == "Ready"
                 && route.target_state == "Published"

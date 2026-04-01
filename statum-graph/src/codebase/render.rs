@@ -2,8 +2,34 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::codebase::{CodebaseDoc, CodebaseMachine, CodebaseState};
+use crate::codebase::{
+    CodebaseDoc, CodebaseMachine, CodebaseRelationDetail, CodebaseRelationSource, CodebaseState,
+};
 use crate::render::{bundle_output_path, validate_output_stem};
+
+/// Error returned when a selected codebase diagram subject is missing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiagramError {
+    /// One selected machine index does not exist in the codebase document.
+    MissingMachine { index: usize },
+    /// One selected relation index does not exist in the codebase document.
+    MissingRelation { index: usize },
+}
+
+impl std::fmt::Display for DiagramError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingMachine { index } => {
+                write!(formatter, "codebase machine index {index} is missing")
+            }
+            Self::MissingRelation { index } => {
+                write!(formatter, "codebase relation index {index} is missing")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DiagramError {}
 
 /// One built-in renderer output format for codebase documents.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,6 +93,32 @@ where
                 .and_then(|path| format.write_to(doc, path))
         })
         .collect()
+}
+
+/// Renders one codebase machine as Mermaid state diagram text.
+pub fn mermaid_machine_state(
+    doc: &CodebaseDoc,
+    machine_index: usize,
+) -> Result<String, DiagramError> {
+    let machine = doc
+        .machine(machine_index)
+        .ok_or(DiagramError::MissingMachine {
+            index: machine_index,
+        })?;
+    Ok(render_machine_state_diagram(machine))
+}
+
+/// Renders one exact relation as Mermaid sequence diagram text.
+pub fn mermaid_relation_sequence(
+    doc: &CodebaseDoc,
+    relation_index: usize,
+) -> Result<String, DiagramError> {
+    let detail = doc
+        .relation_detail(relation_index)
+        .ok_or(DiagramError::MissingRelation {
+            index: relation_index,
+        })?;
+    Ok(render_relation_sequence(detail))
 }
 
 /// Renders a combined linked-machine topology as Mermaid flowchart text.
@@ -460,6 +512,176 @@ fn cross_machine_relation_groups(
         .collect()
 }
 
+fn render_machine_state_diagram(machine: &CodebaseMachine) -> String {
+    let mut lines = Vec::new();
+    push_machine_comment_lines(&mut lines, "%%", machine);
+    lines.push("stateDiagram-v2".to_string());
+
+    if !machine.states.is_empty() {
+        lines.push(String::new());
+    }
+
+    for state in &machine.states {
+        lines.push(format!(
+            "    state \"{}\" as {}",
+            escape_mermaid_label(&render_state_label(state)),
+            machine.node_id(state.index)
+        ));
+    }
+
+    let roots = machine
+        .states
+        .iter()
+        .filter(|state| state.is_graph_root)
+        .collect::<Vec<_>>();
+    if !roots.is_empty() {
+        lines.push(String::new());
+        for state in roots {
+            lines.push(format!("    [*] --> {}", machine.node_id(state.index)));
+        }
+    }
+
+    if !machine.transitions.is_empty() {
+        lines.push(String::new());
+    }
+
+    let mut has_outgoing = vec![false; machine.states.len()];
+    for transition in &machine.transitions {
+        has_outgoing[transition.from] = true;
+        let from = machine.node_id(transition.from);
+        for target in &transition.to {
+            lines.push(format!(
+                "    {from} --> {} : {}",
+                machine.node_id(*target),
+                escape_mermaid_edge_label(transition.display_label())
+            ));
+        }
+    }
+
+    let sinks = machine
+        .states
+        .iter()
+        .filter(|state| !has_outgoing[state.index])
+        .collect::<Vec<_>>();
+    if !sinks.is_empty() {
+        lines.push(String::new());
+        for state in sinks {
+            lines.push(format!("    {} --> [*]", machine.node_id(state.index)));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn render_relation_sequence(detail: CodebaseRelationDetail<'_>) -> String {
+    let mut lines = vec![
+        format!(
+            "%% relation {} [{} / {}]",
+            detail.relation.index,
+            detail.relation.semantic.display_label(),
+            detail.relation.basis.display_label()
+        ),
+        "sequenceDiagram".to_string(),
+    ];
+
+    let participants = sequence_participant_machines(&detail);
+    for machine in participants {
+        lines.push(format!(
+            "    participant {} as {}",
+            sequence_participant_id(machine.index),
+            escape_sequence_label(&render_machine_cluster_label(machine))
+        ));
+    }
+
+    lines.push(String::new());
+
+    let source_id = sequence_participant_id(detail.source_machine.index);
+    let target_id = sequence_participant_id(detail.target_machine.index);
+
+    match detail.relation.source {
+        CodebaseRelationSource::TransitionParam { .. } => {
+            let consumer_transition = detail
+                .source_transition
+                .expect("transition-param relations should resolve source transitions");
+            let consumer_label = escape_sequence_label(consumer_transition.display_label());
+            let target_state_label =
+                escape_sequence_label(&render_state_label(detail.target_state));
+
+            if detail.attested_via_producers.is_empty() {
+                lines.push(format!(
+                    "    {target_id}->>{source_id}: {target_state_label} for {consumer_label}"
+                ));
+            } else if detail.attested_via_producers.len() == 1 {
+                let producer = &detail.attested_via_producers[0];
+                let producer_id = sequence_participant_id(producer.machine.index);
+                lines.push(format!(
+                    "    Note over {producer_id}: producer {} from {} to {}",
+                    escape_sequence_label(producer.transition.display_label()),
+                    escape_sequence_label(&render_state_label(producer.state)),
+                    target_state_label
+                ));
+                lines.push(format!(
+                    "    {producer_id}->>{source_id}: {} via {}",
+                    target_state_label,
+                    escape_sequence_label(
+                        detail
+                            .relation
+                            .attested_via
+                            .as_ref()
+                            .expect("attested relation should resolve route")
+                            .route_name
+                    )
+                ));
+                lines.push(format!(
+                    "    Note over {source_id}: consumer {}",
+                    consumer_label
+                ));
+            } else {
+                let route_name = escape_sequence_label(
+                    detail
+                        .relation
+                        .attested_via
+                        .as_ref()
+                        .expect("attested relation should resolve route")
+                        .route_name,
+                );
+                for (index, producer) in detail.attested_via_producers.iter().enumerate() {
+                    let keyword = if index == 0 { "alt" } else { "else" };
+                    let producer_id = sequence_participant_id(producer.machine.index);
+                    lines.push(format!(
+                        "    {keyword} {} from {}",
+                        escape_sequence_label(producer.transition.display_label()),
+                        escape_sequence_label(&render_state_label(producer.state))
+                    ));
+                    lines.push(format!(
+                        "        {producer_id}->>{source_id}: {} via {}",
+                        target_state_label, route_name
+                    ));
+                }
+                lines.push("    end".to_string());
+                lines.push(format!(
+                    "    Note over {source_id}: consumer {}",
+                    consumer_label
+                ));
+            }
+        }
+        CodebaseRelationSource::StatePayload { .. } => lines.push(format!(
+            "    {}: state payload carries {} at {}",
+            sequence_note_over(&source_id, &target_id),
+            escape_sequence_label(&render_machine_cluster_label(detail.target_machine)),
+            escape_sequence_label(&render_state_label(detail.target_state))
+        )),
+        CodebaseRelationSource::MachineField { .. } => lines.push(format!(
+            "    {}: machine field carries {} at {}",
+            sequence_note_over(&source_id, &target_id),
+            escape_sequence_label(&render_machine_cluster_label(detail.target_machine)),
+            escape_sequence_label(&render_state_label(detail.target_state))
+        )),
+    }
+
+    lines.join("\n")
+}
+
 fn render_state_label(state: &CodebaseState) -> String {
     let base = state.display_label();
     if state.direct_construction_available {
@@ -474,6 +696,60 @@ fn render_machine_cluster_label(machine: &CodebaseMachine) -> String {
         format!("{} [composition]", machine.display_label())
     } else {
         machine.display_label().into_owned()
+    }
+}
+
+fn sequence_participant_machines<'a>(
+    detail: &'a CodebaseRelationDetail<'a>,
+) -> Vec<&'a CodebaseMachine> {
+    let mut participants = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+
+    for machine in std::iter::once(detail.target_machine)
+        .chain(
+            detail
+                .attested_via_producers
+                .iter()
+                .map(|producer| producer.machine),
+        )
+        .chain(std::iter::once(detail.source_machine))
+    {
+        if seen.insert(machine.index) {
+            participants.push(machine);
+        }
+    }
+
+    participants
+}
+
+fn sequence_participant_id(machine_index: usize) -> String {
+    format!("m{machine_index}")
+}
+
+fn sequence_note_over(source_id: &str, target_id: &str) -> String {
+    if source_id == target_id {
+        format!("Note over {source_id}")
+    } else {
+        format!("Note over {source_id},{target_id}")
+    }
+}
+
+fn push_machine_comment_lines(lines: &mut Vec<String>, prefix: &str, machine: &CodebaseMachine) {
+    lines.push(format!(
+        "{prefix} {}",
+        render_machine_cluster_label(machine)
+    ));
+
+    if let Some(description) = machine.description {
+        for line in description.lines() {
+            lines.push(format!("{prefix} {line}"));
+        }
+    }
+
+    if let Some(docs) = machine.docs {
+        for line in docs.lines() {
+            lines.push(format!("{prefix} {line}"));
+        }
     }
 }
 
@@ -493,6 +769,10 @@ fn escape_mermaid_edge_label(label: &str) -> String {
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
         .replace('\n', "<br/>")
+}
+
+fn escape_sequence_label(label: &str) -> String {
+    label.replace('\n', " ").replace('"', "'")
 }
 
 fn escape_dot_label(label: &str) -> String {

@@ -1,6 +1,14 @@
 # Composition Roadmap Checklist: Phase 4
 
-Goal: inspector, atlas, and path UX.
+This checklist is historical.
+
+It documents the now-complete composition-first inspector milestone. The next
+inspector iteration is tracked in:
+
+- [Diagram-First Inspector Plan](../diagram-first-inspector-plan.md)
+- [Statum Inspector TUI Spec](../inspector-tui-spec.md)
+
+Goal at the time: inspector, atlas, and path UX.
 
 - [x] Make composition machines the default home view when present.
 - [x] Render composition machines as the primary workspace flow surface.

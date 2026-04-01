@@ -327,6 +327,46 @@ fn mermaid_renders_one_edge_per_legal_target() {
 }
 
 #[test]
+fn mermaid_state_renders_roots_transitions_and_sinks() {
+    let doc = MachineDoc::from_machine::<branching::Flow<branching::Draft>>();
+    let mermaid = render::mermaid_state(&doc);
+
+    assert!(mermaid.contains("stateDiagram-v2"));
+    assert!(mermaid.contains("state \"Draft\" as s0"));
+    assert!(mermaid.contains("[*] --> s0"));
+    assert!(mermaid.contains("s1 --> s2 : maybe_decide"));
+    assert!(mermaid.contains("s1 --> s3 : maybe_decide"));
+    assert!(mermaid.contains("s4 --> [*]"));
+}
+
+#[test]
+fn mermaid_state_supports_multiple_roots_and_zero_roots() {
+    let multi_root = MachineDoc::from_machine::<multi_root::Flow<multi_root::First>>();
+    let multi_root_mermaid = render::mermaid_state(&multi_root);
+    assert_eq!(multi_root_mermaid.matches("[*] -->").count(), 2);
+    assert!(multi_root_mermaid.contains("s2 --> [*]"));
+
+    let no_root = MachineDoc::from_machine::<no_root::Flow<no_root::Draft>>();
+    let no_root_mermaid = render::mermaid_state(&no_root);
+    assert_eq!(no_root_mermaid.matches("[*] -->").count(), 0);
+    assert_eq!(no_root_mermaid.matches("--> [*]").count(), 0);
+}
+
+#[test]
+fn mermaid_state_uses_presented_labels() {
+    let doc = MachineDoc::from_machine::<presented::Flow<presented::Queued>>();
+    let export = doc
+        .export_with_presentation(&presented::flow::PRESENTATION)
+        .expect("generated presentation should join cleanly");
+
+    let mermaid = render::mermaid_state(&export);
+    assert!(mermaid.contains("state \"Queued\" as s0"));
+    assert!(mermaid.contains("state \"Running\" as s1"));
+    assert!(mermaid.contains("s0 --> s1 : Start"));
+    assert!(mermaid.contains("s2 --> [*]"));
+}
+
+#[test]
 fn export_doc_joins_generated_presentation_labels_and_descriptions() {
     let doc = MachineDoc::from_machine::<presented::Flow<presented::Queued>>();
     let export = doc

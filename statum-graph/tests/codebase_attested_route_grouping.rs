@@ -75,11 +75,31 @@ fn duplicate_attested_route_names_group_compatible_producers() {
         .iter()
         .find(|state| state.rust_name == "Rejected")
         .expect("rejected state");
+    let rejected_label = if rejected.direct_construction_available {
+        format!("{} [build]", rejected.display_label())
+    } else {
+        rejected.display_label().into_owned()
+    };
     let consumed = workflow
         .states
         .iter()
         .find(|state| state.rust_name == "Consumed")
         .expect("consumed state");
+    let consumed_label = if consumed.direct_construction_available {
+        format!("{} [build]", consumed.display_label())
+    } else {
+        consumed.display_label().into_owned()
+    };
+    let destroyed = workflow
+        .states
+        .iter()
+        .find(|state| state.rust_name == "Destroyed")
+        .expect("destroyed state");
+    let destroyed_label = if destroyed.direct_construction_available {
+        format!("{} [build]", destroyed.display_label())
+    } else {
+        destroyed.display_label().into_owned()
+    };
     let closed_transition = audit
         .transitions
         .iter()
@@ -137,4 +157,14 @@ fn duplicate_attested_route_names_group_compatible_producers() {
             .collect::<Vec<_>>(),
         vec!["destroy", "destroy"]
     );
+
+    let mermaid = statum_graph::codebase::render::mermaid_relation_sequence(&doc, relation.index)
+        .expect("multi-producer relation sequence");
+    assert!(mermaid.contains("sequenceDiagram"));
+    assert!(mermaid.contains(&format!("alt destroy from {}", rejected_label)));
+    assert!(mermaid.contains(&format!("else destroy from {}", consumed_label)));
+    assert!(mermaid.contains(&format!(
+        "m{}->>m{}: {} via Destroy",
+        workflow.index, audit.index, destroyed_label
+    )));
 }

@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
-use statum_graph::CodebaseDoc;
+use statum_graph::codebase::render::DiagramError as CodebaseDiagramError;
+use statum_graph::{CodebaseDoc, CodebaseMachine, CodebaseRelation};
 
 mod heuristics;
 mod inspect;
@@ -67,6 +68,67 @@ pub struct SuggestOptions {
     pub patch_statum_root: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StateDiagramOptions {
+    pub input_path: PathBuf,
+    pub package: Option<String>,
+    pub machine: Option<String>,
+    pub patch_statum_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SequenceDiagramOptions {
+    pub input_path: PathBuf,
+    pub package: Option<String>,
+    pub relation: Option<usize>,
+    pub from_machine: Option<String>,
+    pub to_machine: Option<String>,
+    pub patch_statum_root: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RelationDiagramSelection<'a> {
+    pub relation_index: Option<usize>,
+    pub from_machine: Option<&'a str>,
+    pub to_machine: Option<&'a str>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DiagramSelectionError {
+    MachineSelectionRequired {
+        available: Vec<String>,
+    },
+    MachineNotFound {
+        selector: String,
+        available: Vec<String>,
+    },
+    MachineAmbiguous {
+        selector: String,
+        matches: Vec<String>,
+    },
+    NoExactRelations,
+    RelationSelectionRequired {
+        relation_count: usize,
+    },
+    ConflictingRelationSelectors,
+    RelationPairSelectionIncomplete,
+    RelationNotFound {
+        index: usize,
+    },
+    RelationPairNotFound {
+        from: String,
+        to: String,
+    },
+    RelationPairAmbiguous {
+        from: String,
+        to: String,
+        matches: Vec<String>,
+    },
+    Render {
+        source: CodebaseDiagramError,
+    },
+}
+
 #[derive(Debug)]
 pub enum Error {
     CurrentDir(io::Error),
@@ -89,6 +151,9 @@ pub enum Error {
     },
     InvalidStem {
         stem: String,
+    },
+    InvalidDiagramSelection {
+        message: String,
     },
     NonUtf8Path {
         role: &'static str,
@@ -167,6 +232,7 @@ impl fmt::Display for Error {
                 formatter,
                 "invalid output stem `{stem}`: expected a simple file name without path separators"
             ),
+            Self::InvalidDiagramSelection { message } => formatter.write_str(message),
             Self::NonUtf8Path { role, path } => write!(
                 formatter,
                 "cannot generate runner {role} from non-UTF-8 path `{}`",
@@ -226,8 +292,77 @@ impl std::error::Error for Error {
             | Self::PackageHasNoLibrary { .. }
             | Self::AmbiguousPatchStatumRoots { .. }
             | Self::InvalidStem { .. }
+            | Self::InvalidDiagramSelection { .. }
             | Self::NonUtf8Path { .. }
             | Self::RunnerFailed { .. } => None,
+        }
+    }
+}
+
+impl fmt::Display for DiagramSelectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MachineSelectionRequired { available } => write!(
+                formatter,
+                "machine selector required; available linked machines: {}",
+                available.join(", ")
+            ),
+            Self::MachineNotFound {
+                selector,
+                available,
+            } => write!(
+                formatter,
+                "machine selector `{selector}` did not match any linked machine; available machines: {}",
+                available.join(", ")
+            ),
+            Self::MachineAmbiguous { selector, matches } => write!(
+                formatter,
+                "machine selector `{selector}` matched multiple linked machines: {}",
+                matches.join(", ")
+            ),
+            Self::NoExactRelations => {
+                formatter.write_str("no exact linked relations are available for sequence export")
+            }
+            Self::RelationSelectionRequired { relation_count } => write!(
+                formatter,
+                "relation selector required; linked codebase has {relation_count} exact relations, so choose --relation INDEX or --from/--to"
+            ),
+            Self::ConflictingRelationSelectors => {
+                formatter.write_str("choose either --relation or --from/--to, not both")
+            }
+            Self::RelationPairSelectionIncomplete => {
+                formatter.write_str("relation pair selection requires both --from and --to")
+            }
+            Self::RelationNotFound { index } => {
+                write!(formatter, "exact relation index {index} is missing")
+            }
+            Self::RelationPairNotFound { from, to } => {
+                write!(formatter, "no exact relation matched `{from}` -> `{to}`")
+            }
+            Self::RelationPairAmbiguous { from, to, matches } => write!(
+                formatter,
+                "machine pair `{from}` -> `{to}` matched multiple exact relations: {}",
+                matches.join(", ")
+            ),
+            Self::Render { source } => source.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for DiagramSelectionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Render { source } => Some(source),
+            Self::MachineSelectionRequired { .. }
+            | Self::MachineNotFound { .. }
+            | Self::MachineAmbiguous { .. }
+            | Self::NoExactRelations
+            | Self::RelationSelectionRequired { .. }
+            | Self::ConflictingRelationSelectors
+            | Self::RelationPairSelectionIncomplete
+            | Self::RelationNotFound { .. }
+            | Self::RelationPairNotFound { .. }
+            | Self::RelationPairAmbiguous { .. } => None,
         }
     }
 }
@@ -307,6 +442,99 @@ pub fn suggest(options: SuggestOptions) -> Result<String, Error> {
     )
 }
 
+pub fn state_diagram(options: StateDiagramOptions) -> Result<String, Error> {
+    let prepared = prepare_run(
+        &options.input_path,
+        options.package.as_deref(),
+        options.patch_statum_root.as_deref(),
+    )?;
+    let runner = materialize_cached_runner(
+        &prepared.target_directory,
+        &prepared.selections,
+        prepared.patch_root.as_deref(),
+    )?;
+    let mut runtime_args = vec![OsString::from("state-diagram")];
+    match options.machine {
+        Some(machine) => {
+            runtime_args.push(OsString::from("machine"));
+            runtime_args.push(OsString::from(machine));
+        }
+        None => runtime_args.push(OsString::from("auto")),
+    }
+
+    run_runner_captured(
+        runner.runner.manifest_path,
+        &prepared.target_directory,
+        &prepared.input.manifest_path,
+        "machine state diagram",
+        &runtime_args,
+    )
+}
+
+pub fn sequence_diagram(options: SequenceDiagramOptions) -> Result<String, Error> {
+    let has_pair_selector = options.from_machine.is_some() || options.to_machine.is_some();
+    if options.relation.is_some() && has_pair_selector {
+        return Err(Error::InvalidDiagramSelection {
+            message: "choose either --relation or --from/--to, not both".to_owned(),
+        });
+    }
+    if options.from_machine.is_some() ^ options.to_machine.is_some() {
+        return Err(Error::InvalidDiagramSelection {
+            message: "relation pair selection requires both --from and --to".to_owned(),
+        });
+    }
+
+    let prepared = prepare_run(
+        &options.input_path,
+        options.package.as_deref(),
+        options.patch_statum_root.as_deref(),
+    )?;
+    let runner = materialize_cached_runner(
+        &prepared.target_directory,
+        &prepared.selections,
+        prepared.patch_root.as_deref(),
+    )?;
+    let mut runtime_args = vec![OsString::from("sequence-diagram")];
+    if let Some(relation) = options.relation {
+        runtime_args.push(OsString::from("index"));
+        runtime_args.push(OsString::from(relation.to_string()));
+    } else if let (Some(from_machine), Some(to_machine)) =
+        (options.from_machine, options.to_machine)
+    {
+        runtime_args.push(OsString::from("pair"));
+        runtime_args.push(OsString::from(from_machine));
+        runtime_args.push(OsString::from(to_machine));
+    } else {
+        runtime_args.push(OsString::from("auto"));
+    }
+
+    run_runner_captured(
+        runner.runner.manifest_path,
+        &prepared.target_directory,
+        &prepared.input.manifest_path,
+        "relation sequence diagram",
+        &runtime_args,
+    )
+}
+
+pub fn render_machine_state_diagram(
+    doc: &CodebaseDoc,
+    machine_selector: Option<&str>,
+) -> Result<String, DiagramSelectionError> {
+    let machine = resolve_machine(doc, machine_selector)?;
+    statum_graph::codebase::render::mermaid_machine_state(doc, machine.index)
+        .map_err(|source| DiagramSelectionError::Render { source })
+}
+
+pub fn render_relation_sequence_diagram(
+    doc: &CodebaseDoc,
+    selection: RelationDiagramSelection<'_>,
+) -> Result<String, DiagramSelectionError> {
+    let relation_index = resolve_relation_index(doc, selection)?;
+    statum_graph::codebase::render::mermaid_relation_sequence(doc, relation_index)
+        .map_err(|source| DiagramSelectionError::Render { source })
+}
+
 pub fn run_inspector(
     doc: CodebaseDoc,
     heuristic: HeuristicOverlay,
@@ -314,6 +542,187 @@ pub fn run_inspector(
 ) -> Result<(), InspectError> {
     let suggestions = suggestions::collect_composition_suggestions(&doc, &heuristic);
     inspect::run(doc, heuristic, suggestions, workspace_label).map_err(InspectError::Io)
+}
+
+fn resolve_machine<'a>(
+    doc: &'a CodebaseDoc,
+    selector: Option<&str>,
+) -> Result<&'a CodebaseMachine, DiagramSelectionError> {
+    match selector {
+        Some(selector) => {
+            if let Some(machine) = doc
+                .machines()
+                .iter()
+                .find(|machine| machine.rust_type_path == selector)
+            {
+                return Ok(machine);
+            }
+
+            let matches = doc
+                .machines()
+                .iter()
+                .filter(|machine| machine.rust_type_path.ends_with(selector))
+                .collect::<Vec<_>>();
+            match matches.as_slice() {
+                [machine] => Ok(*machine),
+                [] => Err(DiagramSelectionError::MachineNotFound {
+                    selector: selector.to_owned(),
+                    available: available_machines(doc),
+                }),
+                _ => Err(DiagramSelectionError::MachineAmbiguous {
+                    selector: selector.to_owned(),
+                    matches: matches
+                        .iter()
+                        .map(|machine| machine.rust_type_path.to_owned())
+                        .collect(),
+                }),
+            }
+        }
+        None => match doc.machines() {
+            [machine] => Ok(machine),
+            _ => Err(DiagramSelectionError::MachineSelectionRequired {
+                available: available_machines(doc),
+            }),
+        },
+    }
+}
+
+fn resolve_relation_index(
+    doc: &CodebaseDoc,
+    selection: RelationDiagramSelection<'_>,
+) -> Result<usize, DiagramSelectionError> {
+    match (
+        selection.relation_index,
+        selection.from_machine,
+        selection.to_machine,
+    ) {
+        (Some(_), Some(_), _) | (Some(_), _, Some(_)) => {
+            Err(DiagramSelectionError::ConflictingRelationSelectors)
+        }
+        (Some(index), None, None) => doc
+            .relation(index)
+            .map(|relation| relation.index)
+            .ok_or(DiagramSelectionError::RelationNotFound { index }),
+        (None, Some(_), None) | (None, None, Some(_)) => {
+            Err(DiagramSelectionError::RelationPairSelectionIncomplete)
+        }
+        (None, Some(from_selector), Some(to_selector)) => {
+            let from_machine = resolve_machine(doc, Some(from_selector))?;
+            let to_machine = resolve_machine(doc, Some(to_selector))?;
+            let matches = doc
+                .relations()
+                .iter()
+                .filter(|relation| {
+                    relation.source_machine() == from_machine.index
+                        && relation.target_machine == to_machine.index
+                })
+                .collect::<Vec<_>>();
+            match matches.as_slice() {
+                [] => Err(DiagramSelectionError::RelationPairNotFound {
+                    from: from_machine.rust_type_path.to_owned(),
+                    to: to_machine.rust_type_path.to_owned(),
+                }),
+                [relation] => Ok(relation.index),
+                _ => Err(DiagramSelectionError::RelationPairAmbiguous {
+                    from: from_machine.rust_type_path.to_owned(),
+                    to: to_machine.rust_type_path.to_owned(),
+                    matches: matches
+                        .iter()
+                        .map(|relation| relation_selection_label(doc, relation))
+                        .collect(),
+                }),
+            }
+        }
+        (None, None, None) => match doc.relations() {
+            [] => Err(DiagramSelectionError::NoExactRelations),
+            [relation] => Ok(relation.index),
+            relations => Err(DiagramSelectionError::RelationSelectionRequired {
+                relation_count: relations.len(),
+            }),
+        },
+    }
+}
+
+fn available_machines(doc: &CodebaseDoc) -> Vec<String> {
+    doc.machines()
+        .iter()
+        .map(|machine| machine.rust_type_path.to_owned())
+        .collect()
+}
+
+fn relation_selection_label(doc: &CodebaseDoc, relation: &CodebaseRelation) -> String {
+    let Some(detail) = doc.relation_detail(relation.index) else {
+        return format!("#{} <missing relation detail>", relation.index);
+    };
+    let source_machine = detail.source_machine.rust_type_path;
+    let target_machine = detail.target_machine.rust_type_path;
+    let source = match relation.source {
+        statum_graph::CodebaseRelationSource::StatePayload { field_name, .. } => {
+            match (detail.source_state.map(|state| state.rust_name), field_name) {
+                (Some(state_name), Some(field_name)) => {
+                    format!("state payload {state_name}::{field_name}")
+                }
+                (Some(state_name), None) => format!("state payload {state_name}"),
+                (None, Some(field_name)) => format!("state payload <missing>::{field_name}"),
+                (None, None) => "state payload <missing>".to_owned(),
+            }
+        }
+        statum_graph::CodebaseRelationSource::MachineField {
+            field_name,
+            field_index,
+            ..
+        } => match field_name {
+            Some(field_name) => format!("machine field {field_name}"),
+            None => format!("machine field #{field_index}"),
+        },
+        statum_graph::CodebaseRelationSource::TransitionParam {
+            param_index,
+            param_name,
+            ..
+        } => {
+            let transition_name = detail
+                .source_transition
+                .map(|transition| transition.method_name)
+                .unwrap_or("<missing transition>");
+            match detail.source_state.map(|state| state.rust_name) {
+                Some(state_name) => match param_name {
+                    Some(param_name) => {
+                        format!("transition param {state_name}::{transition_name}({param_name})")
+                    }
+                    None => {
+                        format!("transition param {state_name}::{transition_name}[#{param_index}]")
+                    }
+                },
+                None => match param_name {
+                    Some(param_name) => {
+                        format!("transition param {transition_name}({param_name})")
+                    }
+                    None => format!("transition param {transition_name}[#{param_index}]"),
+                },
+            }
+        }
+    };
+    let via = relation
+        .attested_via
+        .as_ref()
+        .map(|attested_via| {
+            format!(
+                " via {}::{}",
+                attested_via.via_module_path, attested_via.route_name
+            )
+        })
+        .unwrap_or_default();
+
+    format!(
+        "#{} {} -> {} [{} / {}] {}{}",
+        relation.index,
+        source_machine,
+        target_machine,
+        relation.semantic.display_label(),
+        relation.basis.display_label(),
+        source,
+        via
+    )
 }
 
 #[derive(Debug)]
@@ -809,6 +1218,97 @@ fn build_runner_main(selections: &[SelectedPackage]) -> Result<String, Error> {
         "                cargo_statum_graph::render_composition_suggestions(&doc, &heuristic),\n",
     );
     source.push_str("            );\n");
+    source.push_str("        }\n");
+    source.push_str("        \"state-diagram\" => {\n");
+    source.push_str("            let selection = take_string_arg(&mut args, \"state-diagram selection mode\")?;\n");
+    source.push_str("            match selection.as_str() {\n");
+    source.push_str("                \"auto\" => {\n");
+    source.push_str("                    ensure_no_extra_args(&mut args, \"state-diagram\")?;\n");
+    source.push_str("                    print!(\n");
+    source.push_str("                        \"{}\",\n");
+    source.push_str(
+        "                        cargo_statum_graph::render_machine_state_diagram(&doc, None)?,\n",
+    );
+    source.push_str("                    );\n");
+    source.push_str("                }\n");
+    source.push_str("                \"machine\" => {\n");
+    source.push_str(
+        "                    let machine_selector = take_string_arg(&mut args, \"machine selector\")?;\n",
+    );
+    source.push_str("                    ensure_no_extra_args(&mut args, \"state-diagram\")?;\n");
+    source.push_str("                    print!(\n");
+    source.push_str("                        \"{}\",\n");
+    source.push_str(
+        "                        cargo_statum_graph::render_machine_state_diagram(&doc, Some(&machine_selector))?,\n",
+    );
+    source.push_str("                    );\n");
+    source.push_str("                }\n");
+    source.push_str("                other => {\n");
+    source.push_str(
+        "                    return Err(std::io::Error::other(format!(\"unknown state-diagram selection mode `{other}`\")).into());\n",
+    );
+    source.push_str("                }\n");
+    source.push_str("            }\n");
+    source.push_str("        }\n");
+    source.push_str("        \"sequence-diagram\" => {\n");
+    source.push_str("            let selection = take_string_arg(&mut args, \"sequence-diagram selection mode\")?;\n");
+    source.push_str("            match selection.as_str() {\n");
+    source.push_str("                \"auto\" => {\n");
+    source
+        .push_str("                    ensure_no_extra_args(&mut args, \"sequence-diagram\")?;\n");
+    source.push_str("                    print!(\n");
+    source.push_str("                        \"{}\",\n");
+    source.push_str(
+        "                        cargo_statum_graph::render_relation_sequence_diagram(&doc, cargo_statum_graph::RelationDiagramSelection::default())?,\n",
+    );
+    source.push_str("                    );\n");
+    source.push_str("                }\n");
+    source.push_str("                \"index\" => {\n");
+    source.push_str(
+        "                    let relation_index = take_string_arg(&mut args, \"relation index\")?;\n",
+    );
+    source
+        .push_str("                    ensure_no_extra_args(&mut args, \"sequence-diagram\")?;\n");
+    source.push_str(
+        "                    let relation_index = relation_index.parse::<usize>().map_err(|source| std::io::Error::other(format!(\"invalid relation index `{relation_index}`: {source}\")))?;\n",
+    );
+    source.push_str("                    print!(\n");
+    source.push_str("                        \"{}\",\n");
+    source.push_str(
+        "                        cargo_statum_graph::render_relation_sequence_diagram(&doc, cargo_statum_graph::RelationDiagramSelection {\n",
+    );
+    source.push_str("                            relation_index: Some(relation_index),\n");
+    source.push_str("                            from_machine: None,\n");
+    source.push_str("                            to_machine: None,\n");
+    source.push_str("                        })?,\n");
+    source.push_str("                    );\n");
+    source.push_str("                }\n");
+    source.push_str("                \"pair\" => {\n");
+    source.push_str(
+        "                    let from_machine = take_string_arg(&mut args, \"source machine selector\")?;\n",
+    );
+    source.push_str(
+        "                    let to_machine = take_string_arg(&mut args, \"target machine selector\")?;\n",
+    );
+    source
+        .push_str("                    ensure_no_extra_args(&mut args, \"sequence-diagram\")?;\n");
+    source.push_str("                    print!(\n");
+    source.push_str("                        \"{}\",\n");
+    source.push_str(
+        "                        cargo_statum_graph::render_relation_sequence_diagram(&doc, cargo_statum_graph::RelationDiagramSelection {\n",
+    );
+    source.push_str("                            relation_index: None,\n");
+    source.push_str("                            from_machine: Some(&from_machine),\n");
+    source.push_str("                            to_machine: Some(&to_machine),\n");
+    source.push_str("                        })?,\n");
+    source.push_str("                    );\n");
+    source.push_str("                }\n");
+    source.push_str("                other => {\n");
+    source.push_str(
+        "                    return Err(std::io::Error::other(format!(\"unknown sequence-diagram selection mode `{other}`\")).into());\n",
+    );
+    source.push_str("                }\n");
+    source.push_str("            }\n");
     source.push_str("        }\n");
     source.push_str("        other => {\n");
     source.push_str(
@@ -1387,8 +1887,12 @@ mod tests {
         assert!(source.contains("\"export\" | \"codebase\""));
         assert!(source.contains("\"codebase\""));
         assert!(source.contains("\"suggest\""));
+        assert!(source.contains("\"state-diagram\""));
+        assert!(source.contains("\"sequence-diagram\""));
         assert!(source.contains("write_all_to_dir(&doc, &out_dir, &stem)?;"));
         assert!(source.contains("render_composition_suggestions(&doc, &heuristic)"));
+        assert!(source.contains("render_machine_state_diagram(&doc, None)?"));
+        assert!(source.contains("render_relation_sequence_diagram(&doc, cargo_statum_graph::RelationDiagramSelection::default())?"));
         assert!(source.contains("take_os_arg"));
         assert!(source.contains("ensure_no_extra_args"));
         assert!(!source.contains("/tmp/workspace/Cargo.toml"));
@@ -1410,6 +1914,44 @@ mod tests {
         assert!(!second.source_rewritten);
         assert_eq!(first.runner.home_dir, second.runner.home_dir);
         assert_eq!(first.runner.manifest_path, second.runner.manifest_path);
+    }
+
+    #[test]
+    fn sequence_diagram_rejects_conflicting_relation_and_pair_selectors() {
+        let error = sequence_diagram(SequenceDiagramOptions {
+            input_path: PathBuf::from("/tmp/workspace"),
+            package: None,
+            relation: Some(3),
+            from_machine: Some("workflow::Machine".to_owned()),
+            to_machine: Some("task::Machine".to_owned()),
+            patch_statum_root: None,
+        })
+        .expect_err("conflicting selectors should fail before runner setup");
+
+        assert!(matches!(
+            error,
+            Error::InvalidDiagramSelection { ref message }
+                if message == "choose either --relation or --from/--to, not both"
+        ));
+    }
+
+    #[test]
+    fn sequence_diagram_rejects_incomplete_machine_pair_selector() {
+        let error = sequence_diagram(SequenceDiagramOptions {
+            input_path: PathBuf::from("/tmp/workspace"),
+            package: None,
+            relation: None,
+            from_machine: Some("workflow::Machine".to_owned()),
+            to_machine: None,
+            patch_statum_root: None,
+        })
+        .expect_err("incomplete pair selector should fail before runner setup");
+
+        assert!(matches!(
+            error,
+            Error::InvalidDiagramSelection { ref message }
+                if message == "relation pair selection requires both --from and --to"
+        ));
     }
 
     #[test]

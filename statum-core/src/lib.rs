@@ -32,10 +32,10 @@ pub use introspection::__STATUM_LINKED_VIA_ROUTES;
 #[doc(hidden)]
 pub mod __private {
     pub use crate::{
-        Attested, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis, LinkedRelationDescriptor,
-        LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget, LinkedStateDescriptor,
-        LinkedTransitionDescriptor, LinkedTransitionInventory, LinkedValidatorEntryDescriptor,
-        LinkedViaRouteDescriptor, MachinePresentation,
+        Attested, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
+        LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
+        LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
+        LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachinePresentation,
         MachinePresentationDescriptor, MachineReference, MachineReferenceTarget, MachineRole,
         RebuildAttempt, RebuildReport, StateFamily, StateFamilyMember, StatePresentation,
         StaticMachineLinkDescriptor, TransitionPresentation, TransitionPresentationInventory,
@@ -73,7 +73,7 @@ pub use introspection::{
     LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
     LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
     LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachineDescriptor, MachineGraph,
-    MachineIntrospection, MachinePresentation, MachineRole, MachinePresentationDescriptor,
+    MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineRole,
     MachineStateIdentity, MachineTransitionRecorder, RecordedTransition, StateDescriptor,
     StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
     TransitionPresentation, TransitionPresentationInventory,

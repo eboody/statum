@@ -378,6 +378,100 @@ fn suggest_command_reports_heuristic_only_composition_candidates() {
 }
 
 #[test]
+fn state_diagram_command_renders_selected_machine_as_mermaid_state_diagram() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_fixture(fixture_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("state-diagram")
+        .arg(fixture_dir.path())
+        .arg("--package")
+        .arg("fixture-app")
+        .arg("--machine")
+        .arg("workflow::Machine")
+        .output()
+        .expect("cargo-statum-graph should run");
+    assert!(output.status.success(), "state-diagram should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("stateDiagram-v2"));
+    assert!(stdout.contains("[*] --> m1_s0"));
+    assert!(stdout.contains("m1_s0 --> m1_s1 : start"));
+    assert!(stdout.contains("m1_s2 --> [*]"));
+    assert!(stdout.contains("state \"InProgress"));
+}
+
+#[test]
+fn state_diagram_command_fails_closed_without_machine_selector_when_multiple_machines_exist() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_fixture(fixture_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("state-diagram")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("cargo-statum-graph should run");
+    assert!(!output.status.success(), "state-diagram should fail");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("machine selector required"));
+    assert!(stderr.contains("workflow::Machine"));
+    assert!(stderr.contains("task::Machine"));
+}
+
+#[test]
+fn sequence_diagram_command_renders_selected_relation_index() {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crate should live under workspace root");
+    let examples_dir = workspace_root.join("statum-examples");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("sequence-diagram")
+        .arg(&examples_dir)
+        .arg("--relation")
+        .arg("3")
+        .output()
+        .expect("cargo-statum-graph should run");
+    assert!(output.status.success(), "sequence-diagram should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("sequenceDiagram"));
+    assert!(stdout.contains("DocumentFlow [composition]"));
+    assert!(stdout.contains("publication::Machine"));
+    assert!(stdout.contains("via Publish"));
+    assert!(stdout.contains("consumer record_publication"));
+}
+
+#[test]
+fn sequence_diagram_command_fails_closed_for_ambiguous_machine_pair() {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crate should live under workspace root");
+    let examples_dir = workspace_root.join("statum-examples");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("sequence-diagram")
+        .arg(&examples_dir)
+        .arg("--from")
+        .arg("DocumentFlow")
+        .arg("--to")
+        .arg("publication::Machine")
+        .output()
+        .expect("cargo-statum-graph should run");
+    assert!(
+        !output.status.success(),
+        "ambiguous sequence-diagram should fail"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("matched multiple exact relations"));
+    assert!(stderr.contains("#2"));
+    assert!(stderr.contains("#3"));
+    assert!(stderr.contains("record_publication(publication)"));
+}
+
+#[test]
 fn export_command_exports_composition_workflow_for_statum_examples() {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

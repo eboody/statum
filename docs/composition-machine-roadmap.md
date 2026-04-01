@@ -167,6 +167,13 @@ Checklist:
 
 Status: complete
 
+Note:
+
+- this phase shipped the composition-first inspector milestone
+- the next mermaid-first inspector shell is tracked separately in
+  [Diagram-First Inspector Plan](./diagram-first-inspector-plan.md) and
+  [Statum Inspector TUI Spec](./inspector-tui-spec.md)
+
 Goal:
 
 - make composition machines the main way users understand a workspace
