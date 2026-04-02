@@ -12,8 +12,8 @@ compiled `#[validators]` impls. `inspect` and `export` reuse that cached
 runner home across invocations, and `suggest` now uses that same cached
 runner path too, but `CodebaseDoc::linked()` still executes fresh at runtime
 on every run. It can also launch an inspector TUI over that same linked
-compiled `CodebaseDoc` surface, with composition machines as the primary
-workspace flow surface and a separate heuristic lane for broader source-scanned
+compiled `CodebaseDoc` surface, with journey-first composition inspection as
+the default home and a separate heuristic lane for broader source-scanned
 machine coupling hints.
 
 ## Install
@@ -119,47 +119,58 @@ cargo statum-graph inspect \
 That launches the inspector TUI for the selected workspace. The current
 surface shows:
 
-- workspace sections for `Workspace`, `Machine`, and `Gaps`
-- diagram-first workspace home when any
-  `#[machine(role = composition)]` machines exist
-- workspace home that renders the exact linked workspace Mermaid flowchart in
-  the center pane instead of leading with text cards
-- machine overview that renders the selected machine as an exact Mermaid
-  `stateDiagram-v2`
-- path explorer that prefers composition-owned routes, then raw exact graph
-  routes, then heuristic fallback when the current lane allows it
-- gap view that surfaces composition warnings and heuristic-only suggestions
-  together with the best currently visible path to the suggested target
-- machine view with states, transitions, validator entries, relations, and
-  paths for leaf protocol drilldown
-- composition machines surfaced from `#[machine(role = composition)]`, with
-  composition-owned direct child-machine edges labeled as `composition refs`
-  instead of generic exact references
-- relation pane with inbound and outbound exact relations plus optional
-  heuristic machine-to-machine coupling hints
+- top-level views for `Journeys`, `Machines`, and `Map`
+- `Journeys` as the default home when the workspace has any composition
+  machine
+- left-pane composition machine selection plus a separate `Entry -> Exit`
+  journey list for the selected machine
+- center-pane exact journey projection as Mermaid `stateDiagram-v2`
+  rendered through `termaid` when available
+- right-pane tabs for `Steps`, `Protocols`, `Mermaid`, `Source`, and `Issues`
+- a persistent journey header with machine, journey count, selected journey,
+  touched protocol summary, and a fast map jump hint
+- exact journey diagrams that show only one selected finite root-to-sink
+  composition trace, with numbered transition labels
+- zero-step journey handling for entry-is-exit traces
+- `Machines` as the full legal-state drilldown for protocol and composition
+  machines
+- `Map` as secondary workspace context instead of the first screen
+- map scales for `Overview`, `Focus`, and `Full`
+- `Overview` that shows the connected component for the selected machine
+- `Focus` that shows the selected machine plus nearby neighbors, with a
+  `1`-hop or `2`-hop radius
+- `Full` that shows every visible machine in the linked workspace flow graph
+- left-to-right and top-down map layout toggles
+- role-shaped map nodes:
+  composition machines render as double boxes and protocol machines render as
+  plain boxes
+- quiet map edges:
+  owned orchestration handoffs render as thick arrows, other linked handoffs
+  render as solid arrows, and static references render as dotted arrows
+- machine view that renders the selected machine as an exact Mermaid
+  `stateDiagram-v2`, with states, transitions, rebuild entries, handoffs, and
+  journeys for drilldown
+- handoff pane with inbound and outbound proven relations plus optional
+  weaker source-scanned hints
 - explicit empty-state guidance when the selected state or transition has no
   direct relations but the machine does
-- search plus exact relation-kind filters and current relation-basis filters
+- search plus proven relation-kind filters and current relation-basis filters
   for direct-type and declared-reference relations
 - heuristic evidence filters for type-surface and body matches
-- exact-only, heuristic-only, and mixed lane toggles
+- `proven`, `hints`, and `both` lane toggles
+- guide tabs for `Guide`, `Docs`, `Mermaid`, `Source`, and `Why`
 - detail pane explaining the current selection, including
   `#[present(description = ...)]` text and source rustdoc (`///`) when
   available. For `#[via(...)]` relations, the detail pane also shows the
   attested route, producer machine, producer source state, and producer
-  transition. Composition-owned exact relations also show their composition
-  semantics and source/target machine roles. Summary and exact relation cards
-  now prefer those composition-owned explanations. Machine detail also shows
-  composition diagnostics when a protocol machine still looks like a
-  composition candidate. The detail tabs also include a `Diagram` preview for
-  exact machine and exact relation selections. The inspector prefers
-  `STATUM_TERMAID_BIN`, then an adjacent
+  transition. Machine detail also shows composition diagnostics when a
+  protocol machine still looks like a composition candidate. The center pane
+  prefers `STATUM_TERMAID_BIN`, then an adjacent
   `../termaid/target/release/termaid`, then `termaid` on `PATH`. If no
-  renderer is available or preview rendering fails, the pane falls back to
-  raw Mermaid source and states why.
-
-If composition machines exist, the inspector opens on `Workspace` first. If
-none exist, it falls back to `Machine`.
+  renderer is available, the pane falls back to raw Mermaid source and states
+  why. For Mermaid flowcharts, the preview also retries a `TD` render when a
+  horizontal preview fails in `termaid`, and only then falls back to raw
+  Mermaid.
 
 `inspect` requires an interactive terminal on stdin and stdout.
 
@@ -183,15 +194,20 @@ That prints composition diagnostics without launching the TUI.
 
 Keybindings:
 
-- `tab` / `shift-tab`: move focus between panes
+- `tab` / `shift-tab`: move focus between panes; in `Journeys`, that means
+  machines, journeys, diagram, and detail
 - `w`: cycle available workspace sections
 - `[` / `]`: switch center or detail tabs
-- `j` / `k`: move within the focused list, or scroll the center diagram when
-  the main view is on `Workspace` or `Diagram`
+- `h` / `l`: move left and right, or pan horizontally in the center diagram
+- `j` / `k`: move within the focused list, or scroll vertically in the center
+  diagram
 - `/`: enter search mode
 - `enter` / `esc`: leave search mode
 - `s`: change search scope
-- `e` / `m` / `h`: exact, mixed, and heuristic lane selection
+- `v`: cycle map scale
+- `r`: toggle map focus radius between `1` and `2` hops
+- `L`: toggle map layout between `LR` and `TD`
+- `e` / `m` / `H`: exact, mixed, and heuristic lane selection
 - `p` / `f` / `t`: toggle payload, field, and param relation filters
 - `d` / `n`: toggle direct-type and declared-reference relation-basis filters
 - `g` / `b`: toggle heuristic type-surface and body evidence filters

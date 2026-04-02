@@ -33,6 +33,12 @@ source-path guessing. State-payload and machine-field direct targets still rely
 on the canonical linked path surface, so those surfaces do not currently
 promote public machine re-exports into exact relations.
 
+For exact machine-level workspace projections over the linked codebase surface,
+use `codebase::render::mermaid_workspace_flow(...)`. That renderer projects the
+same `CodebaseDoc` truth surface into a smaller Mermaid flowchart over machines
+and exact cross-machine edges, with selectable direction, machine subsets,
+role-shaped nodes, and configurable edge-label density.
+
 ## Install
 
 ```toml

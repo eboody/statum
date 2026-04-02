@@ -1,529 +1,324 @@
 # Statum Inspector TUI Spec
 
-This file is the concrete product spec for the next inspector TUI.
+This is the canonical inspector product spec.
 
-It supersedes the earlier atlas-first, story-card-first inspector direction
-with a diagram-first design:
+It replaces the older map-first and generic diagram-shell plans. The inspector
+is now journey-first:
 
-- exact structure comes from compiled Statum metadata
-- the inspector derives Mermaid from that exact structure
-- `termaid` renders Mermaid in the terminal
-- the diagram is the main UI surface
-- lists, docs, and explanations support the diagram instead of replacing it
+- `Journeys` is the default home when a workspace has any composition machine
+- one selected finite root-to-sink composition trace is the main story surface
+- the center pane shows an exact Mermaid `stateDiagram-v2` projection for that
+  selected journey
+- `Machines` and `Map` remain available, but as secondary views
 
-## Goals
+## Product Goal
 
-- Make `cargo statum-graph inspect /path/to/workspace` immediately useful on a
-  real workspace like `citacell`.
-- Make the center pane a visual representation of the exact Statum surface,
-  not a text summary of it.
-- Keep exact and heuristic data visibly separate.
-- Keep the default UX zero-touch: no handwritten graph files and no required
-  extra export step.
-- Make drilldown feel like moving through diagrams, not switching between
-  unrelated lists.
+For one composition machine, the inspector should answer:
+
+- what happens from entry to exit
+- in what order
+- through which composition states and transitions
+- which protocol machines or states are touched along the way
 
 ## Non-Goals
 
-- No runtime replay or runtime chronology claims.
-- No manual narrative overlay file.
-- No heuristic data in exact Mermaid, DOT, PlantUML, or JSON export.
-- No claim of exact nested child-protocol hierarchy until Statum exports that
-  truth surface.
+- no whole-workspace runtime chronology
+- no heuristic Mermaid diagrams presented as exact
+- no exact nested child-machine hierarchy inside composition states until the
+  extractor exports that truth surface
+- no external narrative overlay file as a required input
 
 ## Authority Model
 
 ### Claimed Authority Surface
 
-- exact workspace overview diagrams:
-  exact within the linked compiled `CodebaseDoc` surface
-- exact machine diagrams:
-  exact within the linked machine topology surface
-- exact handoff diagrams:
-  exact for supported exact relations and later supported exact composition
-  paths
-- heuristic views:
-  suggestive only, never exact
+- `Journeys` shows one exact finite root-to-sink composition trace for one
+  selected composition machine
+- `Machines` shows one exact machine-local legality diagram
+- `Map` shows exact linked machine topology
+- relation drilldown can show one exact relation `sequenceDiagram`
 
-### Observation Points
+### Observation Point
 
-- exact structure:
-  macro-expanded, cfg-pruned linked compiled inventories collected into
-  `CodebaseDoc`
-- machine-local structure:
-  `MachineIntrospection::GRAPH` and `ExportDoc`
-- heuristic discovery:
-  raw source scan over reachable module trees, limited to already-known exact
-  machines
-- source-local presentation:
-  `#[present(...)]`, `#[presentation_types(...)]`, and rustdoc on compiled
-  items
+- linked compiled `CodebaseDoc` for exact workspace, composition, and relation
+  surfaces
+- machine-local exported topology for full machine diagrams
+- source-local presentation only from compiled rustdoc and `#[present(...)]`
+  metadata
+- `termaid` is presentation-only
 
-### Support Policy
+### Explicit Non-Claims
 
-- Exact diagrams fail closed when the exact surface is missing.
-- Heuristic diagrams do not exist in the exact lane.
-- If a detail is not present in the exact or extracted source-local surface,
-  the inspector omits it or labels it heuristic.
-- `termaid` is presentation-only. It does not strengthen a weaker semantic
-  surface.
+- no exact nested child-machine hierarchy inside composition states
+- no exact runtime chronology inside touched protocol machines
+- no silently chosen producer when the exact relation surface exposes several
+  attested producers
+- no partial exact journey listing after budget failure
 
-## Layering
+## Identity And Enumeration
 
-This spec uses four layers.
+### Journey Identity
 
-### Narrative Layer
+- display labels use `Entry -> Exit`
+- internal identity uses a snapshot-scoped `JourneyId`
+- `JourneyId` is derived from the selected machine plus the ordered exact step
+  sequence: ingress state and ordered `(transition_index, to_state)` pairs
+- if two journeys share the same endpoints, they remain distinct because the
+  step sequence differs
 
-User-facing inspector modes:
+### Enumeration Policy
 
-- `Workspace`
-- `Machine`
-- `Handoff`
-- support tabs for `Summary`, `Docs`, `Source`, `Mermaid`, and `Explain`
+- enumeration is deterministic
+- one DFS expansion is counted per recursive enumerator frame after outgoing
+  steps are sorted deterministically
+- phase-1 limits:
+  - `MAX_EXACT_JOURNEYS = 256`
+  - `MAX_DFS_EXPANSIONS = 16_384`
+- if either limit is exceeded, journey listing fails closed with
+  `TooManyJourneys`
+- no partial exact list is shown after budget failure
 
-### Session Layer
+### Grouping Policy
 
-Session-only derived behavior:
+- if enumeration succeeds and the machine has at most `64` exact journeys,
+  list them directly
+- if enumeration succeeds and the machine has `65..256` exact journeys, the
+  target UI is grouped `Entry -> Exit` families with exact variant drilldown
+- grouped families must be derived from the full exact journey set, never from
+  truncation or sampling
 
-- semantic selection
-- diagram selection
-- search scope
-- lane selection
-- mixed-lane suppression
-- viewport scroll state
-- pane focus
+Phase note:
 
-### Protocol-Truth Layer
+- phase-1 shipped the deterministic budgets and fail-closed behavior
+- grouped-family UI is a follow-up, not a relaxed semantic claim
 
-Authoritative data surfaces:
+## Top-Level Modes
 
-- linked `CodebaseDoc`
-- machine-local graph export
-- exact relation detail
-- exact composition ownership
-- exact attested route provenance
-
-### Leaf Layer
-
-Local mechanics only:
-
-- ratatui rendering
-- `termaid` invocation
-- viewport scrolling
-- text formatting
-- key dispatch
-
-## Primary Product Shape
-
-The next inspector should have three primary modes.
-
-### `Workspace`
+### Journeys
 
 Purpose:
-show the exact workspace shape first.
 
-Primary diagram:
+- composition-story home
 
-- exact workspace `flowchart`
+Layout:
 
-Default opening:
+- left top: composition machine list
+- left bottom: journey list for the selected machine
+- center top: context header
+- center body: exact journey projection diagram
+- right: support tabs, defaulting to `Steps`
 
-- if composition machines exist, bias selection and ranking toward them
-- otherwise show the exact linked workspace overview
-
-Drilldown:
-
-- selecting a machine opens `Machine`
-- selecting an exact cross-machine handoff opens `Handoff`
-
-### `Machine`
-
-Purpose:
-show one machine's exact legality.
-
-Primary diagram:
-
-- exact `stateDiagram-v2`
-
-Applies to:
-
-- protocol machines
-- composition machines as outer workflow truth
-
-Drilldown:
-
-- selected state
-- selected transition
-- validator details
-- exact relation and path affordances that can open `Handoff`
-
-### `Handoff`
-
-Purpose:
-show one exact cross-machine interaction.
-
-Primary diagram:
-
-- exact `sequenceDiagram` for one exact relation
-- later, exact `sequenceDiagram` for one exact composition path
-
-Drilldown:
-
-- source kind
-- attested producer provenance
-- target machine and target state
-- route identity
-- source locations when available
-
-## Secondary Product Shape
-
-These are required, but secondary:
-
-- raw Mermaid source
-- source locations
-- deterministic explanation text
-- docs and rustdoc
-- diagnostics and heuristic evidence
-
-`Gaps` should stop being a primary top-level mode. Diagnostic and heuristic
-surfaces should still exist, but as support views within the current semantic
-selection.
-
-## Layout Contract
-
-### Left Pane
-
-Owns:
-
-- outline
-- search
-- filters
-- semantic selection list
-- diagnostic badges
-
-It answers:
-
-- what can I inspect next
-
-### Center Pane
-
-Owns:
-
-- diagram viewport
-- exactness badge
-- diagram title
-- raw Mermaid fallback view
-
-It answers:
-
-- what exact diagram am I looking at
-
-### Right Pane
-
-Owns support tabs:
-
-- `Summary`
-- `Docs`
-- `Source`
-- `Mermaid`
-- `Explain`
-
-It answers:
-
-- what does the selected semantic item mean
-
-### Bottom Bar
-
-Owns:
-
-- mode
-- exactness
-- search scope
-- viewport hints
-- short key help
-
-It must not become a content pane.
-
-## Selection Model
-
-The inspector should separate three things.
-
-### Semantic Selection
-
-Examples:
+Context header always shows:
 
 - selected machine
-- selected exact relation
-- selected exact composition path
-- selected state or transition support item
+- journey count or journey-status message
+- selected journey label
+- touched protocol summary
+- a `Map` jump hint
 
-### Diagram Selection
+Journey list rows show:
 
-Examples:
+- `Entry -> Exit` label using state labels
+- step count
+- short touched-protocol summary
 
-- workspace flowchart for current scope
-- machine state diagram for one machine
-- relation sequence diagram for one relation
+Zero-step journeys are valid:
 
-### Viewport State
+- row subtitle: `entry and exit in <state> • 0 steps`
+- diagram: one state with `[*] --> state` and `state --> [*]`
+- `Steps` tab: `No composition transitions. This journey enters and exits in <state>.`
 
-Examples:
+### Machines
 
-- horizontal scroll
-- vertical scroll
-- future fit mode or zoom mode
+Purpose:
 
-The TUI should not derive diagram identity indirectly from ad hoc list state.
+- legal-state drilldown
 
-## Home View Rules
+Layout:
 
-### Startup
+- left: machine list
+- center: exact full-machine `stateDiagram-v2`
+- right: `Summary`, `States`, `Transitions`, `Relations`, `Journeys` for
+  composition machines, `Docs`, `Source`, `Mermaid`, `Issues`
 
-1. Link the target workspace.
-2. Build the exact workspace diagram surface.
-3. Rank initial machine selection.
-4. Open in `Workspace`.
+### Map
 
-### Ranking
+Purpose:
 
-If composition machines exist, rank by:
+- workspace context
 
-1. composition role
-2. exact cross-machine degree
-3. stable machine path
+Layout:
 
-Otherwise rank by:
+- center: exact workspace `flowchart`
+- map opens around the selected machine when entered from `Journeys`
+- scales:
+  - `Overview`
+  - `Focus`
+  - `Full`
 
-1. exact cross-machine degree
-2. stable machine path
+Map is context, not the default home on composition-heavy workspaces.
 
-## Search And Filters
+## Diagram Rules
 
-Search still matters, but it should support diagram selection rather than act
-as the main UI.
+### Journey Diagram
 
-### Search Scopes
+- Mermaid `stateDiagram-v2`
+- only the selected journey's states and transitions
+- `[*]` ingress and egress markers
+- numbered transition labels like `1. start`
+- no fake nested child-machine Mermaid states
 
-- `primary`
-- `docs`
-- `relations`
-- `paths`
-- `all`
+Protocol involvement belongs in the right pane, not inside the exact journey
+diagram.
 
-### Search Rules
+### Machine Diagram
 
-- active scope stays visible
-- selected outline rows show why they matched
-- search never silently widens itself
-- empty states say whether the miss came from query, lane, or filters
+- Mermaid `stateDiagram-v2`
+- full exact machine-local legality
 
-### Filter Rules
+### Map Diagram
 
-Exact filters may include:
+- Mermaid `flowchart`
+- composition machines as double boxes
+- protocol machines as plain boxes
+- owned orchestration handoffs as thick arrows
+- other linked handoffs as solid arrows
+- static references as dotted arrows
 
-- relation kind
-- relation basis
-- composition-only
-- inbound-only
-- outbound-only
+## Right-Pane Tabs
 
-Heuristic filters may include:
+### Journeys Mode
 
-- signature evidence
-- body evidence
-- shadowed-by-exact visibility
+- `Steps`: ordered composition steps with state change, zero or more touched
+  protocol targets, carried-state notes, and producer-alternative notes when
+  the exact relation surface exposes them
+- `Protocols`: grouped summary of every protocol machine touched by the
+  selected journey
+- `Mermaid`: raw Mermaid source for the current journey projection
+- `Source`: exact file or line locations when available
+- `Issues`: fail-closed explanation for unavailable journey surfaces and any
+  weaker heuristic context
 
-Filter state must remain visible but compact.
+### Machine And Map Modes
 
-## Viewport Rules
+- keep the existing guide/docs/source/mermaid/explain split, but match the
+  selected semantic subject instead of reusing journey wording
 
-The diagram viewport is the product center, so it needs explicit rules.
+## Navigation Contract
 
-### Default Render Path
+- `q` quits
+- `Esc` backs out to the outline or clears search, never quits
+- `Tab` and `Shift-Tab` move focus
+- in `Journeys`, focus order is:
+  - machines
+  - journeys
+  - diagram
+  - detail
+- `j` / `k` and arrows act on the currently focused list or viewport only
+- `h` / `l` pan the diagram when the center viewport is focused
+- `[` / `]` switch center or detail tabs
+- `1`, `2`, `3` switch `Journeys`, `Machines`, `Map`
 
-1. derive exact Mermaid in memory
-2. send Mermaid to `termaid`
-3. render terminal output in the viewport
-4. if rendering fails, show raw Mermaid with an explicit reason
+The inspector should never require a temporary `pick vs scroll` mode.
 
-### Viewport Behavior
+## Naming Rules
 
-- support vertical scrolling
-- support horizontal scrolling
-- keep semantic selection stable while scrolling
-- do not rebuild semantic selection from scroll position
-
-### Fallback Behavior
-
-- if Mermaid generation fails closed, say why
-- if `termaid` is unavailable, say why
-- if `termaid` cannot render the Mermaid subset, show raw Mermaid
-- do not silently down-convert one exact surface into a weaker approximate
-  diagram
-
-## Support Tabs
-
-### `Summary`
-
-Deterministic structured facts for the selected semantic item.
-
-Examples:
-
-- machine role
-- state count
-- transition count
-- relation source kind
-- attested route identity
-- exactness label
-
-### `Docs`
-
-Source-local enrichment:
-
-- `#[present(description = ...)]`
-- rustdoc
-- other extracted source-local presentation data
-
-### `Source`
-
-Exact items should show, when available:
-
-- machine path
-- state name
-- transition method
-- exact relation source kind
-- attested route identity
-- source file and line for exact relation records
-
-Heuristic items should show:
-
-- file path
-- line
-- evidence kind
-- matched path text
-- snippet
-
-### `Mermaid`
-
-Always show the raw Mermaid source that underlies the current diagram plan.
-
-This is required even when `termaid` preview works.
-
-### `Explain`
-
-Deterministic generated prose from exact structure.
-
-Rules:
-
-- grounded in structure
-- grounded in source-local metadata when present
-- no invented business intent
-- if the current lane is heuristic, say so
-
-## Citacell Acceptance Story
-
-For `/home/eran/code/citacell`, the target experience is:
-
-1. run `cargo statum-graph inspect /home/eran/code/citacell/`
-2. see an exact workspace flowchart immediately
-3. select the most important machine from the outline
-4. see that machine's exact `stateDiagram-v2`
-5. select an exact handoff
-6. see an exact `sequenceDiagram`
-7. inspect raw Mermaid or source only when needed
-
-If the user still has to reconstruct the architecture from text rows before
-seeing the graph, the product is missing the point.
-
-## Source-Local Metadata Policy
-
-Source-local metadata is useful, but optional.
-
-Supported:
+Prefer this order:
 
 - `#[present(label = ...)]`
-- `#[present(description = ...)]`
-- typed `#[presentation_types(...)]` metadata
-- rustdoc
+- short doc-derived label when already available
+- compact type label such as `outbound_release::Flow<State>` only as a last
+  resort
 
-Policy:
+Primary chrome should say:
 
-- the inspector remains useful without it
-- metadata enriches exact items
-- metadata does not gate the diagram-first UX
-- no separate inspector-only config file is required
+- `Journeys`
+- `Machines`
+- `Map`
+- `Steps`
+- `Protocols`
+- `Source`
+- `Issues`
 
-## Out Of Scope For This Spec
+Primary chrome should not say:
 
-- runtime replay integration
-- persistence snapshots
-- external operational runbooks
-- team ownership dashboards
-- alerts and timers not modeled in source-local typed metadata
-- exact nested child-slot hierarchy until Statum exports it as a first-class
-  truth surface
+- `checkpoint`
+- `comp`
+- `exact lane`
+- `heuristic lane`
+- `mixed lane`
 
-## Acceptance Criteria
+Those terms belong in diagnostics, not the main story surface.
 
-- A user can understand the workspace shape from the initial `Workspace`
-  diagram.
-- A user can move from workspace to machine to handoff without losing
-  orientation.
-- A user can tell which surfaces are exact, heuristic, or source-local.
-- A user can inspect raw Mermaid and exact source status without leaving the
-  current semantic selection.
-- The inspector remains useful when source-local metadata is sparse or absent.
+## CLI Contract
 
-## Implementation Checklist
+Stable commands:
 
-### Authority And Data Surface
+- `inspect`
+- `state-diagram`
+- `sequence-diagram`
+- `suggest`
 
-- [ ] keep exact diagrams backed only by linked compiled exact surfaces
-- [ ] keep heuristic evidence out of exact Mermaid
-- [ ] fail closed for unsupported exact diagrams
-- [ ] document exact, heuristic, and presentation observation points in code
-      and docs
+Inspector defaults:
 
-### View Model
+- if the workspace has composition machines, `inspect` opens on `Journeys`
+- otherwise it opens on `Machines`
 
-- [ ] add primary modes: `Workspace`, `Machine`, `Handoff`
-- [ ] add support tabs: `Summary`, `Docs`, `Source`, `Mermaid`, `Explain`
-- [ ] separate semantic selection, diagram selection, and viewport state
-- [ ] keep diagnostics secondary instead of top-level
+Optional inspector deep links are useful for demos and tests:
 
-### Diagram Viewport
+- `--mode journeys|machines|map`
+- `--machine <selector>`
 
-- [ ] make the center pane a real diagram viewport
-- [ ] support `termaid` preview with raw Mermaid fallback
-- [ ] add scroll behavior for larger diagrams
-- [ ] keep semantic selection stable while scrolling
+Phase note:
 
-### Diagram Selection
+- public `--journey` deep links should wait until the internal `JourneyId`
+  encoding is intentionally frozen
 
-- [ ] add exact workspace flowchart home view
-- [ ] add exact machine `stateDiagram-v2` drilldown
-- [ ] add exact relation `sequenceDiagram` drilldown
-- [ ] add exact composition-path `sequenceDiagram` later
+## Mermaid And Termaid Boundary
 
-### Navigation
+- Statum generates Mermaid from exact linked data
+- `termaid` renders Mermaid in the terminal
+- if `termaid` is unavailable, the inspector shows raw Mermaid source and says
+  why
+- if `termaid` cannot render the Mermaid subset, the inspector falls back to
+  raw Mermaid instead of approximating
 
-- [ ] keep `q` as the direct quit key
-- [ ] keep `?` help
-- [ ] keep search scoped and legible
-- [ ] make mode switches diagram-oriented instead of pane-tab oriented
-- [ ] keep viewport controls discoverable in help and bottom chrome
+## Acceptance Scenarios
 
-### Source And Docs
+On a workspace like `citacell`:
 
-- [ ] keep source file and line for heuristic evidence
-- [ ] surface exact source location status where available
-- [ ] keep attested route provenance visible in `Summary` and `Source`
-- [ ] keep raw Mermaid always available in `Mermaid`
+- opening `inspect` lands on one composition machine and one concrete journey
+- the selected journey answers the order of composition states and transitions
+  without first decoding the workspace map
+- protocol touches are visible in the right pane without inventing protocol
+  runtime chronology
+- moving to `Map` feels like context
+- moving to `Machines` feels like legality drilldown
 
-### Documentation
+## Test Obligations
 
-- [ ] keep this spec aligned with the Mermaid plan
-- [ ] keep the inspector plan pointer aligned with this spec
-- [ ] update `cargo-statum-graph/README.md` only when shipped behavior changes
-- [ ] narrow any wording that promises more authority than the implementation
-      can justify
+Renderer and authority:
+
+- journey projection renders only the selected journey's states and transitions
+- same-endpoint journeys have distinct `JourneyId` values
+- zero-step journeys render correctly
+- missing-root machines fail closed
+- reachable cycles fail closed
+- over-budget enumeration fails closed with no partial list
+- no fake nested child-machine hierarchy appears in journey Mermaid
+
+Inspector interaction:
+
+- composition workspaces open to `Journeys`
+- protocol-only workspaces open to `Machines`
+- `Journeys` focus order is machine list -> journey list -> diagram -> detail
+- diagram scrolling and journey selection never fight over the same focus
+- map scale, hop radius, and layout keys only affect `Map`
+
+## Delivery Order
+
+1. deterministic journey identity, budgets, and exact journey projection
+2. journey-first inspector shell and focus model
+3. map and machine drilldown alignment around preserved selection
+4. grouped journey-family UI for large but still exact acyclic machines
+5. docs and README alignment

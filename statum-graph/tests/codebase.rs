@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
+use std::sync::OnceLock;
 
 use statum::{
     LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
@@ -20,6 +21,224 @@ fn broken_row_type_name() -> &'static str {
 
 fn workflow_db_row_type_name() -> &'static str {
     "workflow::DbRow"
+}
+
+fn zero_step_composition_linked() -> &'static [LinkedMachineGraph] {
+    static LINKED: OnceLock<Box<[LinkedMachineGraph]>> = OnceLock::new();
+    LINKED
+        .get_or_init(|| {
+            let states = Box::new([LinkedStateDescriptor {
+                rust_name: "Idle",
+                label: Some("Idle"),
+                description: None,
+                docs: None,
+                has_data: false,
+                direct_construction_available: true,
+            }]);
+            Box::new([LinkedMachineGraph {
+                machine: MachineDescriptor {
+                    module_path: "zero_step::machine",
+                    rust_type_path: "zero_step::machine::Flow",
+                    role: MachineRole::Composition,
+                },
+                label: Some("Zero Step Flow"),
+                description: None,
+                docs: None,
+                states: Box::leak(states),
+                transitions: LinkedTransitionInventory::new(zero_step_transitions),
+                static_links: &[],
+            }])
+        })
+        .as_ref()
+}
+
+fn zero_step_transitions() -> &'static [LinkedTransitionDescriptor] {
+    &[]
+}
+
+fn too_many_journeys_linked() -> &'static [LinkedMachineGraph] {
+    static LINKED: OnceLock<Box<[LinkedMachineGraph]>> = OnceLock::new();
+    LINKED
+        .get_or_init(|| {
+            let depth = 9usize;
+            let node_count = (1usize << (depth + 1)) - 1;
+            let mut state_names = Vec::with_capacity(node_count);
+            for index in 0..node_count {
+                state_names.push(Box::leak(format!("S{index}").into_boxed_str()) as &'static str);
+            }
+            let states = state_names
+                .iter()
+                .map(|name| LinkedStateDescriptor {
+                    rust_name: name,
+                    label: Some(name),
+                    description: None,
+                    docs: None,
+                    has_data: false,
+                    direct_construction_available: true,
+                })
+                .collect::<Vec<_>>();
+            let transitions = (0..((1usize << depth) - 1))
+                .map(|index| {
+                    let left = state_names[index * 2 + 1];
+                    let right = state_names[index * 2 + 2];
+                    let to = Box::leak(Box::new([left, right])) as &'static [&'static str; 2];
+                    LinkedTransitionDescriptor {
+                        method_name: Box::leak(format!("step_{index}").into_boxed_str()),
+                        label: None,
+                        description: None,
+                        docs: None,
+                        from: state_names[index],
+                        to,
+                    }
+                })
+                .collect::<Vec<_>>();
+            TOO_MANY_JOURNEY_STATES
+                .set(states.into_boxed_slice())
+                .expect("set too-many-journey states once");
+            TOO_MANY_JOURNEY_TRANSITIONS
+                .set(transitions.into_boxed_slice())
+                .expect("set too-many-journey transitions once");
+            Box::new([LinkedMachineGraph {
+                machine: MachineDescriptor {
+                    module_path: "too_many::machine",
+                    rust_type_path: "too_many::machine::Flow",
+                    role: MachineRole::Composition,
+                },
+                label: Some("Too Many Journeys"),
+                description: None,
+                docs: None,
+                states: too_many_journey_states(),
+                transitions: LinkedTransitionInventory::new(too_many_journey_transitions),
+                static_links: &[],
+            }])
+        })
+        .as_ref()
+}
+
+static TOO_MANY_JOURNEY_STATES: OnceLock<Box<[LinkedStateDescriptor]>> = OnceLock::new();
+static TOO_MANY_JOURNEY_TRANSITIONS: OnceLock<Box<[LinkedTransitionDescriptor]>> = OnceLock::new();
+
+fn same_endpoint_journeys_linked() -> &'static [LinkedMachineGraph] {
+    static LINKED: OnceLock<Box<[LinkedMachineGraph]>> = OnceLock::new();
+    LINKED
+        .get_or_init(|| {
+            let states = Box::new([
+                LinkedStateDescriptor {
+                    rust_name: "Start",
+                    label: Some("Start"),
+                    description: None,
+                    docs: None,
+                    has_data: false,
+                    direct_construction_available: true,
+                },
+                LinkedStateDescriptor {
+                    rust_name: "ReviewA",
+                    label: Some("Review A"),
+                    description: None,
+                    docs: None,
+                    has_data: false,
+                    direct_construction_available: true,
+                },
+                LinkedStateDescriptor {
+                    rust_name: "ReviewB",
+                    label: Some("Review B"),
+                    description: None,
+                    docs: None,
+                    has_data: false,
+                    direct_construction_available: true,
+                },
+                LinkedStateDescriptor {
+                    rust_name: "Done",
+                    label: Some("Done"),
+                    description: None,
+                    docs: None,
+                    has_data: false,
+                    direct_construction_available: true,
+                },
+            ]);
+            let choose_to =
+                Box::leak(Box::new(["ReviewA", "ReviewB"])) as &'static [&'static str; 2];
+            let finish_a = Box::leak(Box::new(["Done"])) as &'static [&'static str; 1];
+            let finish_b = Box::leak(Box::new(["Done"])) as &'static [&'static str; 1];
+            let transitions = Box::new([
+                LinkedTransitionDescriptor {
+                    method_name: "choose",
+                    label: Some("Choose"),
+                    description: None,
+                    docs: None,
+                    from: "Start",
+                    to: choose_to,
+                },
+                LinkedTransitionDescriptor {
+                    method_name: "finish_a",
+                    label: Some("Finish A"),
+                    description: None,
+                    docs: None,
+                    from: "ReviewA",
+                    to: finish_a,
+                },
+                LinkedTransitionDescriptor {
+                    method_name: "finish_b",
+                    label: Some("Finish B"),
+                    description: None,
+                    docs: None,
+                    from: "ReviewB",
+                    to: finish_b,
+                },
+            ]);
+            SAME_ENDPOINT_JOURNEY_STATES
+                .set(states)
+                .expect("set same-endpoint journey states once");
+            SAME_ENDPOINT_JOURNEY_TRANSITIONS
+                .set(transitions)
+                .expect("set same-endpoint journey transitions once");
+            Box::new([LinkedMachineGraph {
+                machine: MachineDescriptor {
+                    module_path: "same_endpoints::machine",
+                    rust_type_path: "same_endpoints::machine::Flow",
+                    role: MachineRole::Composition,
+                },
+                label: Some("Same Endpoint Flow"),
+                description: None,
+                docs: None,
+                states: same_endpoint_journey_states(),
+                transitions: LinkedTransitionInventory::new(same_endpoint_journey_transitions),
+                static_links: &[],
+            }])
+        })
+        .as_ref()
+}
+
+static SAME_ENDPOINT_JOURNEY_STATES: OnceLock<Box<[LinkedStateDescriptor]>> = OnceLock::new();
+static SAME_ENDPOINT_JOURNEY_TRANSITIONS: OnceLock<Box<[LinkedTransitionDescriptor]>> =
+    OnceLock::new();
+
+fn too_many_journey_states() -> &'static [LinkedStateDescriptor] {
+    TOO_MANY_JOURNEY_STATES
+        .get()
+        .expect("too-many-journey states initialized")
+        .as_ref()
+}
+
+fn too_many_journey_transitions() -> &'static [LinkedTransitionDescriptor] {
+    TOO_MANY_JOURNEY_TRANSITIONS
+        .get()
+        .expect("too-many-journey transitions initialized")
+        .as_ref()
+}
+
+fn same_endpoint_journey_states() -> &'static [LinkedStateDescriptor] {
+    SAME_ENDPOINT_JOURNEY_STATES
+        .get()
+        .expect("same-endpoint journey states initialized")
+        .as_ref()
+}
+
+fn same_endpoint_journey_transitions() -> &'static [LinkedTransitionDescriptor] {
+    SAME_ENDPOINT_JOURNEY_TRANSITIONS
+        .get()
+        .expect("same-endpoint journey transitions initialized")
+        .as_ref()
 }
 
 mod task {
@@ -400,6 +619,219 @@ fn linked_codebase_machine_state_diagram_renders_selected_machine() {
         workflow.node_id(1)
     )));
     assert!(mermaid.contains(&format!("{} --> [*]", workflow.node_id(2))));
+}
+
+#[test]
+fn linked_codebase_machine_journey_renders_selected_trace_as_state_diagram() {
+    let doc = CodebaseDoc::linked().expect("linked codebase doc");
+    let workflow = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("workflow::Machine"))
+        .expect("workflow machine");
+
+    let journeys = render::machine_journeys(&doc, workflow.index).expect("workflow journeys");
+    assert_eq!(journeys.len(), 1);
+
+    let mermaid = render::mermaid_machine_journey(&doc, workflow.index, &journeys[0].id)
+        .expect("workflow journey diagram");
+
+    assert!(mermaid.contains("stateDiagram-v2"));
+    assert!(mermaid.contains("%% journey Workflow Machine [composition] ::"));
+    assert!(mermaid.contains(&workflow.node_id(0)));
+    assert!(mermaid.contains(&workflow.node_id(1)));
+    assert!(mermaid.contains(&workflow.node_id(2)));
+    assert!(mermaid.contains(": 1. Start Workflow"));
+    assert!(mermaid.contains(": 2. finish"));
+}
+
+#[test]
+fn zero_step_composition_machine_renders_one_state_journey() {
+    let doc = CodebaseDoc::try_from_linked(zero_step_composition_linked()).expect("codebase doc");
+    let machine = doc.machines().first().expect("zero-step machine");
+
+    let journeys = render::machine_journeys(&doc, machine.index).expect("zero-step journeys");
+    assert_eq!(journeys.len(), 1);
+    assert!(journeys[0].steps().is_empty());
+
+    let mermaid = render::mermaid_machine_journey(&doc, machine.index, &journeys[0].id)
+        .expect("zero-step journey diagram");
+    assert!(mermaid.contains("stateDiagram-v2"));
+    assert!(mermaid.contains("[*] --> m0_s0"));
+    assert!(mermaid.contains("m0_s0 --> [*]"));
+}
+
+#[test]
+fn machine_journeys_use_step_sequence_identity_for_same_endpoint_variants() {
+    let doc = CodebaseDoc::try_from_linked(same_endpoint_journeys_linked()).expect("codebase doc");
+    let machine = doc
+        .machines()
+        .first()
+        .expect("same-endpoint journeys machine");
+
+    let journeys = render::machine_journeys(&doc, machine.index).expect("journeys");
+    assert_eq!(journeys.len(), 2);
+    assert!(journeys.iter().all(|journey| journey.ingress_state() == 0));
+    assert!(journeys.iter().all(|journey| journey.egress_state == 3));
+    assert_ne!(journeys[0].id, journeys[1].id);
+
+    let first = render::mermaid_machine_journey(&doc, machine.index, &journeys[0].id)
+        .expect("first journey diagram");
+    let second = render::mermaid_machine_journey(&doc, machine.index, &journeys[1].id)
+        .expect("second journey diagram");
+    assert_ne!(first, second);
+    assert!(
+        (first.contains("Review A") && second.contains("Review B"))
+            || (first.contains("Review B") && second.contains("Review A"))
+    );
+}
+
+#[test]
+fn machine_journeys_fail_closed_when_exact_enumeration_exceeds_budget() {
+    let doc = CodebaseDoc::try_from_linked(too_many_journeys_linked()).expect("codebase doc");
+    let machine = doc.machines().first().expect("too-many-journeys machine");
+
+    let error = render::machine_journeys(&doc, machine.index)
+        .expect_err("journey budget should fail closed");
+    assert_eq!(
+        error,
+        render::DiagramError::TooManyJourneys {
+            index: machine.index
+        }
+    );
+}
+
+#[test]
+fn linked_codebase_workspace_flow_renders_machine_level_projection() {
+    let doc = CodebaseDoc::linked().expect("linked codebase doc");
+
+    let mermaid = render::mermaid_workspace_flow(
+        &doc,
+        render::WorkspaceFlowOptions {
+            machine_indices: None,
+            direction: render::WorkspaceFlowDirection::LeftRight,
+            compact_labels: true,
+            edge_labels: render::WorkspaceFlowEdgeLabelMode::Hidden,
+            role_shapes: true,
+        },
+    )
+    .expect("workspace flow diagram");
+
+    assert!(mermaid.contains("graph LR"));
+    assert!(mermaid.contains("[[\"Workflow\"]]"));
+    assert!(mermaid.contains("Task"));
+    assert!(!mermaid.contains("Draft"));
+    assert!(!mermaid.contains("In Progress"));
+    assert!(mermaid.contains("==>"));
+    assert!(!mermaid.contains('|'));
+}
+
+#[test]
+fn linked_codebase_workspace_flow_can_focus_on_selected_machine_subset() {
+    let doc = CodebaseDoc::linked().expect("linked codebase doc");
+    let workflow = doc
+        .machines()
+        .iter()
+        .find(|machine| machine.rust_type_path.ends_with("workflow::Machine"))
+        .expect("workflow machine");
+
+    let mermaid = render::mermaid_workspace_flow(
+        &doc,
+        render::WorkspaceFlowOptions {
+            machine_indices: Some(&[workflow.index]),
+            ..render::WorkspaceFlowOptions::default()
+        },
+    )
+    .expect("focused workspace flow diagram");
+
+    assert!(mermaid.contains("graph TD"));
+    assert!(mermaid.contains("Workflow Machine"));
+    assert!(!mermaid.contains("Task Machine"));
+    assert!(!mermaid.contains("==>"));
+    assert!(!mermaid.contains("-->"));
+}
+
+#[test]
+fn linked_codebase_workspace_flow_rejects_missing_selected_machine() {
+    let doc = CodebaseDoc::linked().expect("linked codebase doc");
+
+    assert_eq!(
+        render::mermaid_workspace_flow(
+            &doc,
+            render::WorkspaceFlowOptions {
+                machine_indices: Some(&[usize::MAX]),
+                ..render::WorkspaceFlowOptions::default()
+            },
+        )
+        .unwrap_err()
+        .to_string(),
+        format!("codebase machine index {} is missing", usize::MAX)
+    );
+}
+
+#[test]
+fn workspace_flow_disambiguates_duplicate_compact_machine_labels() {
+    fn no_transitions() -> &'static [LinkedTransitionDescriptor] {
+        &[]
+    }
+
+    static IDLE_STATE: [LinkedStateDescriptor; 1] = [LinkedStateDescriptor {
+        rust_name: "Idle",
+        label: Some("Idle"),
+        description: None,
+        docs: None,
+        has_data: false,
+        direct_construction_available: true,
+    }];
+    static LINKS: [StaticMachineLinkDescriptor; 1] = [StaticMachineLinkDescriptor {
+        from_state: "Idle",
+        field_name: Some("handoff"),
+        to_machine_path: &["tasks", "broker", "machine", "Flow"],
+        to_state: "Idle",
+    }];
+    static LINKED: [LinkedMachineGraph; 2] = [
+        LinkedMachineGraph {
+            machine: MachineDescriptor {
+                module_path: "flows::broker::machine",
+                rust_type_path: "flows::broker::machine::Flow",
+                role: MachineRole::Protocol,
+            },
+            label: None,
+            description: None,
+            docs: None,
+            states: &IDLE_STATE,
+            transitions: LinkedTransitionInventory::new(no_transitions),
+            static_links: &LINKS,
+        },
+        LinkedMachineGraph {
+            machine: MachineDescriptor {
+                module_path: "tasks::broker::machine",
+                rust_type_path: "tasks::broker::machine::Flow",
+                role: MachineRole::Protocol,
+            },
+            label: None,
+            description: None,
+            docs: None,
+            states: &IDLE_STATE,
+            transitions: LinkedTransitionInventory::new(no_transitions),
+            static_links: &[],
+        },
+    ];
+
+    let doc = CodebaseDoc::try_from_linked(&LINKED).expect("duplicate-label fixture");
+    let mermaid = render::mermaid_workspace_flow(
+        &doc,
+        render::WorkspaceFlowOptions {
+            compact_labels: true,
+            edge_labels: render::WorkspaceFlowEdgeLabelMode::Hidden,
+            ..render::WorkspaceFlowOptions::default()
+        },
+    )
+    .expect("workspace flow diagram");
+
+    assert!(mermaid.contains("flows::broker::machine::Flow"));
+    assert!(mermaid.contains("tasks::broker::machine::Flow"));
+    assert!(!mermaid.contains("m0[\"broker\"]\n    m1[\"broker\"]"));
 }
 
 #[test]

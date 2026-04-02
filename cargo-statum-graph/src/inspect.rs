@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -79,26 +80,16 @@ fn restore_terminal(terminal: &mut InspectorTerminal) -> io::Result<()> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Focus {
     Workspace,
+    JourneyList,
     MainView,
     Detail,
 }
 
-impl Focus {
-    fn next(self) -> Self {
-        match self {
-            Self::Workspace => Self::MainView,
-            Self::MainView => Self::Detail,
-            Self::Detail => Self::Workspace,
-        }
-    }
-
-    fn previous(self) -> Self {
-        match self {
-            Self::Workspace => Self::Detail,
-            Self::MainView => Self::Workspace,
-            Self::Detail => Self::MainView,
-        }
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct InspectorPaneLayout {
+    outline: Rect,
+    center: Rect,
+    detail: Rect,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,9 +102,9 @@ enum WorkspaceSection {
 impl WorkspaceSection {
     fn label(self) -> &'static str {
         match self {
-            Self::Composition => "Workspace",
-            Self::Machines => "Machine",
-            Self::Gaps => "Gaps",
+            Self::Composition => "Journeys",
+            Self::Machines => "Machines",
+            Self::Gaps => "Map",
         }
     }
 
@@ -139,16 +130,41 @@ enum MachineSection {
     Diagnostics,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceDiagramScale {
+    Overview,
+    Focus,
+    Full,
+}
+
+impl WorkspaceDiagramScale {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "overview",
+            Self::Focus => "focus",
+            Self::Full => "full",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Overview => Self::Focus,
+            Self::Focus => Self::Full,
+            Self::Full => Self::Overview,
+        }
+    }
+}
+
 impl MachineSection {
     fn label(self) -> &'static str {
         match self {
-            Self::Overview => "Overview",
+            Self::Overview => "Diagram",
             Self::States => "States",
             Self::Transitions => "Transitions",
-            Self::Validators => "Validators",
-            Self::Relations => "Relations",
-            Self::Paths => "Paths",
-            Self::Diagnostics => "Diagnostics",
+            Self::Validators => "Rebuild",
+            Self::Relations => "Handoffs",
+            Self::Paths => "Journeys",
+            Self::Diagnostics => "Issues",
         }
     }
 
@@ -194,11 +210,11 @@ impl DetailTab {
 
     fn label(self) -> &'static str {
         match self {
-            Self::Summary => "Summary",
+            Self::Summary => "Guide",
             Self::Docs => "Docs",
-            Self::Diagram => "Diagram",
+            Self::Diagram => "Mermaid",
             Self::Source => "Source",
-            Self::Explain => "Explain",
+            Self::Explain => "Why",
         }
     }
 
@@ -305,9 +321,9 @@ enum LaneMode {
 impl LaneMode {
     fn label(self) -> &'static str {
         match self {
-            Self::Exact => "exact",
-            Self::Heuristic => "heuristic",
-            Self::Mixed => "mixed",
+            Self::Exact => "proven",
+            Self::Heuristic => "hints",
+            Self::Mixed => "both",
         }
     }
 
@@ -365,9 +381,9 @@ enum PathKind {
 impl PathKind {
     fn display_label(self) -> &'static str {
         match self {
-            Self::Composition => "composition",
-            Self::Exact => "exact",
-            Self::Heuristic => "heuristic",
+            Self::Composition => "preferred",
+            Self::Exact => "linked",
+            Self::Heuristic => "hint",
         }
     }
 }
@@ -385,6 +401,42 @@ struct PathItem {
     kind: PathKind,
     target_machine: usize,
     steps: Vec<PathStep>,
+}
+
+type FlowTraceStep = codebase_render::JourneyStep;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FlowTraceItem {
+    id: codebase_render::JourneyId,
+    ingress_state: usize,
+    egress_state: usize,
+    steps: Vec<FlowTraceStep>,
+}
+
+impl From<codebase_render::Journey> for FlowTraceItem {
+    fn from(journey: codebase_render::Journey) -> Self {
+        Self {
+            ingress_state: journey.id.ingress_state,
+            egress_state: journey.egress_state,
+            steps: journey.id.steps.clone(),
+            id: journey.id,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FlowTraceStatus {
+    Available,
+    NotComposition,
+    MissingRoot,
+    ReachableCycle,
+    TooManyJourneys,
+}
+
+#[derive(Clone, Debug)]
+struct FlowTraceCache {
+    items: Rc<[FlowTraceItem]>,
+    status: FlowTraceStatus,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -524,6 +576,8 @@ struct InspectorSessionCache {
     summary_items: Option<Rc<[SummaryItem]>>,
     relation_items: Option<Rc<[RelationItem]>>,
     path_items: Option<Rc<[PathItem]>>,
+    flow_trace: Option<FlowTraceCache>,
+    flow_trace_by_machine: BTreeMap<usize, FlowTraceCache>,
     disconnected_group_count: Option<usize>,
     diagram_preview: Option<DiagramPreviewCache>,
 }
@@ -556,6 +610,9 @@ struct InspectorApp {
     suggestions: CompositionSuggestionOverlay,
     workspace_label: String,
     workspace_section: WorkspaceSection,
+    workspace_diagram_scale: WorkspaceDiagramScale,
+    workspace_flow_direction: codebase_render::WorkspaceFlowDirection,
+    workspace_focus_hops: usize,
     selected_machine: usize,
     selected_gap: usize,
     input_mode: InputMode,
@@ -573,33 +630,60 @@ struct InspectorApp {
     relation_index: usize,
     path_index: usize,
     diagram_scroll_y: u16,
+    diagram_scroll_x: u16,
     show_help: bool,
     should_quit: bool,
     cache: RefCell<InspectorSessionCache>,
 }
 
 impl InspectorApp {
+    fn detail_tab_label(&self, tab: DetailTab) -> &'static str {
+        if self.workspace_section == WorkspaceSection::Composition
+            && self.machine_section == MachineSection::Paths
+        {
+            match tab {
+                DetailTab::Summary => "Steps",
+                DetailTab::Docs => "Protocols",
+                DetailTab::Diagram => "Mermaid",
+                DetailTab::Source => "Source",
+                DetailTab::Explain => "Issues",
+            }
+        } else {
+            tab.label()
+        }
+    }
+
+    fn preferred_machine_section(
+        &self,
+        machine: Option<&CodebaseMachine>,
+        workspace_section: WorkspaceSection,
+    ) -> MachineSection {
+        match workspace_section {
+            WorkspaceSection::Composition
+                if machine.is_some_and(|machine| machine.role.is_composition()) =>
+            {
+                MachineSection::Paths
+            }
+            WorkspaceSection::Gaps => MachineSection::Overview,
+            _ => MachineSection::Overview,
+        }
+    }
+
     fn new(
         doc: CodebaseDoc,
         heuristic: HeuristicOverlay,
         suggestions: CompositionSuggestionOverlay,
         workspace_label: String,
     ) -> Self {
-        let has_composition = doc
-            .machines()
-            .iter()
-            .any(|machine| machine.role.is_composition());
-        let workspace_section = if has_composition {
-            WorkspaceSection::Composition
-        } else {
-            WorkspaceSection::Machines
-        };
         let mut app = Self {
             doc,
             heuristic,
             suggestions,
             workspace_label,
-            workspace_section,
+            workspace_section: WorkspaceSection::Composition,
+            workspace_diagram_scale: WorkspaceDiagramScale::Overview,
+            workspace_flow_direction: codebase_render::WorkspaceFlowDirection::TopDown,
+            workspace_focus_hops: 1,
             selected_machine: 0,
             selected_gap: 0,
             input_mode: InputMode::Normal,
@@ -609,7 +693,7 @@ impl InspectorApp {
             heuristic_filters: HeuristicFilters::default(),
             lane_mode: LaneMode::Exact,
             focus: Focus::Workspace,
-            machine_section: MachineSection::Overview,
+            machine_section: MachineSection::Paths,
             detail_tab: DetailTab::Summary,
             relation_context: RelationContext::Machine,
             machine_item_index: 0,
@@ -617,16 +701,24 @@ impl InspectorApp {
             relation_index: 0,
             path_index: 0,
             diagram_scroll_y: 0,
+            diagram_scroll_x: 0,
             show_help: false,
             should_quit: false,
             cache: RefCell::new(InspectorSessionCache::default()),
         };
         app.clamp_indices();
-        if matches!(
-            app.workspace_section,
-            WorkspaceSection::Machines | WorkspaceSection::Composition
-        ) {
+        if app.visible_composition_machine_indices().is_empty()
+            && !app.visible_machine_indices().is_empty()
+        {
+            app.workspace_section = WorkspaceSection::Machines;
+            if let Some(first_machine) = app.visible_machine_indices().first().copied() {
+                app.selected_machine = first_machine;
+            }
             app.machine_section = MachineSection::Overview;
+            app.clamp_indices();
+        } else if let Some(machine) = app.current_machine() {
+            app.machine_section =
+                app.preferred_machine_section(Some(machine), app.workspace_section);
         }
         app
     }
@@ -634,28 +726,45 @@ impl InspectorApp {
     fn focus_label(&self) -> &'static str {
         match self.focus {
             Focus::Workspace => "outline",
+            Focus::JourneyList => "journeys",
             Focus::MainView => "center",
             Focus::Detail => "detail",
         }
     }
 
-    fn available_workspace_sections(&self) -> Vec<WorkspaceSection> {
-        let mut sections = Vec::new();
-        if self.has_composition_machines() {
-            sections.push(WorkspaceSection::Composition);
+    fn next_focus(&self) -> Focus {
+        match self.focus {
+            Focus::Workspace if self.uses_flow_shell() => Focus::JourneyList,
+            Focus::Workspace => Focus::MainView,
+            Focus::JourneyList => Focus::MainView,
+            Focus::MainView => Focus::Detail,
+            Focus::Detail => Focus::Workspace,
         }
-        sections.push(WorkspaceSection::Machines);
-        if !self.suggestions.is_empty() {
-            sections.push(WorkspaceSection::Gaps);
-        }
-        sections
     }
 
-    fn has_composition_machines(&self) -> bool {
-        self.doc
+    fn previous_focus(&self) -> Focus {
+        match self.focus {
+            Focus::Workspace => Focus::Detail,
+            Focus::JourneyList => Focus::Workspace,
+            Focus::MainView if self.uses_flow_shell() => Focus::JourneyList,
+            Focus::MainView => Focus::Workspace,
+            Focus::Detail => Focus::MainView,
+        }
+    }
+
+    fn available_workspace_sections(&self) -> Vec<WorkspaceSection> {
+        let mut sections = Vec::with_capacity(3);
+        if self
+            .doc
             .machines()
             .iter()
             .any(|machine| machine.role.is_composition())
+        {
+            sections.push(WorkspaceSection::Composition);
+        }
+        sections.push(WorkspaceSection::Machines);
+        sections.push(WorkspaceSection::Gaps);
+        sections
     }
 
     fn visible_gap_indices(&self) -> Rc<[usize]> {
@@ -686,21 +795,15 @@ impl InspectorApp {
         self.suggestions.suggestions().get(gap_index)
     }
 
-    fn select_gap(&mut self, gap_index: usize) {
-        self.selected_gap = gap_index;
-        self.path_index = 0;
-        self.diagram_scroll_y = 0;
-        self.invalidate_cache();
-    }
-
     fn select_machine(&mut self, machine_index: usize) {
         self.selected_machine = machine_index;
-        self.machine_section = MachineSection::Overview;
+        self.machine_section =
+            self.preferred_machine_section(self.doc.machine(machine_index), self.workspace_section);
         self.relation_context = RelationContext::Machine;
         self.machine_item_index = 0;
         self.relation_index = 0;
         self.path_index = 0;
-        self.diagram_scroll_y = 0;
+        self.reset_diagram_scroll();
         self.invalidate_cache();
     }
 
@@ -717,8 +820,7 @@ impl InspectorApp {
     fn visible_workspace_machine_indices(&self) -> Rc<[usize]> {
         match self.workspace_section {
             WorkspaceSection::Composition => self.visible_composition_machine_indices(),
-            WorkspaceSection::Machines => self.visible_machine_indices(),
-            WorkspaceSection::Gaps => Rc::from(Vec::new()),
+            WorkspaceSection::Machines | WorkspaceSection::Gaps => self.visible_machine_indices(),
         }
     }
 
@@ -782,25 +884,34 @@ impl InspectorApp {
     }
 
     fn available_machine_sections(&self) -> &'static [MachineSection] {
+        const COMPOSITION_HOME: &[MachineSection] = &[MachineSection::Paths];
+        const COMPOSITION_MACHINE: &[MachineSection] = &[
+            MachineSection::Overview,
+            MachineSection::States,
+            MachineSection::Transitions,
+            MachineSection::Validators,
+            MachineSection::Relations,
+            MachineSection::Paths,
+            MachineSection::Diagnostics,
+        ];
+        const PROTOCOL_MACHINE: &[MachineSection] = &[
+            MachineSection::Overview,
+            MachineSection::States,
+            MachineSection::Transitions,
+            MachineSection::Validators,
+            MachineSection::Relations,
+            MachineSection::Diagnostics,
+        ];
+        const GAPS: &[MachineSection] = &[MachineSection::Overview];
+
         match self.workspace_section {
-            WorkspaceSection::Composition => &[
-                MachineSection::Overview,
-                MachineSection::States,
-                MachineSection::Transitions,
-                MachineSection::Validators,
-                MachineSection::Paths,
-                MachineSection::Diagnostics,
-            ],
-            WorkspaceSection::Machines => &[
-                MachineSection::Overview,
-                MachineSection::States,
-                MachineSection::Transitions,
-                MachineSection::Validators,
-                MachineSection::Relations,
-                MachineSection::Paths,
-                MachineSection::Diagnostics,
-            ],
-            WorkspaceSection::Gaps => &[MachineSection::Overview],
+            WorkspaceSection::Composition => COMPOSITION_HOME,
+            WorkspaceSection::Machines => self
+                .current_machine()
+                .filter(|machine| machine.role.is_composition())
+                .map(|_| COMPOSITION_MACHINE)
+                .unwrap_or(PROTOCOL_MACHINE),
+            WorkspaceSection::Gaps => GAPS,
         }
     }
 
@@ -824,16 +935,69 @@ impl InspectorApp {
         self.lane_mode = lane_mode;
         self.relation_index = 0;
         self.path_index = 0;
-        self.diagram_scroll_y = 0;
+        self.reset_diagram_scroll();
     }
 
     fn reset_diagram_scroll(&mut self) {
         self.diagram_scroll_y = 0;
+        self.diagram_scroll_x = 0;
+    }
+
+    fn center_diagram_is_scrollable(&self) -> bool {
+        self.focus == Focus::MainView
+            && matches!(
+                self.workspace_section,
+                WorkspaceSection::Composition | WorkspaceSection::Machines | WorkspaceSection::Gaps
+            )
+            && matches!(
+                self.machine_section,
+                MachineSection::Overview | MachineSection::Paths
+            )
+    }
+
+    fn pan_diagram_left(&mut self) {
+        self.diagram_scroll_x = self.diagram_scroll_x.saturating_sub(4);
+    }
+
+    fn pan_diagram_right(&mut self) {
+        self.diagram_scroll_x = self.diagram_scroll_x.saturating_add(4);
     }
 
     fn is_workspace_home(&self) -> bool {
-        self.workspace_section == WorkspaceSection::Composition
+        self.workspace_section == WorkspaceSection::Gaps
             && self.machine_section == MachineSection::Overview
+    }
+
+    fn cycle_workspace_diagram_scale(&mut self) {
+        self.workspace_diagram_scale = self.workspace_diagram_scale.next();
+        self.reset_diagram_scroll();
+    }
+
+    fn toggle_workspace_focus_hops(&mut self) {
+        self.workspace_focus_hops = if self.workspace_focus_hops == 1 { 2 } else { 1 };
+        self.reset_diagram_scroll();
+    }
+
+    fn toggle_workspace_flow_direction(&mut self) {
+        self.workspace_flow_direction = match self.workspace_flow_direction {
+            codebase_render::WorkspaceFlowDirection::TopDown => {
+                codebase_render::WorkspaceFlowDirection::LeftRight
+            }
+            codebase_render::WorkspaceFlowDirection::LeftRight => {
+                codebase_render::WorkspaceFlowDirection::TopDown
+            }
+        };
+        self.reset_diagram_scroll();
+    }
+
+    fn move_flow_selection_up(&mut self) {
+        self.path_index = self.path_index.saturating_sub(1);
+        self.reset_diagram_scroll();
+    }
+
+    fn move_flow_selection_down(&mut self) {
+        self.path_index = self.path_index.saturating_add(1);
+        self.reset_diagram_scroll();
     }
 }
 
@@ -867,23 +1031,29 @@ impl InspectorApp {
             }
             KeyCode::Char('?') => self.show_help = true,
             KeyCode::Char('/') => self.input_mode = InputMode::Search,
-            KeyCode::Char('1') if self.has_composition_machines() => {
-                self.workspace_section = WorkspaceSection::Composition;
-                self.machine_section = MachineSection::Overview;
-                self.reset_diagram_scroll();
+            KeyCode::Char('1') => {
+                if self
+                    .available_workspace_sections()
+                    .contains(&WorkspaceSection::Composition)
+                {
+                    self.workspace_section = WorkspaceSection::Composition;
+                    self.machine_section = self
+                        .preferred_machine_section(self.current_machine(), self.workspace_section);
+                    self.reset_diagram_scroll();
+                }
             }
             KeyCode::Char('2') => {
                 self.workspace_section = WorkspaceSection::Machines;
                 self.machine_section = MachineSection::Overview;
                 self.reset_diagram_scroll();
             }
-            KeyCode::Char('3') if !self.suggestions.is_empty() => {
+            KeyCode::Char('3') => {
                 self.workspace_section = WorkspaceSection::Gaps;
                 self.reset_diagram_scroll();
             }
             KeyCode::Char('e') => self.set_lane_mode(LaneMode::Exact),
             KeyCode::Char('m') => self.set_lane_mode(LaneMode::Mixed),
-            KeyCode::Char('h') => self.set_lane_mode(LaneMode::Heuristic),
+            KeyCode::Char('H') => self.set_lane_mode(LaneMode::Heuristic),
             KeyCode::Char('0') => {
                 self.filters.clear();
                 self.heuristic_filters.clear();
@@ -905,6 +1075,15 @@ impl InspectorApp {
                 self.relation_index = 0;
                 self.path_index = 0;
             }
+            KeyCode::Char('v') if self.workspace_section == WorkspaceSection::Gaps => {
+                self.cycle_workspace_diagram_scale();
+            }
+            KeyCode::Char('r') if self.workspace_section == WorkspaceSection::Gaps => {
+                self.toggle_workspace_focus_hops();
+            }
+            KeyCode::Char('L') if self.workspace_section == WorkspaceSection::Gaps => {
+                self.toggle_workspace_flow_direction();
+            }
             KeyCode::Char('g') => self
                 .heuristic_filters
                 .toggle_evidence_kind(HeuristicEvidenceKind::Signature),
@@ -915,14 +1094,21 @@ impl InspectorApp {
                 self.workspace_section = self
                     .workspace_section
                     .next(&self.available_workspace_sections());
-                self.machine_section = MachineSection::Overview;
+                self.machine_section =
+                    self.preferred_machine_section(self.current_machine(), self.workspace_section);
                 self.relation_context = RelationContext::Machine;
                 self.reset_diagram_scroll();
             }
-            KeyCode::Tab => self.focus = self.focus.next(),
-            KeyCode::BackTab => self.focus = self.focus.previous(),
-            KeyCode::Left | KeyCode::Char('[') => self.move_left(),
-            KeyCode::Right | KeyCode::Char(']') => self.move_right(),
+            KeyCode::Tab => {
+                self.focus = self.next_focus();
+            }
+            KeyCode::BackTab => {
+                self.focus = self.previous_focus();
+            }
+            KeyCode::Char('h') if self.center_diagram_is_scrollable() => self.pan_diagram_left(),
+            KeyCode::Char('l') if self.center_diagram_is_scrollable() => self.pan_diagram_right(),
+            KeyCode::Left | KeyCode::Char('[') | KeyCode::Char('h') => self.move_left(),
+            KeyCode::Right | KeyCode::Char(']') | KeyCode::Char('l') => self.move_right(),
             KeyCode::Char('i') if self.machine_section == MachineSection::Relations => {
                 self.relation_direction = RelationDirection::Inbound;
                 self.relation_index = 0;
@@ -959,7 +1145,7 @@ impl InspectorApp {
 
     fn move_left(&mut self) {
         match self.focus {
-            Focus::Workspace => self.focus = self.focus.previous(),
+            Focus::Workspace | Focus::JourneyList => self.focus = self.previous_focus(),
             Focus::MainView => {
                 self.capture_relation_context();
                 self.machine_section = self
@@ -978,7 +1164,7 @@ impl InspectorApp {
 
     fn move_right(&mut self) {
         match self.focus {
-            Focus::Workspace => self.focus = self.focus.next(),
+            Focus::Workspace | Focus::JourneyList => self.focus = self.next_focus(),
             Focus::MainView => {
                 self.capture_relation_context();
                 self.machine_section = self.machine_section.next(self.available_machine_sections());
@@ -1012,42 +1198,47 @@ impl InspectorApp {
                     }
                 }
                 WorkspaceSection::Gaps => {
-                    let visible = self.visible_gap_indices();
+                    let visible = self.visible_workspace_machine_indices();
                     let Some(current_position) = visible
                         .iter()
-                        .position(|gap_index| *gap_index == self.selected_gap)
+                        .position(|machine_index| *machine_index == self.selected_machine)
                     else {
                         if let Some(&first) = visible.first() {
-                            self.select_gap(first);
+                            self.select_machine(first);
                         }
                         return;
                     };
                     if current_position > 0 {
-                        self.select_gap(visible[current_position - 1]);
+                        self.select_machine(visible[current_position - 1]);
                     }
                 }
             },
+            Focus::JourneyList => {
+                self.move_flow_selection_up();
+            }
             Focus::MainView => match self.workspace_section {
-                WorkspaceSection::Composition | WorkspaceSection::Machines => {
-                    match self.machine_section {
-                        MachineSection::States
-                        | MachineSection::Transitions
-                        | MachineSection::Validators => {
-                            self.machine_item_index = self.machine_item_index.saturating_sub(1);
-                        }
-                        MachineSection::Relations => {
-                            self.relation_index = self.relation_index.saturating_sub(1);
-                        }
-                        MachineSection::Paths => {
-                            self.path_index = self.path_index.saturating_sub(1);
-                        }
-                        MachineSection::Overview => {
-                            self.diagram_scroll_y = self.diagram_scroll_y.saturating_sub(1);
-                        }
-                        MachineSection::Diagnostics => {}
+                WorkspaceSection::Composition
+                | WorkspaceSection::Machines
+                | WorkspaceSection::Gaps => match self.machine_section {
+                    MachineSection::States
+                    | MachineSection::Transitions
+                    | MachineSection::Validators => {
+                        self.machine_item_index = self.machine_item_index.saturating_sub(1);
                     }
-                }
-                WorkspaceSection::Gaps => {}
+                    MachineSection::Relations => {
+                        self.relation_index = self.relation_index.saturating_sub(1);
+                    }
+                    MachineSection::Paths if self.uses_flow_shell() => {
+                        self.diagram_scroll_y = self.diagram_scroll_y.saturating_sub(1);
+                    }
+                    MachineSection::Paths => {
+                        self.path_index = self.path_index.saturating_sub(1);
+                    }
+                    MachineSection::Overview => {
+                        self.diagram_scroll_y = self.diagram_scroll_y.saturating_sub(1);
+                    }
+                    MachineSection::Diagnostics => {}
+                },
             },
             Focus::Detail => {}
         }
@@ -1072,42 +1263,47 @@ impl InspectorApp {
                     }
                 }
                 WorkspaceSection::Gaps => {
-                    let visible = self.visible_gap_indices();
+                    let visible = self.visible_workspace_machine_indices();
                     let Some(current_position) = visible
                         .iter()
-                        .position(|gap_index| *gap_index == self.selected_gap)
+                        .position(|machine_index| *machine_index == self.selected_machine)
                     else {
                         if let Some(&first) = visible.first() {
-                            self.select_gap(first);
+                            self.select_machine(first);
                         }
                         return;
                     };
                     if let Some(&next) = visible.get(current_position + 1) {
-                        self.select_gap(next);
+                        self.select_machine(next);
                     }
                 }
             },
+            Focus::JourneyList => {
+                self.move_flow_selection_down();
+            }
             Focus::MainView => match self.workspace_section {
-                WorkspaceSection::Composition | WorkspaceSection::Machines => {
-                    match self.machine_section {
-                        MachineSection::States
-                        | MachineSection::Transitions
-                        | MachineSection::Validators => {
-                            self.machine_item_index = self.machine_item_index.saturating_add(1);
-                        }
-                        MachineSection::Relations => {
-                            self.relation_index = self.relation_index.saturating_add(1);
-                        }
-                        MachineSection::Paths => {
-                            self.path_index = self.path_index.saturating_add(1);
-                        }
-                        MachineSection::Overview => {
-                            self.diagram_scroll_y = self.diagram_scroll_y.saturating_add(1);
-                        }
-                        MachineSection::Diagnostics => {}
+                WorkspaceSection::Composition
+                | WorkspaceSection::Machines
+                | WorkspaceSection::Gaps => match self.machine_section {
+                    MachineSection::States
+                    | MachineSection::Transitions
+                    | MachineSection::Validators => {
+                        self.machine_item_index = self.machine_item_index.saturating_add(1);
                     }
-                }
-                WorkspaceSection::Gaps => {}
+                    MachineSection::Relations => {
+                        self.relation_index = self.relation_index.saturating_add(1);
+                    }
+                    MachineSection::Paths if self.uses_flow_shell() => {
+                        self.diagram_scroll_y = self.diagram_scroll_y.saturating_add(1);
+                    }
+                    MachineSection::Paths => {
+                        self.path_index = self.path_index.saturating_add(1);
+                    }
+                    MachineSection::Overview => {
+                        self.diagram_scroll_y = self.diagram_scroll_y.saturating_add(1);
+                    }
+                    MachineSection::Diagnostics => {}
+                },
             },
             Focus::Detail => {}
         }
@@ -1116,13 +1312,16 @@ impl InspectorApp {
     fn clamp_indices(&mut self) {
         self.invalidate_cache();
         match self.workspace_section {
-            WorkspaceSection::Composition | WorkspaceSection::Machines => {
+            WorkspaceSection::Composition | WorkspaceSection::Machines | WorkspaceSection::Gaps => {
                 let visible_machines = self.visible_workspace_machine_indices();
                 if visible_machines.is_empty() {
                     self.selected_machine = 0;
                     self.machine_item_index = 0;
                     self.relation_index = 0;
                     self.path_index = 0;
+                    if self.focus == Focus::JourneyList {
+                        self.focus = Focus::Workspace;
+                    }
                     return;
                 }
 
@@ -1133,7 +1332,8 @@ impl InspectorApp {
                     .available_machine_sections()
                     .contains(&self.machine_section)
                 {
-                    self.machine_section = MachineSection::Overview;
+                    self.machine_section = self
+                        .preferred_machine_section(self.current_machine(), self.workspace_section);
                 }
                 match self.machine_section {
                     MachineSection::States
@@ -1149,27 +1349,20 @@ impl InspectorApp {
                             .min(self.relation_items().len().saturating_sub(1));
                     }
                     MachineSection::Paths => {
-                        self.path_index = self
-                            .path_index
-                            .min(self.path_items().len().saturating_sub(1));
+                        self.path_index = self.path_index.min(
+                            if self.uses_flow_traces() {
+                                self.flow_trace_items().len()
+                            } else {
+                                self.path_items().len()
+                            }
+                            .saturating_sub(1),
+                        );
                     }
                     MachineSection::Overview | MachineSection::Diagnostics => {}
                 }
-            }
-            WorkspaceSection::Gaps => {
-                let visible_gaps = self.visible_gap_indices();
-                if visible_gaps.is_empty() {
-                    self.selected_gap = 0;
-                    self.path_index = 0;
-                    return;
+                if self.focus == Focus::JourneyList && !self.uses_flow_shell() {
+                    self.focus = Focus::MainView;
                 }
-
-                if !visible_gaps.contains(&self.selected_gap) {
-                    self.select_gap(visible_gaps[0]);
-                }
-                self.path_index = self
-                    .path_index
-                    .min(self.path_items().len().saturating_sub(1));
             }
         }
     }
@@ -1215,16 +1408,16 @@ impl InspectorApp {
     fn machine_section_label(&self, machine: &CodebaseMachine, section: MachineSection) -> String {
         match section {
             MachineSection::Overview => match self.workspace_section {
-                WorkspaceSection::Composition => "Workspace".to_owned(),
+                WorkspaceSection::Composition => "Journey".to_owned(),
                 WorkspaceSection::Machines => "Diagram".to_owned(),
-                WorkspaceSection::Gaps => "Overview".to_owned(),
+                WorkspaceSection::Gaps => "Map".to_owned(),
             },
             MachineSection::States => format!("States ({})", machine.states.len()),
             MachineSection::Transitions => {
                 format!("Transitions ({})", machine.transitions.len())
             }
             MachineSection::Validators => {
-                format!("Validators ({})", machine.validator_entries.len())
+                format!("Rebuild ({})", machine.validator_entries.len())
             }
             MachineSection::Relations => {
                 let exact = self
@@ -1244,17 +1437,20 @@ impl InspectorApp {
                     )
                     .len();
                 match self.lane_mode {
-                    LaneMode::Exact => format!("Relations ({exact})"),
-                    LaneMode::Heuristic => format!("Relations ({heuristic})"),
-                    LaneMode::Mixed => format!("Relations ({exact}e/{heuristic}h)"),
+                    LaneMode::Exact => format!("Handoffs ({exact})"),
+                    LaneMode::Heuristic => format!("Handoffs ({heuristic})"),
+                    LaneMode::Mixed => format!("Handoffs ({exact}+{heuristic})"),
                 }
             }
-            MachineSection::Paths => format!("Paths ({})", self.path_items().len()),
+            MachineSection::Paths => {
+                if machine.role.is_composition() {
+                    format!("Journeys ({})", self.flow_trace_items().len())
+                } else {
+                    format!("Routes ({})", self.path_items().len())
+                }
+            }
             MachineSection::Diagnostics => {
-                format!(
-                    "Diagnostics ({})",
-                    self.machine_suggestions(machine.index).len()
-                )
+                format!("Issues ({})", self.machine_suggestions(machine.index).len())
             }
         }
     }
@@ -1318,11 +1514,7 @@ impl InspectorApp {
     }
 
     fn path_item_label(&self, item: &PathItem) -> String {
-        let target = self
-            .doc
-            .machine(item.target_machine)
-            .map(render_machine_label)
-            .unwrap_or("<missing machine>");
+        let target = render_optional_machine_label(self.doc.machine(item.target_machine));
         format!(
             "[{}] {} ({} hop{})",
             item.kind.display_label(),
@@ -1476,6 +1668,96 @@ impl InspectorApp {
         computed
     }
 
+    fn uses_flow_traces(&self) -> bool {
+        self.workspace_section != WorkspaceSection::Gaps
+            && self
+                .current_machine()
+                .is_some_and(|machine| machine.role.is_composition())
+    }
+
+    fn flow_trace_cache_for_machine(&self, machine: &CodebaseMachine) -> FlowTraceCache {
+        if let Some(cached) = self
+            .cache
+            .borrow()
+            .flow_trace_by_machine
+            .get(&machine.index)
+            .cloned()
+        {
+            return cached;
+        }
+
+        let computed = enumerate_flow_traces(machine)
+            .map(|items| FlowTraceCache {
+                items: Rc::from(items),
+                status: FlowTraceStatus::Available,
+            })
+            .unwrap_or_else(|status| FlowTraceCache {
+                items: Rc::from(Vec::new()),
+                status,
+            });
+        self.cache
+            .borrow_mut()
+            .flow_trace_by_machine
+            .insert(machine.index, computed.clone());
+        computed
+    }
+
+    fn flow_trace_cache(&self) -> FlowTraceCache {
+        if let Some(cached) = self.cache.borrow().flow_trace.clone() {
+            return cached;
+        }
+
+        let Some(machine) = self.current_machine() else {
+            let cached = FlowTraceCache {
+                items: Rc::from(Vec::new()),
+                status: FlowTraceStatus::NotComposition,
+            };
+            self.cache.borrow_mut().flow_trace = Some(cached.clone());
+            return cached;
+        };
+
+        if !machine.role.is_composition() {
+            let cached = FlowTraceCache {
+                items: Rc::from(Vec::new()),
+                status: FlowTraceStatus::NotComposition,
+            };
+            self.cache.borrow_mut().flow_trace = Some(cached.clone());
+            return cached;
+        }
+
+        let query = self.normalized_query();
+        let base = self.flow_trace_cache_for_machine(machine);
+        let computed = if self.search_scope.includes_paths() {
+            let filtered = base
+                .items
+                .iter()
+                .filter(|item| self.flow_trace_matches_query(machine, item, query.as_deref()))
+                .cloned()
+                .collect::<Vec<_>>();
+            FlowTraceCache {
+                items: Rc::from(filtered),
+                status: base.status,
+            }
+        } else {
+            base
+        };
+
+        self.cache.borrow_mut().flow_trace = Some(computed.clone());
+        computed
+    }
+
+    fn flow_trace_items(&self) -> Rc<[FlowTraceItem]> {
+        self.flow_trace_cache().items
+    }
+
+    fn flow_trace_status(&self) -> FlowTraceStatus {
+        self.flow_trace_cache().status
+    }
+
+    fn selected_flow_trace(&self) -> Option<FlowTraceItem> {
+        self.flow_trace_items().get(self.path_index).cloned()
+    }
+
     fn selected_path_item(&self) -> Option<PathItem> {
         self.path_items().get(self.path_index).cloned()
     }
@@ -1544,7 +1826,7 @@ impl InspectorApp {
                 },
                 self.doc
                     .machine(item.target_machine)
-                    .map(|machine| render_machine_label(machine).to_owned())
+                    .map(|machine| render_machine_label(machine).into_owned())
                     .unwrap_or_default(),
             )
         });
@@ -1618,27 +1900,19 @@ impl InspectorApp {
             return true;
         }
 
-        let source = self
-            .doc
-            .machine(source_machine)
-            .map(render_machine_label)
-            .unwrap_or("<missing machine>");
-        let target = self
-            .doc
-            .machine(item.target_machine)
-            .map(render_machine_label)
-            .unwrap_or("<missing machine>");
+        let source = render_optional_machine_label(self.doc.machine(source_machine));
+        let target = render_optional_machine_label(self.doc.machine(item.target_machine));
         let mut candidates = vec![
             item.kind.display_label().to_owned(),
-            source.to_owned(),
-            target.to_owned(),
+            source.into_owned(),
+            target.into_owned(),
             format!("{} hop", item.steps.len()),
         ];
         for step in &item.steps {
             candidates.push(step.kind.display_label().to_owned());
             candidates.push(step.label.clone());
             if let Some(machine) = self.doc.machine(step.to_machine) {
-                candidates.push(render_machine_label(machine).to_owned());
+                candidates.push(render_machine_label(machine).into_owned());
             }
         }
         Self::query_matches_any(query, candidates)
@@ -2035,37 +2309,445 @@ impl InspectorApp {
         groups
     }
 
+    fn exact_workspace_machine_set(&self) -> BTreeSet<usize> {
+        self.visible_machine_indices().iter().copied().collect()
+    }
+
+    fn exact_workspace_neighbors(&self) -> BTreeMap<usize, BTreeSet<usize>> {
+        let visible = self.exact_workspace_machine_set();
+        let mut adjacency = visible
+            .iter()
+            .copied()
+            .map(|machine_index| (machine_index, BTreeSet::new()))
+            .collect::<BTreeMap<_, _>>();
+
+        for group in self.filtered_machine_relation_groups().iter() {
+            if visible.contains(&group.from_machine) && visible.contains(&group.to_machine) {
+                adjacency
+                    .entry(group.from_machine)
+                    .or_default()
+                    .insert(group.to_machine);
+                adjacency
+                    .entry(group.to_machine)
+                    .or_default()
+                    .insert(group.from_machine);
+            }
+        }
+
+        for link in self.doc.links().iter() {
+            if visible.contains(&link.from_machine) && visible.contains(&link.to_machine) {
+                adjacency
+                    .entry(link.from_machine)
+                    .or_default()
+                    .insert(link.to_machine);
+                adjacency
+                    .entry(link.to_machine)
+                    .or_default()
+                    .insert(link.from_machine);
+            }
+        }
+
+        adjacency
+    }
+
+    fn workspace_connected_components(&self) -> Vec<Vec<usize>> {
+        let adjacency = self.exact_workspace_neighbors();
+        let mut seen = BTreeSet::new();
+        let mut components = Vec::new();
+        for machine_index in adjacency.keys().copied() {
+            if !seen.insert(machine_index) {
+                continue;
+            }
+            let mut stack = vec![machine_index];
+            let mut component = vec![machine_index];
+            while let Some(current) = stack.pop() {
+                for next in adjacency
+                    .get(&current)
+                    .into_iter()
+                    .flat_map(|neighbors| neighbors.iter().copied())
+                {
+                    if seen.insert(next) {
+                        stack.push(next);
+                        component.push(next);
+                    }
+                }
+            }
+            component.sort_unstable();
+            components.push(component);
+        }
+        components
+    }
+
+    fn workspace_component_machine_indices(&self, anchor_machine: usize) -> Vec<usize> {
+        self.workspace_connected_components()
+            .into_iter()
+            .find(|component| component.contains(&anchor_machine))
+            .unwrap_or_else(|| vec![anchor_machine])
+    }
+
+    fn workspace_focus_machine_indices(&self, anchor_machine: usize, hops: usize) -> Vec<usize> {
+        let adjacency = self.exact_workspace_neighbors();
+        if !adjacency.contains_key(&anchor_machine) {
+            return vec![anchor_machine];
+        }
+
+        let mut seen = BTreeSet::from([anchor_machine]);
+        let mut frontier = vec![anchor_machine];
+        for _ in 0..hops {
+            let mut next_frontier = Vec::new();
+            for machine_index in frontier {
+                for neighbor in adjacency
+                    .get(&machine_index)
+                    .into_iter()
+                    .flat_map(|neighbors| neighbors.iter().copied())
+                {
+                    if seen.insert(neighbor) {
+                        next_frontier.push(neighbor);
+                    }
+                }
+            }
+            if next_frontier.is_empty() {
+                break;
+            }
+            frontier = next_frontier;
+        }
+
+        seen.into_iter().collect()
+    }
+
+    fn workspace_component_position(&self, anchor_machine: usize) -> Option<(usize, usize)> {
+        let components = self.workspace_connected_components();
+        let total = components.len();
+        components
+            .iter()
+            .position(|component| component.contains(&anchor_machine))
+            .map(|index| (index + 1, total))
+    }
+
+    fn workspace_diagram_machine_indices(&self) -> Vec<usize> {
+        let Some(machine) = self.current_machine() else {
+            return self.exact_workspace_machine_set().into_iter().collect();
+        };
+
+        match self.workspace_diagram_scale {
+            WorkspaceDiagramScale::Overview => {
+                self.workspace_component_machine_indices(machine.index)
+            }
+            WorkspaceDiagramScale::Focus => {
+                self.workspace_focus_machine_indices(machine.index, self.workspace_focus_hops)
+            }
+            WorkspaceDiagramScale::Full => self.exact_workspace_machine_set().into_iter().collect(),
+        }
+    }
+
+    fn workspace_diagram_title(&self) -> String {
+        match self.workspace_diagram_scale {
+            WorkspaceDiagramScale::Overview => {
+                let component_label = self
+                    .current_machine()
+                    .and_then(|machine| self.workspace_component_position(machine.index))
+                    .map(|(index, total)| format!("component {index}/{total}"))
+                    .unwrap_or_else(|| "component".to_owned());
+                format!("Map Overview · {component_label}")
+            }
+            WorkspaceDiagramScale::Focus => format!(
+                "Map Focus · {} {}",
+                self.workspace_focus_hops,
+                if self.workspace_focus_hops == 1 {
+                    "hop"
+                } else {
+                    "hops"
+                }
+            ),
+            WorkspaceDiagramScale::Full => "Map Full".to_owned(),
+        }
+    }
+
     fn render(&self, frame: &mut Frame) {
+        let status_height = if self.uses_flow_shell() && frame.area().height < 28 {
+            3
+        } else {
+            4
+        };
         let vertical = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(4)])
+            .constraints([Constraint::Min(0), Constraint::Length(status_height)])
             .split(frame.area());
-        let horizontal = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Length(28),
-                Constraint::Min(68),
-                Constraint::Length(42),
-            ])
-            .split(vertical[0]);
-
-        self.render_workspace(frame, horizontal[0]);
-        self.render_center_view(frame, horizontal[1]);
-        self.render_detail(frame, horizontal[2]);
+        if self.uses_flow_shell() {
+            self.render_flow_shell(frame, vertical[0]);
+        } else {
+            let panes = self.pane_layout(vertical[0]);
+            self.render_workspace(frame, panes.outline);
+            self.render_center_view(frame, panes.center);
+            self.render_detail(frame, panes.detail);
+        }
         self.render_status(frame, vertical[1]);
         if self.show_help {
             self.render_help_overlay(frame);
         }
     }
 
+    fn pane_layout(&self, area: Rect) -> InspectorPaneLayout {
+        let left_width = area
+            .width
+            .saturating_sub(if area.width >= 155 { 110 } else { 60 })
+            .clamp(30, 40);
+
+        if area.width >= 155 {
+            let columns = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(left_width),
+                    Constraint::Min(68),
+                    Constraint::Length(38),
+                ])
+                .split(area);
+            InspectorPaneLayout {
+                outline: columns[0],
+                center: columns[1],
+                detail: columns[2],
+            }
+        } else {
+            let columns = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(left_width), Constraint::Min(0)])
+                .split(area);
+            let stacked = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(0),
+                    Constraint::Length(area.height.saturating_sub(10).clamp(10, 16)),
+                ])
+                .split(columns[1]);
+            InspectorPaneLayout {
+                outline: columns[0],
+                center: stacked[0],
+                detail: stacked[1],
+            }
+        }
+    }
+
+    fn uses_flow_shell(&self) -> bool {
+        self.workspace_section == WorkspaceSection::Composition
+            && self.machine_section == MachineSection::Paths
+            && self.uses_flow_traces()
+    }
+
+    fn render_flow_shell(&self, frame: &mut Frame, area: Rect) {
+        let panes = self.pane_layout(area);
+        self.render_flow_sidebar(frame, panes.outline);
+        self.render_flow_main(frame, panes.center);
+        self.render_detail(frame, panes.detail);
+    }
+
+    fn render_flow_sidebar(&self, frame: &mut Frame, area: Rect) {
+        let accent = workspace_section_accent(WorkspaceSection::Composition);
+        let block = titled_block(
+            Line::from(vec![
+                badge("JOURNEYS", Color::Black, accent),
+                Span::raw(" "),
+                Span::styled(
+                    workspace_title_label(&self.workspace_label),
+                    title_style(accent, self.focus == Focus::Workspace),
+                ),
+            ]),
+            accent,
+            self.focus == Focus::Workspace,
+        );
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(area.height.saturating_sub(12).clamp(7, 11)),
+                Constraint::Min(8),
+            ])
+            .split(inner);
+        let available_sections = self.available_workspace_sections();
+        let tabs = Tabs::new(
+            available_sections
+                .iter()
+                .map(|section| Line::from(section.label()))
+                .collect::<Vec<_>>(),
+        )
+        .select(
+            available_sections
+                .iter()
+                .position(|section| *section == self.workspace_section)
+                .unwrap_or(0),
+        )
+        .highlight_style(Style::default().fg(accent).add_modifier(Modifier::BOLD));
+        frame.render_widget(tabs, sections[0]);
+
+        let visible = self.visible_composition_machine_indices();
+        let items = visible
+            .iter()
+            .filter_map(|machine_index| self.doc.machine(*machine_index))
+            .map(|machine| self.flow_sidebar_machine_list_item(machine))
+            .collect::<Vec<_>>();
+        let selected = visible
+            .iter()
+            .position(|machine_index| *machine_index == self.selected_machine);
+        let mut state = ListState::default().with_selected(selected);
+        let machine_block = Block::default()
+            .title(Line::from(vec![
+                badge("MACHINES", Color::Black, accent),
+                Span::raw(" "),
+                Span::styled(
+                    "Composition".to_owned(),
+                    title_style(accent, self.focus == Focus::Workspace),
+                ),
+            ]))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if self.focus == Focus::Workspace {
+                accent
+            } else {
+                muted_color()
+            }));
+        let machine_inner = machine_block.inner(sections[1]);
+        frame.render_widget(machine_block, sections[1]);
+        let list = if items.is_empty() {
+            List::new(vec![ListItem::new("<no flows>")])
+        } else {
+            List::new(items)
+        }
+        .highlight_style(selected_list_style(accent))
+        .highlight_symbol("> ");
+        frame.render_stateful_widget(list, machine_inner, &mut state);
+
+        let journey_block = Block::default()
+            .title(Line::from(vec![
+                badge("JOURNEYS", Color::Black, accent),
+                Span::raw(" "),
+                Span::styled(
+                    "Entry -> Exit".to_owned(),
+                    title_style(accent, self.focus == Focus::JourneyList),
+                ),
+            ]))
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if self.focus == Focus::JourneyList {
+                accent
+            } else {
+                muted_color()
+            }));
+        let journey_inner = journey_block.inner(sections[2]);
+        frame.render_widget(journey_block, sections[2]);
+        self.render_flow_journey_list(frame, journey_inner);
+    }
+
+    fn render_flow_main(&self, frame: &mut Frame, area: Rect) {
+        let accent = workspace_section_accent(WorkspaceSection::Composition);
+        let title = self
+            .current_machine()
+            .map(|machine| format!("Journeys {}", render_flow_machine_label(machine)))
+            .unwrap_or_else(|| "Journeys <no matches>".to_owned());
+        let block = titled_block(
+            Line::from(vec![
+                badge("JOURNEY", Color::Black, accent),
+                Span::raw(" "),
+                Span::styled(title, title_style(accent, self.focus == Focus::MainView)),
+            ]),
+            accent,
+            self.focus == Focus::MainView,
+        );
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(4), Constraint::Min(0)])
+            .split(inner);
+
+        frame.render_widget(
+            Paragraph::new(self.flow_context_text()).wrap(Wrap { trim: false }),
+            sections[0],
+        );
+        if let Some(flow) = self.selected_flow_trace() {
+            if let Some(machine) = self.current_machine() {
+                self.render_diagram_viewport(
+                    frame,
+                    sections[1],
+                    &self.flow_trace_diagram_plan(machine, &flow),
+                );
+            }
+        } else {
+            frame.render_widget(
+                Paragraph::new(self.empty_path_text()).wrap(Wrap { trim: false }),
+                sections[1],
+            );
+        }
+    }
+
+    fn render_flow_journey_list(&self, frame: &mut Frame, area: Rect) {
+        let Some(machine) = self.current_machine() else {
+            frame.render_widget(Paragraph::new(Text::from("<no matches>")), area);
+            return;
+        };
+        let accent = workspace_section_accent(WorkspaceSection::Composition);
+        let items = self
+            .flow_trace_items()
+            .iter()
+            .map(|item| self.flow_trace_list_item(machine, item))
+            .collect::<Vec<_>>();
+        let empty = items.is_empty();
+        let mut state = ListState::default().with_selected((!empty).then_some(self.path_index));
+        let list = if empty {
+            List::new(vec![ListItem::new(self.empty_path_text())])
+        } else {
+            List::new(items)
+        }
+        .highlight_style(selected_list_style(accent))
+        .highlight_symbol("> ");
+        frame.render_stateful_widget(list, area, &mut state);
+    }
+
+    fn flow_context_text(&self) -> Text<'static> {
+        let Some(machine) = self.current_machine() else {
+            return Text::from("<no matches>");
+        };
+
+        let journey_count = self.flow_trace_items().len();
+        let count_status = if journey_count > 0 {
+            format!("{journey_count} journey{}", plural_suffix(journey_count))
+        } else {
+            match self.flow_trace_status() {
+                FlowTraceStatus::MissingRoot => "no entry state".to_owned(),
+                FlowTraceStatus::ReachableCycle => "cycle blocks a finite journey list".to_owned(),
+                FlowTraceStatus::TooManyJourneys => "too many journeys to list".to_owned(),
+                FlowTraceStatus::NotComposition | FlowTraceStatus::Available => {
+                    "no journeys".to_owned()
+                }
+            }
+        };
+        let selected = self
+            .selected_flow_trace()
+            .map(|flow| flow_trace_label(machine, &flow))
+            .unwrap_or_else(|| "<no journey selected>".to_owned());
+        let touched = self
+            .selected_flow_trace()
+            .map(|flow| flow_trace_touch_summary(machine, &self.doc, &flow))
+            .unwrap_or_else(|| "no protocol touches".to_owned());
+
+        Text::from(vec![
+            Line::from(format!("machine: {}", render_flow_machine_label(machine))),
+            Line::from(format!("journeys: {count_status}")),
+            Line::from(format!("selected: {selected}")),
+            Line::from(format!("touches: {touched}  |  map: 3")),
+        ])
+    }
+
     fn render_workspace(&self, frame: &mut Frame, area: Rect) {
         let accent = workspace_section_accent(self.workspace_section);
+        let compact_summary = area.height <= 10;
+        let hide_summary = area.height <= 8;
         let block = titled_block(
             Line::from(vec![
                 badge("OUTLINE", Color::Black, accent),
                 Span::raw(" "),
                 Span::styled(
-                    format!("Workspace {}", self.workspace_label),
+                    format!("Outline {}", workspace_title_label(&self.workspace_label)),
                     title_style(accent, self.focus == Focus::Workspace),
                 ),
             ]),
@@ -2079,7 +2761,13 @@ impl InspectorApp {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
-                Constraint::Length(10),
+                Constraint::Length(if hide_summary {
+                    0
+                } else if compact_summary {
+                    2
+                } else {
+                    4
+                }),
                 Constraint::Min(0),
             ])
             .split(inner);
@@ -2101,19 +2789,15 @@ impl InspectorApp {
         frame.render_widget(tabs, sections[0]);
 
         let visible_machine_indices = self.visible_machine_indices();
-        let visible_machine_count = visible_machine_indices.len();
+        let visible_workspace_machine_indices = self.visible_workspace_machine_indices();
+        let visible_machine_count = visible_workspace_machine_indices.len();
         let total_machine_count = self.doc.machines().len();
-        let visible_composition_indices = self.visible_composition_machine_indices();
-        let visible_composition_count = visible_composition_indices.len();
         let total_composition_count = self
             .doc
             .machines()
             .iter()
             .filter(|machine| machine.role.is_composition())
             .count();
-        let visible_gap_indices = self.visible_gap_indices();
-        let visible_gap_count = visible_gap_indices.len();
-        let total_gap_count = self.suggestions.suggestions().len();
         let visible_exact_summary_edges = self
             .visible_machine_relation_groups()
             .iter()
@@ -2131,93 +2815,104 @@ impl InspectorApp {
         };
 
         match self.workspace_section {
-            WorkspaceSection::Composition => self.render_workspace_summary_cards(
+            WorkspaceSection::Composition => self.render_workspace_summary(
                 frame,
                 sections[1],
-                [
-                    (
-                        "flows:",
-                        format!("{visible_composition_count}/{total_composition_count}"),
-                        "composition".to_owned(),
+                if compact_summary {
+                    vec![summary_line(
                         accent,
-                    ),
-                    (
-                        "machines:",
-                        format!("{visible_machine_count}/{total_machine_count}"),
-                        "reachable".to_owned(),
+                        vec![
+                            (
+                                "journeys",
+                                self.visible_composition_machine_indices()
+                                    .iter()
+                                    .filter_map(|machine_index| self.doc.machine(*machine_index))
+                                    .map(flow_trace_count)
+                                    .sum::<usize>()
+                                    .to_string(),
+                            ),
+                            (
+                                "machines",
+                                format!("{visible_machine_count}/{total_composition_count}"),
+                            ),
+                            ("handoffs", visible_exact_summary_edges.to_string()),
+                        ],
+                    )]
+                } else {
+                    vec![
+                        summary_line(
+                            accent,
+                            vec![
+                                (
+                                    "composition",
+                                    format!("{visible_machine_count}/{total_composition_count}"),
+                                ),
+                                (
+                                    "exact journeys",
+                                    self.visible_composition_machine_indices()
+                                        .iter()
+                                        .filter_map(|machine_index| {
+                                            self.doc.machine(*machine_index)
+                                        })
+                                        .map(flow_trace_count)
+                                        .sum::<usize>()
+                                        .to_string(),
+                                ),
+                            ],
+                        ),
+                        summary_line(
+                            accent,
+                            vec![
+                                ("proven handoffs", visible_exact_summary_edges.to_string()),
+                                ("hints", visible_heuristic_summary_edges.to_string()),
+                            ],
+                        ),
+                    ]
+                },
+            ),
+            WorkspaceSection::Machines => self.render_workspace_summary(
+                frame,
+                sections[1],
+                vec![
+                    summary_line(
                         accent,
+                        vec![
+                            (
+                                "shown",
+                                format!("{visible_machine_count}/{total_machine_count}"),
+                            ),
+                            ("groups", self.disconnected_group_count().to_string()),
+                        ],
                     ),
-                    (
-                        "exact summary edges:",
-                        visible_exact_summary_edges.to_string(),
-                        format!("heuristic {visible_heuristic_summary_edges}"),
-                        lane_accent(LaneMode::Exact),
-                    ),
-                    (
-                        "search:",
-                        search_status,
-                        format!("lane {}", self.lane_mode.label()),
-                        lane_accent(self.lane_mode),
+                    summary_line(
+                        accent,
+                        vec![
+                            ("handoffs", visible_exact_summary_edges.to_string()),
+                            ("hints", visible_heuristic_summary_edges.to_string()),
+                        ],
                     ),
                 ],
             ),
-            WorkspaceSection::Machines => self.render_workspace_summary_cards(
+            WorkspaceSection::Gaps => self.render_workspace_summary(
                 frame,
                 sections[1],
-                [
-                    (
-                        "machines:",
-                        format!("{visible_machine_count}/{total_machine_count}"),
-                        "inventory".to_owned(),
+                vec![
+                    summary_line(
                         accent,
+                        vec![
+                            (
+                                "shown",
+                                format!("{visible_machine_count}/{total_machine_count}"),
+                            ),
+                            ("groups", self.disconnected_group_count().to_string()),
+                        ],
                     ),
-                    (
-                        "groups:",
-                        self.disconnected_group_count().to_string(),
-                        "connected sets".to_owned(),
+                    summary_line(
                         accent,
-                    ),
-                    (
-                        "exact summary edges:",
-                        visible_exact_summary_edges.to_string(),
-                        format!("heuristic {visible_heuristic_summary_edges}"),
-                        lane_accent(LaneMode::Exact),
-                    ),
-                    (
-                        "search:",
-                        search_status,
-                        format!("lane {}", self.lane_mode.label()),
-                        lane_accent(self.lane_mode),
-                    ),
-                ],
-            ),
-            WorkspaceSection::Gaps => self.render_workspace_summary_cards(
-                frame,
-                sections[1],
-                [
-                    (
-                        "gaps:",
-                        format!("{visible_gap_count}/{total_gap_count}"),
-                        "open diagnostics".to_owned(),
-                        accent,
-                    ),
-                    (
-                        "warnings:",
-                        self.suggestions.warning_count().to_string(),
-                        "exact typed".to_owned(),
-                        severity_accent(CompositionSuggestionSeverity::Warning),
-                    ),
-                    (
-                        "suggestions:",
-                        self.suggestions.suggestion_count().to_string(),
-                        "heuristic".to_owned(),
-                        severity_accent(CompositionSuggestionSeverity::Suggestion),
-                    ),
-                    (
-                        "search:",
-                        search_status,
-                        format!("lane {}", self.lane_mode.label()),
-                        lane_accent(self.lane_mode),
+                        vec![
+                            ("links", visible_exact_summary_edges.to_string()),
+                            ("search", compact_inline_text(&search_status, 12)),
+                        ],
                     ),
                 ],
             ),
@@ -2225,12 +2920,14 @@ impl InspectorApp {
 
         let (items, selected) = match self.workspace_section {
             WorkspaceSection::Composition => (
-                visible_composition_indices
+                visible_workspace_machine_indices
                     .iter()
                     .filter_map(|machine_index| self.doc.machine(*machine_index))
-                    .map(|machine| self.workspace_machine_list_item(machine))
+                    .map(|machine| {
+                        self.composition_workspace_machine_list_item(machine, compact_summary)
+                    })
                     .collect::<Vec<_>>(),
-                visible_composition_indices
+                visible_workspace_machine_indices
                     .iter()
                     .position(|machine_index| *machine_index == self.selected_machine),
             ),
@@ -2245,14 +2942,14 @@ impl InspectorApp {
                     .position(|machine_index| *machine_index == self.selected_machine),
             ),
             WorkspaceSection::Gaps => (
-                visible_gap_indices
+                visible_machine_indices
                     .iter()
-                    .filter_map(|gap_index| self.suggestions.suggestions().get(*gap_index))
-                    .map(|suggestion| self.workspace_gap_list_item(suggestion))
+                    .filter_map(|machine_index| self.doc.machine(*machine_index))
+                    .map(|machine| self.workspace_machine_list_item(machine))
                     .collect::<Vec<_>>(),
-                visible_gap_indices
+                visible_machine_indices
                     .iter()
-                    .position(|gap_index| *gap_index == self.selected_gap),
+                    .position(|machine_index| *machine_index == self.selected_machine),
             ),
         };
         let mut state = ListState::default().with_selected(selected);
@@ -2262,7 +2959,7 @@ impl InspectorApp {
             List::new(items)
         }
         .highlight_style(selected_list_style(accent))
-        .highlight_symbol(">> ");
+        .highlight_symbol("> ");
         frame.render_stateful_widget(list, sections[2], &mut state);
     }
 
@@ -2286,11 +2983,6 @@ impl InspectorApp {
         );
         let inner = block.inner(area);
         frame.render_widget(block, area);
-
-        if self.workspace_section == WorkspaceSection::Gaps {
-            self.render_gap_center_content(frame, inner);
-            return;
-        }
 
         let sections = Layout::default()
             .direction(Direction::Vertical)
@@ -2330,75 +3022,56 @@ impl InspectorApp {
 
     fn center_title(&self) -> String {
         match self.workspace_section {
-            WorkspaceSection::Composition | WorkspaceSection::Machines
+            WorkspaceSection::Composition | WorkspaceSection::Machines | WorkspaceSection::Gaps
                 if self.machine_section == MachineSection::Overview =>
             {
                 self.center_diagram_plan().title
             }
+            WorkspaceSection::Composition if self.machine_section == MachineSection::Paths => self
+                .current_machine()
+                .map(|machine| format!("Journeys {}", render_flow_machine_label(machine)))
+                .unwrap_or_else(|| "Journeys <no matches>".to_owned()),
             WorkspaceSection::Composition => self
                 .current_machine()
-                .map(|machine| format!("Workspace {}", render_machine_label(machine)))
-                .unwrap_or_else(|| "Workspace <no matches>".to_owned()),
+                .map(|machine| format!("Journey Detail {}", render_flow_machine_label(machine)))
+                .unwrap_or_else(|| "Journey Detail <no matches>".to_owned()),
             WorkspaceSection::Machines => self
                 .current_machine()
                 .map(|machine| format!("Machine {}", render_machine_label(machine)))
                 .unwrap_or_else(|| "Machine <no matches>".to_owned()),
-            WorkspaceSection::Gaps => self
-                .current_gap()
-                .map(|gap| format!("Gap {}", gap.summary_label(&self.doc)))
-                .unwrap_or_else(|| "Gap <no matches>".to_owned()),
+            WorkspaceSection::Gaps => self.workspace_diagram_title(),
         }
     }
 
-    fn render_workspace_summary_cards(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        cards: [(&str, String, String, Color); 4],
-    ) {
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Length(3)])
-            .split(area);
-        for (row, chunk) in rows.into_iter().zip(cards.as_slice().chunks(2)) {
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(*row);
-            for (col, card) in cols.into_iter().zip(chunk.iter()) {
-                render_metric_card(frame, *col, card.0, card.1.clone(), card.2.clone(), card.3);
-            }
-        }
+    fn render_workspace_summary(&self, frame: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
+        frame.render_widget(
+            Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+            area,
+        );
     }
 
     fn workspace_machine_list_item(&self, machine: &CodebaseMachine) -> ListItem<'static> {
         let accent = workspace_section_accent(self.workspace_section);
-        let (exact, heuristic) = self.machine_visible_summary_counts(machine.index);
-        let paths = self.path_items_from_source(machine.index, None, None).len();
+        let (_, hints) = self.machine_visible_summary_counts(machine.index);
+        let routes = if machine.role.is_composition() {
+            self.flow_trace_cache_for_machine(machine).items.len()
+        } else {
+            self.path_items_from_source(machine.index, None, None).len()
+        };
         let warnings = self
             .machine_suggestions(machine.index)
             .into_iter()
             .filter(|suggestion| suggestion.severity == CompositionSuggestionSeverity::Warning)
             .count();
         let mut spans = vec![
-            badge(
-                machine.role.display_label().to_ascii_uppercase(),
-                Color::Black,
-                accent,
-            ),
+            badge(machine_role_badge_label(machine.role), Color::Black, accent),
             Span::raw(" "),
             Span::styled(
-                render_machine_label(machine).to_owned(),
+                render_flow_machine_label(machine).into_owned(),
                 Style::default()
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" "),
-            ghost_badge(format!("{exact}e"), lane_accent(LaneMode::Exact)),
-            Span::raw(" "),
-            ghost_badge(format!("{heuristic}h"), lane_accent(LaneMode::Heuristic)),
-            Span::raw(" "),
-            ghost_badge(format!("{paths}p"), lane_accent(LaneMode::Mixed)),
         ];
         if warnings > 0 {
             spans.push(Span::raw(" "));
@@ -2407,57 +3080,82 @@ impl InspectorApp {
                 severity_accent(CompositionSuggestionSeverity::Warning),
             ));
         }
-        let mut lines = vec![
-            Line::from(spans),
-            subdued_line(
-                format!(
-                    "{} state{}  {} transition{}  {} validator{}",
-                    machine.states.len(),
-                    plural_suffix(machine.states.len()),
-                    machine.transitions.len(),
-                    plural_suffix(machine.transitions.len()),
-                    machine.validator_entries.len(),
-                    plural_suffix(machine.validator_entries.len())
-                ),
-                accent,
-            ),
-        ];
+        let mut detail = format!(
+            "{} state{}  {} move{}",
+            machine.states.len(),
+            plural_suffix(machine.states.len()),
+            machine.transitions.len(),
+            plural_suffix(machine.transitions.len()),
+        );
+        if routes > 0 {
+            detail.push_str(&format!(
+                "  {} {}{}",
+                routes,
+                if machine.role.is_composition() {
+                    "flow"
+                } else {
+                    "route"
+                },
+                plural_suffix(routes)
+            ));
+        }
+        if hints > 0 {
+            detail.push_str(&format!("  {} hint{}", hints, plural_suffix(hints)));
+        }
+        let mut lines = vec![Line::from(spans), subdued_line(detail, accent)];
         push_match_reason_line(&mut lines, self.machine_search_reason(machine));
         ListItem::new(Text::from(lines))
     }
 
-    fn workspace_gap_list_item(&self, suggestion: &CompositionSuggestion) -> ListItem<'static> {
-        let source = suggestion
-            .source_machine(&self.doc)
-            .map(render_machine_label)
-            .unwrap_or("<missing machine>");
-        let target = suggestion
-            .target_machine(&self.doc)
-            .map(render_machine_label)
-            .unwrap_or("<missing machine>");
-        let mut lines = vec![
-            Line::from(vec![
-                badge(
-                    suggestion.severity.display_label().to_ascii_uppercase(),
-                    Color::Black,
-                    severity_accent(suggestion.severity),
-                ),
-                Span::raw(" "),
-                Span::styled(
-                    suggestion.summary_label(&self.doc),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                ghost_badge(
-                    suggestion.counts_label(),
-                    workspace_section_accent(WorkspaceSection::Gaps),
-                ),
-            ]),
-            subdued_line(format!("{source} -> {target}"), muted_color()),
+    fn composition_workspace_machine_list_item(
+        &self,
+        machine: &CodebaseMachine,
+        compact: bool,
+    ) -> ListItem<'static> {
+        let accent = workspace_section_accent(WorkspaceSection::Composition);
+        let warnings = self
+            .machine_suggestions(machine.index)
+            .into_iter()
+            .filter(|suggestion| suggestion.severity == CompositionSuggestionSeverity::Warning)
+            .count();
+        let flow_cache = self.flow_trace_cache_for_machine(machine);
+        let flow_count = flow_cache.items.len();
+        let journeys = if flow_cache.status == FlowTraceStatus::Available {
+            flow_trace_checkpoint_summary(machine, &flow_cache.items)
+        } else {
+            flow_trace_status_summary(Some(flow_cache.status))
+        };
+
+        let mut spans = vec![
+            badge("ORCH", Color::Black, accent),
+            Span::raw(" "),
+            Span::styled(
+                render_flow_machine_label(machine).into_owned(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ];
-        push_match_reason_line(&mut lines, self.suggestion_search_reason(suggestion));
+        if flow_count > 0 {
+            spans.push(Span::raw(" "));
+            spans.push(ghost_badge(
+                format!("{flow_count} flow{}", plural_suffix(flow_count)),
+                accent,
+            ));
+        }
+        if warnings > 0 {
+            spans.push(Span::raw(" "));
+            spans.push(ghost_badge(
+                format!("{warnings} warn"),
+                severity_accent(CompositionSuggestionSeverity::Warning),
+            ));
+        }
+
+        let mut lines = vec![Line::from(spans)];
+        if !compact {
+            lines.push(subdued_line(journeys, accent));
+        }
+        push_match_reason_line(&mut lines, self.machine_search_reason(machine));
         ListItem::new(Text::from(lines))
     }
 
@@ -2639,18 +3337,18 @@ impl InspectorApp {
                 .relation_detail(index)
                 .map(|detail| {
                     let mut spans = vec![
-                        badge("EXACT", Color::Black, lane_accent(LaneMode::Exact)),
+                        badge("PROVEN", Color::Black, lane_accent(LaneMode::Exact)),
                         Span::raw(" "),
                     ];
                     if detail.relation.is_composition_owned() {
                         spans.push(ghost_badge(
-                            "composition",
+                            "owned",
                             workspace_section_accent(WorkspaceSection::Composition),
                         ));
                         spans.push(Span::raw(" "));
                     }
                     spans.push(Span::styled(
-                        render_machine_label(detail.target_machine).to_owned(),
+                        render_machine_label(detail.target_machine).into_owned(),
                         Style::default()
                             .fg(Color::White)
                             .add_modifier(Modifier::BOLD),
@@ -2675,14 +3373,14 @@ impl InspectorApp {
                         ),
                     ]
                 })
-                .unwrap_or_else(|| vec![Line::from("[exact] <missing relation>")]),
+                .unwrap_or_else(|| vec![Line::from("[proven] <missing relation>")]),
             RelationItem::Heuristic(index) => self
                 .heuristic
                 .relation_detail(&self.doc, index)
                 .map(|detail| {
                     vec![
                         Line::from(vec![
-                            badge("HEUR", Color::Black, lane_accent(LaneMode::Heuristic)),
+                            badge("HINT", Color::Black, lane_accent(LaneMode::Heuristic)),
                             Span::raw(" "),
                             ghost_badge(
                                 detail.relation.evidence_kind.display_label(),
@@ -2690,7 +3388,7 @@ impl InspectorApp {
                             ),
                             Span::raw(" "),
                             Span::styled(
-                                render_machine_label(detail.target_machine).to_owned(),
+                                render_machine_label(detail.target_machine).into_owned(),
                                 Style::default()
                                     .fg(Color::White)
                                     .add_modifier(Modifier::BOLD),
@@ -2709,7 +3407,7 @@ impl InspectorApp {
                         ),
                     ]
                 })
-                .unwrap_or_else(|| vec![Line::from("[heur] <missing relation>")]),
+                .unwrap_or_else(|| vec![Line::from("[hint] <missing relation>")]),
         };
         push_match_reason_line(&mut lines, self.relation_search_reason(relation));
         ListItem::new(Text::from(lines))
@@ -2725,7 +3423,7 @@ impl InspectorApp {
             .doc
             .machine(item.target_machine)
             .map(render_machine_label)
-            .unwrap_or("<missing machine>");
+            .unwrap_or_else(|| Cow::Borrowed("<missing machine>"));
         let mut lines = vec![
             Line::from(vec![
                 badge(
@@ -2735,7 +3433,7 @@ impl InspectorApp {
                 ),
                 Span::raw(" "),
                 Span::styled(
-                    target.to_owned(),
+                    target.into_owned(),
                     Style::default()
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
@@ -2749,9 +3447,96 @@ impl InspectorApp {
         ListItem::new(Text::from(lines))
     }
 
+    fn flow_trace_list_item(
+        &self,
+        machine: &CodebaseMachine,
+        item: &FlowTraceItem,
+    ) -> ListItem<'static> {
+        let accent = workspace_section_accent(WorkspaceSection::Composition);
+        let step_count_label = if item.steps.is_empty() {
+            "0 steps".to_owned()
+        } else {
+            format!(
+                "{} step{}",
+                item.steps.len(),
+                plural_suffix(item.steps.len())
+            )
+        };
+        let mut lines = vec![
+            Line::from(vec![
+                badge("JOURNEY", Color::Black, accent),
+                Span::raw(" "),
+                Span::styled(
+                    flow_trace_label(machine, item),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                ghost_badge(step_count_label, accent),
+            ]),
+            subdued_line(flow_trace_preview(machine, &self.doc, item), accent),
+        ];
+        push_match_reason_line(&mut lines, self.flow_trace_search_reason(machine, item));
+        ListItem::new(Text::from(lines))
+    }
+
+    fn flow_sidebar_machine_list_item(&self, machine: &CodebaseMachine) -> ListItem<'static> {
+        let accent = workspace_section_accent(WorkspaceSection::Composition);
+        let warnings = self
+            .machine_suggestions(machine.index)
+            .into_iter()
+            .filter(|suggestion| suggestion.severity == CompositionSuggestionSeverity::Warning)
+            .count();
+        let mut spans = vec![Span::styled(
+            render_flow_machine_label(machine).into_owned(),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )];
+        let flow_cache = self.flow_trace_cache_for_machine(machine);
+        match flow_cache.status {
+            FlowTraceStatus::Available => {
+                spans.push(Span::raw(" "));
+                spans.push(ghost_badge(
+                    format!(
+                        "{} journey{}",
+                        flow_cache.items.len(),
+                        plural_suffix(flow_cache.items.len())
+                    ),
+                    accent,
+                ));
+            }
+            FlowTraceStatus::ReachableCycle => {
+                spans.push(Span::raw(" "));
+                spans.push(ghost_badge(
+                    "cycle",
+                    severity_accent(CompositionSuggestionSeverity::Warning),
+                ));
+            }
+            FlowTraceStatus::MissingRoot => {
+                spans.push(Span::raw(" "));
+                spans.push(ghost_badge("no root", muted_color()));
+            }
+            FlowTraceStatus::TooManyJourneys => {
+                spans.push(Span::raw(" "));
+                spans.push(ghost_badge("too many", muted_color()));
+            }
+            FlowTraceStatus::NotComposition => {}
+        }
+        if warnings > 0 {
+            spans.push(Span::raw(" "));
+            spans.push(ghost_badge(
+                format!("{warnings} warn"),
+                severity_accent(CompositionSuggestionSeverity::Warning),
+            ));
+        }
+        ListItem::new(Line::from(spans))
+    }
+
     fn current_selection_label(&self) -> String {
         if self.is_workspace_home() {
-            return format!("Workspace {}", self.workspace_label);
+            return self.center_diagram_plan().title;
         }
         match self.workspace_section {
             WorkspaceSection::Composition | WorkspaceSection::Machines => {
@@ -2760,28 +3545,28 @@ impl InspectorApp {
                 };
                 match self.machine_section {
                     MachineSection::Overview | MachineSection::Diagnostics => {
-                        render_machine_label(machine).to_owned()
+                        render_machine_label(machine).into_owned()
                     }
                     MachineSection::States => match self.selected_machine_item() {
                         Some(MachineItem::State(state_index)) => machine
                             .state(state_index)
                             .map(render_state_label)
-                            .unwrap_or_else(|| render_machine_label(machine).to_owned()),
-                        _ => render_machine_label(machine).to_owned(),
+                            .unwrap_or_else(|| render_machine_label(machine).into_owned()),
+                        _ => render_machine_label(machine).into_owned(),
                     },
                     MachineSection::Transitions => match self.selected_machine_item() {
                         Some(MachineItem::Transition(transition_index)) => machine
                             .transition(transition_index)
                             .map(|transition| render_transition_label(transition).to_owned())
-                            .unwrap_or_else(|| render_machine_label(machine).to_owned()),
-                        _ => render_machine_label(machine).to_owned(),
+                            .unwrap_or_else(|| render_machine_label(machine).into_owned()),
+                        _ => render_machine_label(machine).into_owned(),
                     },
                     MachineSection::Validators => match self.selected_machine_item() {
                         Some(MachineItem::Validator(entry_index)) => machine
                             .validator_entry(entry_index)
                             .map(|entry| entry.display_label().into_owned())
-                            .unwrap_or_else(|| render_machine_label(machine).to_owned()),
-                        _ => render_machine_label(machine).to_owned(),
+                            .unwrap_or_else(|| render_machine_label(machine).into_owned()),
+                        _ => render_machine_label(machine).into_owned(),
                     },
                     MachineSection::Relations => self
                         .selected_relation_detail()
@@ -2793,16 +3578,20 @@ impl InspectorApp {
                                 render_heuristic_relation_label(&detail)
                             }
                         })
-                        .unwrap_or_else(|| render_machine_label(machine).to_owned()),
+                        .unwrap_or_else(|| render_machine_label(machine).into_owned()),
                     MachineSection::Paths => self
-                        .selected_path_item()
-                        .map(|path| self.path_item_label(&path))
-                        .unwrap_or_else(|| render_machine_label(machine).to_owned()),
+                        .selected_flow_trace()
+                        .map(|flow| flow_trace_label(machine, &flow))
+                        .or_else(|| {
+                            self.selected_path_item()
+                                .map(|path| self.path_item_label(&path))
+                        })
+                        .unwrap_or_else(|| render_machine_label(machine).into_owned()),
                 }
             }
             WorkspaceSection::Gaps => self
-                .current_gap()
-                .map(|gap| gap.summary_label(&self.doc))
+                .current_machine()
+                .map(|machine| render_machine_label(machine).into_owned())
                 .unwrap_or_else(|| "<no matches>".to_owned()),
         }
     }
@@ -2810,7 +3599,7 @@ impl InspectorApp {
     fn detail_header_text(&self) -> Text<'static> {
         let section_accent = workspace_section_accent(self.workspace_section);
         let tab_accent = detail_tab_accent(self.detail_tab);
-        let mut lines = vec![Line::from(vec![
+        let mut header = vec![
             badge(
                 self.workspace_section.label().to_ascii_uppercase(),
                 Color::Black,
@@ -2818,13 +3607,19 @@ impl InspectorApp {
             ),
             Span::raw(" "),
             badge(
-                self.detail_tab.label().to_ascii_uppercase(),
+                self.detail_tab_label(self.detail_tab).to_ascii_uppercase(),
                 Color::Black,
                 tab_accent,
             ),
-            Span::raw(" "),
-            ghost_badge(self.lane_mode.label(), lane_accent(self.lane_mode)),
-        ])];
+        ];
+        if self.machine_section == MachineSection::Relations {
+            header.push(Span::raw(" "));
+            header.push(ghost_badge(
+                self.lane_mode.label(),
+                lane_accent(self.lane_mode),
+            ));
+        }
+        let mut lines = vec![Line::from(header)];
         lines.push(Line::from(Span::styled(
             self.current_selection_label(),
             Style::default()
@@ -2843,12 +3638,25 @@ impl InspectorApp {
 
     fn render_detail_body(&self, frame: &mut Frame, area: Rect) {
         let accent = detail_tab_accent(self.detail_tab);
-        let (badge_label, title, notes_title, preferred_head_lines) = match self.detail_tab {
-            DetailTab::Summary => ("SNAPSHOT", "Snapshot", "Breakdown", 6usize),
-            DetailTab::Docs => ("HIGHLIGHTS", "Highlights", "Source-Local Docs", 5usize),
-            DetailTab::Diagram => ("TERMAID", "Diagram Preview", "Availability", 10usize),
-            DetailTab::Source => ("SURFACE", "Observed Surface", "Locations", 5usize),
-            DetailTab::Explain => ("READING", "Interpretation", "Why It Matters", 4usize),
+        let (badge_label, title, notes_title, preferred_head_lines) = if self.workspace_section
+            == WorkspaceSection::Composition
+            && self.machine_section == MachineSection::Paths
+        {
+            match self.detail_tab {
+                DetailTab::Summary => ("STEPS", "Journey Steps", "Selected Step", 8usize),
+                DetailTab::Docs => ("PROTOCOLS", "Touched Protocols", "Context", 6usize),
+                DetailTab::Diagram => ("MERMAID", "Mermaid Source", "Availability", 10usize),
+                DetailTab::Source => ("SOURCE", "Observed Surface", "Locations", 5usize),
+                DetailTab::Explain => ("ISSUES", "Unavailable Or Weaker Data", "Next Move", 5usize),
+            }
+        } else {
+            match self.detail_tab {
+                DetailTab::Summary => ("GUIDE", "Guide", "Key Facts", 6usize),
+                DetailTab::Docs => ("DOCS", "Source Docs", "Context", 5usize),
+                DetailTab::Diagram => ("MERMAID", "Mermaid Source", "Availability", 10usize),
+                DetailTab::Source => ("SURFACE", "Observed Surface", "Locations", 5usize),
+                DetailTab::Explain => ("WHY", "How To Read", "Next Move", 4usize),
+            }
         };
         if self.detail_tab == DetailTab::Diagram {
             render_text_card(
@@ -2857,7 +3665,7 @@ impl InspectorApp {
                 badge_label,
                 title,
                 accent,
-                self.current_diagram_preview_text(area.width.saturating_sub(2)),
+                self.current_diagram_text(),
             );
             return;
         }
@@ -2972,6 +3780,11 @@ impl InspectorApp {
     }
 
     fn render_paths_content(&self, frame: &mut Frame, area: Rect) {
+        if self.uses_flow_traces() {
+            self.render_flow_paths_content(frame, area);
+            return;
+        }
+
         let accent = lane_accent(self.lane_mode);
         let items = self
             .path_items()
@@ -2990,59 +3803,89 @@ impl InspectorApp {
         frame.render_stateful_widget(list, area, &mut state);
     }
 
-    fn render_gap_center_content(&self, frame: &mut Frame, area: Rect) {
-        let sections = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(8), Constraint::Length(10)])
-            .split(area);
-        let accent = workspace_section_accent(WorkspaceSection::Gaps);
-        let gap_block = Block::default()
+    fn render_flow_paths_content(&self, frame: &mut Frame, area: Rect) {
+        let Some(machine) = self.current_machine() else {
+            frame.render_widget(Paragraph::new(Text::from("<no matches>")), area);
+            return;
+        };
+
+        let accent = workspace_section_accent(WorkspaceSection::Composition);
+        if area.height < 8 {
+            if let Some(flow) = self.selected_flow_trace() {
+                let plan = self.flow_trace_diagram_plan(machine, &flow);
+                self.render_diagram_viewport(frame, area, &plan);
+            } else {
+                frame.render_widget(
+                    Paragraph::new(self.empty_path_text()).wrap(Wrap { trim: false }),
+                    area,
+                );
+            }
+            return;
+        }
+
+        let split = if area.width >= 96 {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(34), Constraint::Min(0)])
+                .split(area)
+        } else {
+            let selector_height = area.height.saturating_sub(5).clamp(5, 7);
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(selector_height), Constraint::Min(0)])
+                .split(area)
+        };
+
+        let selector_block = Block::default()
             .title(Line::from(vec![
-                badge("GAP", Color::Black, accent),
+                badge("JOURNEYS", Color::Black, accent),
                 Span::raw(" "),
-                Span::styled("Diagnostic Card", title_style(accent, true)),
+                Span::styled("Entry -> Exit", title_style(accent, true)),
             ]))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(accent));
-        let gap_inner = gap_block.inner(sections[0]);
-        frame.render_widget(gap_block, sections[0]);
-        frame.render_widget(
-            Paragraph::new(self.gap_card_text())
-                .wrap(Wrap { trim: false })
-                .style(Style::default().fg(Color::White)),
-            gap_inner,
+        let selector_inner = selector_block.inner(split[0]);
+        frame.render_widget(selector_block, split[0]);
+
+        let items = self
+            .flow_trace_items()
+            .iter()
+            .map(|item| self.flow_trace_list_item(machine, item))
+            .collect::<Vec<_>>();
+        let empty = items.is_empty();
+        let mut state = ListState::default().with_selected((!empty).then_some(self.path_index));
+        frame.render_stateful_widget(
+            if empty {
+                List::new(vec![ListItem::new(self.empty_path_text())])
+            } else {
+                List::new(items)
+            }
+            .highlight_style(selected_list_style(accent))
+            .highlight_symbol("> "),
+            selector_inner,
+            &mut state,
         );
 
-        let path_items = self
-            .path_items()
-            .iter()
-            .take(4)
-            .map(|item| self.path_list_item(item))
-            .collect::<Vec<_>>();
-        let title = Line::from(vec![
-            badge(
-                self.lane_mode.label().to_ascii_uppercase(),
-                Color::Black,
-                lane_accent(self.lane_mode),
-            ),
-            Span::raw(" "),
-            Span::styled("Best Paths", title_style(accent, true)),
-        ]);
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(accent));
-        let inner = block.inner(sections[1]);
-        frame.render_widget(block, sections[1]);
-        frame.render_widget(
-            if path_items.is_empty() {
-                List::new(vec![ListItem::new(self.empty_list_label())])
-            } else {
-                List::new(path_items)
-            }
-            .highlight_style(selected_list_style(lane_accent(self.lane_mode))),
-            inner,
-        );
+        let diagram_area = split[1];
+        if let Some(flow) = self.selected_flow_trace() {
+            let plan = self.flow_trace_diagram_plan(machine, &flow);
+            self.render_diagram_viewport(frame, diagram_area, &plan);
+        } else {
+            let block = Block::default()
+                .title(Line::from(vec![
+                    badge("FLOW", Color::Black, accent),
+                    Span::raw(" "),
+                    Span::styled("Sequence", title_style(accent, true)),
+                ]))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(accent));
+            let inner = block.inner(diagram_area);
+            frame.render_widget(block, diagram_area);
+            frame.render_widget(
+                Paragraph::new(self.empty_path_text()).wrap(Wrap { trim: false }),
+                inner,
+            );
+        }
     }
 
     fn render_detail(&self, frame: &mut Frame, area: Rect) {
@@ -3056,7 +3899,7 @@ impl InspectorApp {
                 ),
                 Span::raw(" "),
                 Span::styled(
-                    "Detail Pane",
+                    "Guide Pane",
                     title_style(accent, self.focus == Focus::Detail),
                 ),
             ]),
@@ -3076,7 +3919,7 @@ impl InspectorApp {
         let tabs = Tabs::new(
             DetailTab::ORDER
                 .iter()
-                .map(|tab| Line::from(tab.label()))
+                .map(|tab| Line::from(self.detail_tab_label(*tab)))
                 .collect::<Vec<_>>(),
         )
         .select(
@@ -3095,7 +3938,11 @@ impl InspectorApp {
     }
 
     fn render_status(&self, frame: &mut Frame, area: Rect) {
-        let mut lines = vec![Line::from(vec![
+        let detail_badge = ghost_badge(
+            self.detail_tab_label(self.detail_tab),
+            detail_tab_accent(self.detail_tab),
+        );
+        let mut header = vec![
             badge(
                 self.focus_label().to_ascii_uppercase(),
                 Color::Black,
@@ -3107,15 +3954,21 @@ impl InspectorApp {
                 workspace_section_accent(self.workspace_section),
             ),
             Span::raw(" "),
-            ghost_badge(self.lane_mode.label(), lane_accent(self.lane_mode)),
-            Span::raw(" "),
-            ghost_badge(self.detail_tab.label(), detail_tab_accent(self.detail_tab)),
+            detail_badge,
             Span::raw(" "),
             ghost_badge(
                 format!("scope {}", self.search_scope.label()),
                 muted_color(),
             ),
-        ])];
+        ];
+        if self.machine_section == MachineSection::Relations {
+            header.push(Span::raw(" "));
+            header.push(ghost_badge(
+                self.lane_mode.label(),
+                lane_accent(self.lane_mode),
+            ));
+        }
+        let mut lines = vec![Line::from(header)];
 
         let mut chips = Vec::new();
         if self.has_search_query() {
@@ -3145,6 +3998,33 @@ impl InspectorApp {
                 lane_accent(LaneMode::Heuristic),
             ));
         }
+        if self.is_workspace_home() {
+            chips.push(ghost_badge(
+                format!("view {}", self.workspace_diagram_scale.label()),
+                workspace_section_accent(WorkspaceSection::Composition),
+            ));
+            chips.push(ghost_badge(
+                format!(
+                    "layout {}",
+                    workspace_flow_direction_label(self.workspace_flow_direction)
+                ),
+                detail_tab_accent(DetailTab::Diagram),
+            ));
+            if self.workspace_diagram_scale == WorkspaceDiagramScale::Focus {
+                chips.push(ghost_badge(
+                    format!(
+                        "radius {} {}",
+                        self.workspace_focus_hops,
+                        if self.workspace_focus_hops == 1 {
+                            "hop"
+                        } else {
+                            "hops"
+                        }
+                    ),
+                    detail_tab_accent(DetailTab::Source),
+                ));
+            }
+        }
         if matches!(
             self.workspace_section,
             WorkspaceSection::Composition | WorkspaceSection::Machines | WorkspaceSection::Gaps
@@ -3168,15 +4048,19 @@ impl InspectorApp {
         }
         lines.push(join_spans(chips));
 
-        let key_help = if self.input_mode == InputMode::Search {
-            "enter apply  esc clear  backspace delete  s scope"
-        } else {
-            "tab focus  [ ] tabs  j/k move or scroll  / search  ? help  q quit"
-        };
-        lines.push(Line::from(Span::styled(
-            key_help,
-            Style::default().fg(mutated_color_fallback(lane_accent(self.lane_mode))),
-        )));
+        if area.height >= 3 {
+            let key_help = if self.input_mode == InputMode::Search {
+                "enter apply  esc clear  backspace delete  s scope"
+            } else if self.uses_flow_shell() {
+                "tab focus  j/k active pane  h/l pan diagram  [ ] tabs  / search  q quit"
+            } else {
+                "tab focus  [ ] tabs  h/l left-right or pan  j/k move or scroll  / search  e proven  H hints  v scale  L layout  ? help  q quit"
+            };
+            lines.push(Line::from(Span::styled(
+                key_help,
+                Style::default().fg(mutated_color_fallback(lane_accent(self.lane_mode))),
+            )));
+        }
         let status = Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false });
         frame.render_widget(status, area);
     }
@@ -3198,18 +4082,20 @@ impl InspectorApp {
         frame.render_widget(block, area);
         frame.render_widget(
             Paragraph::new(Text::from(vec![
-                Line::from("Views: `1` Workspace, `2` Machine, `3` Gaps"),
-                Line::from("Lanes: `e` exact, `m` mixed, `h` heuristic"),
+                Line::from("Views: `1` Journeys, `2` Machines, `3` Map"),
+                Line::from("Lanes: `e` proven, `m` both, `H` hints"),
                 Line::from("Focus: `tab` / `shift-tab`"),
                 Line::from("Tabs: `[` previous, `]` next"),
-                Line::from("Lists: arrows or `j` / `k`"),
+                Line::from("Lists: arrows or `j` / `k`; `h` / `l` move left / right"),
+                Line::from("Journey view: `tab` moves between machines, journeys, diagram, and detail"),
                 Line::from(
-                    "Diagrams: `j` / `k` scroll when the center is on `Workspace` or `Diagram`",
+                    "Diagrams: `h` / `l` pan horizontally, `j` / `k` scroll vertically in the center diagram",
                 ),
+                Line::from("Map tab: `v` scale, `r` focus radius, `L` layout"),
                 Line::from("Search: `/` enter, `s` scope, `esc` or `enter` finish"),
                 Line::from("Filters: `p` payload, `f` field, `t` param"),
                 Line::from("Filters: `d` direct, `n` declared ref, `g` signature, `b` body"),
-                Line::from("Relations: `o` outbound, `i` inbound"),
+                Line::from("Handoffs: `o` outbound, `i` inbound"),
                 Line::from("Other: `0` clear filters, `q` quit, `?` close help"),
             ]))
             .wrap(Wrap { trim: false }),
@@ -3304,10 +4190,17 @@ impl InspectorApp {
                         .selected_relation_detail()
                         .map(relation_detail_selection_text)
                         .unwrap_or_else(|| self.empty_relation_text()),
-                    MachineSection::Paths => self
-                        .selected_path_item()
-                        .map(|path| self.path_detail_text(&path))
-                        .unwrap_or_else(|| self.empty_path_text()),
+                    MachineSection::Paths => {
+                        if self.uses_flow_traces() {
+                            self.selected_flow_trace()
+                                .map(|flow| flow_trace_detail_text(machine, &self.doc, &flow))
+                                .unwrap_or_else(|| self.empty_path_text())
+                        } else {
+                            self.selected_path_item()
+                                .map(|path| self.path_detail_text(&path))
+                                .unwrap_or_else(|| self.empty_path_text())
+                        }
+                    }
                 }
             }
             WorkspaceSection::Gaps => self.gap_card_text(),
@@ -3352,10 +4245,23 @@ impl InspectorApp {
                         .selected_relation_detail()
                         .map(relation_docs_text)
                         .unwrap_or_else(|| Text::from("No docs for the current relation.")),
-                    MachineSection::Paths => self
-                        .selected_path_item()
-                        .map(|path| path_docs_text(&path, &self.doc))
-                        .unwrap_or_else(|| Text::from("No docs for the current path.")),
+                    MachineSection::Paths => {
+                        if self.uses_flow_traces() {
+                            self.selected_flow_trace()
+                                .map(|flow| {
+                                    if self.workspace_section == WorkspaceSection::Composition {
+                                        flow_trace_protocols_text(machine, &self.doc, &flow)
+                                    } else {
+                                        flow_trace_docs_text(machine, &self.doc, &flow)
+                                    }
+                                })
+                                .unwrap_or_else(|| Text::from("No docs for the current journey."))
+                        } else {
+                            self.selected_path_item()
+                                .map(|path| path_docs_text(&path, &self.doc))
+                                .unwrap_or_else(|| Text::from("No docs for the current path."))
+                        }
+                    }
                 }
             }
             WorkspaceSection::Gaps => self
@@ -3367,7 +4273,7 @@ impl InspectorApp {
 
     fn current_source_text(&self) -> Text<'static> {
         if self.is_workspace_home() {
-            return workspace_source_text(&self.workspace_label, &self.doc);
+            return workspace_source_text(self);
         }
         match self.workspace_section {
             WorkspaceSection::Composition | WorkspaceSection::Machines => {
@@ -3403,10 +4309,17 @@ impl InspectorApp {
                         .selected_relation_detail()
                         .map(relation_source_text)
                         .unwrap_or_else(|| self.empty_relation_text()),
-                    MachineSection::Paths => self
-                        .selected_path_item()
-                        .map(|path| path_source_text(&path, &self.doc))
-                        .unwrap_or_else(|| self.empty_path_text()),
+                    MachineSection::Paths => {
+                        if self.uses_flow_traces() {
+                            self.selected_flow_trace()
+                                .map(|flow| flow_trace_source_text(machine, &self.doc, &flow))
+                                .unwrap_or_else(|| self.empty_path_text())
+                        } else {
+                            self.selected_path_item()
+                                .map(|path| path_source_text(&path, &self.doc))
+                                .unwrap_or_else(|| self.empty_path_text())
+                        }
+                    }
                 }
             }
             WorkspaceSection::Gaps => self
@@ -3417,12 +4330,29 @@ impl InspectorApp {
     }
 
     fn workspace_diagram_plan(&self) -> DiagramPlan {
+        let machine_indices = self.workspace_diagram_machine_indices();
+        if machine_indices.is_empty() {
+            return self.unavailable_diagram_plan(
+                "workspace-flow:none",
+                "Workspace <no matches>",
+                Text::from("<no matches>"),
+            );
+        }
         DiagramPlan {
-            key: "workspace-flow".to_owned(),
-            title: format!("Workspace {}", self.workspace_label),
+            key: format!(
+                "workspace-flow:{}:{}:{}:{machine_indices:?}",
+                self.workspace_diagram_scale.label(),
+                workspace_flow_direction_label(self.workspace_flow_direction),
+                self.workspace_focus_hops
+            ),
+            title: self.workspace_diagram_title(),
             kind_label: "flowchart",
             exact: true,
-            source: workspace_diagram_text(&self.doc),
+            source: workspace_diagram_text(
+                &self.doc,
+                &machine_indices,
+                self.workspace_flow_direction,
+            ),
         }
     }
 
@@ -3433,6 +4363,24 @@ impl InspectorApp {
             kind_label: "stateDiagram-v2",
             exact: true,
             source: machine_diagram_text(&self.doc, machine),
+        }
+    }
+
+    fn flow_trace_diagram_plan(
+        &self,
+        machine: &CodebaseMachine,
+        flow: &FlowTraceItem,
+    ) -> DiagramPlan {
+        DiagramPlan {
+            key: format!("journey:{}:{:?}", machine.rust_type_path, flow.id),
+            title: format!(
+                "{} · Journey {}",
+                render_flow_machine_label(machine),
+                flow_trace_label(machine, flow)
+            ),
+            kind_label: "stateDiagram-v2",
+            exact: true,
+            source: flow_trace_diagram_text(machine, &self.doc, flow),
         }
     }
 
@@ -3453,7 +4401,19 @@ impl InspectorApp {
 
     fn center_diagram_plan(&self) -> DiagramPlan {
         match self.workspace_section {
-            WorkspaceSection::Composition => self.workspace_diagram_plan(),
+            WorkspaceSection::Composition => self
+                .current_machine()
+                .and_then(|machine| {
+                    self.selected_flow_trace()
+                        .map(|flow| self.flow_trace_diagram_plan(machine, &flow))
+                })
+                .unwrap_or_else(|| {
+                    self.unavailable_diagram_plan(
+                        "journey:none",
+                        "Journey <no selection>",
+                        self.empty_path_text(),
+                    )
+                }),
             WorkspaceSection::Machines => self
                 .current_machine()
                 .map(|machine| self.machine_diagram_plan(machine))
@@ -3464,21 +4424,12 @@ impl InspectorApp {
                         Text::from("<no matches>"),
                     )
                 }),
-            WorkspaceSection::Gaps => self.unavailable_diagram_plan(
-                "gaps:none",
-                "Gap Diagnostics",
-                Text::from(
-                    "Gap diagnostics do not have an exact Mermaid export yet.\nSelect a machine or exact relation to inspect a diagram.",
-                ),
-            ),
+            WorkspaceSection::Gaps => self.workspace_diagram_plan(),
         }
     }
 
     fn detail_diagram_plan(&self) -> DiagramPlan {
         match self.workspace_section {
-            WorkspaceSection::Composition if self.machine_section == MachineSection::Overview => {
-                self.workspace_diagram_plan()
-            }
             WorkspaceSection::Composition | WorkspaceSection::Machines => {
                 let Some(machine) = self.current_machine() else {
                     return self.unavailable_diagram_plan(
@@ -3521,37 +4472,50 @@ impl InspectorApp {
                             "relation:none",
                             "Handoff <no relation>",
                             Text::from(
-                                "No exact relation selected.\nSelect an exact relation to view its Mermaid sequence diagram.",
+                                "No proven handoff selected.\nSelect a proven handoff to view its Mermaid sequence diagram.",
                             ),
                         ),
                     },
-                    MachineSection::Paths => self
-                        .selected_path_item()
-                        .map(|path| {
-                            self.unavailable_diagram_plan(
-                                format!("path:{}:{}", path.kind.display_label(), path.target_machine),
-                                self.path_item_label(&path),
-                                path_diagram_text(path),
-                            )
-                        })
-                        .unwrap_or_else(|| {
-                            self.unavailable_diagram_plan(
-                                "path:none",
-                                "Path <no selection>",
-                                Text::from(
-                                    "No path selected.\nExact composition-path Mermaid export is not implemented yet.",
-                                ),
-                            )
-                        }),
+                    MachineSection::Paths => {
+                        if self.uses_flow_traces() {
+                            self.selected_flow_trace()
+                                .map(|flow| self.flow_trace_diagram_plan(machine, &flow))
+                                .unwrap_or_else(|| {
+                                    self.unavailable_diagram_plan(
+                                        "flow:none",
+                                        "Journey <no selection>",
+                                        Text::from(
+                                            "No journey selected.\nSelect an exact root-to-sink journey to view its Mermaid state diagram.",
+                                        ),
+                                    )
+                                })
+                        } else {
+                            self.selected_path_item()
+                                .map(|path| {
+                                    self.unavailable_diagram_plan(
+                                        format!(
+                                            "path:{}:{}",
+                                            path.kind.display_label(),
+                                            path.target_machine
+                                        ),
+                                        self.path_item_label(&path),
+                                        path_diagram_text(path),
+                                    )
+                                })
+                                .unwrap_or_else(|| {
+                                    self.unavailable_diagram_plan(
+                                        "path:none",
+                                        "Route <no selection>",
+                                        Text::from(
+                                            "No route selected.\nMermaid route export is not implemented yet.",
+                                        ),
+                                    )
+                                })
+                        }
+                    }
                 }
             }
-            WorkspaceSection::Gaps => self.unavailable_diagram_plan(
-                "gaps:none",
-                "Gap Diagnostics",
-                Text::from(
-                    "Gap diagnostics do not have an exact Mermaid export yet.\nSelect a machine or exact relation to inspect a diagram.",
-                ),
-            ),
+            WorkspaceSection::Gaps => self.workspace_diagram_plan(),
         }
     }
 
@@ -3587,11 +4551,6 @@ impl InspectorApp {
         text
     }
 
-    fn current_diagram_preview_text(&self, width: u16) -> Text<'static> {
-        let plan = self.detail_diagram_plan();
-        self.diagram_plan_preview_text(&plan, width)
-    }
-
     fn render_diagram_viewport(&self, frame: &mut Frame, area: Rect, plan: &DiagramPlan) {
         let accent = if plan.exact {
             lane_accent(LaneMode::Exact)
@@ -3605,7 +4564,7 @@ impl InspectorApp {
         frame.render_widget(
             Paragraph::new(Text::from(Line::from(vec![
                 badge(
-                    if plan.exact { "EXACT" } else { "INFO" },
+                    if plan.exact { "PROVEN" } else { "INFO" },
                     Color::Black,
                     accent,
                 ),
@@ -3623,7 +4582,7 @@ impl InspectorApp {
         );
         frame.render_widget(
             Paragraph::new(self.diagram_plan_preview_text(plan, sections[1].width))
-                .scroll((self.diagram_scroll_y, 0))
+                .scroll((self.diagram_scroll_y, self.diagram_scroll_x))
                 .style(Style::default().fg(Color::White)),
             sections[1],
         );
@@ -3631,7 +4590,7 @@ impl InspectorApp {
 
     fn current_explain_text(&self) -> Text<'static> {
         if self.is_workspace_home() {
-            return workspace_explain_text(&self.doc);
+            return workspace_explain_text(self);
         }
         match self.workspace_section {
             WorkspaceSection::Composition | WorkspaceSection::Machines => {
@@ -3667,10 +4626,23 @@ impl InspectorApp {
                         .selected_relation_detail()
                         .map(relation_explain_text)
                         .unwrap_or_else(|| self.empty_relation_text()),
-                    MachineSection::Paths => self
-                        .selected_path_item()
-                        .map(|path| path_explain_text(&path, &self.doc))
-                        .unwrap_or_else(|| self.empty_path_text()),
+                    MachineSection::Paths => {
+                        if self.uses_flow_traces() {
+                            self.selected_flow_trace()
+                                .map(|flow| {
+                                    if self.workspace_section == WorkspaceSection::Composition {
+                                        flow_trace_issue_text(machine, &self.doc, &flow)
+                                    } else {
+                                        flow_trace_explain_text(machine, &self.doc, &flow)
+                                    }
+                                })
+                                .unwrap_or_else(|| self.empty_path_text())
+                        } else {
+                            self.selected_path_item()
+                                .map(|path| path_explain_text(&path, &self.doc))
+                                .unwrap_or_else(|| self.empty_path_text())
+                        }
+                    }
                 }
             }
             WorkspaceSection::Gaps => self
@@ -3691,6 +4663,14 @@ impl InspectorApp {
                     .unwrap_or_else(|| Text::from("<no matches>")),
                 WorkspaceSection::Gaps => self.gaps_workspace_detail_text(),
             },
+            Focus::JourneyList => self
+                .selected_flow_trace()
+                .map(|flow| {
+                    self.current_machine()
+                        .map(|machine| flow_trace_detail_text(machine, &self.doc, &flow))
+                        .unwrap_or_else(|| self.empty_path_text())
+                })
+                .unwrap_or_else(|| self.empty_path_text()),
             Focus::MainView => match self.workspace_section {
                 WorkspaceSection::Composition => self.machine_detail_selection_text(),
                 WorkspaceSection::Machines => self.machine_detail_selection_text(),
@@ -3698,8 +4678,16 @@ impl InspectorApp {
             },
             Focus::Detail => match self.workspace_section {
                 WorkspaceSection::Composition | WorkspaceSection::Gaps => self
-                    .selected_path_item()
-                    .map(|path| self.path_detail_text(&path))
+                    .selected_flow_trace()
+                    .map(|flow| {
+                        self.current_machine()
+                            .map(|machine| flow_trace_detail_text(machine, &self.doc, &flow))
+                            .unwrap_or_else(|| self.empty_path_text())
+                    })
+                    .or_else(|| {
+                        self.selected_path_item()
+                            .map(|path| self.path_detail_text(&path))
+                    })
                     .unwrap_or_else(|| self.empty_path_text()),
                 WorkspaceSection::Machines => self
                     .selected_relation_detail()
@@ -3748,37 +4736,53 @@ impl InspectorApp {
     }
 
     fn composition_workspace_detail_text(&self) -> Text<'static> {
-        let visible = self.visible_composition_machine_indices();
         let exact_edges = self
             .visible_machine_relation_groups()
             .iter()
             .filter(|group| group.from_machine != group.to_machine)
             .count();
-        let heuristic_edges = self
+        let shown_machines = self.workspace_diagram_machine_indices().len();
+        let mut lines = vec![
+            self.current_machine()
+                .map(|machine| {
+                    Line::from(format!(
+                        "selected machine: {} ({})",
+                        render_machine_label(machine),
+                        machine.role.display_label()
+                    ))
+                })
+                .unwrap_or_else(|| Line::from("selected: <no matches>")),
+            Line::from(format!(
+                "map: {}  |  layout {}  |  shown {} machine{}",
+                self.workspace_diagram_scale.label(),
+                workspace_flow_direction_label(self.workspace_flow_direction),
+                shown_machines,
+                plural_suffix(shown_machines)
+            )),
+            Line::from(format!(
+                "machines: {} visible  |  {} proven handoff{}",
+                self.visible_machine_indices().len(),
+                exact_edges,
+                plural_suffix(exact_edges)
+            )),
+            Line::from(
+                "Map shows the linked machine neighborhood around the current selection.",
+            ),
+            Line::from(
+                "Use Journeys for exact composition order. Use Machines for full legal state diagrams.",
+            ),
+        ];
+        let hint_edges = self
             .visible_heuristic_machine_relation_groups()
             .iter()
             .filter(|group| group.from_machine != group.to_machine)
             .count();
-        Text::from(vec![
-            Line::from(format!(
-                "composition flows: {}/{}",
-                visible.len(),
-                self.doc
-                    .machines()
-                    .iter()
-                    .filter(|machine| machine.role.is_composition())
-                    .count()
-            )),
-            Line::from("Workspace view is the top-level exact flow surface."),
-            Line::from(format!("visible exact machine edges: {exact_edges}")),
-            Line::from(format!("visible heuristic machine edges: {heuristic_edges}")),
-            Line::from(
-                "Use the workspace diagram as the main flow surface, then drill into machines for exact state diagrams.",
-            ),
-            Line::from(
-                "Use the path pane to follow composition-first routes, then exact graph routes, then heuristic fallback.",
-            ),
-        ])
+        if hint_edges > 0 {
+            lines.push(Line::from(format!(
+                "hints available: {hint_edges} weaker source-scanned couplings stay off the map unless you inspect them directly."
+            )));
+        }
+        Text::from(lines)
     }
 
     #[cfg(test)]
@@ -3899,7 +4903,7 @@ impl InspectorApp {
         }
         if !self.lane_mode.shows_heuristic() && has_any_heuristic_summary {
             lines.push(Line::from(
-                "Switch to heuristic (`h`) or mixed (`m`) mode to inspect weaker source-scanned couplings.",
+                "Switch to heuristic (`H`) or mixed (`m`) mode to inspect weaker source-scanned couplings.",
             ));
         }
 
@@ -3907,26 +4911,42 @@ impl InspectorApp {
     }
 
     fn empty_path_text(&self) -> Text<'static> {
+        if self.uses_flow_traces() {
+            return match self.flow_trace_status() {
+                FlowTraceStatus::Available => Text::from("<no matches>"),
+                FlowTraceStatus::NotComposition => Text::from(self.empty_list_label()),
+                FlowTraceStatus::MissingRoot => Text::from(vec![
+                    Line::from("Exact journeys unavailable for this composition machine."),
+                    Line::from("No graph-root ingress state is available in the current exact surface."),
+                ]),
+                FlowTraceStatus::ReachableCycle => Text::from(vec![
+                    Line::from("Exact journeys unavailable for this composition machine."),
+                    Line::from(
+                        "A reachable cycle would make root-to-sink journey enumeration non-finite, so the inspector fails closed here.",
+                    ),
+                ]),
+                FlowTraceStatus::TooManyJourneys => Text::from(vec![
+                    Line::from("Exact journey list unavailable for this composition machine."),
+                    Line::from(
+                        "The exact journey set exceeds the deterministic enumeration budget, so the inspector fails closed instead of truncating it.",
+                    ),
+                ]),
+            };
+        }
+
         match self.workspace_section {
             WorkspaceSection::Composition => self
                 .current_machine()
                 .map(|machine| {
-                    let mut lines = vec![
+                    let lines = vec![
                         Line::from(format!(
-                            "No visible paths from {}.",
+                            "No exact journeys from {}.",
                             render_machine_label(machine)
                         )),
                         Line::from(
-                            "Path explorer prefers composition-owned edges, then exact graph edges, then heuristic fallback.",
+                            "Journey view only shows finite root-to-sink composition traces.",
                         ),
                     ];
-                    if !self.lane_mode.shows_heuristic()
-                        && self.machine_has_any_heuristic_summary(machine.index)
-                    {
-                        lines.push(Line::from(
-                            "Switch to heuristic (`h`) or mixed (`m`) mode to include weaker fallback paths.",
-                        ));
-                    }
                     Text::from(lines)
                 })
                 .unwrap_or_else(|| Text::from(self.empty_list_label())),
@@ -3936,12 +4956,8 @@ impl InspectorApp {
                     Text::from(vec![
                         Line::from(format!(
                             "No visible path from {} to {}.",
-                            gap.source_machine(&self.doc)
-                                .map(render_machine_label)
-                                .unwrap_or("<missing machine>"),
-                            gap.target_machine(&self.doc)
-                                .map(render_machine_label)
-                                .unwrap_or("<missing machine>")
+                            render_optional_machine_label(gap.source_machine(&self.doc)),
+                            render_optional_machine_label(gap.target_machine(&self.doc))
                         )),
                         Line::from(
                             "This gap still needs composition modeling or richer exact handoff surfaces.",
@@ -3965,7 +4981,7 @@ impl InspectorApp {
             if let Some(reason) = first_match_reason(
                 query,
                 [
-                    ("name", render_machine_label(machine).to_owned()),
+                    ("name", render_machine_label(machine).into_owned()),
                     ("path", machine.rust_type_path.to_owned()),
                     (
                         "summary",
@@ -4037,7 +5053,15 @@ impl InspectorApp {
             }
         }
         if self.search_scope.includes_paths() {
-            if let Some(path) = self
+            if machine.role.is_composition() {
+                if let Some(flow) = enumerate_flow_traces(machine).ok().and_then(|items| {
+                    items
+                        .into_iter()
+                        .find(|item| self.flow_trace_matches_query(machine, item, query))
+                }) {
+                    return self.flow_trace_search_reason(machine, &flow);
+                }
+            } else if let Some(path) = self
                 .path_items_from_source(machine.index, None, query)
                 .first()
             {
@@ -4051,14 +5075,8 @@ impl InspectorApp {
     fn suggestion_search_reason(&self, suggestion: &CompositionSuggestion) -> Option<String> {
         let query = self.normalized_query();
         let query = query.as_deref();
-        let source = suggestion
-            .source_machine(&self.doc)
-            .map(render_machine_label)
-            .unwrap_or("<missing machine>");
-        let target = suggestion
-            .target_machine(&self.doc)
-            .map(render_machine_label)
-            .unwrap_or("<missing machine>");
+        let source = render_optional_machine_label(suggestion.source_machine(&self.doc));
+        let target = render_optional_machine_label(suggestion.target_machine(&self.doc));
 
         if self.search_scope.includes_primary() {
             if let Some(reason) = first_match_reason(
@@ -4088,8 +5106,8 @@ impl InspectorApp {
                 query,
                 [
                     ("evidence", suggestion.counts_label()),
-                    ("source", source.to_owned()),
-                    ("target", target.to_owned()),
+                    ("source", source.clone().into_owned()),
+                    ("target", target.clone().into_owned()),
                 ],
             ) {
                 return Some(reason);
@@ -4151,23 +5169,62 @@ impl InspectorApp {
             .first()
             .and_then(|step| self.doc.machine(step.from_machine))
             .map(render_machine_label)
-            .unwrap_or("<missing machine>");
-        let target = self
-            .doc
-            .machine(item.target_machine)
-            .map(render_machine_label)
-            .unwrap_or("<missing machine>");
+            .unwrap_or_else(|| Cow::Borrowed("<missing machine>"));
+        let target = render_optional_machine_label(self.doc.machine(item.target_machine));
         let mut candidates = vec![
             ("route", path_step_preview(item, &self.doc)),
             ("kind", item.kind.display_label().to_owned()),
-            ("from", source.to_owned()),
-            ("to", target.to_owned()),
+            ("from", source.into_owned()),
+            ("to", target.into_owned()),
             ("hops", format!("{} hop", item.steps.len())),
         ];
         for step in &item.steps {
             candidates.push(("step", step.label.clone()));
         }
         first_match_reason(query, candidates)
+    }
+
+    fn flow_trace_search_reason(
+        &self,
+        machine: &CodebaseMachine,
+        item: &FlowTraceItem,
+    ) -> Option<String> {
+        let query = self.normalized_query();
+        let query = query.as_deref();
+        if !self.search_scope.includes_paths() {
+            return None;
+        }
+
+        let mut candidates = vec![
+            ("flow", flow_trace_label(machine, item)),
+            ("ingress", flow_trace_ingress_label(machine, item)),
+            ("egress", flow_trace_egress_label(machine, item)),
+            ("steps", format!("{} step", item.steps.len())),
+        ];
+        for summary in flow_trace_search_strings(machine, &self.doc, item) {
+            candidates.push(("step", summary));
+        }
+        first_match_reason(query, candidates)
+    }
+
+    fn flow_trace_matches_query(
+        &self,
+        machine: &CodebaseMachine,
+        item: &FlowTraceItem,
+        query: Option<&str>,
+    ) -> bool {
+        if !self.search_scope.includes_paths() {
+            return true;
+        }
+
+        Self::query_matches_any(
+            query,
+            std::iter::once(flow_trace_label(machine, item))
+                .chain(std::iter::once(flow_trace_ingress_label(machine, item)))
+                .chain(std::iter::once(flow_trace_egress_label(machine, item)))
+                .chain(std::iter::once(format!("{} step", item.steps.len())))
+                .chain(flow_trace_search_strings(machine, &self.doc, item)),
+        )
     }
 
     fn state_match_reason(&self, state: &CodebaseState, query: Option<&str>) -> Option<String> {
@@ -4272,7 +5329,7 @@ impl InspectorApp {
             ),
             (
                 "target",
-                render_machine_label(detail.target_machine).to_owned(),
+                render_machine_label(detail.target_machine).into_owned(),
             ),
             ("state", render_state_label(detail.target_state)),
         ];
@@ -4312,7 +5369,7 @@ impl InspectorApp {
                 ("source", render_heuristic_source_label(detail)),
                 (
                     "target",
-                    render_machine_label(detail.target_machine).to_owned(),
+                    render_machine_label(detail.target_machine).into_owned(),
                 ),
                 (
                     "file",
@@ -4350,7 +5407,7 @@ impl InspectorApp {
                 [
                     machine.module_path.to_owned(),
                     machine.rust_type_path.to_owned(),
-                    render_machine_label(machine).to_owned(),
+                    render_machine_label(machine).into_owned(),
                     machine.description.unwrap_or_default().to_owned(),
                 ],
             );
@@ -4380,9 +5437,17 @@ impl InspectorApp {
                 && self.lane_mode.shows_heuristic()
                 && self.machine_heuristic_relations_match_query(machine.index, query))
             || (self.search_scope.includes_paths()
-                && !self
-                    .path_items_from_source(machine.index, None, query)
-                    .is_empty())
+                && if machine.role.is_composition() {
+                    enumerate_flow_traces(machine).ok().is_some_and(|items| {
+                        items
+                            .into_iter()
+                            .any(|item| self.flow_trace_matches_query(machine, &item, query))
+                    })
+                } else {
+                    !self
+                        .path_items_from_source(machine.index, None, query)
+                        .is_empty()
+                })
             || ((self.search_scope.includes_primary() || self.search_scope.includes_docs())
                 && self.machine_suggestions_match_query(machine.index, query))
     }
@@ -4392,14 +5457,8 @@ impl InspectorApp {
         suggestion: &CompositionSuggestion,
         query: Option<&str>,
     ) -> bool {
-        let source = suggestion
-            .source_machine(&self.doc)
-            .map(render_machine_label)
-            .unwrap_or("<missing machine>");
-        let target = suggestion
-            .target_machine(&self.doc)
-            .map(render_machine_label)
-            .unwrap_or("<missing machine>");
+        let source = render_optional_machine_label(suggestion.source_machine(&self.doc));
+        let target = render_optional_machine_label(suggestion.target_machine(&self.doc));
         (self.search_scope.includes_primary()
             && Self::query_matches_any(
                 query,
@@ -4407,8 +5466,8 @@ impl InspectorApp {
                     suggestion.severity.display_label().to_owned(),
                     suggestion.kind.display_label().to_owned(),
                     suggestion.summary_label(&self.doc),
-                    source.to_owned(),
-                    target.to_owned(),
+                    source.clone().into_owned(),
+                    target.clone().into_owned(),
                 ],
             ))
             || (self.search_scope.includes_docs()
@@ -4424,12 +5483,12 @@ impl InspectorApp {
                     query,
                     [
                         suggestion.counts_label(),
-                        source.to_owned(),
-                        target.to_owned(),
+                        source.clone().into_owned(),
+                        target.clone().into_owned(),
                     ],
                 ))
             || (self.search_scope.includes_paths()
-                && Self::query_matches_any(query, [source.to_owned(), target.to_owned()]))
+                && Self::query_matches_any(query, [source.into_owned(), target.into_owned()]))
     }
 
     fn machine_suggestions_match_query(&self, machine_index: usize, query: Option<&str>) -> bool {
@@ -4438,11 +5497,11 @@ impl InspectorApp {
             .any(|suggestion| {
                 let source = suggestion
                     .source_machine(&self.doc)
-                    .map(|machine| render_machine_label(machine).to_owned())
+                    .map(|machine| render_machine_label(machine).into_owned())
                     .unwrap_or_default();
                 let target = suggestion
                     .target_machine(&self.doc)
-                    .map(|machine| render_machine_label(machine).to_owned())
+                    .map(|machine| render_machine_label(machine).into_owned())
                     .unwrap_or_default();
                 Self::query_matches_any(
                     query,
@@ -4601,7 +5660,7 @@ impl InspectorApp {
             detail.relation.basis.display_label().to_owned(),
             detail.relation.semantic.display_label().to_owned(),
             source_specific,
-            render_machine_label(detail.source_machine).to_owned(),
+            render_machine_label(detail.source_machine).into_owned(),
             detail.source_machine.rust_type_path.to_owned(),
             detail
                 .source_machine
@@ -4609,7 +5668,7 @@ impl InspectorApp {
                 .unwrap_or_default()
                 .to_owned(),
             detail.source_machine.docs.unwrap_or_default().to_owned(),
-            render_machine_label(detail.target_machine).to_owned(),
+            render_machine_label(detail.target_machine).into_owned(),
             detail.target_machine.rust_type_path.to_owned(),
             detail
                 .target_machine
@@ -4650,7 +5709,7 @@ impl InspectorApp {
             candidates.push(transition.docs.unwrap_or_default().to_owned());
         }
         if let Some(machine) = detail.attested_via_machine {
-            candidates.push(render_machine_label(machine).to_owned());
+            candidates.push(render_machine_label(machine).into_owned());
             candidates.push(machine.rust_type_path.to_owned());
         }
         if let Some(state) = detail.attested_via_state {
@@ -4662,7 +5721,7 @@ impl InspectorApp {
             candidates.push(transition.method_name.to_owned());
         }
         for producer in &detail.attested_via_producers {
-            candidates.push(render_machine_label(producer.machine).to_owned());
+            candidates.push(render_machine_label(producer.machine).into_owned());
             candidates.push(producer.machine.rust_type_path.to_owned());
             candidates.push(render_state_label(producer.state));
             candidates.push(producer.state.rust_name.to_owned());
@@ -4697,7 +5756,7 @@ impl InspectorApp {
             detail.relation.file_path.display().to_string(),
             detail.relation.line_number.to_string(),
             detail.relation.snippet.clone().unwrap_or_default(),
-            render_machine_label(detail.source_machine).to_owned(),
+            render_machine_label(detail.source_machine).into_owned(),
             detail.source_machine.rust_type_path.to_owned(),
             detail
                 .source_machine
@@ -4706,7 +5765,7 @@ impl InspectorApp {
                 .to_owned(),
             detail.source_machine.docs.unwrap_or_default().to_owned(),
             render_heuristic_source_label(detail),
-            render_machine_label(detail.target_machine).to_owned(),
+            render_machine_label(detail.target_machine).into_owned(),
             detail.target_machine.rust_type_path.to_owned(),
             detail
                 .target_machine
@@ -4740,7 +5799,16 @@ fn workspace_section_accent(section: WorkspaceSection) -> Color {
     match section {
         WorkspaceSection::Composition => Color::Rgb(214, 176, 67),
         WorkspaceSection::Machines => Color::Rgb(95, 154, 214),
-        WorkspaceSection::Gaps => Color::Rgb(226, 104, 81),
+        WorkspaceSection::Gaps => Color::Rgb(72, 169, 166),
+    }
+}
+
+fn workspace_flow_direction_label(
+    direction: codebase_render::WorkspaceFlowDirection,
+) -> &'static str {
+    match direction {
+        codebase_render::WorkspaceFlowDirection::TopDown => "td",
+        codebase_render::WorkspaceFlowDirection::LeftRight => "lr",
     }
 }
 
@@ -4762,8 +5830,24 @@ fn detail_tab_accent(tab: DetailTab) -> Color {
     }
 }
 
-fn workspace_diagram_text(doc: &CodebaseDoc) -> Text<'static> {
-    Text::from(codebase_render::mermaid(doc))
+fn workspace_diagram_text(
+    doc: &CodebaseDoc,
+    machine_indices: &[usize],
+    direction: codebase_render::WorkspaceFlowDirection,
+) -> Text<'static> {
+    match codebase_render::mermaid_workspace_flow(
+        doc,
+        codebase_render::WorkspaceFlowOptions {
+            machine_indices: Some(machine_indices),
+            direction,
+            compact_labels: true,
+            edge_labels: codebase_render::WorkspaceFlowEdgeLabelMode::Compact,
+            role_shapes: true,
+        },
+    ) {
+        Ok(diagram) => Text::from(diagram),
+        Err(error) => Text::from(format!("Map Mermaid export failed closed.\n{error}")),
+    }
 }
 
 fn machine_diagram_text(doc: &CodebaseDoc, machine: &CodebaseMachine) -> Text<'static> {
@@ -4787,7 +5871,7 @@ fn relation_diagram_text(
             }
         }
         RelationDetailSelection::Heuristic { .. } => Text::from(
-            "Heuristic relations do not have an exact Mermaid export.\nSwitch to an exact relation to view a sequence diagram.",
+            "Hinted handoffs do not have a proven Mermaid export.\nSwitch to a proven handoff to view a sequence diagram.",
         ),
     }
 }
@@ -4795,10 +5879,10 @@ fn relation_diagram_text(
 fn path_diagram_text(path: PathItem) -> Text<'static> {
     match path.kind {
         PathKind::Composition | PathKind::Exact => Text::from(
-            "Exact composition-path Mermaid export is not implemented yet.\nUse the machine or relation diagram tabs for current exact Mermaid output.",
+            "Mermaid route export is not implemented yet.\nUse the machine or handoff diagram tabs for current proven Mermaid output.",
         ),
         PathKind::Heuristic => Text::from(
-            "Heuristic paths do not have an exact Mermaid export.\nSwitch to an exact machine or relation selection to view Mermaid output.",
+            "Hinted routes do not have a proven Mermaid export.\nSwitch to a proven machine or handoff selection to view Mermaid output.",
         ),
     }
 }
@@ -4840,6 +5924,28 @@ fn render_termaid_preview_with_candidates(
     width: u16,
     candidates: &[OsString],
 ) -> Result<String, String> {
+    match try_render_termaid_preview_with_candidates(source, width, candidates) {
+        Ok(output) => return Ok(output),
+        Err(primary_error) => {
+            if let Some((fallback_label, fallback_source)) =
+                flowchart_preview_fallback_source(source)
+            {
+                if let Ok(output) =
+                    try_render_termaid_preview_with_candidates(&fallback_source, width, candidates)
+                {
+                    return Ok(format!("preview fallback: {fallback_label}\n\n{output}"));
+                }
+            }
+            Err(primary_error)
+        }
+    }
+}
+
+fn try_render_termaid_preview_with_candidates(
+    source: &str,
+    width: u16,
+    candidates: &[OsString],
+) -> Result<String, String> {
     let mut last_error = None;
     for candidate in candidates {
         match run_termaid_candidate(candidate, source, width) {
@@ -4855,6 +5961,36 @@ fn render_termaid_preview_with_candidates(
     Err(last_error.unwrap_or_else(|| {
         "termaid binary not found; set STATUM_TERMAID_BIN or put `termaid` on PATH".to_owned()
     }))
+}
+
+fn flowchart_preview_fallback_source(source: &str) -> Option<(&'static str, String)> {
+    let mut rewritten = Vec::new();
+    let mut replaced = false;
+
+    for line in source.lines() {
+        if !replaced {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() && !trimmed.starts_with("%%") {
+                let indent_len = line.len().saturating_sub(line.trim_start().len());
+                let indent = &line[..indent_len];
+                let mut parts = trimmed.split_whitespace();
+                let keyword = parts.next()?;
+                let direction = parts.next().unwrap_or("TD");
+                if matches!(keyword, "graph" | "flowchart") && matches!(direction, "LR" | "RL") {
+                    rewritten.push(format!("{indent}{keyword} TD"));
+                    replaced = true;
+                    continue;
+                }
+                return None;
+            }
+        }
+        rewritten.push(line.to_owned());
+    }
+
+    replaced.then_some((
+        "rendered as TD because the preferred horizontal flowchart preview failed",
+        rewritten.join("\n"),
+    ))
 }
 
 fn termaid_candidates(workspace_label: &str) -> Vec<OsString> {
@@ -4959,6 +6095,13 @@ fn badge(label: impl Into<String>, fg: Color, bg: Color) -> Span<'static> {
     )
 }
 
+fn machine_role_badge_label(role: statum_graph::codebase::CodebaseMachineRole) -> &'static str {
+    match role {
+        statum_graph::codebase::CodebaseMachineRole::Protocol => "PROTO",
+        statum_graph::codebase::CodebaseMachineRole::Composition => "ORCH",
+    }
+}
+
 fn ghost_badge(label: impl Into<String>, color: Color) -> Span<'static> {
     Span::styled(
         format!("[{}]", label.into()),
@@ -5004,40 +6147,17 @@ fn mutated_color_fallback(accent: Color) -> Color {
     }
 }
 
-fn render_metric_card(
-    frame: &mut Frame,
-    area: Rect,
-    label: &str,
-    value: impl Into<String>,
-    note: impl Into<String>,
-    accent: Color,
-) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(accent));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
-    let note = note.into();
-    let mut lines = vec![
-        Line::from(styled_label(label.to_owned(), accent)),
-        Line::from(Span::styled(
-            value.into(),
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        )),
-    ];
-    if !note.is_empty() {
-        lines.push(Line::from(Span::styled(
-            note,
-            Style::default().fg(mutated_color_fallback(accent)),
-        )));
+fn summary_line(accent: Color, entries: Vec<(&'static str, String)>) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, (label, value)) in entries.into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(styled_label(label.to_owned(), accent));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(value, Style::default().fg(Color::White)));
     }
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
-        inner,
-    );
+    Line::from(spans)
 }
 
 fn join_spans(mut spans: Vec<Span<'static>>) -> Line<'static> {
@@ -5301,18 +6421,11 @@ fn path_step_preview(item: &PathItem, doc: &CodebaseDoc) -> String {
     let Some(first_step) = item.steps.first() else {
         return "no visible steps".to_owned();
     };
-    let mut machine_labels = vec![doc
-        .machine(first_step.from_machine)
-        .map(render_machine_label)
-        .unwrap_or("<missing machine>")
-        .to_owned()];
+    let mut machine_labels =
+        vec![render_optional_machine_label(doc.machine(first_step.from_machine)).into_owned()];
     for step in item.steps.iter().take(3) {
-        machine_labels.push(
-            doc.machine(step.to_machine)
-                .map(render_machine_label)
-                .unwrap_or("<missing machine>")
-                .to_owned(),
-        );
+        machine_labels
+            .push(render_optional_machine_label(doc.machine(step.to_machine)).into_owned());
     }
     let mut route = machine_labels.join(" -> ");
     if item.steps.len() > 3 {
@@ -5325,8 +6438,327 @@ fn path_step_preview(item: &PathItem, doc: &CodebaseDoc) -> String {
     }
 }
 
-fn render_machine_label(machine: &CodebaseMachine) -> &str {
-    machine.label.unwrap_or(machine.rust_type_path)
+fn enumerate_flow_traces(machine: &CodebaseMachine) -> Result<Vec<FlowTraceItem>, FlowTraceStatus> {
+    match codebase_render::machine_journeys_for_machine(machine) {
+        Ok(journeys) => Ok(journeys.into_iter().map(FlowTraceItem::from).collect()),
+        Err(codebase_render::DiagramError::NotCompositionMachine { .. }) => {
+            Err(FlowTraceStatus::NotComposition)
+        }
+        Err(codebase_render::DiagramError::MissingJourneyRoot { .. }) => {
+            Err(FlowTraceStatus::MissingRoot)
+        }
+        Err(codebase_render::DiagramError::ReachableJourneyCycle { .. }) => {
+            Err(FlowTraceStatus::ReachableCycle)
+        }
+        Err(codebase_render::DiagramError::TooManyJourneys { .. }) => {
+            Err(FlowTraceStatus::TooManyJourneys)
+        }
+        Err(
+            codebase_render::DiagramError::MissingMachine { .. }
+            | codebase_render::DiagramError::MissingRelation { .. }
+            | codebase_render::DiagramError::MissingJourney { .. },
+        ) => Err(FlowTraceStatus::NotComposition),
+    }
+}
+
+fn flow_trace_ingress_label(machine: &CodebaseMachine, item: &FlowTraceItem) -> String {
+    machine
+        .state(item.ingress_state)
+        .map(render_flow_state_label)
+        .unwrap_or_else(|| format!("state {}", item.ingress_state))
+}
+
+fn flow_trace_egress_label(machine: &CodebaseMachine, item: &FlowTraceItem) -> String {
+    machine
+        .state(item.egress_state)
+        .map(render_flow_state_label)
+        .unwrap_or_else(|| format!("state {}", item.egress_state))
+}
+
+fn flow_trace_label(machine: &CodebaseMachine, item: &FlowTraceItem) -> String {
+    let ingress = flow_trace_ingress_label(machine, item);
+    let egress = flow_trace_egress_label(machine, item);
+    if item.steps.is_empty() || ingress == egress {
+        ingress
+    } else {
+        format!("{ingress} -> {egress}")
+    }
+}
+
+fn flow_trace_count(machine: &CodebaseMachine) -> usize {
+    enumerate_flow_traces(machine).map_or(0, |items| items.len())
+}
+
+fn flow_trace_checkpoint_summary(machine: &CodebaseMachine, items: &[FlowTraceItem]) -> String {
+    let mut labels = items
+        .iter()
+        .take(2)
+        .map(|item| flow_trace_label(machine, item))
+        .collect::<Vec<_>>();
+    if labels.is_empty() {
+        return "no exact journeys".to_owned();
+    }
+    if items.len() > labels.len() {
+        labels.push(format!(
+            "+{} more",
+            items.len().saturating_sub(labels.len())
+        ));
+    }
+    labels.join("  |  ")
+}
+
+fn flow_trace_status_summary(status: Option<FlowTraceStatus>) -> String {
+    match status {
+        Some(FlowTraceStatus::MissingRoot) => "no graph-root ingress in exact surface".to_owned(),
+        Some(FlowTraceStatus::ReachableCycle) => {
+            "reachable cycle prevents a finite exact journey list".to_owned()
+        }
+        Some(FlowTraceStatus::TooManyJourneys) => {
+            "too many exact journeys to list without truncation".to_owned()
+        }
+        Some(FlowTraceStatus::NotComposition) => "not a composition machine".to_owned(),
+        Some(FlowTraceStatus::Available) | None => "no exact journeys".to_owned(),
+    }
+}
+
+fn flow_state_relations<'a>(
+    machine: &CodebaseMachine,
+    doc: &'a CodebaseDoc,
+    state_index: usize,
+) -> Vec<CodebaseRelationDetail<'a>> {
+    doc.outbound_relations_for_state(machine.index, state_index)
+        .filter_map(|relation| doc.relation_detail(relation.index))
+        .filter(|detail| detail.target_machine.index != machine.index)
+        .collect()
+}
+
+fn flow_transition_relations<'a>(
+    machine: &CodebaseMachine,
+    doc: &'a CodebaseDoc,
+    transition_index: usize,
+) -> Vec<CodebaseRelationDetail<'a>> {
+    doc.outbound_relations_for_transition(machine.index, transition_index)
+        .filter_map(|relation| doc.relation_detail(relation.index))
+        .filter(|detail| detail.target_machine.index != machine.index)
+        .collect()
+}
+
+fn flow_checkpoint_relation_label(detail: CodebaseRelationDetail<'_>) -> String {
+    format!(
+        "{} @ {}",
+        render_flow_machine_label(detail.target_machine),
+        render_flow_state_label(detail.target_state)
+    )
+}
+
+fn flow_checkpoint_relation_summary(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    state_index: usize,
+) -> Option<String> {
+    let labels = flow_state_relations(machine, doc, state_index)
+        .into_iter()
+        .map(flow_checkpoint_relation_label)
+        .collect::<Vec<_>>();
+    (!labels.is_empty()).then(|| labels.join(", "))
+}
+
+fn flow_transition_name(machine: &CodebaseMachine, step: &FlowTraceStep) -> String {
+    machine
+        .transition(step.transition)
+        .map(|transition| render_transition_label(transition).to_owned())
+        .unwrap_or_else(|| format!("transition {}", step.transition))
+}
+
+fn flow_trace_step_line(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    step: &FlowTraceStep,
+) -> String {
+    let transition = machine
+        .transition(step.transition)
+        .expect("flow transition should resolve");
+    let from_state = machine
+        .state(transition.from)
+        .map(render_flow_state_label)
+        .unwrap_or_else(|| format!("state {}", transition.from));
+    let to_state = machine
+        .state(step.to_state)
+        .map(render_flow_state_label)
+        .unwrap_or_else(|| format!("state {}", step.to_state));
+    let handoffs = flow_transition_relations(machine, doc, transition.index)
+        .into_iter()
+        .map(flow_transition_relation_label)
+        .collect::<Vec<_>>();
+    let carries = flow_checkpoint_relation_summary(machine, doc, step.to_state);
+    let mut segments = vec![format!(
+        "{} --{}--> {}",
+        from_state,
+        render_transition_label(transition),
+        to_state
+    )];
+    if !handoffs.is_empty() {
+        segments.push(format!("touches {}", handoffs.join(", ")));
+    }
+    if let Some(carries) = carries {
+        segments.push(format!("carries {}", carries));
+    }
+    segments.join("  |  ")
+}
+
+fn flow_trace_preview(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    item: &FlowTraceItem,
+) -> String {
+    let transitions = item
+        .steps
+        .iter()
+        .take(3)
+        .map(|step| flow_transition_name(machine, step))
+        .collect::<Vec<_>>();
+    let mut segments = Vec::new();
+    if transitions.is_empty() {
+        segments.push(format!(
+            "entry and exit in {}",
+            flow_trace_ingress_label(machine, item)
+        ));
+    } else {
+        let mut transition_text = transitions.join(" -> ");
+        if item.steps.len() > transitions.len() {
+            transition_text.push_str(&format!(
+                " -> +{} more",
+                item.steps.len() - transitions.len()
+            ));
+        }
+        segments.push(transition_text);
+    }
+    if let Some(checkpoint) = flow_checkpoint_relation_summary(machine, doc, item.egress_state) {
+        segments.push(format!("ends with {checkpoint}"));
+    }
+    segments.join("  |  ")
+}
+
+fn flow_trace_touch_summary(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    item: &FlowTraceItem,
+) -> String {
+    let mut touches = BTreeSet::new();
+    if let Some(checkpoint) = flow_checkpoint_relation_summary(machine, doc, item.ingress_state) {
+        touches.insert(checkpoint);
+    }
+    for step in &item.steps {
+        for detail in flow_transition_relations(machine, doc, step.transition) {
+            touches.insert(flow_checkpoint_relation_label(detail));
+        }
+        if let Some(checkpoint) = flow_checkpoint_relation_summary(machine, doc, step.to_state) {
+            touches.insert(checkpoint);
+        }
+    }
+    if touches.is_empty() {
+        "none".to_owned()
+    } else {
+        let mut labels = touches.into_iter().collect::<Vec<_>>();
+        if labels.len() > 3 {
+            let extra = labels.len() - 3;
+            labels.truncate(3);
+            labels.push(format!("+{extra} more"));
+        }
+        labels.join(", ")
+    }
+}
+
+fn flow_transition_relation_label(detail: CodebaseRelationDetail<'_>) -> String {
+    let target = format!(
+        "{} @ {}",
+        render_flow_machine_label(detail.target_machine),
+        render_flow_state_label(detail.target_state)
+    );
+    if let Some(attested_via) = detail.relation.attested_via.as_ref() {
+        format!("{target} via {}", attested_via.route_name)
+    } else if detail.relation.is_composition_owned() {
+        format!("child {target}")
+    } else {
+        format!("handoff {target}")
+    }
+}
+
+fn flow_trace_search_strings(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    item: &FlowTraceItem,
+) -> Vec<String> {
+    let mut strings = item
+        .steps
+        .iter()
+        .map(|step| flow_trace_step_line(machine, doc, step))
+        .collect::<Vec<_>>();
+    if let Some(checkpoint) = flow_checkpoint_relation_summary(machine, doc, item.ingress_state) {
+        strings.push(checkpoint);
+    }
+    if let Some(checkpoint) = flow_checkpoint_relation_summary(machine, doc, item.egress_state) {
+        strings.push(checkpoint);
+    }
+    strings
+}
+
+fn render_machine_label(machine: &CodebaseMachine) -> Cow<'static, str> {
+    match machine.label {
+        Some(label) => Cow::Borrowed(label),
+        None => Cow::Owned(codebase_render::compact_machine_type_label(
+            machine.rust_type_path,
+        )),
+    }
+}
+
+fn render_flow_machine_label(machine: &CodebaseMachine) -> Cow<'static, str> {
+    if let Some(label) = machine.label {
+        return Cow::Borrowed(label);
+    }
+
+    let compact = codebase_render::compact_machine_type_label(machine.rust_type_path);
+    if let Some((module_name, tail)) = compact.rsplit_once("::") {
+        if matches!(tail, "Flow<State>" | "Machine<State>") {
+            return Cow::Owned(module_name.to_owned());
+        }
+        if compact.len() > 24 {
+            return Cow::Owned(tail.to_owned());
+        }
+    }
+
+    Cow::Owned(compact)
+}
+
+fn render_optional_machine_label(machine: Option<&CodebaseMachine>) -> Cow<'static, str> {
+    machine
+        .map(render_machine_label)
+        .unwrap_or_else(|| Cow::Borrowed("<missing machine>"))
+}
+
+fn render_flow_state_label(state: &CodebaseState) -> String {
+    state.label.unwrap_or(state.rust_name).to_owned()
+}
+
+fn workspace_title_label(workspace_label: &str) -> String {
+    let path = Path::new(workspace_label);
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == "Cargo.toml")
+    {
+        return path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| workspace_label.to_owned());
+    }
+
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| workspace_label.to_owned())
 }
 
 fn render_state_label(state: &CodebaseState) -> String {
@@ -5387,9 +6819,9 @@ fn exact_covers_heuristic_relation(
 
 fn render_relation_label(detail: &CodebaseRelationDetail<'_>) -> String {
     let prefix = if detail.relation.is_composition_owned() {
-        "[exact][composition]"
+        "[owned]"
     } else {
-        "[exact]"
+        "[proven]"
     };
     format!(
         "{prefix} {} ({}) -> {} :: {}",
@@ -5402,7 +6834,7 @@ fn render_relation_label(detail: &CodebaseRelationDetail<'_>) -> String {
 
 fn render_heuristic_relation_label(detail: &HeuristicRelationDetail<'_>) -> String {
     format!(
-        "[heur] {} -> {} ({})",
+        "[hint] {} -> {} ({})",
         render_machine_label(detail.target_machine),
         render_heuristic_source_label(detail),
         detail.relation.evidence_kind.display_label()
@@ -5414,20 +6846,28 @@ fn machine_detail_text(
     doc: &CodebaseDoc,
     suggestions: &[&CompositionSuggestion],
 ) -> Text<'static> {
+    let outbound_handoffs = doc.outbound_relations_for_machine(machine.index).count();
+    let inbound_handoffs = doc.inbound_relations_for_machine(machine.index).count();
     let mut lines = vec![
-        Line::from(format!("machine: {}", render_machine_label(machine))),
-        Line::from(format!("path: {}", machine.rust_type_path)),
-        Line::from(format!("role: {}", machine.role.display_label())),
-        Line::from(format!("states: {}", machine.states.len())),
-        Line::from(format!("transitions: {}", machine.transitions.len())),
-        Line::from(format!("validators: {}", machine.validator_entries.len())),
+        Line::from(render_machine_label(machine).into_owned()),
         Line::from(format!(
-            "outbound exact relations: {}",
-            doc.outbound_relations_for_machine(machine.index).count()
+            "{} machine  |  {} state{}  |  {} transition{}  |  {} rebuild{}",
+            machine.role.display_label(),
+            machine.states.len(),
+            plural_suffix(machine.states.len()),
+            machine.transitions.len(),
+            plural_suffix(machine.transitions.len()),
+            machine.validator_entries.len(),
+            plural_suffix(machine.validator_entries.len())
         )),
         Line::from(format!(
-            "inbound exact relations: {}",
-            doc.inbound_relations_for_machine(machine.index).count()
+            "traffic: {outbound_handoffs} outbound handoff{}  |  {inbound_handoffs} inbound handoff{}",
+            plural_suffix(outbound_handoffs),
+            plural_suffix(inbound_handoffs)
+        )),
+        Line::from(format!(
+            "type: {}",
+            codebase_render::compact_machine_type_label(machine.rust_type_path)
         )),
     ];
     if !suggestions.is_empty() {
@@ -5439,11 +6879,11 @@ fn machine_detail_text(
 
 fn state_detail_text(state: &CodebaseState) -> Text<'static> {
     let mut lines = vec![
-        Line::from(format!("state: {}", render_state_label(state))),
+        Line::from(render_state_label(state)),
         Line::from(format!("rust name: {}", state.rust_name)),
-        Line::from(format!("has data: {}", yes_no(state.has_data))),
+        Line::from(format!("stores data: {}", yes_no(state.has_data))),
         Line::from(format!(
-            "direct construction: {}",
+            "can build directly: {}",
             yes_no(state.direct_construction_available)
         )),
         Line::from(format!("graph root: {}", yes_no(state.is_graph_root))),
@@ -5454,14 +6894,11 @@ fn state_detail_text(state: &CodebaseState) -> Text<'static> {
 
 fn transition_detail_text(transition: &CodebaseTransition) -> Text<'static> {
     let mut lines = vec![
-        Line::from(format!(
-            "transition: {}",
-            render_transition_label(transition)
-        )),
+        Line::from(render_transition_label(transition).to_owned()),
         Line::from(format!("method: {}", transition.method_name)),
         Line::from(format!("from state index: {}", transition.from)),
         Line::from(format!("target count: {}", transition.to.len())),
-        Line::from(format!("targets: {:?}", transition.to)),
+        Line::from(format!("target state indices: {:?}", transition.to)),
     ];
     append_description_and_docs(&mut lines, transition.description, transition.docs);
     Text::from(lines)
@@ -5469,7 +6906,7 @@ fn transition_detail_text(transition: &CodebaseTransition) -> Text<'static> {
 
 fn validator_detail_text(entry: &CodebaseValidatorEntry) -> Text<'static> {
     let mut lines = vec![
-        Line::from(format!("validator: {}", entry.display_label())),
+        Line::from(format!("rebuild entry: {}", entry.display_label())),
         Line::from(format!("module: {}", entry.source_module_path)),
         Line::from(format!("target states: {:?}", entry.target_states)),
     ];
@@ -5556,15 +6993,11 @@ fn gap_detail_text(gap: &CompositionSuggestion, doc: &CodebaseDoc) -> Text<'stat
         Line::from(format!("kind: {}", gap.kind.display_label())),
         Line::from(format!(
             "source machine: {}",
-            source_machine
-                .map(render_machine_label)
-                .unwrap_or("<missing machine>")
+            render_optional_machine_label(source_machine)
         )),
         Line::from(format!(
             "target machine: {}",
-            target_machine
-                .map(render_machine_label)
-                .unwrap_or("<missing machine>")
+            render_optional_machine_label(target_machine)
         )),
         Line::from(format!("why: {}", gap.why_text())),
         Line::from(format!("evidence: {}", gap.counts_label())),
@@ -5591,6 +7024,135 @@ fn gap_detail_text(gap: &CompositionSuggestion, doc: &CodebaseDoc) -> Text<'stat
     Text::from(lines)
 }
 
+fn flow_trace_detail_text(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    item: &FlowTraceItem,
+) -> Text<'static> {
+    let mut lines = vec![
+        Line::from(format!("journey: {}", flow_trace_label(machine, item))),
+        Line::from(format!("machine: {}", render_flow_machine_label(machine))),
+        Line::from(format!(
+            "{} step{}",
+            item.steps.len(),
+            plural_suffix(item.steps.len())
+        )),
+    ];
+
+    if let Some(checkpoint) = flow_checkpoint_relation_summary(machine, doc, item.ingress_state) {
+        lines.push(Line::from(format!("entry carries: {checkpoint}")));
+    }
+
+    lines.extend([
+        Line::from(""),
+        Line::from(Span::styled(
+            "Steps".to_owned(),
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ]);
+
+    if item.steps.is_empty() {
+        lines.push(Line::from(format!(
+            "No composition transitions. This journey enters and exits in {}.",
+            flow_trace_ingress_label(machine, item)
+        )));
+    }
+
+    for (index, step) in item.steps.iter().enumerate() {
+        let transition = machine
+            .transition(step.transition)
+            .expect("flow transition should resolve");
+        let handoffs = flow_transition_relations(machine, doc, transition.index)
+            .into_iter()
+            .map(flow_transition_relation_label)
+            .collect::<Vec<_>>();
+        lines.push(Line::from(format!(
+            "{}. {}",
+            index + 1,
+            flow_transition_name(machine, step)
+        )));
+        lines.push(Line::from(format!(
+            "   {} -> {}",
+            machine
+                .state(transition.from)
+                .map(render_flow_state_label)
+                .unwrap_or_else(|| format!("state {}", transition.from)),
+            machine
+                .state(step.to_state)
+                .map(render_flow_state_label)
+                .unwrap_or_else(|| format!("state {}", step.to_state))
+        )));
+        if !handoffs.is_empty() {
+            lines.push(Line::from(format!("   touches: {}", handoffs.join(", "))));
+        }
+        if let Some(checkpoint) = flow_checkpoint_relation_summary(machine, doc, step.to_state) {
+            lines.push(Line::from(format!("   holds: {checkpoint}")));
+        }
+    }
+
+    if let Some(checkpoint) = flow_checkpoint_relation_summary(machine, doc, item.egress_state) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!("exit carries: {checkpoint}")));
+    }
+
+    Text::from(lines)
+}
+
+fn flow_trace_protocols_text(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    item: &FlowTraceItem,
+) -> Text<'static> {
+    let mut lines = vec![
+        Line::from(format!("journey: {}", flow_trace_label(machine, item))),
+        Line::from(format!("composition steps: {}", item.steps.len())),
+    ];
+    let mut any_touch = false;
+    if item.steps.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(
+            "No composition transitions. This journey enters and exits in {}.",
+            flow_trace_ingress_label(machine, item)
+        )));
+    }
+    for (step_index, step) in item.steps.iter().enumerate() {
+        let transition = machine
+            .transition(step.transition)
+            .expect("journey transition should resolve");
+        let direct_targets = flow_transition_relations(machine, doc, transition.index)
+            .into_iter()
+            .map(flow_transition_relation_label)
+            .collect::<Vec<_>>();
+        let carried_targets = flow_state_relations(machine, doc, step.to_state)
+            .into_iter()
+            .map(flow_checkpoint_relation_label)
+            .collect::<Vec<_>>();
+        if direct_targets.is_empty() && carried_targets.is_empty() {
+            continue;
+        }
+        any_touch = true;
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(
+            "{}. {}",
+            step_index + 1,
+            render_transition_label(transition)
+        )));
+        for target in direct_targets {
+            lines.push(Line::from(format!("touches: {target}")));
+        }
+        for target in carried_targets {
+            lines.push(Line::from(format!("carries: {target}")));
+        }
+    }
+    if !any_touch {
+        lines.push(Line::from(""));
+        lines.push(Line::from(
+            "No cross-machine protocol touches on this journey.",
+        ));
+    }
+    Text::from(lines)
+}
+
 fn path_detail_text(path: &PathItem, doc: &CodebaseDoc) -> Text<'static> {
     let source_machine = path
         .steps
@@ -5598,36 +7160,32 @@ fn path_detail_text(path: &PathItem, doc: &CodebaseDoc) -> Text<'static> {
         .and_then(|step| doc.machine(step.from_machine));
     let target_machine = doc.machine(path.target_machine);
     let mut lines = vec![
-        Line::from(format!("path kind: {}", path.kind.display_label())),
+        Line::from(format!("route type: {}", path.kind.display_label())),
         Line::from(format!("hop count: {}", path.steps.len())),
         Line::from(format!(
             "from: {}",
-            source_machine
-                .map(render_machine_label)
-                .unwrap_or("<missing machine>")
+            render_optional_machine_label(source_machine)
         )),
         Line::from(format!(
             "to: {}",
-            target_machine
-                .map(render_machine_label)
-                .unwrap_or("<missing machine>")
+            render_optional_machine_label(target_machine)
         )),
     ];
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Steps".to_owned(),
+        "Route".to_owned(),
         Style::default().add_modifier(Modifier::BOLD),
     )));
     for (index, step) in path.steps.iter().enumerate() {
         let from = doc
             .machine(step.from_machine)
             .map(render_machine_label)
-            .unwrap_or("<missing machine>");
+            .unwrap_or_else(|| Cow::Borrowed("<missing machine>"));
         let to = doc
             .machine(step.to_machine)
             .map(render_machine_label)
-            .unwrap_or("<missing machine>");
+            .unwrap_or_else(|| Cow::Borrowed("<missing machine>"));
         lines.push(Line::from(format!(
             "{}. [{}] {} -> {} : {}",
             index + 1,
@@ -5692,25 +7250,15 @@ fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
 
     let mut lines = vec![
         Line::from(if detail.relation.is_composition_owned() {
-            "composition relationship card"
+            "Proven handoff owned by the source composition machine."
         } else {
-            "exact relationship card"
+            "Proven linked handoff."
         }),
-        Line::from(format!("kind: {}", detail.relation.kind.display_label())),
-        Line::from(format!("basis: {}", detail.relation.basis.display_label())),
         Line::from(format!(
-            "semantic: {}",
-            detail.relation.semantic.display_label()
-        )),
-        Line::from(format!(
-            "source machine: {}",
+            "from: {}",
             render_machine_label(detail.source_machine)
         )),
-        Line::from(format!(
-            "source machine role: {}",
-            detail.source_machine.role.display_label()
-        )),
-        Line::from(format!("source: {source}")),
+        Line::from(format!("source item: {source}")),
     ];
 
     if let Some(state) = detail.source_state {
@@ -5726,16 +7274,17 @@ fn relation_detail_text(detail: CodebaseRelationDetail<'_>) -> Text<'static> {
         )));
     }
     lines.push(Line::from(format!(
-        "target machine: {}",
+        "to: {}",
         render_machine_label(detail.target_machine)
     )));
     lines.push(Line::from(format!(
-        "target machine role: {}",
-        detail.target_machine.role.display_label()
+        "lands in state: {}",
+        render_state_label(detail.target_state)
     )));
     lines.push(Line::from(format!(
-        "target state: {}",
-        render_state_label(detail.target_state)
+        "proof: {} via {}",
+        detail.relation.kind.display_label(),
+        detail.relation.basis.display_label()
     )));
     if let Some(reference_type) = detail.relation.declared_reference_type {
         lines.push(Line::from(format!("declared ref type: {reference_type}")));
@@ -5892,8 +7441,8 @@ fn heuristic_relation_detail_text(
     shadowed_by_exact: bool,
 ) -> Text<'static> {
     let mut lines = vec![
-        Line::from("heuristic relation"),
-        Line::from("basis: source-scanned affinity"),
+        Line::from("Hinted handoff from source scan."),
+        Line::from("basis: weaker source-level affinity"),
         Line::from(format!(
             "evidence: {}",
             detail.relation.evidence_kind.display_label()
@@ -5903,7 +7452,7 @@ fn heuristic_relation_detail_text(
             detail.relation.source.kind_label()
         )),
         Line::from(format!(
-            "source machine: {}",
+            "from: {}",
             render_machine_label(detail.source_machine)
         )),
         Line::from(format!(
@@ -5911,7 +7460,7 @@ fn heuristic_relation_detail_text(
             render_heuristic_source_label(&detail)
         )),
         Line::from(format!(
-            "target machine: {}",
+            "to: {}",
             render_machine_label(detail.target_machine)
         )),
         Line::from(format!(
@@ -5926,7 +7475,7 @@ fn heuristic_relation_detail_text(
     ];
     if shadowed_by_exact {
         lines.push(Line::from(
-            "exact lane already covers this relationship and will hide it in mixed mode.",
+            "The proven lane already covers this handoff, so `both` mode hides the weaker duplicate.",
         ));
     }
     if let Some(snippet) = detail.relation.snippet.as_deref() {
@@ -6115,9 +7664,9 @@ fn docs_text(description: Option<&'static str>, docs: Option<&'static str>) -> T
 
 fn workspace_docs_text() -> Text<'static> {
     Text::from(vec![
-        Line::from("Workspace diagrams do not have source-local docs of their own."),
+        Line::from("The map itself does not have source-local docs."),
         Line::from(
-            "Use the workspace diagram to orient on exact linked structure, then drill into machines, states, or transitions for local docs.",
+            "Use Map to pick a machine, then switch to Machine, State, or Handoff detail for source-local docs.",
         ),
     ])
 }
@@ -6199,6 +7748,75 @@ fn relation_docs_text(selection: RelationDetailSelection<'_>) -> Text<'static> {
     }
 }
 
+fn flow_trace_docs_text(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    item: &FlowTraceItem,
+) -> Text<'static> {
+    let mut lines = Vec::new();
+    append_named_description_and_docs(&mut lines, "machine", machine.description, machine.docs);
+    if let Some(ingress) = machine.state(item.ingress_state) {
+        append_named_description_and_docs(
+            &mut lines,
+            "ingress state",
+            ingress.description,
+            ingress.docs,
+        );
+    }
+    if let Some(egress) = machine.state(item.egress_state) {
+        append_named_description_and_docs(
+            &mut lines,
+            "egress state",
+            egress.description,
+            egress.docs,
+        );
+    }
+    for step in &item.steps {
+        let Some(transition) = machine.transition(step.transition) else {
+            continue;
+        };
+        append_named_description_and_docs(
+            &mut lines,
+            "transition",
+            transition.description,
+            transition.docs,
+        );
+        for detail in flow_transition_relations(machine, doc, transition.index) {
+            append_named_description_and_docs(
+                &mut lines,
+                "touched machine",
+                detail.target_machine.description,
+                detail.target_machine.docs,
+            );
+            append_named_description_and_docs(
+                &mut lines,
+                "touched state",
+                detail.target_state.description,
+                detail.target_state.docs,
+            );
+        }
+        for detail in flow_state_relations(machine, doc, step.to_state) {
+            append_named_description_and_docs(
+                &mut lines,
+                "carried machine",
+                detail.target_machine.description,
+                detail.target_machine.docs,
+            );
+            append_named_description_and_docs(
+                &mut lines,
+                "carried state",
+                detail.target_state.description,
+                detail.target_state.docs,
+            );
+        }
+    }
+    if lines.is_empty() {
+        Text::from("No docs for the current flow.")
+    } else {
+        Text::from(lines)
+    }
+}
+
 fn path_docs_text(path: &PathItem, doc: &CodebaseDoc) -> Text<'static> {
     let mut lines = Vec::new();
     if let Some(source_machine) = path
@@ -6261,24 +7879,38 @@ fn machine_source_text(machine: &CodebaseMachine) -> Text<'static> {
     ])
 }
 
-fn workspace_source_text(workspace_label: &str, doc: &CodebaseDoc) -> Text<'static> {
-    let machine_count = doc.machines().len();
-    let composition_count = doc
+fn workspace_source_text(app: &InspectorApp) -> Text<'static> {
+    let machine_count = app.doc.machines().len();
+    let composition_count = app
+        .doc
         .machines()
         .iter()
         .filter(|machine| machine.role.is_composition())
         .count();
-    let relation_count = doc
+    let relation_count = app
+        .doc
         .relations()
         .iter()
         .filter(|relation| relation.source_machine() != relation.target_machine)
         .count();
+    let shown_machines = app.workspace_diagram_machine_indices().len();
     Text::from(vec![
-        Line::from(format!("workspace manifest: {workspace_label}")),
+        Line::from(format!("workspace manifest: {}", app.workspace_label)),
         Line::from(format!("linked machines: {machine_count}")),
         Line::from(format!("composition machines: {composition_count}")),
-        Line::from(format!("cross-machine exact relations: {relation_count}")),
+        Line::from(format!("cross-machine proven handoffs: {relation_count}")),
+        Line::from(format!(
+            "projection: {}  |  layout {}  |  shown {} machine{}",
+            app.workspace_diagram_scale.label(),
+            workspace_flow_direction_label(app.workspace_flow_direction),
+            shown_machines,
+            plural_suffix(shown_machines)
+        )),
         Line::from("observed surface: linked compiled CodebaseDoc rendered as Mermaid flowchart"),
+        Line::from("map encoding: double box = composition machine, box = protocol machine"),
+        Line::from("map encoding: thick arrow = owned handoff, solid arrow = linked handoff"),
+        Line::from("map encoding: dotted arrow = static machine reference"),
+        Line::from("map labels: owns = composition-owned child flow, handoff = linked transfer, ref = static reference"),
     ])
 }
 
@@ -6314,7 +7946,7 @@ fn relation_source_text(selection: RelationDetailSelection<'_>) -> Text<'static>
     match selection {
         RelationDetailSelection::Exact(detail) => {
             let mut lines = vec![
-                Line::from("exact relation"),
+                Line::from("proven handoff"),
                 Line::from(format!("kind: {}", detail.relation.kind.display_label())),
                 Line::from(format!("basis: {}", detail.relation.basis.display_label())),
                 Line::from(format!(
@@ -6364,7 +7996,7 @@ fn relation_source_text(selection: RelationDetailSelection<'_>) -> Text<'static>
             shadowed_by_exact,
         } => {
             let mut lines = vec![
-                Line::from("heuristic relation"),
+                Line::from("hinted handoff"),
                 Line::from(format!(
                     "source item: {}",
                     render_heuristic_source_label(&detail)
@@ -6385,7 +8017,7 @@ fn relation_source_text(selection: RelationDetailSelection<'_>) -> Text<'static>
             ];
             if shadowed_by_exact {
                 lines.push(Line::from(
-                    "exact lane already covers this relationship and will hide it in mixed mode.",
+                    "The proven lane already covers this handoff, so `both` mode hides the weaker duplicate.",
                 ));
             }
             if let Some(snippet) = detail.relation.snippet.as_deref() {
@@ -6396,22 +8028,81 @@ fn relation_source_text(selection: RelationDetailSelection<'_>) -> Text<'static>
     }
 }
 
+fn flow_trace_source_text(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    item: &FlowTraceItem,
+) -> Text<'static> {
+    let mut lines = vec![
+        Line::from(format!("composition machine: {}", machine.rust_type_path)),
+        Line::from(
+            "observed surface: linked compiled CodebaseDoc machine topology + exact state and transition relations",
+        ),
+        Line::from(format!("ingress state index: {}", item.ingress_state)),
+        Line::from(format!("egress state index: {}", item.egress_state)),
+    ];
+    let ingress_relations = flow_state_relations(machine, doc, item.ingress_state)
+        .into_iter()
+        .map(|detail| detail.relation.index.to_string())
+        .collect::<Vec<_>>();
+    if !ingress_relations.is_empty() {
+        lines.push(Line::from(format!(
+            "ingress relation indices: {}",
+            ingress_relations.join(", ")
+        )));
+    }
+    for (index, step) in item.steps.iter().enumerate() {
+        let Some(transition) = machine.transition(step.transition) else {
+            continue;
+        };
+        lines.push(Line::from(format!(
+            "{}. transition {}::{}",
+            index + 1,
+            machine.rust_type_path,
+            transition.method_name
+        )));
+        lines.push(Line::from(format!(
+            "   target state index: {}",
+            step.to_state
+        )));
+        let relation_indices = flow_transition_relations(machine, doc, transition.index)
+            .into_iter()
+            .map(|detail| detail.relation.index.to_string())
+            .collect::<Vec<_>>();
+        if !relation_indices.is_empty() {
+            lines.push(Line::from(format!(
+                "   transition relation indices: {}",
+                relation_indices.join(", ")
+            )));
+        }
+        let checkpoint_relation_indices = flow_state_relations(machine, doc, step.to_state)
+            .into_iter()
+            .map(|detail| detail.relation.index.to_string())
+            .collect::<Vec<_>>();
+        if !checkpoint_relation_indices.is_empty() {
+            lines.push(Line::from(format!(
+                "   checkpoint relation indices: {}",
+                checkpoint_relation_indices.join(", ")
+            )));
+        }
+    }
+    Text::from(lines)
+}
+
 fn path_source_text(path: &PathItem, doc: &CodebaseDoc) -> Text<'static> {
     let mut lines = vec![
-        Line::from(format!("path kind: {}", path.kind.display_label())),
-        Line::from(
-            "exact path step locations are not available in the current linked exact surface",
-        ),
+        Line::from(format!("route type: {}", path.kind.display_label())),
+        Line::from("route step locations are not available in the current linked compiled surface"),
     ];
     for (index, step) in path.steps.iter().enumerate() {
         let from = doc
             .machine(step.from_machine)
             .map(render_machine_label)
-            .unwrap_or("<missing machine>");
+            .unwrap_or_else(|| Cow::Borrowed("<missing machine>"));
         let to = doc
             .machine(step.to_machine)
             .map(render_machine_label)
-            .unwrap_or("<missing machine>");
+            .unwrap_or_else(|| Cow::Borrowed("<missing machine>"));
         lines.push(Line::from(format!(
             "{}. [{}] {} -> {} : {}",
             index + 1,
@@ -6430,45 +8121,71 @@ fn gap_source_text(gap: &CompositionSuggestion, doc: &CodebaseDoc) -> Text<'stat
         Line::from(format!("kind: {}", gap.kind.display_label())),
         Line::from(format!(
             "source machine: {}",
-            gap.source_machine(doc)
-                .map(render_machine_label)
-                .unwrap_or("<missing machine>")
+            render_optional_machine_label(gap.source_machine(doc))
         )),
         Line::from(format!(
             "target machine: {}",
-            gap.target_machine(doc)
-                .map(render_machine_label)
-                .unwrap_or("<missing machine>")
+            render_optional_machine_label(gap.target_machine(doc))
         )),
         Line::from(format!("evidence: {}", gap.counts_label())),
     ])
 }
 
 fn machine_explain_text(machine: &CodebaseMachine, app: &InspectorApp) -> Text<'static> {
-    let (exact_summary_count, heuristic_summary_count) =
-        app.machine_visible_summary_counts(machine.index);
+    let (handoffs, hints) = app.machine_visible_summary_counts(machine.index);
+    let routes = if machine.role.is_composition() {
+        flow_trace_count(machine)
+    } else {
+        app.path_items_from_source(machine.index, None, None).len()
+    };
+    let role_reading = if machine.role.is_composition() {
+        "Start on Flows to see exact ingress -> egress order. Use Diagram only for the legal state topology."
+    } else {
+        "Start on the diagram to learn the legal state changes, then open Handoffs only for cross-machine exchanges."
+    };
     Text::from(format!(
-        "{} is a {} machine with {} states, {} transitions, {} validator entries, {} exact summary edges, and {} heuristic summary edges.",
-        render_machine_label(machine),
+        "{} is a {} machine. It currently shows {} proven handoff{}, {} hint{}, and {} {}{} from this selection. {}",
+        if machine.role.is_composition() {
+            render_flow_machine_label(machine)
+        } else {
+            render_machine_label(machine)
+        },
         machine.role.display_label(),
-        machine.states.len(),
-        machine.transitions.len(),
-        machine.validator_entries.len(),
-        exact_summary_count,
-        heuristic_summary_count
+        handoffs,
+        plural_suffix(handoffs),
+        hints,
+        plural_suffix(hints),
+        routes,
+        if machine.role.is_composition() { "flow" } else { "route" },
+        plural_suffix(routes),
+        role_reading
     ))
 }
 
-fn workspace_explain_text(doc: &CodebaseDoc) -> Text<'static> {
-    let machine_count = doc.machines().len();
-    let composition_count = doc
-        .machines()
-        .iter()
-        .filter(|machine| machine.role.is_composition())
-        .count();
-    Text::from(format!(
-        "The workspace diagram is the exact linked flow surface across {machine_count} machine(s), including {composition_count} composition machine(s). Use it to understand the top-level handoff graph before drilling into a machine state diagram or an exact relation sequence diagram."
-    ))
+fn workspace_explain_text(app: &InspectorApp) -> Text<'static> {
+    let projection = match app.workspace_diagram_scale {
+        WorkspaceDiagramScale::Overview => {
+            "Overview keeps you inside one connected component around the selected machine."
+        }
+        WorkspaceDiagramScale::Focus => {
+            "Focus keeps only the selected machine and its nearby neighbors."
+        }
+        WorkspaceDiagramScale::Full => {
+            "Full shows every visible machine in the linked workspace graph."
+        }
+    };
+    Text::from(vec![
+        Line::from(projection),
+        Line::from(
+            "Read double-box nodes as composition machines and plain boxes as protocol machines.",
+        ),
+        Line::from(
+            "Read thick arrows as owned orchestration handoffs, solid arrows as other linked handoffs, and dotted arrows as static references.",
+        ),
+        Line::from(
+            "Use Map for workspace context only. Use Journeys for exact composition order. Use Machines for full legal state diagrams.",
+        ),
+    ])
 }
 
 fn state_explain_text(machine: &CodebaseMachine, state: &CodebaseState) -> Text<'static> {
@@ -6507,7 +8224,7 @@ fn validator_explain_text(entry: &CodebaseValidatorEntry) -> Text<'static> {
 fn relation_explain_text(selection: RelationDetailSelection<'_>) -> Text<'static> {
     match selection {
         RelationDetailSelection::Exact(detail) => Text::from(format!(
-            "{} points to {}::{} through an exact {} relation with {} basis.",
+            "{} hands off to {}::{} through a proven {} edge built from {}.",
             render_machine_label(detail.source_machine),
             render_machine_label(detail.target_machine),
             detail.target_state.rust_name,
@@ -6515,10 +8232,88 @@ fn relation_explain_text(selection: RelationDetailSelection<'_>) -> Text<'static
             detail.relation.basis.display_label()
         )),
         RelationDetailSelection::Heuristic { detail, .. } => Text::from(format!(
-            "{} suggests a weaker source-scanned coupling to {} based on {} evidence.",
+            "{} suggests a weaker source-scanned handoff to {} based on {} evidence.",
             render_heuristic_source_label(&detail),
             render_machine_label(detail.target_machine),
             detail.relation.evidence_kind.display_label()
+        )),
+    }
+}
+
+fn flow_trace_explain_text(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    item: &FlowTraceItem,
+) -> Text<'static> {
+    let touch_steps = item
+        .steps
+        .iter()
+        .filter(|step| {
+            machine
+                .transition(step.transition)
+                .map(|transition| {
+                    !flow_transition_relations(machine, doc, transition.index).is_empty()
+                })
+                .unwrap_or(false)
+        })
+        .count();
+    Text::from(format!(
+        "This is one exact root-to-sink journey through {}. It starts at {}, ends at {}, and orders {} transition step{}. Each step may touch child protocol machines, and {} step{} do so in the current exact surface.",
+        render_flow_machine_label(machine),
+        flow_trace_ingress_label(machine, item),
+        flow_trace_egress_label(machine, item),
+        item.steps.len(),
+        plural_suffix(item.steps.len()),
+        touch_steps,
+        plural_suffix(touch_steps)
+    ))
+}
+
+fn flow_trace_issue_text(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    item: &FlowTraceItem,
+) -> Text<'static> {
+    let touch_steps = item
+        .steps
+        .iter()
+        .filter(|step| {
+            machine
+                .transition(step.transition)
+                .map(|transition| {
+                    !flow_transition_relations(machine, doc, transition.index).is_empty()
+                        || !flow_state_relations(machine, doc, step.to_state).is_empty()
+                })
+                .unwrap_or(false)
+        })
+        .count();
+    Text::from(vec![
+        Line::from(format!(
+            "This journey is exact within the linked compiled surface for {}.",
+            render_flow_machine_label(machine)
+        )),
+        Line::from(
+            "It does not claim nested child-machine hierarchy or runtime chronology inside touched protocols.",
+        ),
+        Line::from(format!(
+            "{} of {} step{} touch or carry another machine in the current exact surface.",
+            touch_steps,
+            item.steps.len(),
+            plural_suffix(item.steps.len())
+        )),
+    ])
+}
+
+fn flow_trace_diagram_text(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    item: &FlowTraceItem,
+) -> Text<'static> {
+    match codebase_render::mermaid_machine_journey(doc, machine.index, &item.id) {
+        Ok(diagram) => Text::from(diagram),
+        Err(error) => Text::from(format!(
+            "Journey diagram unavailable.\n{}\n\nTry the machine diagram or workspace map for broader context.",
+            error
         )),
     }
 }
@@ -6527,7 +8322,7 @@ fn path_explain_text(path: &PathItem, doc: &CodebaseDoc) -> Text<'static> {
     let target = doc
         .machine(path.target_machine)
         .map(render_machine_label)
-        .unwrap_or("<missing machine>");
+        .unwrap_or_else(|| Cow::Borrowed("<missing machine>"));
     Text::from(format!(
         "This {} path reaches {} in {} hop(s).",
         path.kind.display_label(),
@@ -6720,6 +8515,210 @@ mod tests {
         CodebaseDoc::linked().expect("linked codebase doc")
     }
 
+    fn workspace_scale_fixture_doc() -> CodebaseDoc {
+        fn no_transitions() -> &'static [statum::LinkedTransitionDescriptor] {
+            &[]
+        }
+
+        static IDLE_STATE: [statum::LinkedStateDescriptor; 1] = [statum::LinkedStateDescriptor {
+            rust_name: "Idle",
+            label: Some("Idle"),
+            description: None,
+            docs: None,
+            has_data: false,
+            direct_construction_available: true,
+        }];
+        static ALPHA_LINKS: [statum::StaticMachineLinkDescriptor; 1] =
+            [statum::StaticMachineLinkDescriptor {
+                from_state: "Idle",
+                field_name: Some("beta"),
+                to_machine_path: &["beta", "Machine"],
+                to_state: "Idle",
+            }];
+        static BETA_LINKS: [statum::StaticMachineLinkDescriptor; 1] =
+            [statum::StaticMachineLinkDescriptor {
+                from_state: "Idle",
+                field_name: Some("gamma"),
+                to_machine_path: &["gamma", "Machine"],
+                to_state: "Idle",
+            }];
+        static LINKED: [statum::LinkedMachineGraph; 4] = [
+            statum::LinkedMachineGraph {
+                machine: statum::MachineDescriptor {
+                    module_path: "alpha",
+                    rust_type_path: "alpha::Machine",
+                    role: statum::MachineRole::Composition,
+                },
+                label: Some("Alpha Machine"),
+                description: None,
+                docs: None,
+                states: &IDLE_STATE,
+                transitions: statum::LinkedTransitionInventory::new(no_transitions),
+                static_links: &ALPHA_LINKS,
+            },
+            statum::LinkedMachineGraph {
+                machine: statum::MachineDescriptor {
+                    module_path: "beta",
+                    rust_type_path: "beta::Machine",
+                    role: statum::MachineRole::Protocol,
+                },
+                label: Some("Beta Machine"),
+                description: None,
+                docs: None,
+                states: &IDLE_STATE,
+                transitions: statum::LinkedTransitionInventory::new(no_transitions),
+                static_links: &BETA_LINKS,
+            },
+            statum::LinkedMachineGraph {
+                machine: statum::MachineDescriptor {
+                    module_path: "gamma",
+                    rust_type_path: "gamma::Machine",
+                    role: statum::MachineRole::Protocol,
+                },
+                label: Some("Gamma Machine"),
+                description: None,
+                docs: None,
+                states: &IDLE_STATE,
+                transitions: statum::LinkedTransitionInventory::new(no_transitions),
+                static_links: &[],
+            },
+            statum::LinkedMachineGraph {
+                machine: statum::MachineDescriptor {
+                    module_path: "delta",
+                    rust_type_path: "delta::Machine",
+                    role: statum::MachineRole::Protocol,
+                },
+                label: Some("Delta Machine"),
+                description: None,
+                docs: None,
+                states: &IDLE_STATE,
+                transitions: statum::LinkedTransitionInventory::new(no_transitions),
+                static_links: &[],
+            },
+        ];
+
+        CodebaseDoc::try_from_linked(&LINKED).expect("workspace scale fixture doc")
+    }
+
+    fn protocol_only_fixture_doc() -> CodebaseDoc {
+        fn no_transitions() -> &'static [statum::LinkedTransitionDescriptor] {
+            &[]
+        }
+
+        static IDLE_STATE: [statum::LinkedStateDescriptor; 1] = [statum::LinkedStateDescriptor {
+            rust_name: "Idle",
+            label: Some("Idle"),
+            description: None,
+            docs: None,
+            has_data: false,
+            direct_construction_available: true,
+        }];
+        static LINKED: [statum::LinkedMachineGraph; 2] = [
+            statum::LinkedMachineGraph {
+                machine: statum::MachineDescriptor {
+                    module_path: "alpha",
+                    rust_type_path: "alpha::Machine",
+                    role: statum::MachineRole::Protocol,
+                },
+                label: Some("Alpha Machine"),
+                description: None,
+                docs: None,
+                states: &IDLE_STATE,
+                transitions: statum::LinkedTransitionInventory::new(no_transitions),
+                static_links: &[],
+            },
+            statum::LinkedMachineGraph {
+                machine: statum::MachineDescriptor {
+                    module_path: "beta",
+                    rust_type_path: "beta::Machine",
+                    role: statum::MachineRole::Protocol,
+                },
+                label: Some("Beta Machine"),
+                description: None,
+                docs: None,
+                states: &IDLE_STATE,
+                transitions: statum::LinkedTransitionInventory::new(no_transitions),
+                static_links: &[],
+            },
+        ];
+
+        CodebaseDoc::try_from_linked(&LINKED).expect("protocol-only fixture doc")
+    }
+
+    fn cyclic_composition_fixture_doc() -> CodebaseDoc {
+        fn transitions() -> &'static [statum::LinkedTransitionDescriptor] {
+            &TRANSITIONS
+        }
+
+        static STATES: [statum::LinkedStateDescriptor; 3] = [
+            statum::LinkedStateDescriptor {
+                rust_name: "Draft",
+                label: Some("Draft"),
+                description: None,
+                docs: None,
+                has_data: false,
+                direct_construction_available: true,
+            },
+            statum::LinkedStateDescriptor {
+                rust_name: "Review",
+                label: Some("Review"),
+                description: None,
+                docs: None,
+                has_data: false,
+                direct_construction_available: true,
+            },
+            statum::LinkedStateDescriptor {
+                rust_name: "Retrying",
+                label: Some("Retrying"),
+                description: None,
+                docs: None,
+                has_data: false,
+                direct_construction_available: true,
+            },
+        ];
+        static TRANSITIONS: [statum::LinkedTransitionDescriptor; 3] = [
+            statum::LinkedTransitionDescriptor {
+                method_name: "submit",
+                from: "Draft",
+                to: &["Review"],
+                label: Some("Submit"),
+                description: None,
+                docs: None,
+            },
+            statum::LinkedTransitionDescriptor {
+                method_name: "retry",
+                from: "Review",
+                to: &["Retrying"],
+                label: Some("Retry"),
+                description: None,
+                docs: None,
+            },
+            statum::LinkedTransitionDescriptor {
+                method_name: "requeue",
+                from: "Retrying",
+                to: &["Review"],
+                label: Some("Requeue"),
+                description: None,
+                docs: None,
+            },
+        ];
+        static LINKED: [statum::LinkedMachineGraph; 1] = [statum::LinkedMachineGraph {
+            machine: statum::MachineDescriptor {
+                module_path: "cycle",
+                rust_type_path: "cycle::Flow",
+                role: statum::MachineRole::Composition,
+            },
+            label: Some("Cycle Flow"),
+            description: None,
+            docs: None,
+            states: &STATES,
+            transitions: statum::LinkedTransitionInventory::new(transitions),
+            static_links: &[],
+        }];
+
+        CodebaseDoc::try_from_linked(&LINKED).expect("cycle fixture doc")
+    }
+
     fn unique_temp_dir(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -6815,9 +8814,18 @@ mod tests {
             .position(|machine| machine.label == Some("Workflow Machine"))
             .expect("workflow machine should exist");
         app.select_machine(workflow_index);
+        app.machine_section = MachineSection::Overview;
+        app.clamp_indices();
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("terminal");
 
+        terminal
+            .draw(|frame| app.render(frame))
+            .expect("render should succeed");
+
+        app.workspace_section = WorkspaceSection::Gaps;
+        app.machine_section = MachineSection::Overview;
+        app.clamp_indices();
         terminal
             .draw(|frame| app.render(frame))
             .expect("render should succeed");
@@ -6832,9 +8840,11 @@ mod tests {
         assert_eq!(plan.kind_label, "flowchart");
         let source = text_contents(plan.source);
         assert!(source.contains("graph TD"));
-        assert!(text.contains("flowchart"));
-        assert!(text.contains("Workspace /tmp/workspace/Cargo.toml"));
+        assert!(source.contains("[[\"Workflow\"]]"));
+        assert!(source.contains("|owns"));
+        assert!(text.contains("Map Overview"));
 
+        app.workspace_section = WorkspaceSection::Composition;
         app.machine_section = MachineSection::Paths;
         app.clamp_indices();
         terminal
@@ -6846,8 +8856,11 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(text.contains("Task Machine"));
-        assert!(text.contains("[1 hop]"));
+        assert!(text.contains("Start Workflow"));
+        assert!(text.contains("JOURNEYS"));
+        let diagram = text_contents(app.current_diagram_text());
+        assert!(diagram.contains("stateDiagram-v2"));
+        assert!(diagram.contains("1. Start Workflow"));
     }
 
     #[test]
@@ -6860,20 +8873,173 @@ mod tests {
             .iter()
             .position(|machine| machine.label == Some("Workflow Machine"))
             .expect("workflow machine should exist");
+        app.workspace_section = WorkspaceSection::Gaps;
         app.select_machine(workflow_index);
+        app.machine_section = MachineSection::Overview;
+        app.clamp_indices();
 
-        assert_eq!(
-            app.current_selection_label(),
-            "Workspace /tmp/workspace/Cargo.toml"
-        );
+        assert!(app.current_selection_label().contains("Map Overview"));
         assert!(text_contents(app.current_summary_text())
-            .contains("Workspace view is the top-level exact flow surface."));
+            .contains("Map shows the linked machine neighborhood"));
         assert!(text_contents(app.current_docs_text())
-            .contains("Workspace diagrams do not have source-local docs of their own."));
+            .contains("The map itself does not have source-local docs."));
         assert!(text_contents(app.current_source_text())
             .contains("workspace manifest: /tmp/workspace/Cargo.toml"));
         assert!(text_contents(app.current_explain_text())
-            .contains("The workspace diagram is the exact linked flow surface"));
+            .contains("Read double-box nodes as composition machines"));
+    }
+
+    #[test]
+    fn workspace_home_scale_and_layout_controls_exact_projection_size() {
+        let doc = workspace_scale_fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        let alpha_index = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Alpha Machine"))
+            .expect("alpha machine should exist");
+        app.workspace_section = WorkspaceSection::Gaps;
+        app.select_machine(alpha_index);
+        app.machine_section = MachineSection::Overview;
+        app.clamp_indices();
+
+        assert_eq!(app.workspace_diagram_scale, WorkspaceDiagramScale::Overview);
+        assert_eq!(app.workspace_diagram_machine_indices().len(), 3);
+        assert!(text_contents(app.current_diagram_text()).contains("graph TD"));
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+        assert_eq!(app.workspace_diagram_scale, WorkspaceDiagramScale::Focus);
+        assert_eq!(app.workspace_diagram_machine_indices().len(), 2);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(app.workspace_focus_hops, 2);
+        assert_eq!(app.workspace_diagram_machine_indices().len(), 3);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE));
+        assert_eq!(app.workspace_diagram_scale, WorkspaceDiagramScale::Full);
+        assert_eq!(app.workspace_diagram_machine_indices().len(), 4);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT));
+        assert_eq!(
+            app.workspace_flow_direction,
+            codebase_render::WorkspaceFlowDirection::LeftRight
+        );
+        assert!(text_contents(app.current_diagram_text()).contains("graph LR"));
+    }
+
+    #[test]
+    fn workspace_home_uses_h_and_l_for_horizontal_panning() {
+        let doc = workspace_scale_fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        let alpha_index = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Alpha Machine"))
+            .expect("alpha machine should exist");
+        app.workspace_section = WorkspaceSection::Gaps;
+        app.select_machine(alpha_index);
+        app.machine_section = MachineSection::Overview;
+        app.clamp_indices();
+        app.focus = Focus::MainView;
+
+        assert_eq!(app.machine_section, MachineSection::Overview);
+        assert_eq!(app.diagram_scroll_x, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(app.diagram_scroll_x, 4);
+        assert_eq!(app.machine_section, MachineSection::Overview);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        assert_eq!(app.diagram_scroll_x, 0);
+        assert_eq!(app.machine_section, MachineSection::Overview);
+    }
+
+    #[test]
+    fn flow_view_uses_h_and_l_for_horizontal_panning() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        app.workspace_section = WorkspaceSection::Composition;
+        app.machine_section = MachineSection::Paths;
+        app.focus = Focus::MainView;
+        app.clamp_indices();
+
+        assert_eq!(app.diagram_scroll_x, 0);
+        assert_eq!(app.path_index, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        assert_eq!(app.diagram_scroll_x, 4);
+        assert_eq!(app.path_index, 0);
+        assert_eq!(app.machine_section, MachineSection::Paths);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        assert_eq!(app.diagram_scroll_x, 0);
+        assert_eq!(app.path_index, 0);
+        assert_eq!(app.machine_section, MachineSection::Paths);
+    }
+
+    #[test]
+    fn flow_view_scrolls_by_default_and_journey_list_has_separate_focus() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        app.workspace_section = WorkspaceSection::Composition;
+        app.machine_section = MachineSection::Paths;
+        app.focus = Focus::MainView;
+        app.clamp_indices();
+
+        assert_eq!(app.diagram_scroll_y, 0);
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert_eq!(app.diagram_scroll_y, 1);
+
+        if app.flow_trace_items().len() > 1 {
+            app.handle_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+            assert_eq!(app.focus, Focus::JourneyList);
+
+            let start_index = app.path_index;
+            app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+            assert_eq!(app.path_index, start_index + 1);
+            assert_eq!(app.diagram_scroll_y, 0);
+        }
+    }
+
+    #[test]
+    fn flow_shell_prioritizes_diagram_space_on_short_terminals() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        app.workspace_section = WorkspaceSection::Composition;
+        app.machine_section = MachineSection::Paths;
+        app.clamp_indices();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| app.render(frame))
+            .expect("render should succeed");
+
+        let rendered = terminal.backend().buffer().content.clone();
+        let text = rendered
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("JOURNEYS"));
+        assert!(text.contains("Journey Steps"));
+        assert!(text_contents(app.current_diagram_text()).contains("stateDiagram-v2"));
+    }
+
+    #[test]
+    fn app_stacks_detail_below_diagram_on_common_terminal_widths() {
+        let app = fixture_app(fixture_doc(), empty_heuristic_overlay());
+
+        let stacked = app.pane_layout(Rect::new(0, 0, 120, 36));
+        assert_eq!(stacked.outline.width, 40);
+        assert_eq!(stacked.center.x, stacked.detail.x);
+        assert!(stacked.detail.y > stacked.center.y);
+
+        let wide = app.pane_layout(Rect::new(0, 0, 180, 36));
+        assert!(wide.detail.x > wide.center.x);
+        assert_eq!(wide.detail.y, wide.center.y);
     }
 
     #[test]
@@ -6919,7 +9085,11 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect::<String>();
-        assert!(text.contains("Workflow Machine -> Task Machine"));
+        assert!(text.contains("Draft"));
+        assert!(text.contains("Start Workflow"));
+        let diagram = text_contents(app.current_diagram_text());
+        assert!(diagram.contains("stateDiagram-v2"));
+        assert!(diagram.contains("1. Start Workflow"));
 
         app.workspace_section = WorkspaceSection::Machines;
         app.machine_section = MachineSection::Relations;
@@ -6965,13 +9135,12 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert!(text.contains("match"));
-        assert!(text.contains("docs:"));
-        assert!(text.contains("SNAPSHOT"));
+        assert!(text.contains("GUIDE"));
         assert!(text.contains("NOTES"));
     }
 
     #[test]
-    fn relation_rich_machines_default_to_overview() {
+    fn composition_rich_machines_default_to_flows() {
         let doc = fixture_doc();
         let mut app = fixture_app(doc, empty_heuristic_overlay());
         let workflow_index = app
@@ -6983,8 +9152,23 @@ mod tests {
 
         app.select_machine(workflow_index);
 
-        assert_eq!(app.machine_section, MachineSection::Overview);
-        assert_eq!(app.summary_items().len(), 1);
+        assert_eq!(app.machine_section, MachineSection::Paths);
+        assert_eq!(app.flow_trace_items().len(), 1);
+    }
+
+    #[test]
+    fn protocol_only_workspaces_hide_journeys_and_ignore_journey_shortcut() {
+        let doc = protocol_only_fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+
+        assert_eq!(app.workspace_section, WorkspaceSection::Machines);
+        assert_eq!(
+            app.available_workspace_sections(),
+            vec![WorkspaceSection::Machines, WorkspaceSection::Gaps]
+        );
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+        assert_eq!(app.workspace_section, WorkspaceSection::Machines);
     }
 
     #[test]
@@ -6998,6 +9182,7 @@ mod tests {
             .position(|machine| machine.label == Some("Workflow Machine"))
             .expect("workflow machine should exist");
         app.select_machine(workflow_index);
+        app.workspace_section = WorkspaceSection::Machines;
         app.machine_section = MachineSection::States;
         app.machine_item_index = app
             .machine_items()
@@ -7043,10 +9228,11 @@ mod tests {
         assert_eq!(app.search_query, "workflow machine");
         assert_eq!(app.visible_machine_indices().len(), 1);
         assert_eq!(
-            app.current_machine().map(render_machine_label),
+            app.current_machine().map(render_machine_label).as_deref(),
             Some("Workflow Machine")
         );
 
+        app.workspace_section = WorkspaceSection::Machines;
         app.machine_section = MachineSection::Transitions;
         app.search_query = "start workflow".to_owned();
         app.clamp_indices();
@@ -7072,7 +9258,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
         assert_eq!(app.search_scope, SearchScope::Docs);
         assert_eq!(
-            app.current_machine().map(render_machine_label),
+            app.current_machine().map(render_machine_label).as_deref(),
             Some("Workflow Machine")
         );
 
@@ -7085,21 +9271,17 @@ mod tests {
     fn app_search_scope_can_target_paths() {
         let doc = fixture_doc();
         let mut app = fixture_app(doc, empty_heuristic_overlay());
-        app.search_query = "1 hop".to_owned();
-        app.clamp_indices();
-
-        assert!(app.current_machine().is_none());
-
         app.search_scope = SearchScope::Paths;
+        app.search_query = "start workflow".to_owned();
         app.clamp_indices();
         assert_eq!(
-            app.current_machine().map(render_machine_label),
+            app.current_machine().map(render_machine_label).as_deref(),
             Some("Workflow Machine")
         );
 
         app.machine_section = MachineSection::Paths;
-        assert_eq!(app.path_items().len(), 1);
-        assert_eq!(app.path_items()[0].kind, PathKind::Composition);
+        assert_eq!(app.flow_trace_items().len(), 1);
+        assert_eq!(app.selected_flow_trace().expect("flow").steps.len(), 2);
     }
 
     #[test]
@@ -7313,7 +9495,7 @@ mod tests {
         });
 
         let machine_detail = text_contents(machine_detail_text(workflow, &doc, &[]));
-        assert!(machine_detail.contains("role: composition"));
+        assert!(machine_detail.contains("composition machine"));
         assert!(machine_detail.contains("Description"));
         assert!(machine_detail.contains("Tracks workflow progress across task execution."));
         assert!(machine_detail.contains("Docs"));
@@ -7333,14 +9515,15 @@ mod tests {
             .contains("Starts the workflow and hands control to the task machine."));
 
         let validator_detail = text_contents(validator_detail_text(validator));
+        assert!(validator_detail.contains("rebuild entry"));
         assert!(validator_detail.contains("Docs"));
         assert!(
             validator_detail.contains("Rebuilds workflow machines from persisted workflow rows.")
         );
 
         let relation_text = text_contents(relation_detail_text(relation_detail));
-        assert!(relation_text.contains("semantic: composition direct child"));
-        assert!(relation_text.contains("source machine role: composition"));
+        assert!(relation_text.contains("Proven handoff owned by the source composition machine."));
+        assert!(relation_text.contains("proof:"));
         assert!(relation_text.contains("source machine Description"));
         assert!(relation_text.contains("source machine Docs"));
         assert!(relation_text.contains("target machine Description"));
@@ -7359,6 +9542,13 @@ mod tests {
         let doc = fixture_doc();
         let mut app = fixture_app(doc, empty_heuristic_overlay());
         app.workspace_section = WorkspaceSection::Machines;
+        let workflow_index = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.select_machine(workflow_index);
         app.invalidate_cache();
 
         let diagram = text_contents(app.current_diagram_text());
@@ -7370,18 +9560,28 @@ mod tests {
     #[test]
     fn diagram_tab_shows_workspace_flow_mermaid_on_workspace_home() {
         let doc = fixture_doc();
-        let app = fixture_app(doc, empty_heuristic_overlay());
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        app.workspace_section = WorkspaceSection::Gaps;
+        app.machine_section = MachineSection::Overview;
+        app.clamp_indices();
 
         let diagram = text_contents(app.current_diagram_text());
         assert!(diagram.contains("graph TD"));
-        assert!(diagram.contains("Workflow Machine"));
-        assert!(diagram.contains("Task Machine"));
+        assert!(!diagram.contains("Draft"));
     }
 
     #[test]
     fn diagram_tab_shows_exact_relation_sequence_mermaid() {
         let doc = fixture_doc();
         let mut app = fixture_app(doc, empty_heuristic_overlay());
+        let workflow_index = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.workspace_section = WorkspaceSection::Machines;
+        app.select_machine(workflow_index);
         app.machine_section = MachineSection::Relations;
         app.invalidate_cache();
 
@@ -7392,14 +9592,16 @@ mod tests {
     }
 
     #[test]
-    fn diagram_tab_marks_path_export_as_unimplemented() {
+    fn diagram_tab_shows_exact_flow_sequence_mermaid() {
         let doc = fixture_doc();
         let mut app = fixture_app(doc, empty_heuristic_overlay());
         app.machine_section = MachineSection::Paths;
         app.invalidate_cache();
 
         let diagram = text_contents(app.current_diagram_text());
-        assert!(diagram.contains("Exact composition-path Mermaid export is not implemented yet."));
+        assert!(diagram.contains("stateDiagram-v2"));
+        assert!(diagram.contains("Start Workflow"));
+        assert!(diagram.contains("[*] -->"));
     }
 
     #[test]
@@ -7440,6 +9642,7 @@ mod tests {
             permissions.set_mode(0o755);
             fs::set_permissions(&script, permissions).expect("make fake termaid executable");
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
 
         let rendered = render_termaid_preview_with_candidates(
             "sequenceDiagram\nparticipant a as A",
@@ -7450,6 +9653,39 @@ mod tests {
 
         assert!(rendered.contains("sequenceDiagram"));
         assert!(rendered.contains("participant a as A"));
+
+        fs::remove_dir_all(temp).expect("remove temp dir");
+    }
+
+    #[test]
+    fn termaid_preview_falls_back_to_td_when_horizontal_flowchart_fails() {
+        let temp = unique_temp_dir("termaid-preview-fallback");
+        let script = temp.join("fake-termaid");
+        fs::write(
+            &script,
+            "#!/bin/sh\ninput=$(cat)\ncase \"$input\" in\n  *\"graph LR\"*) echo \"lr failed\" >&2; exit 1 ;;\n  *) printf \"%s\" \"$input\" ;;\nesac\n",
+        )
+        .expect("write fake termaid");
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&script)
+                .expect("script metadata")
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&script, permissions).expect("make fake termaid executable");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let rendered = render_termaid_preview_with_candidates(
+            "%% note\ngraph LR\n  A --> B",
+            72,
+            &[script.into_os_string()],
+        )
+        .expect("fallback preview should succeed");
+
+        assert!(rendered.contains("preview fallback"));
+        assert!(rendered.contains("graph TD"));
+        assert!(!rendered.contains("graph LR"));
 
         fs::remove_dir_all(temp).expect("remove temp dir");
     }
@@ -7525,7 +9761,7 @@ mod tests {
     }
 
     #[test]
-    fn composition_view_shows_preferred_paths() {
+    fn composition_view_shows_exact_flow_trace() {
         let doc = fixture_doc();
         let mut app = fixture_app(doc, empty_heuristic_overlay());
         let workflow_index = app
@@ -7537,12 +9773,16 @@ mod tests {
         app.workspace_section = WorkspaceSection::Composition;
         app.select_machine(workflow_index);
 
-        let path = app.selected_path_item().expect("composition path");
-        assert_eq!(path.kind, PathKind::Composition);
-        assert_eq!(path.steps.len(), 1);
-        let detail = text_contents(app.path_detail_text(&path));
-        assert!(detail.contains("path kind: composition"));
-        assert!(detail.contains("[composition] Workflow Machine -> Task Machine"));
+        let flow = app.selected_flow_trace().expect("composition flow");
+        assert_eq!(flow.steps.len(), 2);
+        let detail = text_contents(flow_trace_detail_text(
+            app.current_machine().expect("workflow machine"),
+            &app.doc,
+            &flow,
+        ));
+        assert!(detail.contains("journey: Draft -> Done"));
+        assert!(detail.contains("1. Start Workflow"));
+        assert!(detail.contains("touches: child Task Machine @ Running"));
     }
 
     #[test]
@@ -7590,6 +9830,26 @@ mod tests {
         assert_eq!(path.kind, PathKind::Composition);
         let path_text = text_contents(app.path_detail_text(&path));
         assert!(path_text.contains("to: Task Machine"));
+    }
+
+    #[test]
+    fn composition_flow_view_fails_closed_for_reachable_cycles() {
+        let doc = cyclic_composition_fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        let cycle_index = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Cycle Flow"))
+            .expect("cycle flow machine");
+        app.workspace_section = WorkspaceSection::Composition;
+        app.select_machine(cycle_index);
+
+        assert_eq!(app.machine_section, MachineSection::Paths);
+        assert_eq!(app.flow_trace_status(), FlowTraceStatus::ReachableCycle);
+        let text = text_contents(app.empty_path_text());
+        assert!(text.contains("reachable cycle"));
+        assert!(text.contains("fails closed"));
     }
 
     #[test]
@@ -7649,7 +9909,7 @@ mod tests {
         app.machine_item_index = 0;
 
         assert_eq!(app.lane_mode, LaneMode::Exact);
-        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT));
         assert_eq!(app.lane_mode, LaneMode::Heuristic);
         let heuristic_items = app.relation_items();
         assert_eq!(heuristic_items.len(), 2);
@@ -7742,7 +10002,7 @@ mod tests {
         app.clamp_indices();
 
         let text = text_contents(app.detail_text());
-        assert!(text.contains("exact lane already covers this relationship"));
+        assert!(text.contains("The proven lane already covers this handoff"));
     }
 
     #[test]
@@ -7794,7 +10054,7 @@ mod tests {
         app.focus = Focus::Detail;
 
         let text = text_contents(app.detail_text());
-        assert!(text.contains("Switch to heuristic (`h`) or mixed (`m`) mode"));
+        assert!(text.contains("Switch to heuristic (`H`) or mixed (`m`) mode"));
     }
 
     #[test]
