@@ -3,10 +3,11 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fmt::Write as _;
 use std::fs;
-use std::io;
+use std::io::{self, Write as _};
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::thread;
 
 use cargo_metadata::{Metadata, MetadataCommand, Package, PackageId};
 use statum_graph::codebase::render::DiagramError as CodebaseDiagramError;
@@ -278,6 +279,27 @@ impl Error {
                 ..
             }
         )
+    }
+
+    pub fn post_diagnostics_note(&self) -> Option<String> {
+        match self {
+            Self::RunnerFailed {
+                operation,
+                manifest_path,
+                details,
+                diagnostics_reported: true,
+                ..
+            } if details
+                .as_deref()
+                .is_some_and(runner_failure_details_look_like_build_failure) =>
+            {
+                Some(format!(
+                    "{operation} stopped while building the generated Statum runner against `{}`.\nThe target workspace must compile before cargo-statum-graph can continue.\nFix the compiler error above and rerun, or narrow the run with `--package`.",
+                    manifest_path.display()
+                ))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -1471,13 +1493,31 @@ fn run_runner(
                 .arg("--");
             command.args(runtime_args);
 
-            let status = command
+            let mut child = command
                 .stdin(Stdio::inherit())
                 .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()
+                .stderr(Stdio::piped())
+                .spawn()
                 .map_err(|source| Error::Io {
                     action: "run generated cargo runner",
+                    path: runner.manifest_path.clone(),
+                    source,
+                })?;
+            let stderr = child
+                .stderr
+                .take()
+                .expect("piped stderr should be available");
+            let reporter = thread::spawn(move || forward_and_capture_stderr(stderr));
+            let status = child.wait().map_err(|source| Error::Io {
+                action: "wait for generated cargo runner",
+                path: runner.manifest_path.clone(),
+                source,
+            })?;
+            let stderr = reporter
+                .join()
+                .unwrap_or_else(|_| Err(io::Error::other("stderr forwarder thread panicked")))
+                .map_err(|source| Error::Io {
+                    action: "capture generated cargo runner diagnostics",
                     path: runner.manifest_path.clone(),
                     source,
                 })?;
@@ -1489,7 +1529,7 @@ fn run_runner(
                     operation,
                     manifest_path: target_manifest_path.to_path_buf(),
                     status,
-                    details: None,
+                    details: normalize_runner_failure_details(&stderr, &[]),
                     diagnostics_reported: true,
                 })
             }
@@ -1551,6 +1591,26 @@ fn normalize_runner_failure_details(stderr: &[u8], stdout: &[u8]) -> Option<Stri
                 .to_owned(),
         )
     }
+}
+
+fn runner_failure_details_look_like_build_failure(details: &str) -> bool {
+    details.contains("could not compile `") || details.contains("error[E")
+}
+
+fn forward_and_capture_stderr<R: io::Read>(mut reader: R) -> io::Result<Vec<u8>> {
+    let mut captured = Vec::new();
+    let mut stderr = io::stderr().lock();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        captured.extend_from_slice(&buffer[..read]);
+        stderr.write_all(&buffer[..read])?;
+    }
+    stderr.flush()?;
+    Ok(captured)
 }
 
 fn bundle_paths(out_dir: &Path, stem: &str) -> Vec<PathBuf> {
@@ -1830,6 +1890,44 @@ mod tests {
     }
 
     #[test]
+    fn post_diagnostics_note_explains_runner_compile_failure() {
+        let error = Error::RunnerFailed {
+            operation: "inspect session",
+            manifest_path: PathBuf::from("/tmp/workspace/Cargo.toml"),
+            status: exit_status_failure(),
+            details: Some(
+                "error[E0425]: cannot find function `missing_renderer` in this scope\nerror: could not compile `fixture-app` (lib) due to 1 previous error".to_owned(),
+            ),
+            diagnostics_reported: true,
+        };
+
+        let note = error
+            .post_diagnostics_note()
+            .expect("runner failures with reported diagnostics should explain next steps");
+
+        assert!(note.contains("inspect session stopped while building the generated Statum runner"));
+        assert!(note.contains("/tmp/workspace/Cargo.toml"));
+        assert!(note.contains("must compile before cargo-statum-graph can continue"));
+        assert!(note.contains("--package"));
+    }
+
+    #[test]
+    fn post_diagnostics_note_is_absent_for_non_build_runner_diagnostics() {
+        let error = Error::RunnerFailed {
+            operation: "inspect session",
+            manifest_path: PathBuf::from("/tmp/workspace/Cargo.toml"),
+            status: exit_status_failure(),
+            details: Some(
+                "statum-graph inspect requires an interactive terminal on stdin and stdout."
+                    .to_owned(),
+            ),
+            diagnostics_reported: true,
+        };
+
+        assert!(error.post_diagnostics_note().is_none());
+    }
+
+    #[test]
     fn detect_patch_root_from_target_workspace_finds_local_statum_checkout_dependency() {
         let temp = tempfile::tempdir().expect("fixture tempdir");
         let statum_root = temp.path().join("local-statum");
@@ -1851,6 +1949,22 @@ mod tests {
             .expect("patch root detection should succeed");
 
         assert_eq!(detected, Some(statum_root));
+    }
+
+    fn exit_status_failure() -> ExitStatus {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+
+            ExitStatus::from_raw(1 << 8)
+        }
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::ExitStatusExt;
+
+            ExitStatus::from_raw(1)
+        }
     }
 
     #[test]

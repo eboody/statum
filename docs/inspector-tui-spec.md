@@ -9,7 +9,7 @@ is now journey-first:
 - one selected finite root-to-sink composition trace is the main story surface
 - the center pane shows an exact Mermaid `stateDiagram-v2` projection for that
   selected journey
-- `Machines` and `Map` remain available, but as secondary views
+- `Machines` and `Topology` remain available, but as secondary views
 
 ## Product Goal
 
@@ -35,7 +35,7 @@ For one composition machine, the inspector should answer:
 - `Journeys` shows one exact finite root-to-sink composition trace for one
   selected composition machine
 - `Machines` shows one exact machine-local legality diagram
-- `Map` shows exact linked machine topology
+- `Topology` shows exact linked machine topology
 - relation drilldown can show one exact relation `sequenceDiagram`
 
 ### Observation Point
@@ -114,7 +114,7 @@ Context header always shows:
 - journey count or journey-status message
 - selected journey label
 - touched protocol summary
-- a `Map` jump hint
+- a `Topology` jump hint
 
 Journey list rows show:
 
@@ -141,7 +141,7 @@ Layout:
 - right: `Summary`, `States`, `Transitions`, `Relations`, `Journeys` for
   composition machines, `Docs`, `Source`, `Mermaid`, `Issues`
 
-### Map
+### Topology
 
 Purpose:
 
@@ -156,7 +156,7 @@ Layout:
   - `Focus`
   - `Full`
 
-Map is context, not the default home on composition-heavy workspaces.
+Topology is context, not the default home on composition-heavy workspaces.
 
 ## Diagram Rules
 
@@ -176,7 +176,7 @@ diagram.
 - Mermaid `stateDiagram-v2`
 - full exact machine-local legality
 
-### Map Diagram
+### Topology Diagram
 
 - Mermaid `flowchart`
 - composition machines as double boxes
@@ -199,7 +199,7 @@ diagram.
 - `Issues`: fail-closed explanation for unavailable journey surfaces and any
   weaker heuristic context
 
-### Machine And Map Modes
+### Machine And Topology Modes
 
 - keep the existing guide/docs/source/mermaid/explain split, but match the
   selected semantic subject instead of reusing journey wording
@@ -217,7 +217,7 @@ diagram.
 - `j` / `k` and arrows act on the currently focused list or viewport only
 - `h` / `l` pan the diagram when the center viewport is focused
 - `[` / `]` switch center or detail tabs
-- `1`, `2`, `3` switch `Journeys`, `Machines`, `Map`
+- `1`, `2`, `3` switch `Journeys`, `Machines`, `Topology`
 
 The inspector should never require a temporary `pick vs scroll` mode.
 
@@ -234,7 +234,7 @@ Primary chrome should say:
 
 - `Journeys`
 - `Machines`
-- `Map`
+- `Topology`
 - `Steps`
 - `Protocols`
 - `Source`
@@ -292,7 +292,7 @@ On a workspace like `citacell`:
   without first decoding the workspace map
 - protocol touches are visible in the right pane without inventing protocol
   runtime chronology
-- moving to `Map` feels like context
+- moving to `Topology` feels like context
 - moving to `Machines` feels like legality drilldown
 
 ## Test Obligations
@@ -313,7 +313,7 @@ Inspector interaction:
 - protocol-only workspaces open to `Machines`
 - `Journeys` focus order is machine list -> journey list -> diagram -> detail
 - diagram scrolling and journey selection never fight over the same focus
-- map scale, hop radius, and layout keys only affect `Map`
+- topology scale, hop radius, and layout keys only affect `Topology`
 
 ## Delivery Order
 

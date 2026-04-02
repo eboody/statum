@@ -119,7 +119,7 @@ cargo statum-graph inspect \
 That launches the inspector TUI for the selected workspace. The current
 surface shows:
 
-- top-level views for `Journeys`, `Machines`, and `Map`
+- top-level views for `Journeys`, `Machines`, and `Topology`
 - `Journeys` as the default home when the workspace has any composition
   machine
 - left-pane composition machine selection plus a separate `Entry -> Exit`
@@ -128,23 +128,23 @@ surface shows:
   rendered through `termaid` when available
 - right-pane tabs for `Steps`, `Protocols`, `Mermaid`, `Source`, and `Issues`
 - a persistent journey header with machine, journey count, selected journey,
-  touched protocol summary, and a fast map jump hint
+  touched protocol summary, and a fast topology jump hint
 - exact journey diagrams that show only one selected finite root-to-sink
   composition trace, with numbered transition labels
 - zero-step journey handling for entry-is-exit traces
 - `Machines` as the full legal-state drilldown for protocol and composition
   machines
-- `Map` as secondary workspace context instead of the first screen
-- map scales for `Overview`, `Focus`, and `Full`
+- `Topology` as secondary workspace context instead of the first screen
+- topology scales for `Overview`, `Focus`, and `Full`
 - `Overview` that shows the connected component for the selected machine
 - `Focus` that shows the selected machine plus nearby neighbors, with a
   `1`-hop or `2`-hop radius
 - `Full` that shows every visible machine in the linked workspace flow graph
-- left-to-right and top-down map layout toggles
-- role-shaped map nodes:
+- left-to-right and top-down topology layout toggles
+- role-shaped topology nodes:
   composition machines render as double boxes and protocol machines render as
   plain boxes
-- quiet map edges:
+- topology edges:
   owned orchestration handoffs render as thick arrows, other linked handoffs
   render as solid arrows, and static references render as dotted arrows
 - machine view that renders the selected machine as an exact Mermaid
@@ -172,6 +172,9 @@ surface shows:
   horizontal preview fails in `termaid`, and only then falls back to raw
   Mermaid.
 
+See [`docs/inspector-how-to-read.md`](../docs/inspector-how-to-read.md) for a
+practical reading guide for `Journeys`, `Machines`, and `Topology`.
+
 `inspect` requires an interactive terminal on stdin and stdout.
 
 ## Suggest
@@ -197,6 +200,7 @@ Keybindings:
 - `tab` / `shift-tab`: move focus between panes; in `Journeys`, that means
   machines, journeys, diagram, and detail
 - `w`: cycle available workspace sections
+- outline `h` / `l` or left / right: switch `Journeys` / `Machines` / `Topology`
 - `[` / `]`: switch center or detail tabs
 - `h` / `l`: move left and right, or pan horizontally in the center diagram
 - `j` / `k`: move within the focused list, or scroll vertically in the center
@@ -204,9 +208,9 @@ Keybindings:
 - `/`: enter search mode
 - `enter` / `esc`: leave search mode
 - `s`: change search scope
-- `v`: cycle map scale
-- `r`: toggle map focus radius between `1` and `2` hops
-- `L`: toggle map layout between `LR` and `TD`
+- `v`: cycle topology scale
+- `r`: toggle topology focus radius between `1` and `2` hops
+- `L`: toggle topology layout between `LR` and `TD`
 - `e` / `m` / `H`: exact, mixed, and heuristic lane selection
 - `p` / `f` / `t`: toggle payload, field, and param relation filters
 - `d` / `n`: toggle direct-type and declared-reference relation-basis filters

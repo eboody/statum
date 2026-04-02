@@ -105,6 +105,8 @@ fn main() -> ExitCode {
         Err(error) => {
             if !error.diagnostics_reported() {
                 eprintln!("{error}");
+            } else if let Some(note) = error.post_diagnostics_note() {
+                eprintln!("\n{note}");
             }
             ExitCode::FAILURE
         }

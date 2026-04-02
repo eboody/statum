@@ -320,6 +320,40 @@ fn inspect_command_fails_closed_without_an_interactive_terminal() {
 }
 
 #[test]
+fn inspect_command_explains_target_compile_failures_after_cargo_diagnostics() {
+    let fixture_dir = tempdir().expect("fixture tempdir");
+    write_broken_fixture(fixture_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-statum-graph"))
+        .arg("inspect")
+        .arg(fixture_dir.path())
+        .output()
+        .expect("cargo-statum-graph should run");
+    assert!(
+        !output.status.success(),
+        "broken workspaces should fail closed"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot find function `missing_renderer`"),
+        "stderr should include the target compiler diagnostic, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("inspect session stopped while building the generated Statum runner"),
+        "stderr should explain the generated-runner boundary, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("must compile before cargo-statum-graph can continue"),
+        "stderr should explain the compile prerequisite, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--package"),
+        "stderr should suggest narrowing the workspace, got: {stderr}"
+    );
+}
+
+#[test]
 fn suggest_command_reports_exact_typed_orchestration_warnings() {
     let fixture_dir = tempdir().expect("fixture tempdir");
     write_fixture(fixture_dir.path());
@@ -602,6 +636,30 @@ fn write_no_machine_fixture(dir: &Path) {
 
     fs::create_dir_all(dir.join("crates/app/src")).expect("fixture app src dir");
     fs::write(dir.join("Cargo.toml"), root_manifest).expect("fixture root cargo manifest");
+    fs::write(dir.join("crates/app/Cargo.toml"), app_manifest).expect("fixture app cargo manifest");
+    fs::write(dir.join("crates/app/src/lib.rs"), app_lib).expect("fixture app lib");
+}
+
+fn write_broken_fixture(dir: &Path) {
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crate should live under workspace root");
+    let root_manifest = format!(
+        "[workspace]\nresolver = \"2\"\nmembers = [\"crates/domain\", \"crates/app\"]\n\n[workspace.dependencies]\nstatum = {{ path = {:?} }}\n",
+        workspace_root.join("statum")
+    );
+    let domain_manifest =
+        "[package]\nname = \"fixture-domain\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nstatum = { workspace = true }\n";
+    let domain_lib = "pub mod task {\n    use statum::{machine, state};\n\n    #[state]\n    pub enum State {\n        Idle,\n    }\n\n    #[machine]\n    pub struct Machine<State> {}\n}\n";
+    let app_manifest = "[package]\nname = \"fixture-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nfixture-domain = { path = \"../domain\" }\nstatum = { workspace = true }\n";
+    let app_lib = "pub mod workflow {\n    use fixture_domain::task;\n    use statum::{machine, state};\n\n    #[state]\n    pub enum State {\n        Draft(task::Machine<task::Idle>),\n    }\n\n    #[machine(role = composition)]\n    pub struct Machine<State> {}\n\n    pub fn broken() {\n        missing_renderer();\n    }\n}\n";
+
+    fs::create_dir_all(dir.join("crates/domain/src")).expect("fixture domain src dir");
+    fs::create_dir_all(dir.join("crates/app/src")).expect("fixture app src dir");
+    fs::write(dir.join("Cargo.toml"), root_manifest).expect("fixture root cargo manifest");
+    fs::write(dir.join("crates/domain/Cargo.toml"), domain_manifest)
+        .expect("fixture domain cargo manifest");
+    fs::write(dir.join("crates/domain/src/lib.rs"), domain_lib).expect("fixture domain lib");
     fs::write(dir.join("crates/app/Cargo.toml"), app_manifest).expect("fixture app cargo manifest");
     fs::write(dir.join("crates/app/src/lib.rs"), app_lib).expect("fixture app lib");
 }
