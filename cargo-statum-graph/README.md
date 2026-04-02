@@ -124,6 +124,7 @@ surface shows:
   machine
 - left-pane composition machine selection plus a separate `Entry -> Exit`
   journey list for the selected machine
+- grouped exact journey families for heavily branching composition machines
 - center-pane exact journey projection as Mermaid `stateDiagram-v2`
   rendered through `termaid` when available
 - right-pane tabs for `Steps`, `Protocols`, `Mermaid`, `Source`, and `Issues`
@@ -139,6 +140,8 @@ surface shows:
 - `Overview` that shows the connected component for the selected machine
 - `Focus` that shows the selected machine plus nearby neighbors, with a
   `1`-hop or `2`-hop radius
+- entering `Topology` from `Journeys` starts in `Focus` around the selected
+  composition machine
 - `Full` that shows every visible machine in the linked workspace flow graph
 - left-to-right and top-down topology layout toggles
 - role-shaped topology nodes:

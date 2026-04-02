@@ -26,10 +26,10 @@ Important rules:
 - a journey is one exact finite root-to-sink composition trace
 - the numbered transition labels in the diagram match the numbered step cards
 - the center diagram is state order inside the selected composition machine
-- the step rail shows zero or more exact cross-machine touches for each step
+- the step rail shows zero or more exact cross-machine targets for each step
 - `carries` means the composition state still holds a child protocol machine in
   that state after the step
-- `touches` means that step handed off to or referenced another machine on that
+- `targets` means that step handed off to or referenced another machine on that
   transition
 
 When journeys are heavily branching:
@@ -37,6 +37,8 @@ When journeys are heavily branching:
 - the journey list groups exact variants by `Entry -> Exit`
 - `h` / `l` in the journey list switches endpoint families
 - `j` / `k` picks a concrete exact variant inside the selected family
+- jumping to `Topology` from here starts in a local focused neighborhood around
+  the selected machine
 
 ## Machines
 

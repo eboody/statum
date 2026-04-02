@@ -128,6 +128,14 @@ impl WorkspaceSection {
             .copied()
             .unwrap_or_else(|| *available.last().unwrap_or(&Self::Machines))
     }
+
+    fn compact_label(self) -> &'static str {
+        match self {
+            Self::Composition => "Jour",
+            Self::Machines => "Mach",
+            Self::Gaps => "Topo",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -250,6 +258,38 @@ impl DetailTab {
             .and_then(|index| Self::ORDER.get(index))
             .copied()
             .unwrap_or(*Self::ORDER.last().expect("detail order should exist"))
+    }
+}
+
+fn detail_tab_compact_label(
+    tab: DetailTab,
+    journey_mode: bool,
+    workspace_home: bool,
+) -> &'static str {
+    if journey_mode {
+        match tab {
+            DetailTab::Summary => "Steps",
+            DetailTab::Docs => "Proto",
+            DetailTab::Diagram => "Mmd",
+            DetailTab::Source => "Src",
+            DetailTab::Explain => "Issues",
+        }
+    } else if workspace_home {
+        match tab {
+            DetailTab::Summary => "Read",
+            DetailTab::Docs => "Docs",
+            DetailTab::Diagram => "Mmd",
+            DetailTab::Source => "Src",
+            DetailTab::Explain => "Legend",
+        }
+    } else {
+        match tab {
+            DetailTab::Summary => "Guide",
+            DetailTab::Docs => "Docs",
+            DetailTab::Diagram => "Mmd",
+            DetailTab::Source => "Src",
+            DetailTab::Explain => "Why",
+        }
     }
 }
 
@@ -804,7 +844,12 @@ impl InspectorApp {
         if !self.available_workspace_sections().contains(&section) {
             return;
         }
+        let previous_section = self.workspace_section;
         self.workspace_section = section;
+        if section == WorkspaceSection::Gaps && previous_section == WorkspaceSection::Composition {
+            self.workspace_diagram_scale = WorkspaceDiagramScale::Focus;
+            self.workspace_focus_hops = 1;
+        }
         self.machine_section =
             self.preferred_machine_section(self.current_machine(), self.workspace_section);
         self.relation_context = RelationContext::Machine;
@@ -2590,6 +2635,9 @@ impl InspectorApp {
     }
 
     fn workspace_diagram_title(&self) -> String {
+        let selected_machine = self
+            .current_machine()
+            .map(|machine| render_flow_machine_label(machine).into_owned());
         match self.workspace_diagram_scale {
             WorkspaceDiagramScale::Overview => {
                 let component_label = self
@@ -2597,18 +2645,27 @@ impl InspectorApp {
                     .and_then(|machine| self.workspace_component_position(machine.index))
                     .map(|(index, total)| format!("component {index}/{total}"))
                     .unwrap_or_else(|| "component".to_owned());
-                format!("Topology Overview · {component_label}")
+                selected_machine.map_or_else(
+                    || format!("Topology Overview · {component_label}"),
+                    |machine| format!("Topology Overview · {machine} · {component_label}"),
+                )
             }
             WorkspaceDiagramScale::Focus => format!(
-                "Topology Focus · {} {}",
+                "Topology Focus · {}{}{}",
+                selected_machine
+                    .as_deref()
+                    .map(|machine| format!("{machine} · "))
+                    .unwrap_or_default(),
                 self.workspace_focus_hops,
                 if self.workspace_focus_hops == 1 {
-                    "hop"
+                    " hop"
                 } else {
-                    "hops"
+                    " hops"
                 }
             ),
-            WorkspaceDiagramScale::Full => "Topology Full".to_owned(),
+            WorkspaceDiagramScale::Full => selected_machine
+                .map(|machine| format!("Topology Full · {machine}"))
+                .unwrap_or_else(|| "Topology Full".to_owned()),
         }
     }
 
@@ -2715,10 +2772,17 @@ impl InspectorApp {
             ])
             .split(inner);
         let available_sections = self.available_workspace_sections();
+        let compact_tabs = sections[0].width < 30;
         let tabs = Tabs::new(
             available_sections
                 .iter()
-                .map(|section| Line::from(section.label()))
+                .map(|section| {
+                    Line::from(if compact_tabs {
+                        section.compact_label()
+                    } else {
+                        section.label()
+                    })
+                })
                 .collect::<Vec<_>>(),
         )
         .select(
@@ -2731,10 +2795,11 @@ impl InspectorApp {
         frame.render_widget(tabs, sections[0]);
 
         let visible = self.visible_composition_machine_indices();
+        let compact_list = area.width <= 34;
         let items = visible
             .iter()
             .filter_map(|machine_index| self.doc.machine(*machine_index))
-            .map(|machine| self.flow_sidebar_machine_list_item(machine))
+            .map(|machine| self.flow_sidebar_machine_list_item(machine, compact_list))
             .collect::<Vec<_>>();
         let selected = visible
             .iter()
@@ -2835,6 +2900,7 @@ impl InspectorApp {
             return;
         };
         let accent = workspace_section_accent(WorkspaceSection::Composition);
+        let compact_rows = area.width <= 30;
         if self.uses_grouped_flow_trace_families() {
             let families = self.flow_trace_families();
             if families.is_empty() {
@@ -2870,6 +2936,7 @@ impl InspectorApp {
                             item,
                             variant_index,
                             family.item_indices.len(),
+                            compact_rows,
                         )
                     })
                 })
@@ -2890,7 +2957,7 @@ impl InspectorApp {
         let items = self
             .flow_trace_items()
             .iter()
-            .map(|item| self.flow_trace_list_item(machine, item))
+            .map(|item| self.flow_trace_list_item(machine, item, compact_rows))
             .collect::<Vec<_>>();
         let empty = items.is_empty();
         let mut state = ListState::default().with_selected((!empty).then_some(self.path_index));
@@ -2970,7 +3037,9 @@ impl InspectorApp {
             Line::from(format!("machine: {}", render_flow_machine_label(machine))),
             Line::from(format!("journeys: {count_status}")),
             Line::from(format!("selected: {selected}{selected_suffix}")),
-            Line::from(format!("touches: {touched}  |  topology: press 3")),
+            Line::from(format!(
+                "touches: {touched}  |  topology: press 3 for local neighborhood"
+            )),
         ])
     }
 
@@ -2978,6 +3047,7 @@ impl InspectorApp {
         let accent = workspace_section_accent(self.workspace_section);
         let compact_summary = area.height <= 10;
         let hide_summary = area.height <= 8;
+        let compact_outline = area.width <= 34;
         let block = titled_block(
             Line::from(vec![
                 badge("OUTLINE", Color::Black, accent),
@@ -3009,10 +3079,17 @@ impl InspectorApp {
             .split(inner);
 
         let available_sections = self.available_workspace_sections();
+        let compact_tabs = sections[0].width < 30;
         let tabs = Tabs::new(
             available_sections
                 .iter()
-                .map(|section| Line::from(section.label()))
+                .map(|section| {
+                    Line::from(if compact_tabs {
+                        section.compact_label()
+                    } else {
+                        section.label()
+                    })
+                })
                 .collect::<Vec<_>>(),
         )
         .select(
@@ -3160,7 +3237,10 @@ impl InspectorApp {
                     .iter()
                     .filter_map(|machine_index| self.doc.machine(*machine_index))
                     .map(|machine| {
-                        self.composition_workspace_machine_list_item(machine, compact_summary)
+                        self.composition_workspace_machine_list_item(
+                            machine,
+                            compact_summary || compact_outline,
+                        )
                     })
                     .collect::<Vec<_>>(),
                 visible_workspace_machine_indices
@@ -3171,7 +3251,7 @@ impl InspectorApp {
                 visible_machine_indices
                     .iter()
                     .filter_map(|machine_index| self.doc.machine(*machine_index))
-                    .map(|machine| self.workspace_machine_list_item(machine))
+                    .map(|machine| self.workspace_machine_list_item(machine, compact_outline))
                     .collect::<Vec<_>>(),
                 visible_machine_indices
                     .iter()
@@ -3181,7 +3261,7 @@ impl InspectorApp {
                 visible_machine_indices
                     .iter()
                     .filter_map(|machine_index| self.doc.machine(*machine_index))
-                    .map(|machine| self.workspace_machine_list_item(machine))
+                    .map(|machine| self.workspace_machine_list_item(machine, compact_outline))
                     .collect::<Vec<_>>(),
                 visible_machine_indices
                     .iter()
@@ -3226,13 +3306,20 @@ impl InspectorApp {
             .split(inner);
 
         let available_sections = self.available_machine_sections();
+        let compact_tabs = sections[0].width < 44;
         let tabs = Tabs::new(
             available_sections
                 .iter()
                 .map(|section| {
-                    self.current_machine()
-                        .map(|machine| Line::from(self.machine_section_label(machine, *section)))
-                        .unwrap_or_else(|| Line::from(section.label()))
+                    if compact_tabs {
+                        Line::from(section.label())
+                    } else {
+                        self.current_machine()
+                            .map(|machine| {
+                                Line::from(self.machine_section_label(machine, *section))
+                            })
+                            .unwrap_or_else(|| Line::from(section.label()))
+                    }
                 })
                 .collect::<Vec<_>>(),
         )
@@ -3286,7 +3373,11 @@ impl InspectorApp {
         );
     }
 
-    fn workspace_machine_list_item(&self, machine: &CodebaseMachine) -> ListItem<'static> {
+    fn workspace_machine_list_item(
+        &self,
+        machine: &CodebaseMachine,
+        compact: bool,
+    ) -> ListItem<'static> {
         let accent = workspace_section_accent(self.workspace_section);
         let (_, hints) = self.machine_visible_summary_counts(machine.index);
         let routes = if machine.role.is_composition() {
@@ -3312,10 +3403,49 @@ impl InspectorApp {
         if warnings > 0 {
             spans.push(Span::raw(" "));
             spans.push(ghost_badge(
-                format!("{warnings} warn"),
+                if compact {
+                    format!("{warnings}w")
+                } else {
+                    format!("{warnings} warn")
+                },
                 severity_accent(CompositionSuggestionSeverity::Warning),
             ));
         }
+        if compact {
+            spans.push(Span::raw(" "));
+            spans.push(ghost_badge(format!("{}s", machine.states.len()), accent));
+            spans.push(Span::raw(" "));
+            spans.push(ghost_badge(
+                format!("{}m", machine.transitions.len()),
+                accent,
+            ));
+            if routes > 0 {
+                spans.push(Span::raw(" "));
+                spans.push(ghost_badge(
+                    format!(
+                        "{}{}",
+                        routes,
+                        if machine.role.is_composition() {
+                            "j"
+                        } else {
+                            "r"
+                        }
+                    ),
+                    accent,
+                ));
+            }
+            if hints > 0 {
+                spans.push(Span::raw(" "));
+                spans.push(ghost_badge(
+                    format!("{hints}h"),
+                    detail_tab_accent(DetailTab::Explain),
+                ));
+            }
+            let mut lines = vec![Line::from(spans)];
+            push_match_reason_line(&mut lines, self.machine_search_reason(machine));
+            return ListItem::new(Text::from(lines));
+        }
+
         let mut detail = format!(
             "{} state{}  {} move{}",
             machine.states.len(),
@@ -3375,14 +3505,22 @@ impl InspectorApp {
         if flow_count > 0 {
             spans.push(Span::raw(" "));
             spans.push(ghost_badge(
-                format!("{flow_count} flow{}", plural_suffix(flow_count)),
+                if compact {
+                    format!("{flow_count}j")
+                } else {
+                    format!("{flow_count} flow{}", plural_suffix(flow_count))
+                },
                 accent,
             ));
         }
         if warnings > 0 {
             spans.push(Span::raw(" "));
             spans.push(ghost_badge(
-                format!("{warnings} warn"),
+                if compact {
+                    format!("{warnings}w")
+                } else {
+                    format!("{warnings} warn")
+                },
                 severity_accent(CompositionSuggestionSeverity::Warning),
             ));
         }
@@ -3687,32 +3825,44 @@ impl InspectorApp {
         &self,
         machine: &CodebaseMachine,
         item: &FlowTraceItem,
+        compact: bool,
     ) -> ListItem<'static> {
         let accent = workspace_section_accent(WorkspaceSection::Composition);
         let step_count_label = if item.steps.is_empty() {
-            "0 steps".to_owned()
+            if compact {
+                "0s".to_owned()
+            } else {
+                "0 steps".to_owned()
+            }
         } else {
-            format!(
-                "{} step{}",
-                item.steps.len(),
-                plural_suffix(item.steps.len())
-            )
+            if compact {
+                format!("{}s", item.steps.len())
+            } else {
+                format!(
+                    "{} step{}",
+                    item.steps.len(),
+                    plural_suffix(item.steps.len())
+                )
+            }
         };
-        let mut lines = vec![
-            Line::from(vec![
-                badge("JOURNEY", Color::Black, accent),
-                Span::raw(" "),
-                Span::styled(
-                    flow_trace_label(machine, item),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-                ghost_badge(step_count_label, accent),
-            ]),
-            subdued_line(flow_trace_preview(machine, &self.doc, item), accent),
-        ];
+        let mut lines = vec![Line::from(vec![
+            badge(if compact { "J" } else { "JOURNEY" }, Color::Black, accent),
+            Span::raw(" "),
+            Span::styled(
+                flow_trace_label(machine, item),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            ghost_badge(step_count_label, accent),
+        ])];
+        if !compact {
+            lines.push(subdued_line(
+                flow_trace_preview(machine, &self.doc, item),
+                accent,
+            ));
+        }
         push_match_reason_line(&mut lines, self.flow_trace_search_reason(machine, item));
         ListItem::new(Text::from(lines))
     }
@@ -3723,42 +3873,58 @@ impl InspectorApp {
         item: &FlowTraceItem,
         variant_index: usize,
         variant_count: usize,
+        compact: bool,
     ) -> ListItem<'static> {
         let accent = workspace_section_accent(WorkspaceSection::Composition);
         let step_count_label = if item.steps.is_empty() {
-            "0 steps".to_owned()
+            if compact {
+                "0s".to_owned()
+            } else {
+                "0 steps".to_owned()
+            }
         } else {
-            format!(
-                "{} step{}",
-                item.steps.len(),
-                plural_suffix(item.steps.len())
-            )
+            if compact {
+                format!("{}s", item.steps.len())
+            } else {
+                format!(
+                    "{} step{}",
+                    item.steps.len(),
+                    plural_suffix(item.steps.len())
+                )
+            }
         };
-        let mut lines = vec![
-            Line::from(vec![
-                badge("VARIANT", Color::Black, accent),
-                Span::raw(" "),
-                Span::styled(
-                    format!(
-                        "{}/{} {}",
-                        variant_index + 1,
-                        variant_count,
-                        flow_trace_variant_signature(machine, item)
-                    ),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
+        let mut lines = vec![Line::from(vec![
+            badge(if compact { "V" } else { "VARIANT" }, Color::Black, accent),
+            Span::raw(" "),
+            Span::styled(
+                format!(
+                    "{}/{} {}",
+                    variant_index + 1,
+                    variant_count,
+                    flow_trace_variant_signature(machine, item)
                 ),
-                Span::raw(" "),
-                ghost_badge(step_count_label, accent),
-            ]),
-            subdued_line(flow_trace_preview(machine, &self.doc, item), accent),
-        ];
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" "),
+            ghost_badge(step_count_label, accent),
+        ])];
+        if !compact {
+            lines.push(subdued_line(
+                flow_trace_preview(machine, &self.doc, item),
+                accent,
+            ));
+        }
         push_match_reason_line(&mut lines, self.flow_trace_search_reason(machine, item));
         ListItem::new(Text::from(lines))
     }
 
-    fn flow_sidebar_machine_list_item(&self, machine: &CodebaseMachine) -> ListItem<'static> {
+    fn flow_sidebar_machine_list_item(
+        &self,
+        machine: &CodebaseMachine,
+        compact: bool,
+    ) -> ListItem<'static> {
         let accent = workspace_section_accent(WorkspaceSection::Composition);
         let warnings = self
             .machine_suggestions(machine.index)
@@ -3776,11 +3942,15 @@ impl InspectorApp {
             FlowTraceStatus::Available => {
                 spans.push(Span::raw(" "));
                 spans.push(ghost_badge(
-                    format!(
-                        "{} journey{}",
-                        flow_cache.items.len(),
-                        plural_suffix(flow_cache.items.len())
-                    ),
+                    if compact {
+                        format!("{}j", flow_cache.items.len())
+                    } else {
+                        format!(
+                            "{} journey{}",
+                            flow_cache.items.len(),
+                            plural_suffix(flow_cache.items.len())
+                        )
+                    },
                     accent,
                 ));
             }
@@ -3804,7 +3974,11 @@ impl InspectorApp {
         if warnings > 0 {
             spans.push(Span::raw(" "));
             spans.push(ghost_badge(
-                format!("{warnings} warn"),
+                if compact {
+                    format!("{warnings}w")
+                } else {
+                    format!("{warnings} warn")
+                },
                 severity_accent(CompositionSuggestionSeverity::Warning),
             ));
         }
@@ -4124,10 +4298,11 @@ impl InspectorApp {
         let selector_inner = selector_block.inner(split[0]);
         frame.render_widget(selector_block, split[0]);
 
+        let compact_rows = selector_inner.width <= 30;
         let items = self
             .flow_trace_items()
             .iter()
-            .map(|item| self.flow_trace_list_item(machine, item))
+            .map(|item| self.flow_trace_list_item(machine, item, compact_rows))
             .collect::<Vec<_>>();
         let empty = items.is_empty();
         let mut state = ListState::default().with_selected((!empty).then_some(self.path_index));
@@ -4193,10 +4368,19 @@ impl InspectorApp {
                 Constraint::Min(0),
             ])
             .split(inner);
+        let compact_tabs = sections[0].width < 34;
+        let journey_mode = self.workspace_section == WorkspaceSection::Composition
+            && self.machine_section == MachineSection::Paths;
         let tabs = Tabs::new(
             DetailTab::ORDER
                 .iter()
-                .map(|tab| Line::from(self.detail_tab_label(*tab)))
+                .map(|tab| {
+                    Line::from(if compact_tabs {
+                        detail_tab_compact_label(*tab, journey_mode, self.is_workspace_home())
+                    } else {
+                        self.detail_tab_label(*tab)
+                    })
+                })
                 .collect::<Vec<_>>(),
         )
         .select(
@@ -6900,6 +7084,17 @@ fn flow_state_relations<'a>(
         .collect()
 }
 
+fn flow_state_relation_labels(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    state_index: usize,
+) -> Vec<String> {
+    flow_state_relations(machine, doc, state_index)
+        .into_iter()
+        .map(flow_checkpoint_relation_label)
+        .collect()
+}
+
 fn flow_transition_relations<'a>(
     machine: &CodebaseMachine,
     doc: &'a CodebaseDoc,
@@ -7458,6 +7653,7 @@ fn flow_trace_detail_text(
             .transition(step.transition)
             .expect("flow transition should resolve");
         let handoffs = flow_transition_relations(machine, doc, transition.index);
+        let carried_targets = flow_state_relation_labels(machine, doc, step.to_state);
         lines.push(Line::from(format!(
             "{}. {}",
             index + 1,
@@ -7475,10 +7671,10 @@ fn flow_trace_detail_text(
                 .unwrap_or_else(|| format!("state {}", step.to_state))
         )));
         if handoffs.is_empty() {
-            lines.push(Line::from("   touches: no cross-machine touch"));
+            lines.push(Line::from("   targets: none"));
         } else {
             lines.push(Line::from(format!(
-                "   touches: {} target{}",
+                "   targets: {} target{}",
                 handoffs.len(),
                 plural_suffix(handoffs.len())
             )));
@@ -7494,8 +7690,11 @@ fn flow_trace_detail_text(
                 }
             }
         }
-        if let Some(checkpoint) = flow_checkpoint_relation_summary(machine, doc, step.to_state) {
-            lines.push(Line::from(format!("   carries: {checkpoint}")));
+        if !carried_targets.is_empty() {
+            lines.push(Line::from("   carries:"));
+            for target in carried_targets {
+                lines.push(Line::from(format!("     - {target}")));
+            }
         }
     }
 
@@ -7530,12 +7729,14 @@ fn flow_trace_protocols_text(
             .expect("journey transition should resolve");
         let direct_targets = flow_transition_relations(machine, doc, transition.index)
             .into_iter()
-            .map(|detail| flow_transition_relation_label(&detail))
+            .map(|detail| {
+                (
+                    flow_transition_relation_label(&detail),
+                    flow_transition_producer_summary(&detail),
+                )
+            })
             .collect::<Vec<_>>();
-        let carried_targets = flow_state_relations(machine, doc, step.to_state)
-            .into_iter()
-            .map(flow_checkpoint_relation_label)
-            .collect::<Vec<_>>();
+        let carried_targets = flow_state_relation_labels(machine, doc, step.to_state);
         if direct_targets.is_empty() && carried_targets.is_empty() {
             continue;
         }
@@ -7546,11 +7747,22 @@ fn flow_trace_protocols_text(
             step_index + 1,
             render_transition_label(transition)
         )));
-        for target in direct_targets {
-            lines.push(Line::from(format!("touches: {target}")));
+        if direct_targets.is_empty() {
+            lines.push(Line::from("targets: none"));
+        } else {
+            lines.push(Line::from("targets:"));
+            for (target, producers) in direct_targets {
+                lines.push(Line::from(format!("- {target}")));
+                if let Some(producers) = producers {
+                    lines.push(Line::from(format!("  producers: {producers}")));
+                }
+            }
         }
-        for target in carried_targets {
-            lines.push(Line::from(format!("carries: {target}")));
+        if !carried_targets.is_empty() {
+            lines.push(Line::from("carries:"));
+            for target in carried_targets {
+                lines.push(Line::from(format!("- {target}")));
+            }
         }
     }
     if !any_touch {
@@ -8600,6 +8812,9 @@ fn workspace_explain_text(app: &InspectorApp) -> Text<'static> {
             "Read `owns xN`, `handoff xN`, and `ref xN` as grouped exact link counts between machines, not temporal step counts.",
         ),
         Line::from(
+            "When you open Topology from Journeys, it starts in focus mode around the selected machine.",
+        ),
+        Line::from(
             "Press Enter on a selected topology machine to jump into Journeys or Machines.",
         ),
         Line::from(
@@ -9608,6 +9823,31 @@ mod tests {
     }
 
     #[test]
+    fn short_terminals_use_compact_top_level_view_tabs() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        app.workspace_section = WorkspaceSection::Composition;
+        app.machine_section = MachineSection::Paths;
+        app.clamp_indices();
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| app.render(frame))
+            .expect("render should succeed");
+
+        let rendered = terminal.backend().buffer().content.clone();
+        let text = rendered
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(text.contains("Jour"));
+        assert!(text.contains("Mach"));
+        assert!(text.contains("Topo"));
+        assert!(!text.contains("Topol"));
+    }
+
+    #[test]
     fn app_stacks_detail_below_diagram_on_common_terminal_widths() {
         let app = fixture_app(fixture_doc(), empty_heuristic_overlay());
 
@@ -9786,6 +10026,21 @@ mod tests {
     }
 
     #[test]
+    fn compact_labels_shorten_top_level_tabs_for_narrow_panes() {
+        assert_eq!(WorkspaceSection::Composition.compact_label(), "Jour");
+        assert_eq!(WorkspaceSection::Machines.compact_label(), "Mach");
+        assert_eq!(WorkspaceSection::Gaps.compact_label(), "Topo");
+        assert_eq!(
+            detail_tab_compact_label(DetailTab::Summary, false, true),
+            "Read"
+        );
+        assert_eq!(
+            detail_tab_compact_label(DetailTab::Explain, true, false),
+            "Issues"
+        );
+    }
+
+    #[test]
     fn grouped_journeys_switch_endpoint_families_inside_journey_list() {
         let doc = grouped_journey_fixture_doc();
         let mut app = fixture_app(doc, empty_heuristic_overlay());
@@ -9809,6 +10064,24 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
         assert_eq!(app.journey_family_index, 0);
         assert!(text_contents(app.flow_context_text()).contains("family 1/2  |  variant 1/64"));
+    }
+
+    #[test]
+    fn journey_to_topology_switch_prefers_local_focus_view() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        app.workspace_section = WorkspaceSection::Composition;
+        app.machine_section = MachineSection::Paths;
+        app.workspace_diagram_scale = WorkspaceDiagramScale::Full;
+        app.workspace_focus_hops = 2;
+        app.clamp_indices();
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+
+        assert_eq!(app.workspace_section, WorkspaceSection::Gaps);
+        assert_eq!(app.workspace_diagram_scale, WorkspaceDiagramScale::Focus);
+        assert_eq!(app.workspace_focus_hops, 1);
+        assert!(app.center_diagram_plan().title.contains("Topology Focus"));
     }
 
     #[test]
@@ -10476,8 +10749,9 @@ mod tests {
         ));
         assert!(detail.contains("journey: Draft -> Done"));
         assert!(detail.contains("1. Start Workflow"));
-        assert!(detail.contains("touches: 1 target"));
+        assert!(detail.contains("targets: 1 target"));
         assert!(detail.contains("- child Task Machine @ Running"));
+        assert!(detail.contains("carries:"));
     }
 
     #[test]
