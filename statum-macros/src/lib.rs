@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 //! Proc-macro implementation crate for Statum.
 //!
 //! Most users should depend on [`statum`](https://docs.rs/statum), which
@@ -42,7 +44,9 @@ pub(crate) use syntax::{
     extract_derives, source_file_fingerprint,
 };
 
-use macro_registry::callsite::module_path_for_span;
+use macro_registry::callsite::{
+    best_effort_source_context_for_span_or_callsite, module_path_for_span,
+};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use syn::{Item, ItemImpl, parse_macro_input};
@@ -184,7 +188,8 @@ pub fn transition(
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_impl = parse_macro_input!(item as ItemImpl);
-    let line_number = item_impl.impl_token.span.start().line;
+    let line_number =
+        best_effort_source_context_for_span_or_callsite(item_impl.impl_token.span).line_number;
     let module_path = match resolved_current_module_path(item_impl.impl_token.span, "#[validators]")
     {
         Ok(path) => path,
@@ -199,11 +204,18 @@ pub fn __statum_emit_validator_methods_impl(input: TokenStream) -> TokenStream {
     validators::emit_validator_methods_impl(input)
 }
 
+#[allow(unexpected_cfgs)]
+pub(crate) fn is_rust_analyzer() -> bool {
+    cfg!(rust_analyzer) || std::env::var("RUST_ANALYZER_INTERNALS").is_ok()
+}
+
 pub(crate) fn resolved_current_module_path(
     span: Span,
     macro_name: &str,
 ) -> Result<String, TokenStream> {
-    let resolved = module_path_for_span(span);
+    let resolved = module_path_for_span(span)
+        .or_else(|| best_effort_source_context_for_span_or_callsite(span).module_path)
+        .or_else(|| Some("unknown".to_owned()));
 
     resolved.ok_or_else(|| {
         let message = format!(

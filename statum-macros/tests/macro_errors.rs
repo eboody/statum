@@ -1,5 +1,6 @@
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::{env, ffi::OsString};
 
 fn uses_rust_1_93_trybuild_fixtures() -> bool {
     static USES_RUST_1_93_FIXTURES: OnceLock<bool> = OnceLock::new();
@@ -37,8 +38,40 @@ fn compile_fail_with_rust_1_93_fixture(
     }
 }
 
+fn trybuild_lock() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("trybuild lock")
+}
+
+struct ScopedEnvVar {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl ScopedEnvVar {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = env::var_os(key);
+        unsafe {
+            env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        match self.previous.as_ref() {
+            Some(previous) => unsafe { env::set_var(self.key, previous) },
+            None => unsafe { env::remove_var(self.key) },
+        }
+    }
+}
+
 #[test]
 fn test_invalid_state_usage() {
+    let _lock = trybuild_lock();
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_state_not_enum.rs");
     t.compile_fail("tests/ui/invalid_state_empty_enum.rs");
@@ -54,6 +87,7 @@ fn test_invalid_state_usage() {
 
 #[test]
 fn test_invalid_machine_usage() {
+    let _lock = trybuild_lock();
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_machine_not_struct.rs");
     t.compile_fail("tests/ui/invalid_machine_cfg_field.rs");
@@ -71,6 +105,7 @@ fn test_invalid_machine_usage() {
 
 #[test]
 fn test_invalid_machine_ref_usage() {
+    let _lock = trybuild_lock();
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_machine_ref_type_alias.rs");
     t.compile_fail("tests/ui/invalid_machine_ref_generics.rs");
@@ -78,6 +113,7 @@ fn test_invalid_machine_ref_usage() {
 
 #[test]
 fn test_invalid_transition_usage() {
+    let _lock = trybuild_lock();
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_transition_no_methods.rs");
     t.compile_fail("tests/ui/invalid_transition_not_method.rs");
@@ -111,6 +147,7 @@ fn test_invalid_transition_usage() {
 
 #[test]
 fn test_invalid_validators_usage() {
+    let _lock = trybuild_lock();
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_validators_missing_variant.rs");
     t.compile_fail("tests/ui/invalid_validators_wrong_return.rs");
@@ -134,6 +171,7 @@ fn test_invalid_validators_usage() {
 
 #[test]
 fn test_valid_macro_usage() {
+    let _lock = trybuild_lock();
     let t = trybuild::TestCases::new();
     t.pass("tests/ui/valid_state_unit_only.rs");
     t.pass("tests/ui/valid_state_with_data.rs");
@@ -179,4 +217,25 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
     t.pass("tests/ui/valid_machine_ref.rs");
+}
+
+#[test]
+fn test_valid_macro_usage_with_rust_analyzer_missing_source_info() {
+    let _lock = trybuild_lock();
+    let _ra = ScopedEnvVar::set("RUST_ANALYZER_INTERNALS", "1");
+    let _missing_source = ScopedEnvVar::set("STATUM_TEST_FORCE_MISSING_SOURCE_INFO", "1");
+    let _missing_module = ScopedEnvVar::set("STATUM_TEST_FORCE_MISSING_MODULE_PATH", "1");
+
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/valid_editor_missing_source_surface.rs");
+}
+
+#[test]
+fn test_valid_macro_usage_with_missing_source_info_without_ra_flag() {
+    let _lock = trybuild_lock();
+    let _missing_source = ScopedEnvVar::set("STATUM_TEST_FORCE_MISSING_SOURCE_INFO", "1");
+    let _missing_module = ScopedEnvVar::set("STATUM_TEST_FORCE_MISSING_MODULE_PATH", "1");
+
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/valid_editor_missing_source_surface.rs");
 }

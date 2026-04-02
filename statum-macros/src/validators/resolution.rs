@@ -6,8 +6,9 @@ use macro_registry::callsite::{current_source_info, source_info_for_span_or_call
 use macro_registry::query;
 
 use crate::{
-    LoadedMachineLookupFailure, MachineInfo, MachinePath, format_loaded_machine_candidates,
-    lookup_loaded_machine_in_module, same_named_loaded_machines_elsewhere,
+    LoadedMachineLookupFailure, MachineInfo, MachinePath, crate_root_for_file,
+    format_loaded_machine_candidates, lookup_loaded_machine_best_effort, lookup_loaded_machine_in_module,
+    same_named_loaded_machines_elsewhere,
 };
 
 pub(super) fn resolve_machine_metadata(
@@ -17,7 +18,27 @@ pub(super) fn resolve_machine_metadata(
     let source_info = source_info_for_span_or_callsite(machine_ident.span());
     let module_path_key: MachinePath = module_path.into();
     let machine_name = machine_ident.to_string();
-    lookup_loaded_machine_in_module(&module_path_key, &machine_name).map_err(|failure| {
+    let current_file_path = source_info.as_ref().map(|(file_path, _)| file_path.as_str());
+    let current_crate_root = current_file_path.and_then(crate_root_for_file);
+    let incomplete_source_context = current_file_path.is_none() || module_path == "unknown";
+    let resolved = lookup_loaded_machine_in_module(&module_path_key, &machine_name).or_else(|failure| {
+        if incomplete_source_context {
+            lookup_loaded_machine_best_effort(
+                Some(&module_path_key),
+                &machine_name,
+                current_file_path,
+                current_crate_root.as_deref(),
+            )
+            .map_err(|fallback_failure| match failure {
+                LoadedMachineLookupFailure::NotFound => fallback_failure,
+                LoadedMachineLookupFailure::Ambiguous(_) => failure,
+            })
+        } else {
+            Err(failure)
+        }
+    });
+
+    resolved.map_err(|failure| {
         let current_line = source_info.as_ref().map(|(_, line)| *line).unwrap_or_default();
         let available = available_machine_candidates_in_module(source_info.as_ref(), module_path);
         let same_named_elsewhere =

@@ -1,5 +1,6 @@
 use macro_registry::callsite::{
-    current_source_info, module_path_for_span, source_info_for_span_or_callsite,
+    best_effort_source_context_for_span_or_callsite, current_source_info, module_path_for_span,
+    source_info_for_span_or_callsite,
 };
 use macro_registry::query;
 use proc_macro2::{Span, TokenStream};
@@ -10,8 +11,9 @@ use syn::{Generics, Ident, ItemStruct, LitStr, Type, Visibility};
 use crate::{
     EnumInfo, LoadedStateLookupFailure, ModulePath, SourceFingerprint, StateModulePath,
     crate_root_for_file, extract_derives, format_loaded_state_candidates,
-    lookup_loaded_state_enum, lookup_loaded_state_enum_by_name, source_file_fingerprint,
-    parse_doc_attrs, parse_present_attrs, parse_presentation_types_attr, PresentationAttr,
+    lookup_loaded_state_enum, lookup_loaded_state_enum_best_effort, lookup_loaded_state_enum_by_name,
+    parse_doc_attrs, parse_present_attrs, parse_presentation_types_attr,
+    source_file_fingerprint, PresentationAttr,
     PresentationTypesAttr,
 };
 use super::extra_type_arguments_tokens;
@@ -150,33 +152,51 @@ impl MachineInfo {
         } else {
             lookup_loaded_state_enum(&state_path)
         };
-        state_enum.map_err(|failure| missing_state_enum_error(self, failure))
+        match state_enum {
+            Ok(state_enum) => Ok(state_enum),
+            Err(failure) => {
+                let incomplete_source_context =
+                    self.file_path.is_none() || self.module_path.as_ref() == "unknown";
+                if incomplete_source_context {
+                    let fallback = lookup_loaded_state_enum_best_effort(
+                        Some(&state_path),
+                        self.state_generic_name.as_deref(),
+                        self.file_path.as_deref(),
+                        self.crate_root.as_deref(),
+                    );
+                    if let Ok(state_enum) = fallback {
+                        return Ok(state_enum);
+                    }
+
+                    return Err(TokenStream::new());
+                }
+
+                Err(missing_state_enum_error(self, failure))
+            }
+        }
     }
 
     pub fn from_item_struct(item: &ItemStruct, role: MachineRoleAttr) -> syn::Result<Self> {
         let span = item.ident.span();
-        let Some((file_path, line_number)) = source_info_for_span_or_callsite(span) else {
-            return Err(syn::Error::new(
-                span,
-                format!(
-                    "Internal error: could not read source information for `#[machine]` struct `{}`.",
-                    item.ident
-                ),
-            ));
-        };
-        let Some(module_path) = module_path_for_span(span) else {
-            return Err(syn::Error::new(
-                span,
-                format!(
-                    "Internal error: could not resolve the module path for `#[machine]` struct `{}`.",
-                    item.ident
-                ),
-            ));
-        };
+        let source_info = source_info_for_span_or_callsite(span);
+        let exact_module_path = module_path_for_span(span);
+        let fallback_context = best_effort_source_context_for_span_or_callsite(span);
+        let file_path = source_info
+            .as_ref()
+            .map(|(file_path, _)| file_path.clone())
+            .or_else(|| fallback_context.file_path.clone());
+        let line_number = source_info
+            .map(|(_, line_number)| line_number)
+            .filter(|line_number| *line_number > 0)
+            .or_else(|| (fallback_context.line_number > 0).then_some(fallback_context.line_number))
+            .unwrap_or_default();
+        let module_path = exact_module_path
+            .or_else(|| fallback_context.module_path)
+            .unwrap_or_else(|| "unknown".to_owned());
         let module_path: MachinePath = module_path.into();
         let fields = collect_fields(item);
-        let crate_root = crate_root_for_file(&file_path);
-        let file_fingerprint = source_file_fingerprint(&file_path);
+        let crate_root = file_path.as_deref().and_then(crate_root_for_file);
+        let file_fingerprint = file_path.as_deref().and_then(source_file_fingerprint);
 
         Ok(Self {
             name: item.ident.to_string(),
@@ -196,7 +216,7 @@ impl MachineInfo {
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
             role,
-            file_path: Some(file_path),
+            file_path,
             crate_root,
             file_fingerprint,
         })
@@ -210,7 +230,7 @@ impl MachineInfo {
 
         let (file_path, line_number) = source_info_for_span_or_callsite(item.ident.span())
             .map(|(file_path, line_number)| (Some(file_path), line_number))
-            .unwrap_or((None, item.ident.span().start().line));
+            .unwrap_or((None, 0));
         let presentation = parse_present_attrs(&item.attrs).ok()?;
         let presentation_types = parse_presentation_types_attr(&item.attrs).ok()?;
         Some(Self {
@@ -271,10 +291,6 @@ pub(crate) struct ParsedMachineField {
     pub(crate) field_type: Type,
 }
 
-pub(super) fn is_rust_analyzer() -> bool {
-    std::env::var("RUST_ANALYZER_INTERNALS").is_ok()
-}
-
 pub(super) fn field_type_alias_name(machine_name: &str, field_name: &str) -> String {
     let field_name = field_name.trim_start_matches("r#");
     format!(
@@ -311,10 +327,6 @@ fn missing_state_enum_error(
     machine_info: &MachineInfo,
     failure: LoadedStateLookupFailure,
 ) -> TokenStream {
-    if is_rust_analyzer() {
-        return TokenStream::new();
-    }
-
     let expected = machine_info.state_generic_name.as_deref();
     let expected_line = expected
         .map(|name| format!("Expected a `#[state]` enum named `{name}` in module `{}`.", machine_info.module_path))

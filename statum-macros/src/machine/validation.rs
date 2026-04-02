@@ -3,10 +3,9 @@ use quote::ToTokens;
 use syn::{Item, ItemStruct};
 
 use crate::{
-    ItemTarget, StateModulePath, lookup_loaded_state_enum, lookup_loaded_state_enum_by_name,
+    ItemTarget, StateModulePath, is_rust_analyzer, lookup_loaded_state_enum,
+    lookup_loaded_state_enum_by_name,
 };
-
-use super::metadata::is_rust_analyzer;
 use super::MachineInfo;
 
 pub fn invalid_machine_target_error(item: &Item) -> TokenStream {
@@ -92,8 +91,9 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
     let matching_state_enum = match matching_state_enum {
         Some(state_enum) => state_enum,
         None => match machine_info.get_matching_state_enum() {
-        Ok(state_enum) => state_enum,
-        Err(err) => return Some(err),
+            Ok(state_enum) => state_enum,
+            Err(err) if err.is_empty() => return None,
+            Err(err) => return Some(err),
         },
     };
 

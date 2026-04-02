@@ -16,7 +16,8 @@ pub(crate) use introspection::{
 };
 pub use metadata::{MachineInfo, MachinePath, parse_machine_attr};
 pub use registry::{
-    LoadedMachineLookupFailure, format_loaded_machine_candidates, lookup_loaded_machine_in_module,
+    LoadedMachineLookupFailure, format_loaded_machine_candidates,
+    lookup_loaded_machine_best_effort, lookup_loaded_machine_in_module,
     same_named_loaded_machines_elsewhere, store_machine_struct,
 };
 pub use validation::{invalid_machine_target_error, validate_machine_struct};

@@ -53,3 +53,6 @@ readme = "README.md"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
 version = "0.7.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(rust_analyzer)'] }

@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use macro_registry::callsite::best_effort_source_context_for_span_or_callsite;
 use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{Fields, Item, Type, parse_macro_input};
@@ -41,7 +42,8 @@ pub fn parse_machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    let line_number = item_struct.ident.span().start().line;
+    let line_number = best_effort_source_context_for_span_or_callsite(item_struct.ident.span())
+        .line_number;
     let module_path = match resolved_current_module_path(item_struct.ident.span(), "#[machine_ref]") {
         Ok(path) => path,
         Err(err) => return err,

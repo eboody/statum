@@ -2126,8 +2126,16 @@ fn generate_machine_module_introspection(
     item: &ItemStruct,
 ) -> Result<TokenStream, TokenStream> {
     let presentation_types = resolve_presentation_types(machine_info)?;
-    let linked_state_entries = linked_state_entries(machine_info)?;
-    let static_machine_link_entries = static_machine_link_entries(machine_info)?;
+    let linked_state_entries = match linked_state_entries(machine_info) {
+        Ok(entries) => entries,
+        Err(err) if err.is_empty() => Vec::new(),
+        Err(err) => return Err(err),
+    };
+    let static_machine_link_entries = match static_machine_link_entries(machine_info) {
+        Ok(entries) => entries,
+        Err(err) if err.is_empty() => Vec::new(),
+        Err(err) => return Err(err),
+    };
     let state_presentation_entry_macro_ident =
         machine_state_presentation_entry_macro_ident(machine_info);
     let transition_slice_ident = transition_slice_ident(
@@ -2167,7 +2175,11 @@ fn generate_machine_module_introspection(
     let machine_meta_ty = presentation_type_tokens(presentation_types.machine.as_ref());
     let state_meta_ty = presentation_type_tokens(presentation_types.state.as_ref());
     let transition_meta_ty = presentation_type_tokens(presentation_types.transition.as_ref());
-    let linked_relation_registrations = linked_relation_registrations(machine_info, item)?;
+    let linked_relation_registrations = match linked_relation_registrations(machine_info, item) {
+        Ok(registrations) => registrations,
+        Err(err) if err.is_empty() => Vec::new(),
+        Err(err) => return Err(err),
+    };
     let machine_role = machine_info.role.tokens();
 
     Ok(quote! {
