@@ -3028,17 +3028,17 @@ impl InspectorApp {
         } else {
             String::new()
         };
-        let touched = self
+        let targets = self
             .selected_flow_trace()
             .map(|flow| flow_trace_touch_summary(machine, &self.doc, &flow))
-            .unwrap_or_else(|| "no protocol touches".to_owned());
+            .unwrap_or_else(|| "none".to_owned());
 
         Text::from(vec![
             Line::from(format!("machine: {}", render_flow_machine_label(machine))),
             Line::from(format!("journeys: {count_status}")),
             Line::from(format!("selected: {selected}{selected_suffix}")),
             Line::from(format!(
-                "touches: {touched}  |  topology: press 3 for local neighborhood"
+                "targets: {targets}  |  topology: press 3 for local neighborhood"
             )),
         ])
     }
@@ -5222,6 +5222,7 @@ impl InspectorApp {
                     ))
                 })
                 .unwrap_or_else(|| Line::from("selected: <no matches>")),
+            Line::from(self.workspace_scope_detail_line()),
             Line::from(format!(
                 "topology: {}  |  layout {}  |  shown {} machine{}",
                 self.workspace_diagram_scale.label(),
@@ -5259,6 +5260,35 @@ impl InspectorApp {
             )));
         }
         Text::from(lines)
+    }
+
+    fn workspace_scope_detail_line(&self) -> String {
+        let selected = self
+            .current_machine()
+            .map(|machine| render_flow_machine_label(machine).into_owned());
+        match self.workspace_diagram_scale {
+            WorkspaceDiagramScale::Overview => selected.map_or_else(
+                || "scope: connected component around the current selection".to_owned(),
+                |machine| format!("scope: connected component around {machine}"),
+            ),
+            WorkspaceDiagramScale::Focus => selected.map_or_else(
+                || {
+                    format!(
+                        "scope: {}-hop neighborhood around the current selection",
+                        self.workspace_focus_hops
+                    )
+                },
+                |machine| {
+                    format!(
+                        "scope: {}-hop neighborhood around {machine}",
+                        self.workspace_focus_hops
+                    )
+                },
+            ),
+            WorkspaceDiagramScale::Full => {
+                "scope: all visible machines after search and filters".to_owned()
+            }
+        }
     }
 
     #[cfg(test)]
@@ -7161,7 +7191,7 @@ fn flow_trace_step_line(
         to_state
     )];
     if !handoffs.is_empty() {
-        segments.push(format!("touches {}", handoffs.join(", ")));
+        segments.push(format!("targets {}", handoffs.join(", ")));
     }
     if let Some(carries) = carries {
         segments.push(format!("carries {}", carries));
@@ -7272,6 +7302,22 @@ fn flow_transition_producer_summary(detail: &CodebaseRelationDetail<'_>) -> Opti
         ));
     }
     Some(labels.join("  |  "))
+}
+
+fn flow_transition_target_rows(
+    machine: &CodebaseMachine,
+    doc: &CodebaseDoc,
+    transition_index: usize,
+) -> Vec<(String, Option<String>)> {
+    flow_transition_relations(machine, doc, transition_index)
+        .into_iter()
+        .map(|detail| {
+            (
+                flow_transition_relation_label(&detail),
+                flow_transition_producer_summary(&detail),
+            )
+        })
+        .collect()
 }
 
 fn flow_trace_search_strings(
@@ -7652,7 +7698,7 @@ fn flow_trace_detail_text(
         let transition = machine
             .transition(step.transition)
             .expect("flow transition should resolve");
-        let handoffs = flow_transition_relations(machine, doc, transition.index);
+        let direct_targets = flow_transition_target_rows(machine, doc, transition.index);
         let carried_targets = flow_state_relation_labels(machine, doc, step.to_state);
         lines.push(Line::from(format!(
             "{}. {}",
@@ -7670,28 +7716,25 @@ fn flow_trace_detail_text(
                 .map(render_flow_state_label)
                 .unwrap_or_else(|| format!("state {}", step.to_state))
         )));
-        if handoffs.is_empty() {
+        if direct_targets.is_empty() {
             lines.push(Line::from("   targets: none"));
         } else {
             lines.push(Line::from(format!(
-                "   targets: {} target{}",
-                handoffs.len(),
-                plural_suffix(handoffs.len())
+                "   targets ({}):",
+                direct_targets.len()
             )));
-            for detail in handoffs {
-                lines.push(Line::from(format!(
-                    "     - {}",
-                    flow_transition_relation_label(&detail)
-                )));
-                if let Some(producers) = flow_transition_producer_summary(&detail) {
-                    lines.push(Line::from(format!(
-                        "       producer alternatives: {producers}"
-                    )));
+            for (target, producers) in direct_targets {
+                lines.push(Line::from(format!("     - {target}")));
+                if let Some(producers) = producers {
+                    lines.push(Line::from(format!("       producer options: {producers}")));
                 }
             }
         }
         if !carried_targets.is_empty() {
-            lines.push(Line::from("   carries:"));
+            lines.push(Line::from(format!(
+                "   carries ({}):",
+                carried_targets.len()
+            )));
             for target in carried_targets {
                 lines.push(Line::from(format!("     - {target}")));
             }
@@ -7727,15 +7770,7 @@ fn flow_trace_protocols_text(
         let transition = machine
             .transition(step.transition)
             .expect("journey transition should resolve");
-        let direct_targets = flow_transition_relations(machine, doc, transition.index)
-            .into_iter()
-            .map(|detail| {
-                (
-                    flow_transition_relation_label(&detail),
-                    flow_transition_producer_summary(&detail),
-                )
-            })
-            .collect::<Vec<_>>();
+        let direct_targets = flow_transition_target_rows(machine, doc, transition.index);
         let carried_targets = flow_state_relation_labels(machine, doc, step.to_state);
         if direct_targets.is_empty() && carried_targets.is_empty() {
             continue;
@@ -7750,16 +7785,16 @@ fn flow_trace_protocols_text(
         if direct_targets.is_empty() {
             lines.push(Line::from("targets: none"));
         } else {
-            lines.push(Line::from("targets:"));
+            lines.push(Line::from(format!("targets ({}):", direct_targets.len())));
             for (target, producers) in direct_targets {
                 lines.push(Line::from(format!("- {target}")));
                 if let Some(producers) = producers {
-                    lines.push(Line::from(format!("  producers: {producers}")));
+                    lines.push(Line::from(format!("  producer options: {producers}")));
                 }
             }
         }
         if !carried_targets.is_empty() {
-            lines.push(Line::from("carries:"));
+            lines.push(Line::from(format!("carries ({}):", carried_targets.len())));
             for target in carried_targets {
                 lines.push(Line::from(format!("- {target}")));
             }
@@ -7768,7 +7803,7 @@ fn flow_trace_protocols_text(
     if !any_touch {
         lines.push(Line::from(""));
         lines.push(Line::from(
-            "No cross-machine protocol touches on this journey.",
+            "No cross-machine protocol targets on this journey.",
         ));
     }
     Text::from(lines)
@@ -8789,12 +8824,14 @@ fn workspace_explain_text(app: &InspectorApp) -> Text<'static> {
     let projection = match app.workspace_diagram_scale {
         WorkspaceDiagramScale::Overview => {
             "Overview keeps you inside one connected component around the selected machine."
+                .to_owned()
         }
-        WorkspaceDiagramScale::Focus => {
-            "Focus keeps only the selected machine and its nearby neighbors."
-        }
+        WorkspaceDiagramScale::Focus => format!(
+            "Focus keeps only the selected machine and its {}-hop neighborhood.",
+            app.workspace_focus_hops
+        ),
         WorkspaceDiagramScale::Full => {
-            "Full shows every visible machine in the linked workspace graph."
+            "Full shows every visible machine in the linked workspace graph.".to_owned()
         }
     };
     Text::from(vec![
@@ -9684,6 +9721,28 @@ mod tests {
     }
 
     #[test]
+    fn workspace_home_focus_detail_explains_local_scope() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        let workflow_index = app
+            .doc
+            .machines()
+            .iter()
+            .position(|machine| machine.label == Some("Workflow Machine"))
+            .expect("workflow machine should exist");
+        app.workspace_section = WorkspaceSection::Gaps;
+        app.select_machine(workflow_index);
+        app.machine_section = MachineSection::Overview;
+        app.workspace_diagram_scale = WorkspaceDiagramScale::Focus;
+        app.workspace_focus_hops = 2;
+        app.clamp_indices();
+
+        let detail = text_contents(app.current_summary_text());
+        assert!(detail.contains("scope: 2-hop neighborhood around Workflow"));
+        assert!(detail.contains("topology: focus"));
+    }
+
+    #[test]
     fn workspace_home_scale_and_layout_controls_exact_projection_size() {
         let doc = workspace_scale_fixture_doc();
         let mut app = fixture_app(doc, empty_heuristic_overlay());
@@ -10099,6 +10158,19 @@ mod tests {
         let context = text_contents(app.flow_context_text());
         assert!(context.contains("journeys: matching 64 journeys"));
         assert!(!app.uses_grouped_flow_trace_families());
+    }
+
+    #[test]
+    fn journey_context_uses_targets_wording() {
+        let doc = fixture_doc();
+        let mut app = fixture_app(doc, empty_heuristic_overlay());
+        app.workspace_section = WorkspaceSection::Composition;
+        app.machine_section = MachineSection::Paths;
+        app.clamp_indices();
+
+        let context = text_contents(app.flow_context_text());
+        assert!(context.contains("targets:"));
+        assert!(!context.contains("touches:"));
     }
 
     #[test]
@@ -10749,9 +10821,9 @@ mod tests {
         ));
         assert!(detail.contains("journey: Draft -> Done"));
         assert!(detail.contains("1. Start Workflow"));
-        assert!(detail.contains("targets: 1 target"));
+        assert!(detail.contains("targets (1):"));
         assert!(detail.contains("- child Task Machine @ Running"));
-        assert!(detail.contains("carries:"));
+        assert!(detail.contains("carries (1):"));
     }
 
     #[test]

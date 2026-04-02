@@ -129,7 +129,7 @@ surface shows:
   rendered through `termaid` when available
 - right-pane tabs for `Steps`, `Protocols`, `Mermaid`, `Source`, and `Issues`
 - a persistent journey header with machine, journey count, selected journey,
-  touched protocol summary, and a fast topology jump hint
+  protocol target summary, and a fast topology jump hint
 - exact journey diagrams that show only one selected finite root-to-sink
   composition trace, with numbered transition labels
 - zero-step journey handling for entry-is-exit traces
