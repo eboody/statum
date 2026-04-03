@@ -289,7 +289,7 @@ Statum can also emit typed machine introspection directly from the machine
 definition itself. That graph comes from macro-expanded, cfg-pruned
 `#[transition]` signatures, so downstream tooling can render exact transition
 sites and legal targets without maintaining a parallel graph table by hand.
-Real cargo builds fail closed if Statum cannot recover enough source context
+Real cargo builds fail closed if Statum can't recover enough source context
 to prove the `#[machine]` to `#[state]` linkage exactly.
 
 See [docs/introspection.md](docs/introspection.md) for the full guide,

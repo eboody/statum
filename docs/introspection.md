@@ -32,7 +32,7 @@ aliases, and differently-qualified machine paths are rejected instead of
 approximated. Whole-item `#[cfg]` gates are supported, but nested `#[cfg]` or
 `#[cfg_attr]` on `#[state]` variants, variant payload fields, or `#[machine]`
 fields are rejected because they would otherwise drift the generated metadata
-from the active build. Real cargo builds also fail closed if Statum cannot
+from the active build. Real cargo builds also fail closed if Statum can't
 recover enough source context to prove the `#[machine]` to `#[state]` link.
 Editor-only macro hosts such as rust-analyzer may temporarily show a partial
 surface until a real build runs.
