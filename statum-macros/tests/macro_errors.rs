@@ -237,5 +237,5 @@ fn test_valid_macro_usage_with_missing_source_info_without_ra_flag() {
     let _missing_module = ScopedEnvVar::set("STATUM_TEST_FORCE_MISSING_MODULE_PATH", "1");
 
     let t = trybuild::TestCases::new();
-    t.pass("tests/ui/valid_editor_missing_source_surface.rs");
+    t.compile_fail("tests/ui/invalid_build_missing_source_surface.rs");
 }

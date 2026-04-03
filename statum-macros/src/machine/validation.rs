@@ -83,11 +83,15 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
     }
 
     let state_path: StateModulePath = machine_info.module_path.clone();
-    let matching_state_enum = machine_info
-        .state_generic_name
-        .as_deref()
-        .and_then(|state_name| lookup_loaded_state_enum_by_name(&state_path, state_name).ok())
-        .or_else(|| lookup_loaded_state_enum(&state_path).ok());
+    let matching_state_enum = if !is_rust_analyzer() && state_path.as_ref() == "unknown" {
+        None
+    } else {
+        machine_info
+            .state_generic_name
+            .as_deref()
+            .and_then(|state_name| lookup_loaded_state_enum_by_name(&state_path, state_name).ok())
+            .or_else(|| lookup_loaded_state_enum(&state_path).ok())
+    };
     let matching_state_enum = match matching_state_enum {
         Some(state_enum) => state_enum,
         None => match machine_info.get_matching_state_enum() {

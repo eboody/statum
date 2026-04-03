@@ -11,9 +11,10 @@ use syn::{Generics, Ident, ItemStruct, LitStr, Type, Visibility};
 use crate::{
     EnumInfo, LoadedStateLookupFailure, ModulePath, SourceFingerprint, StateModulePath,
     crate_root_for_file, extract_derives, format_loaded_state_candidates,
-    lookup_loaded_state_enum, lookup_loaded_state_enum_best_effort, lookup_loaded_state_enum_by_name,
-    parse_doc_attrs, parse_present_attrs, parse_presentation_types_attr,
-    source_file_fingerprint, PresentationAttr, PresentationTypesAttr,
+    is_rust_analyzer, lookup_loaded_state_enum, lookup_loaded_state_enum_best_effort,
+    lookup_loaded_state_enum_by_name, parse_doc_attrs, parse_present_attrs,
+    parse_presentation_types_attr, source_file_fingerprint, PresentationAttr,
+    PresentationTypesAttr,
 };
 use super::extra_type_arguments_tokens;
 
@@ -145,6 +146,23 @@ impl MachineInfo {
     }
 
     pub fn get_matching_state_enum(&self) -> Result<EnumInfo, TokenStream> {
+        if self.module_path.as_ref() == "unknown" {
+            if is_rust_analyzer() {
+                let fallback = lookup_loaded_state_enum_best_effort(
+                    None,
+                    self.state_generic_name.as_deref(),
+                    self.file_path.as_deref(),
+                    self.crate_root.as_deref(),
+                );
+                return match fallback {
+                    Ok(state_enum) => Ok(state_enum),
+                    Err(_fallback_failure) => Err(TokenStream::new()),
+                };
+            }
+
+            return Err(unknown_module_path_error(self));
+        }
+
         let state_path: StateModulePath = self.module_path.clone();
         let state_enum = if let Some(expected_name) = self.state_generic_name.as_deref() {
             lookup_loaded_state_enum_by_name(&state_path, expected_name)
@@ -154,20 +172,17 @@ impl MachineInfo {
         match state_enum {
             Ok(state_enum) => Ok(state_enum),
             Err(failure) => {
-                let incomplete_source_context =
-                    self.file_path.is_none() || self.module_path.as_ref() == "unknown";
-                if incomplete_source_context {
+                if is_rust_analyzer() {
                     let fallback = lookup_loaded_state_enum_best_effort(
                         Some(&state_path),
                         self.state_generic_name.as_deref(),
                         self.file_path.as_deref(),
                         self.crate_root.as_deref(),
                     );
-                    if let Ok(state_enum) = fallback {
-                        return Ok(state_enum);
-                    }
-
-                    return Err(TokenStream::new());
+                    return match fallback {
+                        Ok(state_enum) => Ok(state_enum),
+                        Err(_fallback_failure) => Err(TokenStream::new()),
+                    };
                 }
 
                 Err(missing_state_enum_error(self, failure))
@@ -326,6 +341,26 @@ fn missing_state_enum_error(
     machine_info: &MachineInfo,
     failure: LoadedStateLookupFailure,
 ) -> TokenStream {
+    let message = missing_state_enum_message(machine_info, failure, None);
+    let message = LitStr::new(&message, Span::call_site());
+    quote! { compile_error!(#message); }
+}
+
+fn unknown_module_path_error(machine_info: &MachineInfo) -> TokenStream {
+    let note = format!(
+        "Statum could not recover an exact module path for machine `{}` during macro expansion, so a real cargo build cannot prove which `#[state]` enum owns this machine safely enough to keep compiling.\nIf this only happens inside rust-analyzer, the editor build may stay partial until a real cargo build runs.",
+        machine_info.name,
+    );
+    let message = missing_state_enum_message(machine_info, LoadedStateLookupFailure::NotFound, Some(note.as_str()));
+    let message = LitStr::new(&message, Span::call_site());
+    quote! { compile_error!(#message); }
+}
+
+fn missing_state_enum_message(
+    machine_info: &MachineInfo,
+    failure: LoadedStateLookupFailure,
+    source_context_note: Option<&str>,
+) -> String {
     let expected = machine_info.state_generic_name.as_deref();
     let expected_line = expected
         .map(|name| format!("Expected a `#[state]` enum named `{name}` in module `{}`.", machine_info.module_path))
@@ -392,9 +427,13 @@ fn missing_state_enum_error(
             format_loaded_state_candidates(&candidates)
         ),
     };
-    let message = format!(
-        "Failed to resolve the #[state] enum for machine `{}`.\n{}\n{}\n{}{}\n{}\n{}\nHelp: make sure the machine's first generic names the right `#[state]` enum in this module and declare that `#[state]` enum before the machine.\nCorrect shape: `struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`.",
+    let source_context_note = source_context_note
+        .map(|note| format!("{note}\n"))
+        .unwrap_or_default();
+    format!(
+        "Failed to resolve the #[state] enum for machine `{}`.\n{}{}\n{}\n{}{}\n{}\n{}\nHelp: make sure the machine's first generic names the right `#[state]` enum in this module and declare that `#[state]` enum before the machine.\nCorrect shape: `struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`.",
         machine_info.name,
+        source_context_note,
         expected_line,
         authority_line,
         ordering_line,
@@ -403,10 +442,9 @@ fn missing_state_enum_error(
         available_line,
         machine_info.name,
         machine_info.module_path,
-    );
-    let message = LitStr::new(&message, Span::call_site());
-    quote! { compile_error!(#message); }
+    )
 }
+
 
 fn available_state_candidates_in_module(
     file_path: Option<&str>,
