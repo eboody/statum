@@ -6431,7 +6431,7 @@ fn render_termaid_preview_with_candidates(
     candidates: &[OsString],
 ) -> Result<String, String> {
     match try_render_termaid_preview_with_candidates(source, width, candidates) {
-        Ok(output) => return Ok(output),
+        Ok(output) => Ok(output),
         Err(primary_error) => {
             if let Some((fallback_label, fallback_source)) =
                 flowchart_preview_fallback_source(source)

@@ -808,16 +808,14 @@ pub fn machine_journeys_for_machine(
     for root in roots {
         let mut state_stack = BTreeSet::new();
         let mut steps = Vec::new();
-        enumerate_machine_journeys_from_state(
-            root,
-            root,
-            &outgoing,
-            &mut state_stack,
-            &mut steps,
-            &mut journeys,
-            &mut cycle_detected,
-            &mut budget,
-        );
+        let mut state = JourneyEnumerationState {
+            state_stack: &mut state_stack,
+            steps: &mut steps,
+            journeys: &mut journeys,
+            cycle_detected: &mut cycle_detected,
+            budget: &mut budget,
+        };
+        enumerate_machine_journeys_from_state(root, root, &outgoing, &mut state);
         if cycle_detected || budget.exceeded {
             break;
         }
@@ -843,28 +841,32 @@ pub fn machine_journeys_for_machine(
     Ok(journeys)
 }
 
+struct JourneyEnumerationState<'a> {
+    state_stack: &'a mut BTreeSet<usize>,
+    steps: &'a mut Vec<JourneyStep>,
+    journeys: &'a mut Vec<Journey>,
+    cycle_detected: &'a mut bool,
+    budget: &'a mut JourneyEnumerationBudget,
+}
+
 fn enumerate_machine_journeys_from_state(
     ingress_state: usize,
     current_state: usize,
     outgoing: &[Vec<JourneyStep>],
-    state_stack: &mut BTreeSet<usize>,
-    steps: &mut Vec<JourneyStep>,
-    journeys: &mut Vec<Journey>,
-    cycle_detected: &mut bool,
-    budget: &mut JourneyEnumerationBudget,
+    state: &mut JourneyEnumerationState<'_>,
 ) {
-    if budget.exceeded || *cycle_detected {
+    if state.budget.exceeded || *state.cycle_detected {
         return;
     }
 
-    budget.expansions += 1;
-    if budget.expansions > MAX_DFS_EXPANSIONS {
-        budget.exceeded = true;
+    state.budget.expansions += 1;
+    if state.budget.expansions > MAX_DFS_EXPANSIONS {
+        state.budget.exceeded = true;
         return;
     }
 
-    if !state_stack.insert(current_state) {
-        *cycle_detected = true;
+    if !state.state_stack.insert(current_state) {
+        *state.cycle_detected = true;
         return;
     }
 
@@ -873,39 +875,30 @@ fn enumerate_machine_journeys_from_state(
         .map(Vec::as_slice)
         .unwrap_or(&[]);
     if next_steps.is_empty() {
-        journeys.push(Journey {
+        state.journeys.push(Journey {
             id: JourneyId {
                 ingress_state,
-                steps: steps.clone(),
+                steps: state.steps.clone(),
             },
             egress_state: current_state,
         });
-        if journeys.len() > MAX_EXACT_JOURNEYS {
-            budget.exceeded = true;
+        if state.journeys.len() > MAX_EXACT_JOURNEYS {
+            state.budget.exceeded = true;
         }
-        state_stack.remove(&current_state);
+        state.state_stack.remove(&current_state);
         return;
     }
 
     for step in next_steps {
-        steps.push(*step);
-        enumerate_machine_journeys_from_state(
-            ingress_state,
-            step.to_state,
-            outgoing,
-            state_stack,
-            steps,
-            journeys,
-            cycle_detected,
-            budget,
-        );
-        steps.pop();
-        if budget.exceeded || *cycle_detected {
+        state.steps.push(*step);
+        enumerate_machine_journeys_from_state(ingress_state, step.to_state, outgoing, state);
+        state.steps.pop();
+        if state.budget.exceeded || *state.cycle_detected {
             break;
         }
     }
 
-    state_stack.remove(&current_state);
+    state.state_stack.remove(&current_state);
 }
 
 fn render_machine_journey_diagram(machine: &CodebaseMachine, journey: &Journey) -> String {
@@ -1445,27 +1438,6 @@ fn plural_suffix(count: usize) -> &'static str {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::compact_machine_type_label;
-
-    #[test]
-    fn compact_machine_type_label_keeps_context_without_full_path_noise() {
-        assert_eq!(
-            compact_machine_type_label("flows::outbound_release::machine::Flow"),
-            "outbound_release::Flow<State>"
-        );
-        assert_eq!(
-            compact_machine_type_label("protocols::review::machine::Machine"),
-            "review::Machine<State>"
-        );
-        assert_eq!(
-            compact_machine_type_label("flows::audit::machine::ReviewMachine"),
-            "audit::ReviewMachine"
-        );
-    }
-}
-
 fn sequence_participant_machines<'a>(
     detail: &'a CodebaseRelationDetail<'a>,
 ) -> Vec<&'a CodebaseMachine> {
@@ -1554,4 +1526,25 @@ fn escape_plantuml_label(label: &str) -> String {
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compact_machine_type_label;
+
+    #[test]
+    fn compact_machine_type_label_keeps_context_without_full_path_noise() {
+        assert_eq!(
+            compact_machine_type_label("flows::outbound_release::machine::Flow"),
+            "outbound_release::Flow<State>"
+        );
+        assert_eq!(
+            compact_machine_type_label("protocols::review::machine::Machine"),
+            "review::Machine<State>"
+        );
+        assert_eq!(
+            compact_machine_type_label("flows::audit::machine::ReviewMachine"),
+            "audit::ReviewMachine"
+        );
+    }
 }

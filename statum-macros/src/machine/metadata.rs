@@ -191,7 +191,7 @@ impl MachineInfo {
             .or_else(|| (fallback_context.line_number > 0).then_some(fallback_context.line_number))
             .unwrap_or_default();
         let module_path = exact_module_path
-            .or_else(|| fallback_context.module_path)
+            .or(fallback_context.module_path)
             .unwrap_or_else(|| "unknown".to_owned());
         let module_path: MachinePath = module_path.into();
         let fields = collect_fields(item);
