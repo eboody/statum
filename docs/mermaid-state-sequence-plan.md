@@ -49,15 +49,15 @@ Claimed authority surface:
 Actual observation points:
 
 - machine-local structure:
-  [`MachineIntrospection::GRAPH`](/home/eran/code/statum/statum-graph/src/lib.rs#L1)
+  [`MachineIntrospection::GRAPH`](../statum-graph/src/lib.rs)
 - stable renderer model:
-  [`ExportDoc`](/home/eran/code/statum/statum-graph/src/export.rs#L8)
+  [`ExportDoc`](../statum-graph/src/export.rs)
 - linked workspace structure and exact cross-machine relations:
-  [`CodebaseDoc`](/home/eran/code/statum/statum-graph/src/lib.rs#L7)
+  [`CodebaseDoc`](../statum-graph/src/lib.rs)
 - exact composition ownership:
-  [`#[machine(role = composition)]`](/home/eran/code/statum/statum/src/lib.rs#L343)
+  [`#[machine(role = composition)]`](../statum/src/lib.rs)
 - exact attested handoff provenance:
-  [introspection.md](/home/eran/code/statum/docs/introspection.md#L190)
+  [introspection.md](./introspection.md)
 
 What is exact now:
 
@@ -103,8 +103,8 @@ Unsupported-case policy:
 
 Relevant code:
 
-- [`MachineDoc`](/home/eran/code/statum/statum-graph/src/lib.rs#L56)
-- [`ExportDoc`](/home/eran/code/statum/statum-graph/src/export.rs#L8)
+- [`MachineDoc`](../statum-graph/src/lib.rs)
+- [`ExportDoc`](../statum-graph/src/export.rs)
 
 This is enough to generate an exact `stateDiagram-v2` for one machine.
 
@@ -128,11 +128,11 @@ they directly carry child machines or exact detached handoff evidence:
 
 Relevant code and docs:
 
-- [`#[machine(role = composition)]`](/home/eran/code/statum/statum/src/lib.rs#L343)
-- [composition roadmap phase 2 and 3](/home/eran/code/statum/docs/composition-machine-roadmap.md#L114)
-- [`CodebaseRelation`](/home/eran/code/statum/statum-graph/src/codebase/mod.rs#L608)
-- [`CodebaseRelationSource`](/home/eran/code/statum/statum-graph/src/codebase/mod.rs#L559)
-- [`CodebaseAttestedRoute`](/home/eran/code/statum/statum-graph/src/codebase/mod.rs#L677)
+- [`#[machine(role = composition)]`](../statum/src/lib.rs)
+- [composition roadmap phase 2 and 3](./composition-machine-roadmap.md)
+- [`CodebaseRelation`](../statum-graph/src/codebase/mod.rs)
+- [`CodebaseRelationSource`](../statum-graph/src/codebase/mod.rs)
+- [`CodebaseAttestedRoute`](../statum-graph/src/codebase/mod.rs)
 
 This is enough to generate exact composition annotations and exact
 machine-to-machine handoff diagrams.
@@ -147,9 +147,9 @@ The current inspector path explorer prefers:
 
 Relevant code:
 
-- [roadmap phase 4](/home/eran/code/statum/docs/composition-machine-roadmap.md#L170)
-- [path item discovery](/home/eran/code/statum/cargo-statum-graph/src/inspect.rs#L1451)
-- [path edge building](/home/eran/code/statum/cargo-statum-graph/src/inspect.rs#L1518)
+- [roadmap phase 4](./composition-machine-roadmap.md)
+- [path item discovery](../cargo-statum-graph/src/inspect.rs)
+- [path edge building](../cargo-statum-graph/src/inspect.rs)
 
 Important limitation:
 
@@ -302,8 +302,8 @@ For attested handoff relations:
 
 Relevant model:
 
-- [`CodebaseRelationSource`](/home/eran/code/statum/statum-graph/src/codebase/mod.rs#L559)
-- [`CodebaseRelationSemantic`](/home/eran/code/statum/statum-graph/src/codebase/mod.rs#L540)
+- [`CodebaseRelationSource`](../statum-graph/src/codebase/mod.rs)
+- [`CodebaseRelationSemantic`](../statum-graph/src/codebase/mod.rs)
 
 ### What Not To Do In Exact State Diagrams
 
@@ -491,7 +491,7 @@ When `attested_via` exists:
 
 Relevant model:
 
-- [`CodebaseAttestedRoute`](/home/eran/code/statum/statum-graph/src/codebase/mod.rs#L677)
+- [`CodebaseAttestedRoute`](../statum-graph/src/codebase/mod.rs)
 
 ### Direct Child Rules Without Attestation
 

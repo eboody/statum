@@ -13,8 +13,7 @@ use crate::{
     crate_root_for_file, extract_derives, format_loaded_state_candidates,
     lookup_loaded_state_enum, lookup_loaded_state_enum_best_effort, lookup_loaded_state_enum_by_name,
     parse_doc_attrs, parse_present_attrs, parse_presentation_types_attr,
-    source_file_fingerprint, PresentationAttr,
-    PresentationTypesAttr,
+    source_file_fingerprint, PresentationAttr, PresentationTypesAttr,
 };
 use super::extra_type_arguments_tokens;
 
@@ -230,7 +229,7 @@ impl MachineInfo {
 
         let (file_path, line_number) = source_info_for_span_or_callsite(item.ident.span())
             .map(|(file_path, line_number)| (Some(file_path), line_number))
-            .unwrap_or((None, 0));
+            .unwrap_or((None, item.ident.span().start().line));
         let presentation = parse_present_attrs(&item.attrs).ok()?;
         let presentation_types = parse_presentation_types_attr(&item.attrs).ok()?;
         Some(Self {

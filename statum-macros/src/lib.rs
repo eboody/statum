@@ -188,10 +188,11 @@ pub fn transition(
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_impl = parse_macro_input!(item as ItemImpl);
-    let line_number =
-        best_effort_source_context_for_span_or_callsite(item_impl.impl_token.span).line_number;
-    let module_path = match resolved_current_module_path(item_impl.impl_token.span, "#[validators]")
-    {
+    let span = item_impl.impl_token.span;
+    let line_number = best_effort_source_context_for_span_or_callsite(span)
+        .line_number
+        .max(span.start().line);
+    let module_path = match resolved_current_module_path(span, "#[validators]") {
         Ok(path) => path,
         Err(err) => return err,
     };

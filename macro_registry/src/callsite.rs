@@ -59,7 +59,6 @@ pub fn current_source_info() -> Option<(String, usize)> {
     if force_missing_source_info() {
         return None;
     }
-
     get_source_info()
         .map(|(file_path, line_number)| (normalize_file_path(&file_path), line_number))
         .filter(|(file_path, _)| source_file_exists(file_path))
@@ -79,7 +78,6 @@ pub fn source_info_for_span(span: Span) -> Option<(String, usize)> {
     if force_missing_source_info() {
         return None;
     }
-
     let file_path = span
         .local_file()
         .map(|path| path.to_string_lossy().into_owned())
@@ -125,7 +123,6 @@ pub fn module_path_for_span(span: Span) -> Option<String> {
     if force_missing_module_path() {
         return None;
     }
-
     let (file_path, line_number) = source_info_for_span_or_callsite(span)?;
     if line_number == 0 {
         return None;

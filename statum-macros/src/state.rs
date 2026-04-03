@@ -423,7 +423,7 @@ impl EnumInfo {
     ) -> syn::Result<Self> {
         let (file_path, line_number) = source_info_for_span_or_callsite(item.ident.span())
             .map(|(file_path, line_number)| (Some(file_path), line_number))
-            .unwrap_or((None, 0));
+            .unwrap_or((None, item.ident.span().start().line));
         Self::from_item_enum_with_module_and_file(item, module_path, file_path, line_number)
     }
 
