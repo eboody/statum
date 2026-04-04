@@ -18,6 +18,7 @@ mod cfg_surface {
         pub done: bool,
     }
 
+    /// Rebuilds cfg-surface machines from visible persisted rows.
     #[validators(Machine)]
     impl VisibleRow {
         fn is_draft(&self) -> statum::Result<()> {
@@ -39,6 +40,7 @@ mod cfg_surface {
 
     pub struct HiddenRow;
 
+    /// Hidden validator docs should not appear in the active build.
     #[cfg(any())]
     #[validators(Machine)]
     impl HiddenRow {
@@ -70,6 +72,7 @@ mod macro_surface {
 
     macro_rules! define_validators {
         () => {
+            /// Rebuilds macro-surface machines from macro-generated rows.
             #[validators(Machine)]
             impl MacroRow {
                 fn is_draft(&self) -> statum::Result<()> {
@@ -109,6 +112,10 @@ fn linked_codebase_uses_compiled_validator_impl_surfaces() {
         "VisibleRow"
     );
     assert_eq!(cfg_machine.validator_entries[0].target_states, vec![0, 1]);
+    assert_eq!(
+        cfg_machine.validator_entries[0].docs,
+        Some("Rebuilds cfg-surface machines from visible persisted rows.")
+    );
 
     let macro_machine = doc
         .machines()
@@ -121,4 +128,8 @@ fn linked_codebase_uses_compiled_validator_impl_surfaces() {
         "MacroRow"
     );
     assert_eq!(macro_machine.validator_entries[0].target_states, vec![0, 1]);
+    assert_eq!(
+        macro_machine.validator_entries[0].docs,
+        Some("Rebuilds macro-surface machines from macro-generated rows.")
+    );
 }

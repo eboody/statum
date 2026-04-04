@@ -1,4 +1,7 @@
-use macro_registry::callsite::{module_path_for_span, source_info_for_span_or_callsite};
+use macro_registry::callsite::{
+    best_effort_source_context_for_span_or_callsite, module_path_for_span,
+    source_info_for_span_or_callsite,
+};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::sync::{OnceLock, RwLock};
@@ -6,7 +9,8 @@ use syn::{Expr, Fields, Ident, Item, ItemEnum, LitStr, Path, Type, Visibility};
 
 use crate::{
     ItemTarget, ModulePath, SourceFingerprint, crate_root_for_file, current_crate_root,
-    extract_derives, parse_present_attrs, source_file_fingerprint, PresentationAttr,
+    extract_derives, parse_doc_attrs, parse_present_attrs, source_file_fingerprint,
+    PresentationAttr,
 };
 
 // Structure to hold extracted enum data
@@ -30,6 +34,7 @@ pub struct EnumInfo {
 pub struct VariantInfo {
     pub name: String,
     pub shape: VariantShape,
+    pub docs: Option<String>,
     pub presentation: Option<PresentationAttr>,
 }
 
@@ -246,21 +251,30 @@ fn upsert_loaded_state(enum_info: &EnumInfo) {
     }
 }
 
-fn loaded_state_candidates_matching<F>(matches: F) -> Vec<EnumInfo>
+fn loaded_state_candidates_matching_with_crate_root<F>(
+    current_crate_root: Option<&str>,
+    matches: F,
+) -> Vec<EnumInfo>
 where
     F: Fn(&EnumInfo) -> bool,
 {
-    let current_crate_root = current_crate_root();
     let Ok(states) = loaded_state_enums().read() else {
         return Vec::new();
     };
 
     states
         .iter()
-        .filter(|state| loaded_state_is_current(state, current_crate_root.as_deref()))
+        .filter(|state| loaded_state_is_current(state, current_crate_root))
         .filter(|state| matches(state))
         .cloned()
         .collect()
+}
+
+fn loaded_state_candidates_matching<F>(matches: F) -> Vec<EnumInfo>
+where
+    F: Fn(&EnumInfo) -> bool,
+{
+    loaded_state_candidates_matching_with_crate_root(current_crate_root().as_deref(), matches)
 }
 
 fn loaded_state_is_current(state: &EnumInfo, current_crate_root: Option<&str>) -> bool {
@@ -303,6 +317,48 @@ pub fn lookup_loaded_state_enum_by_name(
     }))
 }
 
+pub(crate) fn lookup_loaded_state_enum_best_effort(
+    enum_path: Option<&StateModulePath>,
+    enum_name: Option<&str>,
+    current_file_path: Option<&str>,
+    current_crate_root: Option<&str>,
+) -> Result<EnumInfo, LoadedStateLookupFailure> {
+    if let Some(enum_path) = enum_path {
+        let exact = match enum_name {
+            Some(enum_name) => lookup_loaded_state_enum_by_name(enum_path, enum_name),
+            None => lookup_loaded_state_enum(enum_path),
+        };
+        if !matches!(exact, Err(LoadedStateLookupFailure::NotFound)) {
+            return exact;
+        }
+    }
+
+    if let Some(current_file_path) = current_file_path {
+        let same_file = loaded_state_candidates_matching_with_crate_root(
+            current_crate_root,
+            |state| {
+                state.file_path.as_deref() == Some(current_file_path)
+                    && enum_name.is_none_or(|enum_name| state.name == enum_name)
+            },
+        );
+        if !same_file.is_empty() {
+            return lookup_loaded_state_candidates(same_file);
+        }
+    }
+
+    if let Some(current_crate_root) = current_crate_root {
+        let same_crate = loaded_state_candidates_matching_with_crate_root(
+            Some(current_crate_root),
+            |state| enum_name.is_none_or(|enum_name| state.name == enum_name),
+        );
+        if !same_crate.is_empty() {
+            return lookup_loaded_state_candidates(same_crate);
+        }
+    }
+
+    Err(LoadedStateLookupFailure::NotFound)
+}
+
 pub fn format_loaded_state_candidates(candidates: &[EnumInfo]) -> String {
     candidates
         .iter()
@@ -337,28 +393,25 @@ pub fn invalid_state_target_error(item: &Item) -> TokenStream {
 impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
         let span = item.ident.span();
-        let Some((file_path, line_number)) = source_info_for_span_or_callsite(span) else {
-            return Err(syn::Error::new(
-                span,
-                format!(
-                    "Internal error: could not read source information for `#[state]` enum `{}`.",
-                    item.ident
-                ),
-            ));
-        };
-        let Some(module_path) = module_path_for_span(span) else {
-            return Err(syn::Error::new(
-                span,
-                format!(
-                    "Internal error: could not resolve the module path for `#[state]` enum `{}`.",
-                    item.ident
-                ),
-            ));
-        };
+        let source_info = source_info_for_span_or_callsite(span);
+        let exact_module_path = module_path_for_span(span);
+        let fallback_context = best_effort_source_context_for_span_or_callsite(span);
+        let file_path = source_info
+            .as_ref()
+            .map(|(file_path, _)| file_path.clone())
+            .or_else(|| fallback_context.file_path.clone());
+        let line_number = source_info
+            .map(|(_, line_number)| line_number)
+            .filter(|line_number| *line_number > 0)
+            .or_else(|| (fallback_context.line_number > 0).then_some(fallback_context.line_number))
+            .unwrap_or_default();
+        let module_path = exact_module_path
+            .or(fallback_context.module_path)
+            .unwrap_or_else(|| "unknown".to_owned());
         Self::from_item_enum_with_module_and_file(
             item,
             module_path.into(),
-            Some(file_path),
+            file_path,
             line_number,
         )
     }
@@ -430,11 +483,13 @@ impl EnumInfo {
                         .collect(),
                 },
             };
+            let docs = parse_doc_attrs(&variant.attrs)?;
             let presentation = parse_present_attrs(&variant.attrs)?;
 
             variants.push(VariantInfo {
                 name,
                 shape,
+                docs,
                 presentation,
             });
         }
@@ -843,8 +898,24 @@ mod tests {
 
     use super::{
         EnumInfo, ParsedVariantShape, StateModulePath, VariantShape,
+        lookup_loaded_state_enum_best_effort, store_state_enum,
         state_family_visitor_macro_ident,
     };
+
+    fn state_info(
+        item: syn::ItemEnum,
+        module_path: &str,
+        file_path: Option<&str>,
+        crate_root: Option<&str>,
+    ) -> EnumInfo {
+        let module_path: StateModulePath = crate::ModulePath(module_path.into());
+        let mut info =
+            EnumInfo::from_item_enum_with_module(&item, module_path).expect("state metadata");
+        info.file_path = file_path.map(str::to_owned);
+        info.crate_root = crate_root.map(str::to_owned);
+        info.file_fingerprint = None;
+        info
+    }
 
     #[test]
     fn parse_round_trips_variant_payloads() {
@@ -937,5 +1008,118 @@ mod tests {
             state_family_visitor_macro_ident("WorkflowState").to_string(),
             "__statum_visit_workflow_state_family"
         );
+    }
+
+    #[test]
+    fn best_effort_state_lookup_prefers_same_file_unique_name() {
+        let local: syn::ItemEnum = parse_quote! {
+            pub enum __StatumLocalStateLookupA {
+                Draft,
+            }
+        };
+        let sibling: syn::ItemEnum = parse_quote! {
+            pub enum __StatumLocalStateLookupA {
+                Draft,
+            }
+        };
+
+        store_state_enum(&state_info(
+            local,
+            "crate::alpha",
+            Some("/tmp/local_state_lookup_a.rs"),
+            Some("/tmp/local_lookup_crate"),
+        ));
+        store_state_enum(&state_info(
+            sibling,
+            "crate::beta",
+            Some("/tmp/other_state_lookup_a.rs"),
+            Some("/tmp/other_lookup_crate"),
+        ));
+
+        let resolved = lookup_loaded_state_enum_best_effort(
+            None,
+            Some("__StatumLocalStateLookupA"),
+            Some("/tmp/local_state_lookup_a.rs"),
+            Some("/tmp/local_lookup_crate"),
+        )
+        .unwrap_or_else(|_| panic!("same-file fallback should resolve"));
+
+        assert_eq!(resolved.module_path.as_ref(), "crate::alpha");
+    }
+
+    #[test]
+    fn best_effort_state_lookup_falls_back_to_same_crate_unique_name() {
+        let local: syn::ItemEnum = parse_quote! {
+            pub enum __StatumCrateStateLookupB {
+                Draft,
+            }
+        };
+        let sibling: syn::ItemEnum = parse_quote! {
+            pub enum __StatumCrateStateLookupB {
+                Draft,
+            }
+        };
+
+        store_state_enum(&state_info(
+            local,
+            "crate::alpha",
+            Some("/tmp/crate_state_lookup_a.rs"),
+            Some("/tmp/shared_lookup_crate"),
+        ));
+        store_state_enum(&state_info(
+            sibling,
+            "crate::beta",
+            Some("/tmp/crate_state_lookup_b.rs"),
+            Some("/tmp/different_lookup_crate"),
+        ));
+
+        let resolved = lookup_loaded_state_enum_best_effort(
+            None,
+            Some("__StatumCrateStateLookupB"),
+            None,
+            Some("/tmp/shared_lookup_crate"),
+        )
+        .unwrap_or_else(|_| panic!("same-crate fallback should resolve"));
+
+        assert_eq!(resolved.module_path.as_ref(), "crate::alpha");
+    }
+
+    #[test]
+    fn best_effort_state_lookup_rejects_ambiguous_same_file_candidates() {
+        let first: syn::ItemEnum = parse_quote! {
+            pub enum __StatumAmbiguousStateLookupC {
+                Draft,
+            }
+        };
+        let second: syn::ItemEnum = parse_quote! {
+            pub enum __StatumAmbiguousStateLookupC {
+                Draft,
+            }
+        };
+
+        store_state_enum(&state_info(
+            first,
+            "crate::alpha",
+            Some("/tmp/ambiguous_state_lookup.rs"),
+            Some("/tmp/ambiguous_lookup_crate"),
+        ));
+        store_state_enum(&state_info(
+            second,
+            "crate::beta",
+            Some("/tmp/ambiguous_state_lookup.rs"),
+            Some("/tmp/ambiguous_lookup_crate"),
+        ));
+
+        let failure = lookup_loaded_state_enum_best_effort(
+            None,
+            Some("__StatumAmbiguousStateLookupC"),
+            Some("/tmp/ambiguous_state_lookup.rs"),
+            Some("/tmp/ambiguous_lookup_crate"),
+        );
+
+        assert!(matches!(
+            failure,
+            Err(super::LoadedStateLookupFailure::Ambiguous(_))
+        ));
     }
 }

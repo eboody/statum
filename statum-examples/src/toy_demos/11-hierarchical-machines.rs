@@ -23,11 +23,11 @@ mod workflow {
     #[derive(Debug)]
     pub enum State {
         NotStarted,
-        InProgress(task::Machine<task::Running>),
+        InProgress(self::task::Machine<self::task::Running>),
         Finished,
     }
 
-    #[machine]
+    #[machine(role = composition)]
     #[derive(Debug)]
     pub struct Machine<State> {}
 
@@ -35,7 +35,7 @@ mod workflow {
     impl Machine<NotStarted> {
         pub fn start(
             self,
-            running_task_machine: task::Machine<task::Running>,
+            running_task_machine: self::task::Machine<self::task::Running>,
         ) -> Machine<InProgress> {
             self.transition_with(running_task_machine)
         }

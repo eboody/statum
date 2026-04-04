@@ -14,24 +14,37 @@ It is authoritative only for machine-local structure:
 For linked-build codebase export, `statum-graph` can also combine every linked
 compiled machine family, legacy direct payload links, declared validator-entry
 surfaces, direct-construction availability per state, and exact relation
-records inferred from supported type syntax plus nominal
-`#[machine_ref(...)]` declarations. That codebase view is still static only. It
-does not model runtime-selected branches or orchestration order across
-machines. Validator node labels come from the impl self type as written in
-source and are display-only, not canonical Rust type identity. Method-level
-`#[cfg]` and `#[cfg_attr]` on validator methods are rejected at the macro
-layer. `include!()`-generated validator impls are also rejected. In v1, exact
-direct-type relations recurse only through canonical absolute carrier paths
-such as `::core::option::Option<...>` and `::core::result::Result<..., E>`,
-and direct machine targets must use explicit `crate::`, `self::`, `super::`,
-or absolute paths instead of imported aliases or bare names.
+records inferred from supported type syntax, `#[via(...)]` declarations, and
+nominal `#[machine_ref(...)]` declarations. That codebase view is still static
+only. It does not model runtime-selected branches or orchestration order
+across machines. Validator node labels come from the impl self type as written
+in source and are display-only, not canonical Rust type identity.
+Method-level `#[cfg]` and `#[cfg_attr]` on validator methods are rejected at
+the macro layer. `include!()`-generated validator impls are also rejected. In
+v1, exact direct-type relations recurse only through canonical absolute carrier
+paths such as `::core::option::Option<...>` and
+`::core::result::Result<..., E>`, and direct machine targets must use explicit
+`crate::`, `self::`, `super::`, or absolute paths instead of imported aliases
+or bare names. Transition-parameter direct targets, `#[via(...)]` inner
+targets, and `#[machine_ref(...)]` declarations resolve against the linked
+codebase view through compiler-resolved concrete machine type identity, so
+public machine re-exports remain exact there instead of depending on
+source-path guessing. State-payload and machine-field direct targets still rely
+on the canonical linked path surface, so those surfaces do not currently
+promote public machine re-exports into exact relations.
+
+For exact machine-level workspace projections over the linked codebase surface,
+use `codebase::render::mermaid_workspace_flow(...)`. That renderer projects the
+same `CodebaseDoc` truth surface into a smaller Mermaid flowchart over machines
+and exact cross-machine edges, with selectable direction, machine subsets,
+role-shaped nodes, and configurable edge-label density.
 
 ## Install
 
 ```toml
 [dependencies]
-statum = "0.6.9"
-statum-graph = "0.6.9"
+statum = "0.7.0"
+statum-graph = "0.7.0"
 ```
 
 ## Example
@@ -107,6 +120,33 @@ graph TD
 
 The output is deterministic for one validated `MachineDoc`, so it works well
 for snapshot tests, generated docs, and CLI output.
+
+For native Mermaid state diagrams, use `render::mermaid_state`:
+
+```rust
+# use statum::{machine, state, transition};
+# use statum_graph::{render, MachineDoc};
+# #[state]
+# enum FlowState {
+#     Draft,
+#     Done,
+# }
+# #[machine]
+# struct Flow<FlowState> {}
+# #[transition]
+# impl Flow<Draft> {
+#     fn finish(self) -> Flow<Done> {
+#         self.transition()
+#     }
+# }
+let doc = MachineDoc::from_machine::<Flow<Draft>>();
+let mermaid = render::mermaid_state(&doc);
+
+assert!(mermaid.contains("stateDiagram-v2"));
+assert!(mermaid.contains("[*] --> s0"));
+assert!(mermaid.contains("s0 --> s1 : finish"));
+assert!(mermaid.contains("s1 --> [*]"));
+```
 
 ## Canonical Export Model
 
@@ -281,32 +321,91 @@ assert_eq!(paths.len(), 4);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+For exact Mermaid machine-state and relation-sequence diagrams over the linked
+codebase surface, use the dedicated codebase renderers:
+
+```rust
+# use statum_graph::{CodebaseDoc, codebase::render};
+# let doc = CodebaseDoc::linked()?;
+let workflow = doc
+    .machines()
+    .iter()
+    .find(|machine| machine.rust_type_path.ends_with("workflow::Machine"))
+    .expect("workflow machine");
+let relation = doc.relations().first().expect("one exact relation");
+
+let machine_state = render::mermaid_machine_state(&doc, workflow.index)?;
+let relation_sequence = render::mermaid_relation_sequence(&doc, relation.index)?;
+
+assert!(machine_state.contains("stateDiagram-v2"));
+assert!(relation_sequence.contains("sequenceDiagram"));
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 The codebase view is based on the linked compiled build, not a source scan.
 Legacy `links()` come only from direct machine-like payload types written in
 state data, including named fields. The richer exact `relations()` surface also
-covers machine fields, transition parameters, and nominal opaque reference
-types declared once with `#[machine_ref(...)]`. In v1, `#[machine_ref(...)]`
-supports nominal structs and tuple structs only; plain type aliases are
-rejected. Exact direct-type relations recurse only through canonical absolute
-carrier paths such as `::core::option::Option<...>` and
-`::core::result::Result<..., E>`, and direct machine targets must use explicit
-`crate::`, `self::`, `super::`, or absolute paths. Validator-entry nodes come
-only from compiled `#[validators]` impls and represent declared rebuild
-surfaces such as `DbRow::into_machine()`, not runtime match outcomes. All
-exact surfaces fail closed on malformed or ambiguous linked metadata.
+covers machine fields, transition parameters, `#[via(...)]` declarations, and
+nominal opaque reference types declared once with `#[machine_ref(...)]`. In
+v1, `#[machine_ref(...)]` supports nominal structs and tuple structs only;
+plain type aliases are rejected. Exact direct-type relations recurse only
+through canonical absolute carrier paths such as `::core::option::Option<...>`
+and `::core::result::Result<..., E>`, and direct machine targets must use
+explicit `crate::`, `self::`, `super::`, or absolute paths. Exact target
+resolution for transition-parameter direct targets, `#[via(...)]` inner
+targets, and `#[machine_ref(...)]` declarations uses compiler-resolved
+concrete machine type identity, so public machine re-exports still join the
+right machine family in `CodebaseDoc`. State-payload and machine-field direct
+targets still rely on the canonical linked path surface, so those surfaces do
+not currently promote public machine re-exports into exact relations.
+Validator-entry
+nodes come only from compiled `#[validators]` impls and represent declared
+rebuild surfaces such as `DbRow::into_machine()`, not runtime match outcomes.
+All exact surfaces fail closed on malformed or ambiguous linked metadata.
 Transition-body orchestration, runtime composition, primitive ids with no
 typed wrapper, and terminal-state semantics are intentionally out of scope.
+
+`#[via(...)]` is the exact relation surface for “this parent transition depends
+on this exact child transition route.” For example, if one transition takes
+`crate::PaymentMachine<crate::Captured>` and also declares
+`#[via(self::payment_machine::via::Capture)]`,
+`CodebaseDoc` can say both:
+
+- the parent transition depends on the child being in `Captured`
+- the parent transition can depend on `PaymentMachine<Authorized>::capture`
+
+This improves exact relation detail without inferring a protocol-stage graph.
+Compatible same-name attested producer routes are grouped deterministically
+when they emit distinct route marker types, and the exact relation detail
+surfaces the matching producer transition list instead of rejecting that shape
+outright.
+For a runnable example that also asserts the linked relation basis, see
+[`statum-examples/src/toy_demos/17-attested-composition.rs`](../statum-examples/src/toy_demos/17-attested-composition.rs).
 Graph backends mark directly constructible states with a ` [build]` suffix and
 derive cross-machine summary edges from exact `relations()`. Downstream
 consumers can use `machine_relation_groups()`, inbound and outbound relation
 lookup helpers, and `relation_detail()` to drive exact navigation without
-re-deriving relation semantics.
+re-deriving relation semantics. The codebase surface also carries source
+rustdoc separately as `docs` on machines, states, transitions, and validator
+entries. Use `#[present(description = ...)]` for concise UI copy and outer
+rustdoc comments (`///`) for fuller inspector and `codebase.json` detail.
+
+Authority boundary for those exact Mermaid exports:
+
+- `render::mermaid_state` is authoritative for one machine-local topology from
+  `MachineIntrospection::GRAPH`.
+- `codebase::render::mermaid_machine_state` is authoritative for one linked
+  machine family inside `CodebaseDoc`.
+- `codebase::render::mermaid_relation_sequence` is authoritative for one exact
+  linked relation record, including `#[via(...)]` producer routes when present.
+- These exports do not claim whole-workspace runtime chronology or full nested
+  child-slot hierarchy inside composition states.
 
 If you do not want to hand-write a runner crate, install
 `cargo-statum-graph` and point it at an existing library package:
 
 ```text
-cargo statum-graph codebase \
+cargo statum-graph export \
   /path/to/workspace
 ```
 

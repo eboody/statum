@@ -5,7 +5,7 @@ use serde::Serialize;
 use statum::{
     LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
     LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
-    LinkedValidatorEntryDescriptor, StaticMachineLinkDescriptor,
+    LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, StaticMachineLinkDescriptor,
 };
 
 pub mod render;
@@ -16,6 +16,10 @@ pub struct CodebaseDoc {
     machines: Vec<CodebaseMachine>,
     links: Vec<CodebaseLink>,
     relations: Vec<CodebaseRelation>,
+    #[serde(skip)]
+    relation_groups: Vec<CodebaseMachineRelationGroup>,
+    #[serde(skip)]
+    relation_index: CodebaseRelationIndex,
 }
 
 impl CodebaseDoc {
@@ -26,6 +30,7 @@ impl CodebaseDoc {
             statum::linked_machines(),
             statum::linked_validator_entries(),
             statum::linked_relations(),
+            statum::linked_via_routes(),
             statum::linked_reference_types(),
         )
     }
@@ -35,7 +40,7 @@ impl CodebaseDoc {
     pub fn try_from_linked(
         linked: &'static [LinkedMachineGraph],
     ) -> Result<Self, CodebaseDocError> {
-        Self::try_from_linked_with_inventories(linked, &[], &[], &[])
+        Self::try_from_linked_with_inventories(linked, &[], &[], &[], &[])
     }
 
     /// Builds a combined codebase document from explicit linked machine and
@@ -44,13 +49,14 @@ impl CodebaseDoc {
         linked: &'static [LinkedMachineGraph],
         validator_entries: &'static [LinkedValidatorEntryDescriptor],
     ) -> Result<Self, CodebaseDocError> {
-        Self::try_from_linked_with_inventories(linked, validator_entries, &[], &[])
+        Self::try_from_linked_with_inventories(linked, validator_entries, &[], &[], &[])
     }
 
     fn try_from_linked_with_inventories(
         linked: &'static [LinkedMachineGraph],
         validator_entries: &'static [LinkedValidatorEntryDescriptor],
         relations: &'static [LinkedRelationDescriptor],
+        via_routes: &'static [LinkedViaRouteDescriptor],
         reference_types: &'static [LinkedReferenceTypeDescriptor],
     ) -> Result<Self, CodebaseDocError> {
         let mut linked = linked.to_vec();
@@ -79,7 +85,9 @@ impl CodebaseDoc {
         let resolved_validator_entries =
             resolve_validator_entries(&mut machines, validator_entries)?;
         let links = resolve_static_links(&machines, &static_links)?;
-        let relations = resolve_relations(&machines, relations, reference_types)?;
+        let relations = resolve_relations(&machines, relations, via_routes, reference_types)?;
+        let relation_groups = build_machine_relation_groups(&relations);
+        let relation_index = CodebaseRelationIndex::new(&machines, &relations);
 
         debug_assert_eq!(
             resolved_validator_entries,
@@ -90,6 +98,8 @@ impl CodebaseDoc {
             machines,
             links,
             relations,
+            relation_groups,
+            relation_index,
         })
     }
 
@@ -120,39 +130,16 @@ impl CodebaseDoc {
 
     /// Groups exact relations by source and target machine for renderer and
     /// inspector use.
-    pub fn machine_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
-        let mut groups = BTreeMap::<(usize, usize), Vec<usize>>::new();
-        for relation in &self.relations {
-            groups
-                .entry((relation.source_machine(), relation.target_machine))
-                .or_default()
-                .push(relation.index);
-        }
+    pub fn machine_relation_groups(&self) -> &[CodebaseMachineRelationGroup] {
+        &self.relation_groups
+    }
 
-        groups
-            .into_iter()
-            .enumerate()
-            .map(|(index, ((from_machine, to_machine), relation_indices))| {
-                let mut counts =
-                    BTreeMap::<(CodebaseRelationKind, CodebaseRelationBasis), usize>::new();
-                for relation_index in &relation_indices {
-                    let relation = self
-                        .relation(*relation_index)
-                        .expect("grouped relation index should resolve");
-                    *counts.entry((relation.kind, relation.basis)).or_default() += 1;
-                }
-
-                CodebaseMachineRelationGroup {
-                    index,
-                    from_machine,
-                    to_machine,
-                    relation_indices,
-                    counts: counts
-                        .into_iter()
-                        .map(|((kind, basis), count)| CodebaseRelationCount { kind, basis, count })
-                        .collect(),
-                }
-            })
+    /// Groups exact relations that are owned by composition machines.
+    pub fn composition_relation_groups(&self) -> Vec<CodebaseMachineRelationGroup> {
+        self.machine_relation_groups()
+            .iter()
+            .filter(|group| group.is_composition_owned() && group.from_machine != group.to_machine)
+            .cloned()
             .collect()
     }
 
@@ -161,9 +148,10 @@ impl CodebaseDoc {
         &self,
         machine_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations
+        self.relation_index
+            .outbound_machine(machine_index)
             .iter()
-            .filter(move |relation| relation.source_machine() == machine_index)
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Exact relations whose target belongs to `machine_index`.
@@ -171,9 +159,10 @@ impl CodebaseDoc {
         &self,
         machine_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations
+        self.relation_index
+            .inbound_machine(machine_index)
             .iter()
-            .filter(move |relation| relation.target_machine == machine_index)
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Exact relations whose source belongs to one exported state.
@@ -182,12 +171,10 @@ impl CodebaseDoc {
         machine_index: usize,
         state_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations.iter().filter(move |relation| {
-            relation.source_machine() == machine_index
-                && relation
-                    .source_state()
-                    .is_some_and(|state| state == state_index)
-        })
+        self.relation_index
+            .outbound_state(machine_index, state_index)
+            .iter()
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Exact relations whose target belongs to one exported state.
@@ -196,9 +183,10 @@ impl CodebaseDoc {
         machine_index: usize,
         state_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations.iter().filter(move |relation| {
-            relation.target_machine == machine_index && relation.target_state == state_index
-        })
+        self.relation_index
+            .inbound_state(machine_index, state_index)
+            .iter()
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Exact relations whose source belongs to one exported transition site.
@@ -207,12 +195,10 @@ impl CodebaseDoc {
         machine_index: usize,
         transition_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations.iter().filter(move |relation| {
-            relation.source_machine() == machine_index
-                && relation
-                    .source_transition()
-                    .is_some_and(|transition| transition == transition_index)
-        })
+        self.relation_index
+            .outbound_transition(machine_index, transition_index)
+            .iter()
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Exact relations whose target belongs to one exported transition site.
@@ -225,12 +211,10 @@ impl CodebaseDoc {
         machine_index: usize,
         transition_index: usize,
     ) -> impl Iterator<Item = &CodebaseRelation> + '_ {
-        self.relations.iter().filter(move |relation| {
-            relation.target_machine == machine_index
-                && relation
-                    .target_transition()
-                    .is_some_and(|transition| transition == transition_index)
-        })
+        self.relation_index
+            .inbound_transition(machine_index, transition_index)
+            .iter()
+            .filter_map(|index| self.relation(*index))
     }
 
     /// Resolves one exact relation into typed source and target references for
@@ -246,6 +230,38 @@ impl CodebaseDoc {
             .and_then(|transition| source_machine.transition(transition));
         let target_machine = self.machine(relation.target_machine)?;
         let target_state = target_machine.state(relation.target_state)?;
+        let attested_via_producers = relation
+            .attested_via
+            .as_ref()
+            .map(|route| {
+                route
+                    .producers
+                    .iter()
+                    .filter_map(|producer| {
+                        let machine = self.machine(producer.machine)?;
+                        let state = machine.state(producer.state)?;
+                        let transition = machine.transition(producer.transition)?;
+                        Some(CodebaseAttestedProducerDetail {
+                            producer,
+                            machine,
+                            state,
+                            transition,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let (attested_via_machine, attested_via_state, attested_via_transition) =
+            if attested_via_producers.len() == 1 {
+                let producer = &attested_via_producers[0];
+                (
+                    Some(producer.machine),
+                    Some(producer.state),
+                    Some(producer.transition),
+                )
+            } else {
+                (None, None, None)
+            };
 
         Some(CodebaseRelationDetail {
             relation,
@@ -254,7 +270,42 @@ impl CodebaseDoc {
             source_transition,
             target_machine,
             target_state,
+            attested_via_machine,
+            attested_via_state,
+            attested_via_transition,
+            attested_via_producers,
         })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodebaseMachineRole {
+    Protocol,
+    Composition,
+}
+
+impl CodebaseMachineRole {
+    /// Human-facing machine-role label for inspector and renderer detail.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::Protocol => "protocol",
+            Self::Composition => "composition",
+        }
+    }
+
+    /// Whether this machine participates as a composition machine.
+    pub const fn is_composition(self) -> bool {
+        matches!(self, Self::Composition)
+    }
+}
+
+impl From<statum::MachineRole> for CodebaseMachineRole {
+    fn from(value: statum::MachineRole) -> Self {
+        match value {
+            statum::MachineRole::Protocol => Self::Protocol,
+            statum::MachineRole::Composition => Self::Composition,
+        }
     }
 }
 
@@ -267,10 +318,15 @@ pub struct CodebaseMachine {
     pub module_path: &'static str,
     /// Fully qualified Rust type path for the machine family.
     pub rust_type_path: &'static str,
+    /// Whether this machine is a local protocol machine or a composition
+    /// machine.
+    pub role: CodebaseMachineRole,
     /// Optional human-facing machine label.
     pub label: Option<&'static str>,
     /// Optional human-facing machine description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// States exported in source order.
     pub states: Vec<CodebaseState>,
     /// Transition sites exported in deterministic order.
@@ -349,6 +405,8 @@ pub struct CodebaseState {
     pub label: Option<&'static str>,
     /// Optional human-facing state description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// Whether the state carries `state_data`.
     pub has_data: bool,
     /// Whether direct construction is available for this state.
@@ -377,6 +435,12 @@ pub struct CodebaseValidatorEntry {
     pub source_module_path: &'static str,
     /// Human-facing source syntax for the persisted impl self type as written.
     pub source_type_display: &'static str,
+    /// Compiler-resolved source type identity for this validator impl.
+    #[doc(hidden)]
+    #[serde(skip_serializing)]
+    pub resolved_source_type_name: &'static str,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// Stable target-state indices in machine state order.
     pub target_states: Vec<usize>,
 }
@@ -399,6 +463,8 @@ pub struct CodebaseTransition {
     pub label: Option<&'static str>,
     /// Optional human-facing transition description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// Stable source-state index.
     pub from: usize,
     /// Stable legal target-state indices for this transition site.
@@ -435,7 +501,9 @@ impl CodebaseRelationKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
 pub enum CodebaseRelationBasis {
     DirectTypeSyntax,
+    AttestedTypeSyntax,
     DeclaredReferenceType,
+    ViaDeclaration,
 }
 
 impl CodebaseRelationBasis {
@@ -443,15 +511,48 @@ impl CodebaseRelationBasis {
     pub const fn display_label(self) -> &'static str {
         match self {
             Self::DirectTypeSyntax => "direct type",
+            Self::AttestedTypeSyntax => "attested type",
             Self::DeclaredReferenceType => "declared ref",
+            Self::ViaDeclaration => "via declaration",
         }
     }
 
     fn summary_suffix(self) -> &'static str {
         match self {
             Self::DirectTypeSyntax => "",
+            Self::AttestedTypeSyntax => " [attested]",
             Self::DeclaredReferenceType => " [ref]",
+            Self::ViaDeclaration => " [via]",
         }
+    }
+}
+
+/// Higher-level exact semantics for one relation after machine-role
+/// classification.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodebaseRelationSemantic {
+    Exact,
+    CompositionDirectChild,
+    CompositionDetachedHandoff,
+}
+
+impl CodebaseRelationSemantic {
+    /// Human-facing semantic label for relation detail and search.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::CompositionDirectChild => "composition direct child",
+            Self::CompositionDetachedHandoff => "composition detached handoff",
+        }
+    }
+
+    /// Whether this exact relation comes from direct child-machine composition.
+    pub const fn is_composition_owned(self) -> bool {
+        matches!(
+            self,
+            Self::CompositionDirectChild | Self::CompositionDetachedHandoff
+        )
     }
 }
 
@@ -505,7 +606,7 @@ impl CodebaseRelationSource {
 }
 
 /// One resolved exact relation in the codebase export surface.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CodebaseRelation {
     /// Stable codebase-local relation index.
     pub index: usize,
@@ -513,6 +614,8 @@ pub struct CodebaseRelation {
     pub kind: CodebaseRelationKind,
     /// Why Statum considered this relation exact.
     pub basis: CodebaseRelationBasis,
+    /// Higher-level exact semantics after machine-role classification.
+    pub semantic: CodebaseRelationSemantic,
     /// Exact source location for this relation.
     pub source: CodebaseRelationSource,
     /// Resolved target machine index.
@@ -522,6 +625,9 @@ pub struct CodebaseRelation {
     /// Declared nominal reference type when this relation came through
     /// `#[machine_ref(...)]`.
     pub declared_reference_type: Option<&'static str>,
+    /// Exact attested producer route when this relation came from
+    /// `#[via(...)]` or a canonical `statum::Attested<_, Route>` wrapper.
+    pub attested_via: Option<CodebaseAttestedRoute>,
 }
 
 impl CodebaseRelation {
@@ -549,6 +655,35 @@ impl CodebaseRelation {
     pub const fn target_transition(&self) -> Option<usize> {
         None
     }
+
+    /// Whether this exact relation is owned by one composition machine through
+    /// direct child-machine composition.
+    pub const fn is_composition_owned(&self) -> bool {
+        self.semantic.is_composition_owned()
+    }
+}
+
+/// One exact producer transition reachable through an attested route.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct CodebaseAttestedProducer {
+    /// Stable producer machine index.
+    pub machine: usize,
+    /// Stable producer source-state index.
+    pub state: usize,
+    /// Stable producer transition index.
+    pub transition: usize,
+}
+
+/// One resolved producer route attached to one exact attested relation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CodebaseAttestedRoute {
+    /// Machine-module path that owns the attested route namespace.
+    pub via_module_path: &'static str,
+    /// Human-facing route name such as `Capture`.
+    pub route_name: &'static str,
+    /// Exact producer transitions that can attest this route and still satisfy
+    /// the resolved consumer target state.
+    pub producers: Vec<CodebaseAttestedProducer>,
 }
 
 /// One grouped machine-to-machine view derived from exact relations.
@@ -560,10 +695,58 @@ pub struct CodebaseMachineRelationGroup {
     pub from_machine: usize,
     /// Target machine index shared by the grouped relations.
     pub to_machine: usize,
+    /// Higher-level group semantics derived from the grouped exact relations.
+    pub semantic: CodebaseMachineRelationGroupSemantic,
     /// Stable exact relation indices included in this group.
     pub relation_indices: Vec<usize>,
     /// Stable grouped counts by relation kind and basis.
     pub counts: Vec<CodebaseRelationCount>,
+}
+
+/// Higher-level exact semantics for one grouped machine relation summary.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodebaseMachineRelationGroupSemantic {
+    Exact,
+    CompositionDirectChild,
+    Mixed,
+}
+
+impl CodebaseMachineRelationGroupSemantic {
+    const fn from_relation_counts(
+        composition_owned_relations: usize,
+        total_relations: usize,
+    ) -> Self {
+        if composition_owned_relations == 0 {
+            Self::Exact
+        } else if composition_owned_relations == total_relations {
+            Self::CompositionDirectChild
+        } else {
+            Self::Mixed
+        }
+    }
+
+    /// Human-facing semantic label for grouped relation detail.
+    pub const fn display_label(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::CompositionDirectChild => "composition-owned",
+            Self::Mixed => "composition + exact",
+        }
+    }
+
+    const fn summary_prefix(self) -> &'static str {
+        match self {
+            Self::Exact => "exact refs",
+            Self::CompositionDirectChild => "composition refs",
+            Self::Mixed => "composition + exact refs",
+        }
+    }
+
+    /// Whether this group includes any composition-owned exact relations.
+    pub const fn is_composition_owned(self) -> bool {
+        !matches!(self, Self::Exact)
+    }
 }
 
 impl CodebaseMachineRelationGroup {
@@ -575,7 +758,13 @@ impl CodebaseMachineRelationGroup {
             .map(CodebaseRelationCount::display_label)
             .collect::<Vec<_>>()
             .join(", ");
-        format!("exact refs: {counts}")
+        format!("{}: {counts}", self.semantic.summary_prefix())
+    }
+
+    /// Whether this grouped summary includes composition-owned exact
+    /// relations.
+    pub const fn is_composition_owned(&self) -> bool {
+        self.semantic.is_composition_owned()
     }
 }
 
@@ -608,6 +797,18 @@ impl CodebaseRelationCount {
 
 /// One typed resolved view of an exact relation for downstream consumers.
 #[derive(Clone, Copy, Debug)]
+pub struct CodebaseAttestedProducerDetail<'a> {
+    /// The exact producer record itself.
+    pub producer: &'a CodebaseAttestedProducer,
+    /// The resolved producer machine.
+    pub machine: &'a CodebaseMachine,
+    /// The resolved producer source state.
+    pub state: &'a CodebaseState,
+    /// The resolved producer transition.
+    pub transition: &'a CodebaseTransition,
+}
+
+#[derive(Debug)]
 pub struct CodebaseRelationDetail<'a> {
     /// The exact relation record itself.
     pub relation: &'a CodebaseRelation,
@@ -622,6 +823,164 @@ pub struct CodebaseRelationDetail<'a> {
     pub target_machine: &'a CodebaseMachine,
     /// The resolved target state.
     pub target_state: &'a CodebaseState,
+    /// The resolved producer machine when this exact relation came from one
+    /// attested route declaration.
+    pub attested_via_machine: Option<&'a CodebaseMachine>,
+    /// The resolved producer source state when this exact relation came from
+    /// one attested route declaration.
+    pub attested_via_state: Option<&'a CodebaseState>,
+    /// The resolved producer transition when this exact relation came from one
+    /// attested route declaration and exactly one producer matched.
+    pub attested_via_transition: Option<&'a CodebaseTransition>,
+    /// All resolved producer transitions when this exact relation came from an
+    /// attested route declaration.
+    pub attested_via_producers: Vec<CodebaseAttestedProducerDetail<'a>>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct CodebaseRelationIndex {
+    outbound_machine: Vec<Vec<usize>>,
+    inbound_machine: Vec<Vec<usize>>,
+    outbound_state: Vec<Vec<Vec<usize>>>,
+    inbound_state: Vec<Vec<Vec<usize>>>,
+    outbound_transition: Vec<Vec<Vec<usize>>>,
+    inbound_transition: Vec<Vec<Vec<usize>>>,
+}
+
+impl CodebaseRelationIndex {
+    fn new(machines: &[CodebaseMachine], relations: &[CodebaseRelation]) -> Self {
+        let machine_count = machines.len();
+        let mut index = Self {
+            outbound_machine: vec![Vec::new(); machine_count],
+            inbound_machine: vec![Vec::new(); machine_count],
+            outbound_state: machines
+                .iter()
+                .map(|machine| vec![Vec::new(); machine.states.len()])
+                .collect(),
+            inbound_state: machines
+                .iter()
+                .map(|machine| vec![Vec::new(); machine.states.len()])
+                .collect(),
+            outbound_transition: machines
+                .iter()
+                .map(|machine| vec![Vec::new(); machine.transitions.len()])
+                .collect(),
+            inbound_transition: machines
+                .iter()
+                .map(|machine| vec![Vec::new(); machine.transitions.len()])
+                .collect(),
+        };
+
+        for (position, relation) in relations.iter().enumerate() {
+            debug_assert_eq!(relation.index, position);
+
+            index.outbound_machine[relation.source_machine()].push(position);
+            index.inbound_machine[relation.target_machine].push(position);
+            if let Some(state) = relation.source_state() {
+                index.outbound_state[relation.source_machine()][state].push(position);
+            }
+            index.inbound_state[relation.target_machine][relation.target_state].push(position);
+            if let Some(transition) = relation.source_transition() {
+                index.outbound_transition[relation.source_machine()][transition].push(position);
+            }
+            if let Some(transition) = relation.target_transition() {
+                index.inbound_transition[relation.target_machine][transition].push(position);
+            }
+        }
+
+        index
+    }
+
+    fn outbound_machine(&self, machine_index: usize) -> &[usize] {
+        self.outbound_machine
+            .get(machine_index)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn inbound_machine(&self, machine_index: usize) -> &[usize] {
+        self.inbound_machine
+            .get(machine_index)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn outbound_state(&self, machine_index: usize, state_index: usize) -> &[usize] {
+        self.outbound_state
+            .get(machine_index)
+            .and_then(|states| states.get(state_index))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn inbound_state(&self, machine_index: usize, state_index: usize) -> &[usize] {
+        self.inbound_state
+            .get(machine_index)
+            .and_then(|states| states.get(state_index))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn outbound_transition(&self, machine_index: usize, transition_index: usize) -> &[usize] {
+        self.outbound_transition
+            .get(machine_index)
+            .and_then(|transitions| transitions.get(transition_index))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    fn inbound_transition(&self, machine_index: usize, transition_index: usize) -> &[usize] {
+        self.inbound_transition
+            .get(machine_index)
+            .and_then(|transitions| transitions.get(transition_index))
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+}
+
+fn build_machine_relation_groups(
+    relations: &[CodebaseRelation],
+) -> Vec<CodebaseMachineRelationGroup> {
+    let mut groups = BTreeMap::<(usize, usize), Vec<usize>>::new();
+    for (position, relation) in relations.iter().enumerate() {
+        debug_assert_eq!(relation.index, position);
+        groups
+            .entry((relation.source_machine(), relation.target_machine))
+            .or_default()
+            .push(position);
+    }
+
+    groups
+        .into_iter()
+        .enumerate()
+        .map(|(index, ((from_machine, to_machine), relation_indices))| {
+            let mut counts =
+                BTreeMap::<(CodebaseRelationKind, CodebaseRelationBasis), usize>::new();
+            let mut composition_owned_relations = 0usize;
+            for relation_index in &relation_indices {
+                let relation = &relations[*relation_index];
+                *counts.entry((relation.kind, relation.basis)).or_default() += 1;
+                if relation.is_composition_owned() {
+                    composition_owned_relations += 1;
+                }
+            }
+
+            CodebaseMachineRelationGroup {
+                index,
+                from_machine,
+                to_machine,
+                semantic: CodebaseMachineRelationGroupSemantic::from_relation_counts(
+                    composition_owned_relations,
+                    relation_indices.len(),
+                ),
+                relation_indices,
+                counts: counts
+                    .into_iter()
+                    .map(|((kind, basis), count)| CodebaseRelationCount { kind, basis, count })
+                    .collect(),
+            }
+        })
+        .collect()
 }
 
 type ResolvedRelationTarget = (usize, usize, Option<&'static str>);
@@ -781,6 +1140,58 @@ pub enum CodebaseDocError {
         relation: String,
         target_machine_path: String,
         target_state: &'static str,
+    },
+    /// One attested producer route appears more than once in the linked
+    /// inventory.
+    DuplicateViaRoute {
+        via_module_path: &'static str,
+        route_name: &'static str,
+    },
+    /// One linked attested producer route reuses the same route identity with a
+    /// different target state.
+    ConflictingViaRouteTarget {
+        via_module_path: &'static str,
+        route_name: &'static str,
+        expected_target_state: &'static str,
+        conflicting_target_state: &'static str,
+    },
+    /// One `#[via(...)]` exact relation points at a producer route missing from
+    /// the linked inventory.
+    MissingRelationViaRoute {
+        relation: String,
+        via_module_path: &'static str,
+        route_name: &'static str,
+    },
+    /// One `#[via(...)]` relation points at a producer source state missing
+    /// from the resolved machine graph.
+    MissingRelationViaSourceState {
+        machine: &'static str,
+        state: &'static str,
+        relation: String,
+    },
+    /// One `#[via(...)]` relation points at a producer transition missing from
+    /// the resolved machine graph.
+    MissingRelationViaTransition {
+        machine: &'static str,
+        state: &'static str,
+        transition: &'static str,
+        relation: String,
+    },
+    /// One attested producer route points at a target state missing from the
+    /// resolved machine graph.
+    MissingRelationViaTargetState {
+        machine: &'static str,
+        state: &'static str,
+        relation: String,
+    },
+    /// One `#[via(...)]` relation declared an inner target state that does not
+    /// match the attested producer route it references.
+    MismatchedRelationViaTarget {
+        relation: String,
+        via_module_path: &'static str,
+        route_name: &'static str,
+        declared_target_state: &'static str,
+        producer_target_state: &'static str,
     },
     /// One static payload link points at a source state missing from the
     /// machine state list.
@@ -954,6 +1365,65 @@ Fix: rerun with `--package` to export one crate, or move one machine to a distin
                 formatter,
                 "linked exact relation `{relation}` ambiguously matches target `{target_machine_path}<{target_state}>`"
             ),
+            Self::DuplicateViaRoute {
+                via_module_path,
+                route_name,
+            } => write!(
+                formatter,
+                "linked attested route `{via_module_path}::{route_name}` appears more than once in the producer inventory"
+            ),
+            Self::ConflictingViaRouteTarget {
+                via_module_path,
+                route_name,
+                expected_target_state,
+                conflicting_target_state,
+            } => write!(
+                formatter,
+                "linked attested route `{via_module_path}::{route_name}` conflicts on target state: expected `{expected_target_state}`, found `{conflicting_target_state}`"
+            ),
+            Self::MissingRelationViaRoute {
+                relation,
+                via_module_path,
+                route_name,
+            } => write!(
+                formatter,
+                "linked exact relation `{relation}` points at missing attested route `{via_module_path}::{route_name}`"
+            ),
+            Self::MissingRelationViaSourceState {
+                machine,
+                state,
+                relation,
+            } => write!(
+                formatter,
+                "linked exact relation `{relation}` points at missing attested source state `{machine}::{state}`"
+            ),
+            Self::MissingRelationViaTransition {
+                machine,
+                state,
+                transition,
+                relation,
+            } => write!(
+                formatter,
+                "linked exact relation `{relation}` points at missing attested producer transition `{machine}::{state}::{transition}`"
+            ),
+            Self::MissingRelationViaTargetState {
+                machine,
+                state,
+                relation,
+            } => write!(
+                formatter,
+                "linked exact relation `{relation}` points at missing attested target state `{machine}::{state}`"
+            ),
+            Self::MismatchedRelationViaTarget {
+                relation,
+                via_module_path,
+                route_name,
+                declared_target_state,
+                producer_target_state,
+            } => write!(
+                formatter,
+                "linked exact relation `{relation}` declares target state `{declared_target_state}`, but attested route `{via_module_path}::{route_name}` produces `{producer_target_state}`"
+            ),
             Self::MissingStaticLinkSourceState { machine, state } => write!(
                 formatter,
                 "linked machine `{machine}` contains a static payload link from missing source state `{state}`"
@@ -1005,6 +1475,7 @@ fn build_machine(
             rust_name: state.rust_name,
             label: state.label,
             description: state.description,
+            docs: state.docs,
             has_data: state.has_data,
             direct_construction_available: state.direct_construction_available,
             is_graph_root: true,
@@ -1064,6 +1535,7 @@ fn build_machine(
             method_name: transition.method_name,
             label: transition.label,
             description: transition.description,
+            docs: transition.docs,
             from,
             to,
         });
@@ -1078,8 +1550,10 @@ fn build_machine(
             index: machine_index,
             module_path: linked.machine.module_path,
             rust_type_path: linked.machine.rust_type_path,
+            role: linked.machine.role.into(),
             label: linked.label,
             description: linked.description,
+            docs: linked.docs,
             states,
             transitions: exported_transitions,
             validator_entries: Vec::new(),
@@ -1172,12 +1646,32 @@ struct ResolvedReferenceTypeTarget {
     target_state: usize,
 }
 
+#[derive(Clone, Copy)]
+struct ResolvedViaProducer {
+    machine: usize,
+    state: usize,
+    transition: usize,
+    target_state_name: &'static str,
+}
+
+#[derive(Clone)]
+struct ResolvedViaRoute {
+    via_module_path: &'static str,
+    route_name: &'static str,
+    target_machine: usize,
+    target_state: usize,
+    target_state_name: &'static str,
+    producers: Vec<ResolvedViaProducer>,
+}
+
 fn resolve_relations(
     machines: &[CodebaseMachine],
     relations: &'static [LinkedRelationDescriptor],
+    via_routes: &'static [LinkedViaRouteDescriptor],
     reference_types: &'static [LinkedReferenceTypeDescriptor],
 ) -> Result<Vec<CodebaseRelation>, CodebaseDocError> {
     let reference_types = resolve_reference_type_targets(machines, reference_types)?;
+    let via_routes = resolve_via_routes(machines, via_routes)?;
     let mut relations = relations.to_vec();
     relations.sort_by(compare_relations);
 
@@ -1243,44 +1737,268 @@ fn resolve_relations(
             }
         };
 
-        let resolved_target = match relation.target {
+        let (resolved_target, attested_via) = match relation.target {
             LinkedRelationTarget::DirectMachine {
                 machine_path,
+                resolved_machine_type_name,
                 state,
-            } => resolve_optional_target_machine(
-                machines,
+            } => (
+                resolve_optional_target_machine(
+                    machines,
+                    resolved_machine_type_name(),
+                    machine_path,
+                    state,
+                    &relation_summary(&relation),
+                )?,
+                None,
+            ),
+            LinkedRelationTarget::DeclaredReferenceType { resolved_type_name } => (
+                reference_types
+                    .get(resolved_type_name())
+                    .copied()
+                    .map(|target| {
+                        (
+                            target.target_machine,
+                            target.target_state,
+                            Some(target.rust_type_path),
+                        )
+                    }),
+                None,
+            ),
+            LinkedRelationTarget::AttestedProducerRoute {
+                via_module_path,
+                route_name,
+                resolved_route_type_name,
+                route_id: _,
+            } => {
+                let relation_label = relation_summary(&relation);
+                let resolved_route =
+                    via_routes.get(resolved_route_type_name()).ok_or_else(|| {
+                        CodebaseDocError::MissingRelationViaRoute {
+                            relation: relation_label.clone(),
+                            via_module_path,
+                            route_name,
+                        }
+                    })?;
+                (
+                    Some((
+                        resolved_route.target_machine,
+                        resolved_route.target_state,
+                        None,
+                    )),
+                    Some(CodebaseAttestedRoute {
+                        via_module_path: resolved_route.via_module_path,
+                        route_name: resolved_route.route_name,
+                        producers: resolved_route
+                            .producers
+                            .iter()
+                            .map(|producer| CodebaseAttestedProducer {
+                                machine: producer.machine,
+                                state: producer.state,
+                                transition: producer.transition,
+                            })
+                            .collect(),
+                    }),
+                )
+            }
+            LinkedRelationTarget::AttestedRoute {
+                via_module_path,
+                route_name,
+                resolved_route_type_name,
+                route_id: _,
                 machine_path,
+                resolved_machine_type_name,
                 state,
-                &relation_summary(&relation),
-                true,
-            )?,
-            LinkedRelationTarget::DeclaredReferenceType { resolved_type_name } => reference_types
-                .get(resolved_type_name())
-                .copied()
-                .map(|target| {
-                    (
-                        target.target_machine,
-                        target.target_state,
-                        Some(target.rust_type_path),
-                    )
-                }),
+            } => {
+                let relation_label = relation_summary(&relation);
+                let resolved_target = resolve_optional_target_machine(
+                    machines,
+                    resolved_machine_type_name(),
+                    machine_path,
+                    state,
+                    &relation_label,
+                )?;
+                let resolved_route =
+                    via_routes.get(resolved_route_type_name()).ok_or_else(|| {
+                        CodebaseDocError::MissingRelationViaRoute {
+                            relation: relation_label.clone(),
+                            via_module_path,
+                            route_name,
+                        }
+                    })?;
+                let matched_producers = resolved_route
+                    .producers
+                    .iter()
+                    .filter(|producer| producer.target_state_name == state)
+                    .copied()
+                    .collect::<Vec<_>>();
+                if matched_producers.is_empty() {
+                    return Err(CodebaseDocError::MismatchedRelationViaTarget {
+                        relation: relation_label,
+                        via_module_path,
+                        route_name,
+                        declared_target_state: state,
+                        producer_target_state: resolved_route
+                            .producers
+                            .first()
+                            .map(|producer| producer.target_state_name)
+                            .unwrap_or("<missing-producer-target>"),
+                    });
+                }
+                (
+                    resolved_target,
+                    Some(CodebaseAttestedRoute {
+                        via_module_path,
+                        route_name,
+                        producers: matched_producers
+                            .into_iter()
+                            .map(|producer| CodebaseAttestedProducer {
+                                machine: producer.machine,
+                                state: producer.state,
+                                transition: producer.transition,
+                            })
+                            .collect(),
+                    }),
+                )
+            }
         };
         let Some((target_machine, target_state, declared_reference_type)) = resolved_target else {
             continue;
         };
+        let basis = map_relation_basis(relation.basis);
+        let semantic = classify_relation_semantic(
+            machine.role,
+            basis,
+            machine.index,
+            target_machine,
+            relation.target,
+        );
 
         exported.push(CodebaseRelation {
             index: exported.len(),
             kind: map_relation_kind(relation.kind),
-            basis: map_relation_basis(relation.basis),
+            basis,
+            semantic,
             source,
             target_machine,
             target_state,
             declared_reference_type,
+            attested_via,
         });
     }
 
     Ok(exported)
+}
+
+fn resolve_via_routes(
+    machines: &[CodebaseMachine],
+    via_routes: &'static [LinkedViaRouteDescriptor],
+) -> Result<HashMap<&'static str, ResolvedViaRoute>, CodebaseDocError> {
+    let exact_machine_positions = machines
+        .iter()
+        .map(|machine| (machine.rust_type_path, machine.index))
+        .collect::<HashMap<_, _>>();
+    let mut resolved = HashMap::with_capacity(via_routes.len());
+
+    for route in via_routes {
+        let machine_index = resolve_relation_source_machine(
+            machines,
+            &exact_machine_positions,
+            route.machine.rust_type_path,
+            route.route_name,
+        )?;
+        let machine = &machines[machine_index];
+        let state = machine
+            .state_named(route.source_state)
+            .map(|state| state.index)
+            .ok_or_else(|| CodebaseDocError::MissingRelationViaSourceState {
+                machine: machine.rust_type_path,
+                state: route.source_state,
+                relation: format!("{}::{}", route.via_module_path, route.route_name),
+            })?;
+        let transition = machine
+            .transition_site(route.source_state, route.transition)
+            .map(|transition| transition.index)
+            .ok_or_else(|| CodebaseDocError::MissingRelationViaTransition {
+                machine: machine.rust_type_path,
+                state: route.source_state,
+                transition: route.transition,
+                relation: format!("{}::{}", route.via_module_path, route.route_name),
+            })?;
+        let target_state = machine
+            .state_named(route.target_state)
+            .map(|state| state.index)
+            .ok_or_else(|| CodebaseDocError::MissingRelationViaTargetState {
+                machine: machine.rust_type_path,
+                state: route.target_state,
+                relation: format!("{}::{}", route.via_module_path, route.route_name),
+            })?;
+        let producer = ResolvedViaProducer {
+            machine: machine.index,
+            state,
+            transition,
+            target_state_name: route.target_state,
+        };
+        let resolved_route_type_name = (route.resolved_route_type_name)();
+        match resolved.entry(resolved_route_type_name) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(ResolvedViaRoute {
+                    via_module_path: route.via_module_path,
+                    route_name: route.route_name,
+                    target_machine: machine.index,
+                    target_state,
+                    target_state_name: route.target_state,
+                    producers: vec![producer],
+                });
+            }
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let resolved_route = entry.get_mut();
+                if resolved_route.via_module_path != route.via_module_path
+                    || resolved_route.route_name != route.route_name
+                {
+                    return Err(CodebaseDocError::DuplicateViaRoute {
+                        via_module_path: route.via_module_path,
+                        route_name: route.route_name,
+                    });
+                }
+                if resolved_route.target_machine != machine.index {
+                    return Err(CodebaseDocError::DuplicateViaRoute {
+                        via_module_path: route.via_module_path,
+                        route_name: route.route_name,
+                    });
+                }
+                if resolved_route.target_state != target_state {
+                    return Err(CodebaseDocError::ConflictingViaRouteTarget {
+                        via_module_path: route.via_module_path,
+                        route_name: route.route_name,
+                        expected_target_state: resolved_route.target_state_name,
+                        conflicting_target_state: route.target_state,
+                    });
+                }
+                if resolved_route.producers.iter().any(|existing| {
+                    existing.machine == producer.machine
+                        && existing.state == producer.state
+                        && existing.transition == producer.transition
+                        && existing.target_state_name == producer.target_state_name
+                }) {
+                    return Err(CodebaseDocError::DuplicateViaRoute {
+                        via_module_path: route.via_module_path,
+                        route_name: route.route_name,
+                    });
+                }
+                resolved_route.producers.push(producer);
+                resolved_route.producers.sort_by(|left, right| {
+                    left.machine
+                        .cmp(&right.machine)
+                        .then(left.state.cmp(&right.state))
+                        .then(left.transition.cmp(&right.transition))
+                        .then(left.target_state_name.cmp(right.target_state_name))
+                });
+            }
+        }
+    }
+
+    Ok(resolved)
 }
 
 fn resolve_reference_type_targets(
@@ -1302,6 +2020,7 @@ fn resolve_reference_type_targets(
 
         let target = resolve_required_target_machine(
             machines,
+            (reference_type.resolved_target_machine_type_name)(),
             reference_type.to_machine_path,
             reference_type.to_state,
             |target_machine_path, target_state| {
@@ -1321,7 +2040,6 @@ fn resolve_reference_type_targets(
                 target_machine_path,
                 target_state,
             },
-            true,
         )?;
 
         resolved.insert(
@@ -1368,12 +2086,12 @@ fn resolve_relation_source_machine(
 
 fn resolve_optional_target_machine(
     machines: &[CodebaseMachine],
+    resolved_machine_type_name: &str,
     machine_path: &'static [&'static str],
     state: &'static str,
     relation: &str,
-    exact: bool,
 ) -> Result<Option<ResolvedRelationTarget>, CodebaseDocError> {
-    let candidates = target_candidates(machines, machine_path, state, exact);
+    let candidates = target_candidates(machines, resolved_machine_type_name, machine_path, state);
     match candidates.as_slice() {
         [] => Ok(None),
         [(machine_index, state_index)] => Ok(Some((*machine_index, *state_index, None))),
@@ -1387,12 +2105,12 @@ fn resolve_optional_target_machine(
 
 fn resolve_required_target_machine<FMissingMachine, FMissingState, FAmbiguous>(
     machines: &[CodebaseMachine],
+    resolved_machine_type_name: &str,
     machine_path: &'static [&'static str],
     state: &'static str,
     missing_machine: FMissingMachine,
     missing_state: FMissingState,
     ambiguous: FAmbiguous,
-    exact: bool,
 ) -> Result<(usize, usize), CodebaseDocError>
 where
     FMissingMachine: FnOnce(String, &'static str) -> CodebaseDocError,
@@ -1402,7 +2120,13 @@ where
     let machine_path_string = machine_path.join("::");
     let matching_machines = machines
         .iter()
-        .filter(|candidate| machine_path_matches(candidate.rust_type_path, machine_path, exact))
+        .filter(|candidate| {
+            machine_path_matches(
+                candidate.rust_type_path,
+                resolved_machine_type_name,
+                machine_path,
+            )
+        })
         .collect::<Vec<_>>();
     if matching_machines.is_empty() {
         return Err(missing_machine(machine_path_string, state));
@@ -1426,14 +2150,18 @@ where
 
 fn target_candidates(
     machines: &[CodebaseMachine],
+    resolved_machine_type_name: &str,
     machine_path: &'static [&'static str],
     state: &'static str,
-    exact: bool,
 ) -> Vec<(usize, usize)> {
     machines
         .iter()
         .filter_map(|candidate| {
-            if !machine_path_matches(candidate.rust_type_path, machine_path, exact) {
+            if !machine_path_matches(
+                candidate.rust_type_path,
+                resolved_machine_type_name,
+                machine_path,
+            ) {
                 return None;
             }
 
@@ -1444,12 +2172,13 @@ fn target_candidates(
         .collect()
 }
 
-fn machine_path_matches(candidate: &str, path: &[&'static str], exact: bool) -> bool {
-    if exact {
-        return candidate.split("::").eq(path.iter().copied());
-    }
-
-    path_suffix_matches(candidate, path)
+fn machine_path_matches(
+    candidate: &str,
+    resolved_machine_type_name: &str,
+    path: &[&'static str],
+) -> bool {
+    machine_family_path_suffix_matches(resolved_machine_type_name, candidate)
+        || path_suffix_matches(candidate, path)
 }
 
 fn map_relation_kind(kind: LinkedRelationKind) -> CodebaseRelationKind {
@@ -1463,7 +2192,33 @@ fn map_relation_kind(kind: LinkedRelationKind) -> CodebaseRelationKind {
 fn map_relation_basis(basis: LinkedRelationBasis) -> CodebaseRelationBasis {
     match basis {
         LinkedRelationBasis::DirectTypeSyntax => CodebaseRelationBasis::DirectTypeSyntax,
+        LinkedRelationBasis::AttestedTypeSyntax => CodebaseRelationBasis::AttestedTypeSyntax,
         LinkedRelationBasis::DeclaredReferenceType => CodebaseRelationBasis::DeclaredReferenceType,
+        LinkedRelationBasis::ViaDeclaration => CodebaseRelationBasis::ViaDeclaration,
+    }
+}
+
+fn classify_relation_semantic(
+    source_role: CodebaseMachineRole,
+    basis: CodebaseRelationBasis,
+    source_machine: usize,
+    target_machine: usize,
+    target: LinkedRelationTarget,
+) -> CodebaseRelationSemantic {
+    if source_role == CodebaseMachineRole::Composition && source_machine != target_machine {
+        match (basis, target) {
+            (
+                CodebaseRelationBasis::DirectTypeSyntax,
+                LinkedRelationTarget::DirectMachine { .. },
+            ) => CodebaseRelationSemantic::CompositionDirectChild,
+            (
+                CodebaseRelationBasis::AttestedTypeSyntax | CodebaseRelationBasis::ViaDeclaration,
+                LinkedRelationTarget::AttestedProducerRoute { .. },
+            ) => CodebaseRelationSemantic::CompositionDetachedHandoff,
+            _ => CodebaseRelationSemantic::Exact,
+        }
+    } else {
+        CodebaseRelationSemantic::Exact
     }
 }
 
@@ -1475,6 +2230,10 @@ fn compare_reference_types(
         .cmp((right.resolved_type_name)())
         .then_with(|| left.rust_type_path.cmp(right.rust_type_path))
         .then_with(|| left.to_machine_path.cmp(right.to_machine_path))
+        .then_with(|| {
+            (left.resolved_target_machine_type_name)()
+                .cmp((right.resolved_target_machine_type_name)())
+        })
         .then_with(|| left.to_state.cmp(right.to_state))
 }
 
@@ -1554,14 +2313,17 @@ fn compare_relation_targets(
         (
             LinkedRelationTarget::DirectMachine {
                 machine_path: left_path,
+                resolved_machine_type_name: left_type_name,
                 state: left_state,
             },
             LinkedRelationTarget::DirectMachine {
                 machine_path: right_path,
+                resolved_machine_type_name: right_type_name,
                 state: right_state,
             },
         ) => left_path
             .cmp(right_path)
+            .then_with(|| left_type_name().cmp(right_type_name()))
             .then_with(|| left_state.cmp(right_state)),
         (
             LinkedRelationTarget::DeclaredReferenceType {
@@ -1571,6 +2333,51 @@ fn compare_relation_targets(
                 resolved_type_name: right_name,
             },
         ) => left_name().cmp(right_name()),
+        (
+            LinkedRelationTarget::AttestedProducerRoute {
+                via_module_path: left_module_path,
+                route_name: left_route_name,
+                resolved_route_type_name: left_type_name,
+                route_id: left_route_id,
+            },
+            LinkedRelationTarget::AttestedProducerRoute {
+                via_module_path: right_module_path,
+                route_name: right_route_name,
+                resolved_route_type_name: right_type_name,
+                route_id: right_route_id,
+            },
+        ) => left_module_path
+            .cmp(right_module_path)
+            .then_with(|| left_route_name.cmp(right_route_name))
+            .then_with(|| left_type_name().cmp(right_type_name()))
+            .then_with(|| left_route_id.cmp(right_route_id)),
+        (
+            LinkedRelationTarget::AttestedRoute {
+                via_module_path: left_module_path,
+                route_name: left_route_name,
+                resolved_route_type_name: left_type_name,
+                route_id: left_route_id,
+                machine_path: left_machine_path,
+                resolved_machine_type_name: left_machine_type_name,
+                state: left_state,
+            },
+            LinkedRelationTarget::AttestedRoute {
+                via_module_path: right_module_path,
+                route_name: right_route_name,
+                resolved_route_type_name: right_type_name,
+                route_id: right_route_id,
+                machine_path: right_machine_path,
+                resolved_machine_type_name: right_machine_type_name,
+                state: right_state,
+            },
+        ) => left_module_path
+            .cmp(right_module_path)
+            .then_with(|| left_route_name.cmp(right_route_name))
+            .then_with(|| left_type_name().cmp(right_type_name()))
+            .then_with(|| left_route_id.cmp(right_route_id))
+            .then_with(|| left_machine_path.cmp(right_machine_path))
+            .then_with(|| left_machine_type_name().cmp(right_machine_type_name()))
+            .then_with(|| left_state.cmp(right_state)),
         (left, right) => linked_relation_target_rank(left).cmp(&linked_relation_target_rank(right)),
     }
 }
@@ -1586,7 +2393,9 @@ fn linked_relation_kind_rank(kind: LinkedRelationKind) -> u8 {
 fn linked_relation_basis_rank(basis: LinkedRelationBasis) -> u8 {
     match basis {
         LinkedRelationBasis::DirectTypeSyntax => 0,
-        LinkedRelationBasis::DeclaredReferenceType => 1,
+        LinkedRelationBasis::AttestedTypeSyntax => 1,
+        LinkedRelationBasis::DeclaredReferenceType => 2,
+        LinkedRelationBasis::ViaDeclaration => 3,
     }
 }
 
@@ -1602,11 +2411,13 @@ fn linked_relation_target_rank(target: &LinkedRelationTarget) -> u8 {
     match target {
         LinkedRelationTarget::DirectMachine { .. } => 0,
         LinkedRelationTarget::DeclaredReferenceType { .. } => 1,
+        LinkedRelationTarget::AttestedProducerRoute { .. } => 2,
+        LinkedRelationTarget::AttestedRoute { .. } => 3,
     }
 }
 
 fn relation_summary(relation: &LinkedRelationDescriptor) -> String {
-    match relation.source {
+    let base = match relation.source {
         LinkedRelationSource::StatePayload { state, field_name } => match field_name {
             Some(field_name) => format!(
                 "{} state payload {}::{}",
@@ -1645,6 +2456,21 @@ fn relation_summary(relation: &LinkedRelationDescriptor) -> String {
                 relation.machine.rust_type_path, state, transition, param_index
             ),
         },
+    };
+
+    match relation.target {
+        LinkedRelationTarget::AttestedProducerRoute {
+            via_module_path,
+            route_name,
+            ..
+        }
+        | LinkedRelationTarget::AttestedRoute {
+            via_module_path,
+            route_name,
+            ..
+        } => format!("{base} via {via_module_path}::{route_name}"),
+        LinkedRelationTarget::DirectMachine { .. }
+        | LinkedRelationTarget::DeclaredReferenceType { .. } => base,
     }
 }
 
@@ -1719,6 +2545,8 @@ fn resolve_validator_entries(
             index: machine.validator_entries.len(),
             source_module_path: entry.source_module_path,
             source_type_display: entry.source_type_display,
+            resolved_source_type_name: (entry.resolved_source_type_name)(),
+            docs: entry.docs,
             target_states,
         });
     }
@@ -1761,4 +2589,384 @@ fn path_string_suffix_matches(candidate: &str, suffix: &str) -> bool {
 
     let candidate = candidate.split("::").collect::<Vec<_>>();
     candidate.ends_with(&suffix)
+}
+
+fn machine_family_path_suffix_matches(
+    resolved_machine_type_name: &str,
+    machine_path: &str,
+) -> bool {
+    let family_path = resolved_machine_type_name
+        .split_once('<')
+        .map(|(family_path, _)| family_path)
+        .unwrap_or(resolved_machine_type_name);
+    path_string_suffix_matches(family_path, machine_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use statum::{
+        LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
+        LinkedTransitionInventory, MachineDescriptor,
+    };
+
+    static PRODUCER_STATES: [LinkedStateDescriptor; 2] = [
+        LinkedStateDescriptor {
+            rust_name: "Authorized",
+            label: None,
+            description: None,
+            docs: None,
+            has_data: false,
+            direct_construction_available: false,
+        },
+        LinkedStateDescriptor {
+            rust_name: "Captured",
+            label: None,
+            description: None,
+            docs: None,
+            has_data: false,
+            direct_construction_available: false,
+        },
+    ];
+    static PRODUCER_TRANSITIONS: [LinkedTransitionDescriptor; 1] = [LinkedTransitionDescriptor {
+        method_name: "capture",
+        label: None,
+        description: None,
+        docs: None,
+        from: "Authorized",
+        to: &["Captured"],
+    }];
+    static PRODUCER_MACHINE: LinkedMachineGraph = LinkedMachineGraph {
+        machine: MachineDescriptor {
+            module_path: "crate::payment",
+            rust_type_path: "crate::payment::Machine",
+            role: statum::MachineRole::Protocol,
+        },
+        label: None,
+        description: None,
+        docs: None,
+        states: &PRODUCER_STATES,
+        transitions: LinkedTransitionInventory::new(producer_transitions),
+        static_links: &[],
+    };
+
+    static CONSUMER_STATES: [LinkedStateDescriptor; 2] = [
+        LinkedStateDescriptor {
+            rust_name: "Draft",
+            label: None,
+            description: None,
+            docs: None,
+            has_data: false,
+            direct_construction_available: false,
+        },
+        LinkedStateDescriptor {
+            rust_name: "Done",
+            label: None,
+            description: None,
+            docs: None,
+            has_data: false,
+            direct_construction_available: false,
+        },
+    ];
+    static CONSUMER_TRANSITIONS: [LinkedTransitionDescriptor; 1] = [LinkedTransitionDescriptor {
+        method_name: "finish",
+        label: None,
+        description: None,
+        docs: None,
+        from: "Draft",
+        to: &["Done"],
+    }];
+    static CONSUMER_MACHINE: LinkedMachineGraph = LinkedMachineGraph {
+        machine: MachineDescriptor {
+            module_path: "crate::audit",
+            rust_type_path: "crate::audit::Machine",
+            role: statum::MachineRole::Protocol,
+        },
+        label: None,
+        description: None,
+        docs: None,
+        states: &CONSUMER_STATES,
+        transitions: LinkedTransitionInventory::new(consumer_transitions),
+        static_links: &[],
+    };
+
+    static LINKED_MACHINES: [LinkedMachineGraph; 2] = [PRODUCER_MACHINE, CONSUMER_MACHINE];
+    static CONFLICTING_VIA_ROUTES: [LinkedViaRouteDescriptor; 2] = [
+        LinkedViaRouteDescriptor {
+            machine: MachineDescriptor {
+                module_path: "crate::payment",
+                rust_type_path: "crate::payment::Machine",
+                role: statum::MachineRole::Protocol,
+            },
+            via_module_path: "crate::payment::via",
+            route_name: "Capture",
+            resolved_route_type_name: capture_route_type_name,
+            route_id: 1,
+            transition: "capture",
+            source_state: "Authorized",
+            target_state: "Captured",
+        },
+        LinkedViaRouteDescriptor {
+            machine: MachineDescriptor {
+                module_path: "crate::payment",
+                rust_type_path: "crate::payment::Machine",
+                role: statum::MachineRole::Protocol,
+            },
+            via_module_path: "crate::receipts::via",
+            route_name: "Release",
+            resolved_route_type_name: capture_route_type_name,
+            route_id: 2,
+            transition: "capture",
+            source_state: "Authorized",
+            target_state: "Captured",
+        },
+    ];
+    static CONFLICTING_VIA_ROUTE_TARGETS: [LinkedViaRouteDescriptor; 2] = [
+        LinkedViaRouteDescriptor {
+            machine: MachineDescriptor {
+                module_path: "crate::payment",
+                rust_type_path: "crate::payment::Machine",
+                role: statum::MachineRole::Protocol,
+            },
+            via_module_path: "crate::payment::via",
+            route_name: "Capture",
+            resolved_route_type_name: capture_route_type_name,
+            route_id: 1,
+            transition: "capture",
+            source_state: "Authorized",
+            target_state: "Captured",
+        },
+        LinkedViaRouteDescriptor {
+            machine: MachineDescriptor {
+                module_path: "crate::payment",
+                rust_type_path: "crate::payment::Machine",
+                role: statum::MachineRole::Protocol,
+            },
+            via_module_path: "crate::payment::via",
+            route_name: "Capture",
+            resolved_route_type_name: capture_route_type_name,
+            route_id: 1,
+            transition: "capture",
+            source_state: "Authorized",
+            target_state: "Authorized",
+        },
+    ];
+
+    #[test]
+    fn conflicting_attested_route_identities_fail_closed() {
+        let err = CodebaseDoc::try_from_linked_with_inventories(
+            &LINKED_MACHINES,
+            &[],
+            &[],
+            &CONFLICTING_VIA_ROUTES,
+            &[],
+        )
+        .expect_err("conflicting route identities should fail closed");
+
+        assert_eq!(
+            err,
+            CodebaseDocError::DuplicateViaRoute {
+                via_module_path: "crate::receipts::via",
+                route_name: "Release",
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "linked attested route `crate::receipts::via::Release` appears more than once in the producer inventory"
+        );
+    }
+
+    #[test]
+    fn conflicting_attested_route_targets_fail_closed() {
+        let err = CodebaseDoc::try_from_linked_with_inventories(
+            &LINKED_MACHINES,
+            &[],
+            &[],
+            &CONFLICTING_VIA_ROUTE_TARGETS,
+            &[],
+        )
+        .expect_err("conflicting route targets should fail closed");
+
+        assert_eq!(
+            err,
+            CodebaseDocError::ConflictingViaRouteTarget {
+                via_module_path: "crate::payment::via",
+                route_name: "Capture",
+                expected_target_state: "Captured",
+                conflicting_target_state: "Authorized",
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "linked attested route `crate::payment::via::Capture` conflicts on target state: expected `Captured`, found `Authorized`"
+        );
+    }
+
+    #[test]
+    fn composition_semantics_require_cross_machine_direct_targets() {
+        assert_eq!(
+            classify_relation_semantic(
+                CodebaseMachineRole::Composition,
+                CodebaseRelationBasis::DirectTypeSyntax,
+                1,
+                2,
+                LinkedRelationTarget::DirectMachine {
+                    machine_path: &["crate", "task", "Machine"],
+                    resolved_machine_type_name: capture_route_type_name,
+                    state: "Running",
+                },
+            ),
+            CodebaseRelationSemantic::CompositionDirectChild
+        );
+        assert_eq!(
+            classify_relation_semantic(
+                CodebaseMachineRole::Composition,
+                CodebaseRelationBasis::DirectTypeSyntax,
+                1,
+                1,
+                LinkedRelationTarget::DirectMachine {
+                    machine_path: &["crate", "task", "Machine"],
+                    resolved_machine_type_name: capture_route_type_name,
+                    state: "Running",
+                },
+            ),
+            CodebaseRelationSemantic::Exact
+        );
+        assert_eq!(
+            classify_relation_semantic(
+                CodebaseMachineRole::Composition,
+                CodebaseRelationBasis::DeclaredReferenceType,
+                1,
+                2,
+                LinkedRelationTarget::DeclaredReferenceType {
+                    resolved_type_name: capture_route_type_name,
+                },
+            ),
+            CodebaseRelationSemantic::Exact
+        );
+        assert_eq!(
+            classify_relation_semantic(
+                CodebaseMachineRole::Composition,
+                CodebaseRelationBasis::AttestedTypeSyntax,
+                1,
+                2,
+                LinkedRelationTarget::AttestedProducerRoute {
+                    via_module_path: "crate::task::via",
+                    route_name: "Capture",
+                    resolved_route_type_name: capture_route_type_name,
+                    route_id: 1,
+                },
+            ),
+            CodebaseRelationSemantic::CompositionDetachedHandoff
+        );
+    }
+
+    #[test]
+    fn cached_relation_indices_follow_stable_export_order() {
+        let machines = vec![
+            CodebaseMachine {
+                index: 0,
+                module_path: "crate::producer",
+                rust_type_path: "crate::producer::Machine",
+                role: CodebaseMachineRole::Protocol,
+                label: None,
+                description: None,
+                docs: None,
+                states: vec![CodebaseState {
+                    index: 0,
+                    rust_name: "Idle",
+                    label: None,
+                    description: None,
+                    docs: None,
+                    has_data: false,
+                    direct_construction_available: false,
+                    is_graph_root: true,
+                }],
+                transitions: vec![CodebaseTransition {
+                    index: 0,
+                    method_name: "start",
+                    label: None,
+                    description: None,
+                    docs: None,
+                    from: 0,
+                    to: vec![0],
+                }],
+                validator_entries: Vec::new(),
+            },
+            CodebaseMachine {
+                index: 1,
+                module_path: "crate::consumer",
+                rust_type_path: "crate::consumer::Machine",
+                role: CodebaseMachineRole::Composition,
+                label: None,
+                description: None,
+                docs: None,
+                states: vec![CodebaseState {
+                    index: 0,
+                    rust_name: "Done",
+                    label: None,
+                    description: None,
+                    docs: None,
+                    has_data: false,
+                    direct_construction_available: false,
+                    is_graph_root: true,
+                }],
+                transitions: Vec::new(),
+                validator_entries: Vec::new(),
+            },
+        ];
+        let relations = vec![
+            CodebaseRelation {
+                index: 0,
+                kind: CodebaseRelationKind::TransitionParam,
+                basis: CodebaseRelationBasis::DirectTypeSyntax,
+                semantic: CodebaseRelationSemantic::CompositionDirectChild,
+                source: CodebaseRelationSource::TransitionParam {
+                    machine: 0,
+                    transition: 0,
+                    param_index: 0,
+                    param_name: None,
+                },
+                target_machine: 1,
+                target_state: 0,
+                declared_reference_type: None,
+                attested_via: None,
+            },
+            CodebaseRelation {
+                index: 1,
+                kind: CodebaseRelationKind::StatePayload,
+                basis: CodebaseRelationBasis::DirectTypeSyntax,
+                semantic: CodebaseRelationSemantic::Exact,
+                source: CodebaseRelationSource::StatePayload {
+                    machine: 0,
+                    state: 0,
+                    field_name: Some("child"),
+                },
+                target_machine: 1,
+                target_state: 0,
+                declared_reference_type: None,
+                attested_via: None,
+            },
+        ];
+
+        let index = CodebaseRelationIndex::new(&machines, &relations);
+        let groups = build_machine_relation_groups(&relations);
+
+        assert_eq!(index.outbound_machine(0), &[0, 1]);
+        assert_eq!(index.inbound_machine(1), &[0, 1]);
+        assert_eq!(groups[0].relation_indices, vec![0, 1]);
+    }
+
+    fn producer_transitions() -> &'static [LinkedTransitionDescriptor] {
+        &PRODUCER_TRANSITIONS
+    }
+
+    fn consumer_transitions() -> &'static [LinkedTransitionDescriptor] {
+        &CONSUMER_TRANSITIONS
+    }
+
+    fn capture_route_type_name() -> &'static str {
+        "crate::payment::machine::via::Capture"
+    }
 }

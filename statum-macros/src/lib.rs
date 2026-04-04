@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)]
+
 //! Proc-macro implementation crate for Statum.
 //!
 //! Most users should depend on [`statum`](https://docs.rs/statum), which
@@ -34,15 +36,17 @@ moddef::moddef!(
 );
 
 pub(crate) use presentation::{
-    PresentationAttr, PresentationTypesAttr, parse_present_attrs, parse_presentation_types_attr,
-    strip_present_attrs,
+    PresentationAttr, PresentationTypesAttr, parse_doc_attrs, parse_present_attrs,
+    parse_presentation_types_attr, strip_present_attrs,
 };
 pub(crate) use syntax::{
     ItemTarget, ModulePath, SourceFingerprint, crate_root_for_file, current_crate_root,
     extract_derives, source_file_fingerprint,
 };
 
-use macro_registry::callsite::{module_path_for_span, source_info_for_span_or_callsite};
+use macro_registry::callsite::{
+    best_effort_source_context_for_span_or_callsite, module_path_for_span,
+};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use syn::{Item, ItemImpl, parse_macro_input};
@@ -89,14 +93,18 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// alias `machine::State = machine::SomeState`, and helper items such as
 /// `machine::Fields` for heterogeneous batch rebuilds.
 #[proc_macro_attribute]
-pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn machine(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as Item);
     let input = match input {
         Item::Struct(item_struct) => item_struct,
         other => return invalid_machine_target_error(&other).into(),
     };
+    let role = match parse_machine_attr(attr) {
+        Ok(role) => role,
+        Err(err) => return err.to_compile_error().into(),
+    };
 
-    let machine_info = match MachineInfo::from_item_struct(&input) {
+    let machine_info = match MachineInfo::from_item_struct(&input, role) {
         Ok(info) => info,
         Err(err) => return err.to_compile_error().into(),
     };
@@ -134,10 +142,17 @@ pub fn machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `statum::Branch<Machine<Left>, Machine<Right>>`.
 #[proc_macro_attribute]
 pub fn transition(
-    _attr: proc_macro::TokenStream,
+    attr: proc_macro::TokenStream,
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     let input = parse_macro_input!(item as ItemImpl);
+    if !attr.is_empty() {
+        let message = "Error: `#[transition]` no longer accepts a machine argument.\nFix: write `#[transition]` on an inherent `impl Machine<State>` block and let Statum infer the machine from the impl target.";
+        return quote::quote_spanned! { input.impl_token.span =>
+            compile_error!(#message);
+        }
+        .into();
+    }
     let module_path = match resolved_current_module_path(input.impl_token.span, "#[transition]") {
         Ok(path) => path,
         Err(err) => return err,
@@ -174,14 +189,9 @@ pub fn transition(
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_impl = parse_macro_input!(item as ItemImpl);
     let span = item_impl.impl_token.span;
-    let line_number = source_info_for_span_or_callsite(span)
-        .map(|(_, line_number)| line_number)
-        .filter(|line_number| *line_number > 0)
-        .or_else(|| {
-            let raw_line_number = span.start().line;
-            (raw_line_number > 0).then_some(raw_line_number)
-        })
-        .unwrap_or_default();
+    let line_number = best_effort_source_context_for_span_or_callsite(span)
+        .line_number
+        .max(span.start().line);
     let module_path = match resolved_current_module_path(span, "#[validators]") {
         Ok(path) => path,
         Err(err) => return err,
@@ -195,11 +205,18 @@ pub fn __statum_emit_validator_methods_impl(input: TokenStream) -> TokenStream {
     validators::emit_validator_methods_impl(input)
 }
 
+#[allow(unexpected_cfgs)]
+pub(crate) fn is_rust_analyzer() -> bool {
+    cfg!(rust_analyzer) || std::env::var("RUST_ANALYZER_INTERNALS").is_ok()
+}
+
 pub(crate) fn resolved_current_module_path(
     span: Span,
     macro_name: &str,
 ) -> Result<String, TokenStream> {
-    let resolved = module_path_for_span(span);
+    let resolved = module_path_for_span(span)
+        .or_else(|| best_effort_source_context_for_span_or_callsite(span).module_path)
+        .or_else(|| Some("unknown".to_owned()));
 
     resolved.ok_or_else(|| {
         let message = format!(

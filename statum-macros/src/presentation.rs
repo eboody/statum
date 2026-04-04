@@ -1,5 +1,5 @@
 use quote::ToTokens;
-use syn::{Attribute, Expr, ExprLit, Lit, LitStr, Type};
+use syn::{Attribute, Expr, ExprLit, Lit, LitStr, Meta, Type};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PresentationAttr {
@@ -173,6 +173,34 @@ pub fn strip_present_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
         .collect()
 }
 
+pub fn parse_doc_attrs(attrs: &[Attribute]) -> syn::Result<Option<String>> {
+    let mut lines = Vec::new();
+
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("doc")) {
+        let Meta::NameValue(meta) = &attr.meta else {
+            continue;
+        };
+        let Expr::Lit(ExprLit {
+            lit: Lit::Str(lit), ..
+        }) = &meta.value
+        else {
+            continue;
+        };
+        lines.push(normalize_doc_attr_value(&lit.value()));
+    }
+
+    if lines.is_empty() {
+        return Ok(None);
+    }
+
+    let docs = lines.join("\n");
+    if docs.trim().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(docs))
+    }
+}
+
 fn expect_string_literal(
     expr: &Expr,
     ident: &syn::Ident,
@@ -220,4 +248,41 @@ fn parse_optional_type(value: Option<&str>) -> syn::Result<Option<Type>> {
     value
         .map(syn::parse_str::<Type>)
         .transpose()
+}
+
+fn normalize_doc_attr_value(value: &str) -> String {
+    value
+        .split('\n')
+        .map(|line| line.strip_prefix(' ').unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_doc_attrs;
+
+    #[test]
+    fn parse_doc_attrs_normalizes_and_preserves_blank_lines() {
+        let attrs = vec![
+            syn::parse_quote!(#[doc = " Summary line"]),
+            syn::parse_quote!(#[doc = ""]),
+            syn::parse_quote!(#[doc = " Details line"]),
+        ];
+
+        assert_eq!(
+            parse_doc_attrs(&attrs).expect("docs"),
+            Some("Summary line\n\nDetails line".to_owned())
+        );
+    }
+
+    #[test]
+    fn parse_doc_attrs_treats_whitespace_only_as_missing() {
+        let attrs = vec![
+            syn::parse_quote!(#[doc = " "]),
+            syn::parse_quote!(#[doc = "  "]),
+        ];
+
+        assert_eq!(parse_doc_attrs(&attrs).expect("docs"), None);
+    }
 }

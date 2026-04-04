@@ -32,7 +32,10 @@ aliases, and differently-qualified machine paths are rejected instead of
 approximated. Whole-item `#[cfg]` gates are supported, but nested `#[cfg]` or
 `#[cfg_attr]` on `#[state]` variants, variant payload fields, or `#[machine]`
 fields are rejected because they would otherwise drift the generated metadata
-from the active build.
+from the active build. Real cargo builds also fail closed if Statum can't
+recover enough source context to prove the `#[machine]` to `#[state]` link.
+Editor-only macro hosts such as rust-analyzer may temporarily show a partial
+surface until a real build runs.
 
 ## Static Graph Access
 
@@ -103,7 +106,8 @@ collects every linked compiled machine family and exports:
 - declared validator-entry surfaces from compiled `#[validators]` impls
 - direct-construction availability per state
 - exact relation records from state payloads, machine fields, transition
-  parameters, and nominal `#[machine_ref(...)]` declarations
+  parameters, `#[via(...)]` declarations, and nominal `#[machine_ref(...)]`
+  declarations
 
 That combined view is still static. It is not a whole-workspace source scan, it
 does not model runtime orchestration, and validator entries describe declared
@@ -117,12 +121,168 @@ macro layer. In v1, exact direct-type relations recurse only through canonical
 absolute carrier paths such as `::core::option::Option<...>` and
 `::core::result::Result<..., E>`, and direct machine targets must use explicit
 `crate::`, `self::`, `super::`, or absolute paths rather than imported aliases
-or bare prelude names. `#[machine_ref(...)]` is trait-backed and supports
+or bare prelude names. The linked codebase export resolves transition-parameter
+direct targets, `#[via(...)]` inner machine targets, and `#[machine_ref(...)]`
+declaration targets by compiler-resolved concrete machine type identity, then
+matches that back to the machine family path after stripping the state generic.
+State-payload and machine-field direct targets still rely on the canonical
+linked path surface instead of a separate type-identity helper, so those
+surfaces do not currently promote public machine re-exports into exact
+relations. `#[machine_ref(...)]`
+is trait-backed and supports
 nominal structs and tuple structs only; plain type aliases are rejected.
+Use it when a stable artifact or handoff type should count as an exact
+cross-machine reference without repeating that relationship at every field or
+method. Target the earliest stable producer state for that artifact rather
+than a later consumer state.
 Codebase graph renderers project direct-construction availability with a
 ` [build]` suffix on directly constructible states. They also derive
 cross-machine summary edges from exact `relations()` while leaving the JSON
 surface canonical and relation-level.
+
+## Attested Cross-Machine Composition
+
+Statum can also carry exact transition provenance across machine boundaries
+without changing the base transition surface.
+
+Direct single-target transitions get generated `*_and_attest()` companions that
+return `statum::Attested<Machine<NextState>, Via>`. The plain transition still
+returns the plain machine:
+
+```rust
+use statum::{machine, state, transition};
+
+#[state]
+enum PaymentState {
+    Authorized,
+    Captured,
+}
+
+#[machine]
+struct PaymentMachine<PaymentState> {}
+
+#[transition]
+impl PaymentMachine<Authorized> {
+    fn capture(self) -> PaymentMachine<Captured> {
+        self.transition()
+    }
+}
+
+#[state]
+enum FulfillmentState {
+    ReadyToShip,
+    Shipping,
+}
+
+#[machine]
+struct FulfillmentMachine<FulfillmentState> {}
+
+#[transition]
+impl FulfillmentMachine<ReadyToShip> {
+    fn start_shipping(
+        self,
+        #[via(crate::payment_machine::via::Capture)]
+        payment: crate::PaymentMachine<crate::Captured>,
+    ) -> FulfillmentMachine<Shipping> {
+        let _ = payment;
+        self.transition()
+    }
+}
+
+let captured = PaymentMachine::<Authorized>::builder()
+    .build()
+    .capture_and_attest();
+
+let shipping = FulfillmentMachine::<ReadyToShip>::builder()
+    .build()
+    .from_capture(captured)
+    .start_shipping();
+```
+
+Runnable version:
+[statum-examples/src/toy_demos/17-attested-composition.rs](../statum-examples/src/toy_demos/17-attested-composition.rs)
+
+If you want the top-level workspace story to come from typed orchestration
+instead of only these lower-level attested edges, pair that evidence with a
+composition machine:
+
+- [statum-examples/src/toy_demos/example_18_composition_machine.rs](../statum-examples/src/toy_demos/example_18_composition_machine.rs)
+- [docs/composition-migration.md](composition-migration.md)
+
+In that example:
+
+- `capture()` still means only “move to `Captured`”
+- `capture_and_attest()` means “move to `Captured` and carry exact provenance
+  that this happened via `capture`”
+- `#[via(...)]` declares that `start_shipping` accepts that exact attested
+  route
+- `.from_capture(...)` is generated from the `#[via(...)]` declaration and
+  forwards into the one authored `start_shipping(...)` method
+
+The same producer provenance now works when the consumer boundary is a detached
+artifact instead of the child machine value itself:
+
+```rust
+let receipt = PaymentMachine::<Authorized>::builder()
+    .build()
+    .capture_and_attest()
+    .map_inner(Receipt::from);
+
+let shipping = FulfillmentMachine::<ReadyToShip>::builder()
+    .build()
+    .from_capture(receipt)
+    .start_shipping();
+```
+
+If you also want the plain machine parameter to contribute a direct-type exact
+relation, write that machine parameter with an explicit `crate::`, `self::`,
+`super::`, or absolute path instead of a bare type name.
+
+The linked codebase surface exports those declarations as exact
+transition-parameter relations with producer machine, producer source state,
+producer transition, and target child state detail. That lets the inspector say
+not only “this transition takes `PaymentMachine<Captured>`,” but also “it can
+depend on `PaymentMachine<Authorized>::capture` specifically.”
+
+Composition machines can now carry that same detached provenance exactly
+through:
+
+- transition parameters declared with `#[via(...)]`
+- canonical raw `::statum::Attested<_, Route>` state payloads
+- canonical raw `::statum::Attested<_, Route>` machine fields
+
+For the raw attested wrapper path, the current exact scanner reads the real
+generated route marker type, such as
+`crate::payment_machine::machine::via::Route<{ ID }>`, not the ergonomic
+`#[via(...)]` shorthand path. The shorthand remains the intended consumer
+surface for transition parameters and generated binders.
+
+The machine graph is still just the machine's own states and transitions.
+`#[via(...)]` enriches the linked codebase relation graph and inspector detail;
+it does not create new machine states or infer a whole workflow/protocol-stage
+graph by itself.
+
+In v1, most callers should stay on the generated `*_and_attest()` and
+`.from_*()` surfaces rather than naming the raw `Via` marker type directly.
+
+The authority surface here is still explicit and fail-closed:
+
+- observation point: macro-expanded, cfg-pruned `#[transition]` signatures plus
+  explicit `#[via(...)]` declarations, canonical raw `::statum::Attested<_, Route>`
+  wrappers, and generated attested-route inventories
+- supported in v1: direct single-target producer transitions; at most one
+  `#[via(...)]` parameter per consumer transition; and canonical raw
+  `::statum::Attested<_, Route>` wrappers in state payloads, machine fields,
+  and transition parameters
+- attested producer routes join consumers by compiler-resolved route marker
+  type identity, so one route name can legally map to multiple compatible
+  producer transitions when those producers emit distinct route marker types
+- `CodebaseDoc::linked()` groups those compatible producers deterministically
+  and keeps unsupported duplicate producer records fail-closed
+- producer route identities that disagree on target state are rejected
+  fail-closed instead of being approximated
+- unsupported cases: contribute no exact attested relation or fail with a macro
+  diagnostic rather than exporting guessed provenance
 
 ## Transition Identity
 
@@ -193,9 +353,10 @@ Once you have both:
 you can render the chosen branch and the non-chosen legal branches from the
 same source of truth.
 
-## Presentation Metadata
+## Presentation Metadata And Source Docs
 
-Structural introspection is separate from human-facing metadata.
+Structural introspection is separate from human-facing metadata and longer-form
+source documentation.
 
 If a consumer crate wants labels, descriptions, or phases for rendering, it can
 add a typed `MachinePresentation` overlay keyed by the generated ids. That lets
@@ -210,6 +371,16 @@ For lighter-weight cases, Statum can also emit a generated
 - `#[presentation_types(machine = ..., state = ..., transition = ...)]` on the
   machine when you want typed `metadata = ...` payloads in the generated
   presentation surface
+
+Keep `#[present(description = ...)]` concise. It is the short UI copy surface.
+For fuller docs that should also appear in rustdoc, use outer rustdoc comments
+(`///`). In the linked codebase surface, Statum exports those rustdoc comments
+separately as `docs` on:
+
+- machines from outer docs on the `#[machine]` item
+- states from outer docs on `#[state]` variants
+- transitions from outer docs on `#[transition]` methods
+- validator-entry surfaces from outer docs on the `#[validators]` impl block
 
 Typed presentation metadata follows the same observation point as the graph:
 macro-expanded, cfg-pruned items and supported attribute shapes. If a category
@@ -227,8 +398,14 @@ Machine-local topology comes from the generated machine graph and transition
 inventory. Static cross-machine links come only from direct machine-like
 payload types written in state data. Resolution uses normalized path suffixes
 plus target state names and fails closed on ambiguity instead of guessing.
+The linked codebase JSON and `cargo statum-graph inspect` detail pane expose
+the separate `docs` field directly. The machine-local `ExportDoc` surface still
+joins labels and descriptions only; rustdoc stays in the codebase/inspector
+lane for now.
 
 ## Example
 
-Runnable example:
-[statum-examples/src/toy_demos/16-machine-introspection.rs](../statum-examples/src/toy_demos/16-machine-introspection.rs)
+Runnable examples:
+
+- [statum-examples/src/toy_demos/16-machine-introspection.rs](../statum-examples/src/toy_demos/16-machine-introspection.rs)
+- [statum-examples/src/toy_demos/17-attested-composition.rs](../statum-examples/src/toy_demos/17-attested-composition.rs)

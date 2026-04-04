@@ -1,20 +1,96 @@
 use macro_registry::callsite::{
-    current_source_info, module_path_for_span, source_info_for_span_or_callsite,
+    best_effort_source_context_for_span_or_callsite, current_source_info, module_path_for_span,
+    source_info_for_span_or_callsite,
 };
 use macro_registry::query;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
+use syn::parse::Parser;
 use syn::{Generics, Ident, ItemStruct, LitStr, Type, Visibility};
 
 use crate::{
     EnumInfo, LoadedStateLookupFailure, ModulePath, SourceFingerprint, StateModulePath,
     crate_root_for_file, extract_derives, format_loaded_state_candidates,
-    lookup_loaded_state_enum, lookup_loaded_state_enum_by_name, source_file_fingerprint,
-    parse_present_attrs, parse_presentation_types_attr, PresentationAttr, PresentationTypesAttr,
+    is_rust_analyzer, lookup_loaded_state_enum, lookup_loaded_state_enum_best_effort,
+    lookup_loaded_state_enum_by_name, parse_doc_attrs, parse_present_attrs,
+    parse_presentation_types_attr, source_file_fingerprint, PresentationAttr,
+    PresentationTypesAttr,
 };
 use super::extra_type_arguments_tokens;
 
 pub type MachinePath = ModulePath;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Default)]
+pub enum MachineRoleAttr {
+    #[default]
+    Protocol,
+    Composition,
+}
+
+impl MachineRoleAttr {
+    pub(crate) fn tokens(self) -> TokenStream {
+        match self {
+            Self::Protocol => quote! { statum::__private::MachineRole::Protocol },
+            Self::Composition => quote! { statum::__private::MachineRole::Composition },
+        }
+    }
+}
+
+pub(crate) fn parse_machine_attr_tokens(tokens: TokenStream) -> syn::Result<MachineRoleAttr> {
+    if tokens.is_empty() {
+        return Ok(MachineRoleAttr::Protocol);
+    }
+
+    let mut role = None;
+    let parser = syn::meta::parser(|meta| {
+        let path = meta.path.clone();
+        let Some(ident) = path.get_ident() else {
+            return Err(syn::Error::new_spanned(
+                &path,
+                "Error: `#[machine(...)]` keys must be simple identifiers like `role = composition`.",
+            ));
+        };
+
+        match ident.to_string().as_str() {
+            "role" => {
+                if role.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        ident,
+                        "Error: duplicate `role` in `#[machine(...)]`.",
+                    ));
+                }
+
+                let value = meta.value()?;
+                let role_ident: Ident = value.parse()?;
+                role = Some(match role_ident.to_string().as_str() {
+                    "protocol" => MachineRoleAttr::Protocol,
+                    "composition" => MachineRoleAttr::Composition,
+                    _ => {
+                        return Err(syn::Error::new_spanned(
+                            role_ident,
+                            "Error: unsupported `#[machine(role = ...)]` value.\nSupported values: `protocol`, `composition`.",
+                        ));
+                    }
+                });
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    ident,
+                    "Error: unknown `#[machine(...)]` key.\nSupported keys: `role`.",
+                ));
+            }
+        }
+
+        Ok(())
+    });
+
+    parser.parse2(tokens)?;
+    Ok(role.unwrap_or(MachineRoleAttr::Protocol))
+}
+
+pub fn parse_machine_attr(attr: proc_macro::TokenStream) -> syn::Result<MachineRoleAttr> {
+    parse_machine_attr_tokens(attr.into())
+}
 
 #[derive(Clone)]
 pub struct MachineInfo {
@@ -22,12 +98,14 @@ pub struct MachineInfo {
     pub vis: String,
     pub derives: Vec<String>,
     pub fields: Vec<MachineField>,
+    pub docs: Option<String>,
     pub presentation: Option<PresentationAttr>,
     pub presentation_types: Option<PresentationTypesAttr>,
     pub module_path: MachinePath,
     pub line_number: usize,
     pub generics: String,
     pub state_generic_name: Option<String>,
+    pub role: MachineRoleAttr,
     pub file_path: Option<String>,
     pub crate_root: Option<String>,
     pub file_fingerprint: Option<SourceFingerprint>,
@@ -68,39 +146,71 @@ impl MachineInfo {
     }
 
     pub fn get_matching_state_enum(&self) -> Result<EnumInfo, TokenStream> {
+        if self.module_path.as_ref() == "unknown" {
+            if is_rust_analyzer() {
+                let fallback = lookup_loaded_state_enum_best_effort(
+                    None,
+                    self.state_generic_name.as_deref(),
+                    self.file_path.as_deref(),
+                    self.crate_root.as_deref(),
+                );
+                return match fallback {
+                    Ok(state_enum) => Ok(state_enum),
+                    Err(_fallback_failure) => Err(TokenStream::new()),
+                };
+            }
+
+            return Err(unknown_module_path_error(self));
+        }
+
         let state_path: StateModulePath = self.module_path.clone();
         let state_enum = if let Some(expected_name) = self.state_generic_name.as_deref() {
             lookup_loaded_state_enum_by_name(&state_path, expected_name)
         } else {
             lookup_loaded_state_enum(&state_path)
         };
-        state_enum.map_err(|failure| missing_state_enum_error(self, failure))
+        match state_enum {
+            Ok(state_enum) => Ok(state_enum),
+            Err(failure) => {
+                if is_rust_analyzer() {
+                    let fallback = lookup_loaded_state_enum_best_effort(
+                        Some(&state_path),
+                        self.state_generic_name.as_deref(),
+                        self.file_path.as_deref(),
+                        self.crate_root.as_deref(),
+                    );
+                    return match fallback {
+                        Ok(state_enum) => Ok(state_enum),
+                        Err(_fallback_failure) => Err(TokenStream::new()),
+                    };
+                }
+
+                Err(missing_state_enum_error(self, failure))
+            }
+        }
     }
 
-    pub fn from_item_struct(item: &ItemStruct) -> syn::Result<Self> {
+    pub fn from_item_struct(item: &ItemStruct, role: MachineRoleAttr) -> syn::Result<Self> {
         let span = item.ident.span();
-        let Some((file_path, line_number)) = source_info_for_span_or_callsite(span) else {
-            return Err(syn::Error::new(
-                span,
-                format!(
-                    "Internal error: could not read source information for `#[machine]` struct `{}`.",
-                    item.ident
-                ),
-            ));
-        };
-        let Some(module_path) = module_path_for_span(span) else {
-            return Err(syn::Error::new(
-                span,
-                format!(
-                    "Internal error: could not resolve the module path for `#[machine]` struct `{}`.",
-                    item.ident
-                ),
-            ));
-        };
+        let source_info = source_info_for_span_or_callsite(span);
+        let exact_module_path = module_path_for_span(span);
+        let fallback_context = best_effort_source_context_for_span_or_callsite(span);
+        let file_path = source_info
+            .as_ref()
+            .map(|(file_path, _)| file_path.clone())
+            .or_else(|| fallback_context.file_path.clone());
+        let line_number = source_info
+            .map(|(_, line_number)| line_number)
+            .filter(|line_number| *line_number > 0)
+            .or_else(|| (fallback_context.line_number > 0).then_some(fallback_context.line_number))
+            .unwrap_or_default();
+        let module_path = exact_module_path
+            .or(fallback_context.module_path)
+            .unwrap_or_else(|| "unknown".to_owned());
         let module_path: MachinePath = module_path.into();
         let fields = collect_fields(item);
-        let crate_root = crate_root_for_file(&file_path);
-        let file_fingerprint = source_file_fingerprint(&file_path);
+        let crate_root = file_path.as_deref().and_then(crate_root_for_file);
+        let file_fingerprint = file_path.as_deref().and_then(source_file_fingerprint);
 
         Ok(Self {
             name: item.ident.to_string(),
@@ -111,6 +221,7 @@ impl MachineInfo {
                 .filter_map(extract_derives)
                 .flatten()
                 .collect(),
+            docs: parse_doc_attrs(&item.attrs)?,
             presentation: parse_present_attrs(&item.attrs)?,
             presentation_types: parse_presentation_types_attr(&item.attrs)?,
             module_path,
@@ -118,7 +229,8 @@ impl MachineInfo {
             fields,
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
-            file_path: Some(file_path),
+            role,
+            file_path,
             crate_root,
             file_fingerprint,
         })
@@ -144,6 +256,7 @@ impl MachineInfo {
                 .filter_map(extract_derives)
                 .flatten()
                 .collect(),
+            docs: parse_doc_attrs(&item.attrs).ok()?,
             presentation,
             presentation_types,
             fields: collect_fields(item),
@@ -151,6 +264,7 @@ impl MachineInfo {
             line_number,
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
+            role: MachineRoleAttr::Protocol,
             crate_root: file_path
                 .as_deref()
                 .and_then(crate_root_for_file),
@@ -191,10 +305,6 @@ pub(crate) struct ParsedMachineField {
     pub(crate) field_type: Type,
 }
 
-pub(super) fn is_rust_analyzer() -> bool {
-    std::env::var("RUST_ANALYZER_INTERNALS").is_ok()
-}
-
 pub(super) fn field_type_alias_name(machine_name: &str, field_name: &str) -> String {
     let field_name = field_name.trim_start_matches("r#");
     format!(
@@ -231,10 +341,26 @@ fn missing_state_enum_error(
     machine_info: &MachineInfo,
     failure: LoadedStateLookupFailure,
 ) -> TokenStream {
-    if is_rust_analyzer() {
-        return TokenStream::new();
-    }
+    let message = missing_state_enum_message(machine_info, failure, None);
+    let message = LitStr::new(&message, Span::call_site());
+    quote! { compile_error!(#message); }
+}
 
+fn unknown_module_path_error(machine_info: &MachineInfo) -> TokenStream {
+    let note = format!(
+        "Statum could not recover an exact module path for machine `{}` during macro expansion, so a real cargo build cannot prove which `#[state]` enum owns this machine safely enough to keep compiling.\nIf this only happens inside rust-analyzer, the editor build may stay partial until a real cargo build runs.",
+        machine_info.name,
+    );
+    let message = missing_state_enum_message(machine_info, LoadedStateLookupFailure::NotFound, Some(note.as_str()));
+    let message = LitStr::new(&message, Span::call_site());
+    quote! { compile_error!(#message); }
+}
+
+fn missing_state_enum_message(
+    machine_info: &MachineInfo,
+    failure: LoadedStateLookupFailure,
+    source_context_note: Option<&str>,
+) -> String {
     let expected = machine_info.state_generic_name.as_deref();
     let expected_line = expected
         .map(|name| format!("Expected a `#[state]` enum named `{name}` in module `{}`.", machine_info.module_path))
@@ -301,9 +427,13 @@ fn missing_state_enum_error(
             format_loaded_state_candidates(&candidates)
         ),
     };
-    let message = format!(
-        "Failed to resolve the #[state] enum for machine `{}`.\n{}\n{}\n{}{}\n{}\n{}\nHelp: make sure the machine's first generic names the right `#[state]` enum in this module and declare that `#[state]` enum before the machine.\nCorrect shape: `struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`.",
+    let source_context_note = source_context_note
+        .map(|note| format!("{note}\n"))
+        .unwrap_or_default();
+    format!(
+        "Failed to resolve the #[state] enum for machine `{}`.\n{}{}\n{}\n{}{}\n{}\n{}\nHelp: make sure the machine's first generic names the right `#[state]` enum in this module and declare that `#[state]` enum before the machine.\nCorrect shape: `struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`.",
         machine_info.name,
+        source_context_note,
         expected_line,
         authority_line,
         ordering_line,
@@ -312,10 +442,9 @@ fn missing_state_enum_error(
         available_line,
         machine_info.name,
         machine_info.module_path,
-    );
-    let message = LitStr::new(&message, Span::call_site());
-    quote! { compile_error!(#message); }
+    )
 }
+
 
 fn available_state_candidates_in_module(
     file_path: Option<&str>,
@@ -367,10 +496,11 @@ fn same_named_state_candidates_elsewhere(
 
 #[cfg(test)]
 mod tests {
-    use quote::ToTokens;
+    use proc_macro2::TokenStream;
+    use quote::{ToTokens, quote};
     use syn::parse_quote;
 
-    use super::{MachineInfo, MachinePath};
+    use super::{MachineInfo, MachinePath, MachineRoleAttr, parse_machine_attr_tokens};
 
     #[test]
     fn parse_round_trips_machine_shape() {
@@ -399,5 +529,17 @@ mod tests {
         );
         assert_eq!(parsed.fields[1].ident.to_string(), "priority");
         assert_eq!(parsed.fields[1].vis.to_token_stream().to_string(), "");
+    }
+
+    #[test]
+    fn parse_machine_attr_defaults_to_protocol() {
+        let role = parse_machine_attr_tokens(TokenStream::new()).expect("machine attr");
+        assert_eq!(role, MachineRoleAttr::Protocol);
+    }
+
+    #[test]
+    fn parse_machine_attr_accepts_composition_role() {
+        let role = parse_machine_attr_tokens(quote! { role = composition }).expect("machine attr");
+        assert_eq!(role, MachineRoleAttr::Composition);
     }
 }

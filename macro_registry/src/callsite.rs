@@ -1,6 +1,42 @@
-use module_path_extractor::{find_module_path, get_pseudo_module_path, get_source_info};
+use module_path_extractor::{
+    find_module_path, get_pseudo_module_path, get_source_info, module_path_from_file,
+};
 use proc_macro2::Span;
 use std::path::Path;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceContextQuality {
+    Complete,
+    Partial,
+    Missing,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceContext {
+    pub file_path: Option<String>,
+    pub line_number: usize,
+    pub module_path: Option<String>,
+}
+
+impl SourceContext {
+    pub fn quality(&self) -> SourceContextQuality {
+        if self.file_path.is_some() && self.line_number > 0 && self.module_path.is_some() {
+            SourceContextQuality::Complete
+        } else if self.file_path.is_some() || self.module_path.is_some() {
+            SourceContextQuality::Partial
+        } else {
+            SourceContextQuality::Missing
+        }
+    }
+}
+
+fn force_missing_source_info() -> bool {
+    std::env::var("STATUM_TEST_FORCE_MISSING_SOURCE_INFO").is_ok()
+}
+
+fn force_missing_module_path() -> bool {
+    std::env::var("STATUM_TEST_FORCE_MISSING_MODULE_PATH").is_ok()
+}
 
 fn normalize_file_path(file_path: &str) -> String {
     let path = Path::new(file_path);
@@ -20,13 +56,28 @@ fn source_file_exists(file_path: &str) -> bool {
 
 /// Returns `(file_path, line_number)` for the current macro call-site when available.
 pub fn current_source_info() -> Option<(String, usize)> {
+    if force_missing_source_info() {
+        return None;
+    }
     get_source_info()
         .map(|(file_path, line_number)| (normalize_file_path(&file_path), line_number))
         .filter(|(file_path, _)| source_file_exists(file_path))
 }
 
 /// Returns `(file_path, line_number)` for an explicit span when available.
+#[allow(unexpected_cfgs)]
+#[cfg(rust_analyzer)]
+pub fn source_info_for_span(_span: Span) -> Option<(String, usize)> {
+    None
+}
+
+/// Returns `(file_path, line_number)` for an explicit span when available.
+#[allow(unexpected_cfgs)]
+#[cfg(not(rust_analyzer))]
 pub fn source_info_for_span(span: Span) -> Option<(String, usize)> {
+    if force_missing_source_info() {
+        return None;
+    }
     let file_path = span
         .local_file()
         .map(|path| path.to_string_lossy().into_owned())
@@ -69,6 +120,9 @@ pub fn current_module_path_at_line(line_number: usize) -> Option<String> {
 /// Returns the best-effort module path for an explicit span or, if needed, the
 /// current macro call-site.
 pub fn module_path_for_span(span: Span) -> Option<String> {
+    if force_missing_module_path() {
+        return None;
+    }
     let (file_path, line_number) = source_info_for_span_or_callsite(span)?;
     if line_number == 0 {
         return None;
@@ -84,6 +138,75 @@ pub fn current_module_path() -> String {
 /// Resolves the module path for a specific source file and line number.
 pub fn module_path_for_line(file_path: &str, line_number: usize) -> Option<String> {
     find_module_path(file_path, line_number)
+}
+
+pub fn source_context_for_span_or_callsite(span: Span) -> SourceContext {
+    let source_info = source_info_for_span_or_callsite(span);
+    let module_path = if force_missing_module_path() {
+        None
+    } else {
+        source_info
+            .as_ref()
+            .and_then(|(file_path, line_number)| {
+                (*line_number > 0).then(|| module_path_for_line(file_path, *line_number))
+            })
+            .flatten()
+    };
+
+    SourceContext {
+        file_path: source_info.as_ref().map(|(file_path, _)| file_path.clone()),
+        line_number: source_info
+            .map(|(_, line_number)| line_number)
+            .unwrap_or_default(),
+        module_path,
+    }
+}
+
+pub fn best_effort_source_context_for_span_or_callsite(span: Span) -> SourceContext {
+    let strict = source_context_for_span_or_callsite(span);
+    if strict.quality() == SourceContextQuality::Complete {
+        return strict;
+    }
+
+    let current_source = current_source_info();
+    let file_path = strict.file_path.clone().or_else(|| {
+        current_source
+            .as_ref()
+            .map(|(file_path, _)| file_path.clone())
+    });
+    let line_number = if strict.line_number > 0 {
+        strict.line_number
+    } else {
+        current_source
+            .as_ref()
+            .map(|(_, line_number)| *line_number)
+            .unwrap_or_default()
+    };
+    let module_path = if force_missing_module_path() {
+        None
+    } else {
+        strict
+            .module_path
+            .clone()
+            .or_else(|| {
+                file_path.as_deref().and_then(|file_path| {
+                    if line_number > 0 {
+                        module_path_for_line(file_path, line_number)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .or_else(|| file_path.as_deref().map(module_path_from_file))
+            .or_else(current_module_path_opt)
+            .or_else(|| Some(get_pseudo_module_path()))
+    };
+
+    SourceContext {
+        file_path,
+        line_number,
+        module_path,
+    }
 }
 
 #[cfg(test)]

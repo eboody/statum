@@ -1,0 +1,12 @@
+error: Error: `#[transition]` no longer accepts a machine argument.
+       Fix: write `#[transition]` on an inherent `impl Machine<State>` block and let Statum infer the machine from the impl target.
+  --> tests/ui/invalid_transition_legacy_machine_arg.rs:24:1
+   |
+24 | impl Machine<Draft> {
+   | ^^^^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_transition_legacy_machine_arg.rs:28:2
+   |
+28 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_transition_legacy_machine_arg.rs`

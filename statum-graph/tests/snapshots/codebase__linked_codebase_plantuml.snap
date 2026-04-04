@@ -16,7 +16,7 @@ state "Task Machine" as m2 {
     state "Running [build]" as m2_s1
     state "Done [build]" as m2_s2
 }
-state "Workflow Machine" as m3 {
+state "Workflow Machine [composition]" as m3 {
     state "Draft [build]" as m3_s0
     state "In Progress [build]" as m3_s1
     state "Complete [build]" as m3_s2
@@ -32,7 +32,7 @@ m3_s0 --> m3_s1 : Start Workflow
 m3_s1 --> m3_s2 : finish
 
 m1 -[#2563EB,bold]-> m2 : exact refs: payload
-m3 -[#2563EB,bold]-> m2 : exact refs: payload, param
+m3 -[#2563EB,bold]-> m2 : composition refs: payload, param
 
 m1_s0 ..> m2_s2 : child
 m3_s1 ..> m2_s1 : state_data

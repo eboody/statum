@@ -56,3 +56,16 @@ error[E0433]: failed to resolve: use of unresolved module or unlinked crate `doe
    |
    = help: if you wanted to use a crate named `does_not_exist`, use `cargo add does_not_exist` to add it to your `Cargo.toml`
    = note: this error originates in the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: consider importing this module
+   |
+ 3 + use crate::machine::via;
+   |
+
+error[E0433]: failed to resolve: use of unresolved module or unlinked crate `does_not_exist`
+  --> tests/ui/invalid_transition_unknown_machine.rs:26:1
+   |
+26 | #[transition]
+   | ^^^^^^^^^^^^^ use of unresolved module or unlinked crate `does_not_exist`
+   |
+   = help: if you wanted to use a crate named `does_not_exist`, use `cargo add does_not_exist` to add it to your `Cargo.toml`
+   = note: this error originates in the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)

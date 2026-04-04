@@ -10,6 +10,12 @@ pub(crate) enum RelationTargetCandidate {
     DirectMachine {
         machine_path: Vec<String>,
         state_name: String,
+        ty: Box<Type>,
+    },
+    AttestedProducerRoute {
+        via_module_path: String,
+        route_name: String,
+        route_ty: Box<Type>,
     },
     DeclaredReferenceType {
         ty: Box<Type>,
@@ -83,6 +89,11 @@ fn collect_path_targets(
         return;
     }
 
+    if supported_attested_wrapper(&type_path.path) {
+        collect_attested_targets(&type_path.path, source_module_path, targets);
+        return;
+    }
+
     if let Some(wrapper) = supported_wrapper(&type_path.path) {
         collect_wrapper_targets(wrapper, &type_path.path, source_module_path, targets);
         return;
@@ -95,6 +106,7 @@ fn collect_path_targets(
             RelationTargetCandidate::DirectMachine {
                 machine_path: candidate.machine_path,
                 state_name: candidate.state_name,
+                ty: Box::new(Type::Path(type_path.clone())),
             },
         );
         return;
@@ -108,6 +120,25 @@ fn collect_path_targets(
             },
         );
     }
+}
+
+fn collect_attested_targets(
+    path: &syn::Path,
+    source_module_path: &str,
+    targets: &mut Vec<RelationTargetCandidate>,
+) {
+    let Some(segment) = path.segments.last() else {
+        return;
+    };
+    let Some((inner_ty, route_ty)) = extract_first_two_generic_type_refs(&segment.arguments) else {
+        return;
+    };
+
+    if let Some(route_candidate) = attested_route_candidate(route_ty, source_module_path) {
+        push_unique_target(targets, route_candidate);
+    }
+
+    collect_relation_targets_inner(inner_ty, source_module_path, targets);
 }
 
 fn collect_wrapper_targets(
@@ -150,12 +181,31 @@ fn same_target(left: &RelationTargetCandidate, right: &RelationTargetCandidate) 
             RelationTargetCandidate::DirectMachine {
                 machine_path: left_machine,
                 state_name: left_state,
+                ty: _,
             },
             RelationTargetCandidate::DirectMachine {
                 machine_path: right_machine,
                 state_name: right_state,
+                ty: _,
             },
         ) => left_machine == right_machine && left_state == right_state,
+        (
+            RelationTargetCandidate::AttestedProducerRoute {
+                via_module_path: left_module_path,
+                route_name: left_route_name,
+                route_ty: left_route_ty,
+            },
+            RelationTargetCandidate::AttestedProducerRoute {
+                via_module_path: right_module_path,
+                route_name: right_route_name,
+                route_ty: right_route_ty,
+            },
+        ) => {
+            left_module_path == right_module_path
+                && left_route_name == right_route_name
+                && left_route_ty.to_token_stream().to_string()
+                    == right_route_ty.to_token_stream().to_string()
+        }
         (
             RelationTargetCandidate::DeclaredReferenceType { ty: left_ty },
             RelationTargetCandidate::DeclaredReferenceType { ty: right_ty },
@@ -251,6 +301,32 @@ fn supported_wrapper(path: &syn::Path) -> Option<SupportedWrapper> {
     None
 }
 
+fn supported_attested_wrapper(path: &syn::Path) -> bool {
+    matches_absolute_type_path(path, &["statum", "Attested"])
+        || matches_absolute_type_path(path, &["statum_core", "Attested"])
+}
+
+fn attested_route_candidate(
+    route_ty: &Type,
+    source_module_path: &str,
+) -> Option<RelationTargetCandidate> {
+    let Type::Path(TypePath { qself: None, path }) = route_ty else {
+        return None;
+    };
+    let segments = exact_path_segments(path, source_module_path, true)?;
+    if segments.len() < 2 || segments[segments.len().saturating_sub(2)] != "via" {
+        return None;
+    }
+    let via_module_path = segments[..segments.len().saturating_sub(1)].join("::");
+    let route_name = segments.last()?.clone();
+
+    Some(RelationTargetCandidate::AttestedProducerRoute {
+        via_module_path,
+        route_name,
+        route_ty: Box::new(route_ty.clone()),
+    })
+}
+
 fn exact_machine_path(path: &syn::Path, source_module_path: &str) -> Option<Vec<String>> {
     exact_path_segments(path, source_module_path, true)
 }
@@ -295,7 +371,10 @@ fn exact_path_segments(
     let mut index = 0;
     match raw_segments.first()?.as_str() {
         "crate" => {
-            resolved.push(module_segments.first()?.clone());
+            let crate_root = module_segments.first()?.clone();
+            if raw_segments.get(1) != Some(&crate_root) {
+                resolved.push(crate_root);
+            }
             index = 1;
         }
         "self" => {
@@ -369,6 +448,21 @@ fn extract_generic_type_refs(arguments: &PathArguments) -> Option<Vec<&Type>> {
     (!types.is_empty()).then_some(types)
 }
 
+fn extract_first_two_generic_type_refs(arguments: &PathArguments) -> Option<(&Type, &Type)> {
+    let PathArguments::AngleBracketed(AngleBracketedGenericArguments { args, .. }) = arguments
+    else {
+        return None;
+    };
+
+    let mut types = args.iter().filter_map(|argument| match argument {
+        GenericArgument::Type(ty) => Some(ty),
+        _ => None,
+    });
+    let first = types.next()?;
+    let second = types.next()?;
+    Some((first, second))
+}
+
 #[cfg(test)]
 mod tests {
     use quote::quote;
@@ -392,6 +486,7 @@ mod tests {
             RelationTargetCandidate::DirectMachine {
                 machine_path,
                 state_name,
+                ty: _,
             } => {
                 assert_eq!(
                     machine_path,
@@ -489,10 +584,94 @@ mod tests {
     }
 
     #[test]
+    fn collects_attested_route_targets_through_canonical_attested_wrapper() {
+        let ty = parse_type(
+            "::statum::Attested<crate::artifact::Receipt, crate::payment::via::Capture>",
+        );
+        let targets = collect_relation_targets(&ty, "workspace::workflow");
+
+        let route = targets
+            .iter()
+            .find_map(|target| match target {
+                RelationTargetCandidate::AttestedProducerRoute {
+                    via_module_path,
+                    route_name,
+                    route_ty,
+                } => Some((via_module_path, route_name, route_ty)),
+                _ => None,
+            })
+            .expect("attested route target");
+        assert_eq!(route.0, "workspace::payment::via");
+        assert_eq!(route.1, "Capture");
+        let route_ty = route.2;
+        assert_eq!(
+            quote! { #route_ty }.to_string(),
+            "crate :: payment :: via :: Capture"
+        );
+    }
+
+    #[test]
+    fn attested_wrapper_also_keeps_inner_direct_machine_targets() {
+        let ty = parse_type(
+            "::statum::Attested<crate::task::Machine<crate::task::Running>, crate::audit::via::Capture>",
+        );
+        let targets = collect_relation_targets(&ty, "workspace::workflow");
+
+        assert_eq!(targets.len(), 2);
+        assert!(targets.iter().any(|target| matches!(
+            target,
+            RelationTargetCandidate::DirectMachine {
+                state_name,
+                ..
+            } if state_name == "Running"
+        )));
+        assert!(targets.iter().any(|target| matches!(
+            target,
+            RelationTargetCandidate::AttestedProducerRoute { route_name, .. } if route_name == "Capture"
+        )));
+    }
+
+    #[test]
+    fn rejects_noncanonical_same_name_attested_wrapper() {
+        let ty = parse_type(
+            "foo::Attested<crate::artifact::Receipt, crate::payment::via::Capture>",
+        );
+        let targets = collect_relation_targets(&ty, "workspace::workflow");
+
+        assert!(targets.is_empty());
+    }
+
+    #[test]
     fn rejects_unanchored_direct_machine_paths() {
         let ty = parse_type("task::Machine<task::Running>");
         let targets = collect_relation_targets(&ty, "workspace::workflow");
 
         assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn crate_qualified_paths_do_not_duplicate_root_like_first_module_segment() {
+        let ty = parse_type("crate::flows::result_intake::Flow<crate::flows::result_intake::WriteBackReady>");
+        let targets = collect_relation_targets(&ty, "flows::broker::machine");
+
+        assert_eq!(targets.len(), 1);
+        match &targets[0] {
+            RelationTargetCandidate::DirectMachine {
+                machine_path,
+                state_name,
+                ty: _,
+            } => {
+                assert_eq!(
+                    machine_path,
+                    &vec![
+                        "flows".to_string(),
+                        "result_intake".to_string(),
+                        "Flow".to_string()
+                    ]
+                );
+                assert_eq!(state_name, "WriteBackReady");
+            }
+            other => panic!("unexpected target: {:?}", core::mem::discriminant(other)),
+        }
     }
 }

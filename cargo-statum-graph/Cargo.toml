@@ -2,18 +2,21 @@
 cargo_metadata = "0.21"
 clap = { version = "4.5.39", features = ["derive"] }
 crossterm = "0.29"
+module_path_extractor = { path = "../module_path_extractor", version = "0.7.0" }
+proc-macro2 = { version = "1.0", features = ["span-locations"] }
+quote = "1.0"
 ratatui = "0.29"
-statum-graph = { path = "../statum-graph", version = "0.6.9" }
-tempfile = "3"
+statum = { path = "../statum", version = "0.7.0" }
+statum-graph = { path = "../statum-graph", version = "0.7.0" }
+syn = { version = "2.0", features = ["full", "visit"] }
 
 [dev-dependencies]
-statum = { workspace = true }
 tempfile = "3"
 
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]
 categories = ["development-tools", "command-line-utilities"]
-description = "Cargo subcommand for zero-touch Statum graph export"
+description = "Cargo subcommand for exact Statum workspace export and inspection"
 documentation = "https://docs.rs/cargo-statum-graph"
 edition = "2021"
 keywords = [
@@ -28,4 +31,4 @@ name = "cargo-statum-graph"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.6.9"
+version = "0.7.1"

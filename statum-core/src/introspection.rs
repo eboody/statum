@@ -361,6 +361,17 @@ pub fn linked_relations() -> &'static [LinkedRelationDescriptor] {
     &__STATUM_LINKED_RELATIONS
 }
 
+/// Linked attested transition routes visible to the current build.
+#[doc(hidden)]
+#[linkme::distributed_slice]
+pub static __STATUM_LINKED_VIA_ROUTES: [LinkedViaRouteDescriptor];
+
+/// Returns every linked attested transition route visible to the current
+/// build.
+pub fn linked_via_routes() -> &'static [LinkedViaRouteDescriptor] {
+    &__STATUM_LINKED_VIA_ROUTES
+}
+
 /// Linked reference-type declarations visible to the current build.
 #[doc(hidden)]
 #[linkme::distributed_slice]
@@ -447,6 +458,8 @@ pub struct LinkedMachineGraph {
     pub label: Option<&'static str>,
     /// Optional human-facing machine description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// All states known to the machine.
     pub states: &'static [LinkedStateDescriptor],
     /// All transition sites known to the machine.
@@ -485,6 +498,17 @@ impl LinkedMachineGraph {
     }
 }
 
+/// Whether one machine family is a local protocol machine or a higher-level
+/// composition machine.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MachineRole {
+    /// Ordinary local protocol machine.
+    Protocol,
+    /// Higher-level machine that composes other machines or exact handoff
+    /// evidence into one workspace flow.
+    Composition,
+}
+
 /// Rust-facing identity for a machine family.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MachineDescriptor {
@@ -492,6 +516,8 @@ pub struct MachineDescriptor {
     pub module_path: &'static str,
     /// Fully qualified Rust type path for the machine family.
     pub rust_type_path: &'static str,
+    /// Whether this machine is a protocol machine or a composition machine.
+    pub role: MachineRole,
 }
 
 /// Static descriptor for one generated state id.
@@ -514,6 +540,8 @@ pub struct LinkedStateDescriptor {
     pub label: Option<&'static str>,
     /// Optional human-facing state description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// Whether the state carries `state_data`.
     pub has_data: bool,
     /// Whether the machine exposes direct construction for this state.
@@ -542,6 +570,8 @@ pub struct LinkedTransitionDescriptor {
     pub label: Option<&'static str>,
     /// Optional human-facing transition description.
     pub description: Option<&'static str>,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// Exact source state for the transition site.
     pub from: &'static str,
     /// Exact legal target states for the transition site.
@@ -577,8 +607,13 @@ pub enum LinkedRelationKind {
 pub enum LinkedRelationBasis {
     /// The target was visible directly in the scanned type syntax.
     DirectTypeSyntax,
+    /// The target came from a canonical `statum::Attested<_, Route>` wrapper
+    /// visible directly in the scanned type syntax.
+    AttestedTypeSyntax,
     /// The scanned type resolved through one declared reference type.
     DeclaredReferenceType,
+    /// The target was declared explicitly through `#[via(...)]`.
+    ViaDeclaration,
 }
 
 /// Exact target written into one linked relation record.
@@ -588,6 +623,11 @@ pub enum LinkedRelationTarget {
     DirectMachine {
         /// Exact machine path segments resolved from the source type.
         machine_path: &'static [&'static str],
+        /// Compiler-resolved concrete machine type identity. The codebase
+        /// export strips the state generic and uses the remaining machine
+        /// family path as the exact join key, even when the source syntax
+        /// names a public re-export like `flows::task::Flow`.
+        resolved_machine_type_name: fn() -> &'static str,
         /// Target state marker name.
         state: &'static str,
     },
@@ -595,6 +635,46 @@ pub enum LinkedRelationTarget {
     DeclaredReferenceType {
         /// Compiler-resolved type identity getter for the named reference type.
         resolved_type_name: fn() -> &'static str,
+    },
+    /// One exact producer route carried through a canonical
+    /// `statum::Attested<_, Route>` wrapper or declared through `#[via(...)]`
+    /// without a direct machine target at the consumer site.
+    AttestedProducerRoute {
+        /// Machine module path that owns the attested route namespace.
+        via_module_path: &'static str,
+        /// Human-facing attested route name, such as `Capture`.
+        route_name: &'static str,
+        /// Compiler-resolved route marker type identity. This is the exact join
+        /// key across producer registrations and consumer declarations, even
+        /// when the consumer names a public re-export path.
+        resolved_route_type_name: fn() -> &'static str,
+        /// Stable route id used to join consumer declarations with producer
+        /// attested transition metadata.
+        route_id: u64,
+    },
+    /// An attested route declared through `#[via(...)]`.
+    AttestedRoute {
+        /// Machine module path that owns the attested route namespace.
+        via_module_path: &'static str,
+        /// Human-facing attested route name, such as `Capture`.
+        route_name: &'static str,
+        /// Compiler-resolved route marker type identity. This is the exact
+        /// join key across producer registrations and consumer declarations,
+        /// even when the consumer names a public re-export path.
+        resolved_route_type_name: fn() -> &'static str,
+        /// Stable route id used to join consumer declarations with producer
+        /// attested transition metadata.
+        route_id: u64,
+        /// Exact target machine path segments carried by the attested inner
+        /// machine type.
+        machine_path: &'static [&'static str],
+        /// Compiler-resolved concrete target machine type identity for the
+        /// attested inner machine. The codebase export strips the state
+        /// generic and uses the remaining machine family path as the exact
+        /// join key.
+        resolved_machine_type_name: fn() -> &'static str,
+        /// Target state marker name carried by the attested inner machine type.
+        state: &'static str,
     },
 }
 
@@ -604,13 +684,19 @@ impl PartialEq for LinkedRelationTarget {
             (
                 Self::DirectMachine {
                     machine_path: left_machine_path,
+                    resolved_machine_type_name: left_type_name,
                     state: left_state,
                 },
                 Self::DirectMachine {
                     machine_path: right_machine_path,
+                    resolved_machine_type_name: right_type_name,
                     state: right_state,
                 },
-            ) => left_machine_path == right_machine_path && left_state == right_state,
+            ) => {
+                left_machine_path == right_machine_path
+                    && left_type_name() == right_type_name()
+                    && left_state == right_state
+            }
             (
                 Self::DeclaredReferenceType {
                     resolved_type_name: left_name,
@@ -619,6 +705,53 @@ impl PartialEq for LinkedRelationTarget {
                     resolved_type_name: right_name,
                 },
             ) => left_name() == right_name(),
+            (
+                Self::AttestedProducerRoute {
+                    via_module_path: left_module_path,
+                    route_name: left_route_name,
+                    resolved_route_type_name: left_type_name,
+                    route_id: left_route_id,
+                },
+                Self::AttestedProducerRoute {
+                    via_module_path: right_module_path,
+                    route_name: right_route_name,
+                    resolved_route_type_name: right_type_name,
+                    route_id: right_route_id,
+                },
+            ) => {
+                left_module_path == right_module_path
+                    && left_route_name == right_route_name
+                    && left_type_name() == right_type_name()
+                    && left_route_id == right_route_id
+            }
+            (
+                Self::AttestedRoute {
+                    via_module_path: left_module_path,
+                    route_name: left_route_name,
+                    resolved_route_type_name: left_type_name,
+                    route_id: left_route_id,
+                    machine_path: left_machine_path,
+                    resolved_machine_type_name: left_machine_type_name,
+                    state: left_state,
+                },
+                Self::AttestedRoute {
+                    via_module_path: right_module_path,
+                    route_name: right_route_name,
+                    resolved_route_type_name: right_type_name,
+                    route_id: right_route_id,
+                    machine_path: right_machine_path,
+                    resolved_machine_type_name: right_machine_type_name,
+                    state: right_state,
+                },
+            ) => {
+                left_module_path == right_module_path
+                    && left_route_name == right_route_name
+                    && left_type_name() == right_type_name()
+                    && left_route_id == right_route_id
+                    && left_machine_path == right_machine_path
+                    && left_machine_type_name() == right_machine_type_name()
+                    && left_state == right_state
+            }
             _ => false,
         }
     }
@@ -671,6 +804,43 @@ pub struct LinkedRelationDescriptor {
     pub target: LinkedRelationTarget,
 }
 
+/// One producer transition that can generate an attested route value.
+#[derive(Clone, Copy, Debug)]
+pub struct LinkedViaRouteDescriptor {
+    /// Rust-facing identity of the producer machine family.
+    pub machine: MachineDescriptor,
+    /// Machine-module path that owns the generated `machine::via` namespace.
+    pub via_module_path: &'static str,
+    /// Human-facing route name, such as `Capture`.
+    pub route_name: &'static str,
+    /// Compiler-resolved route marker type identity used to join producer
+    /// inventories with consumer `#[via(...)]` declarations.
+    pub resolved_route_type_name: fn() -> &'static str,
+    /// Stable route id shared with `LinkedRelationTarget::AttestedRoute`.
+    pub route_id: u64,
+    /// Rust transition method name on the producer machine.
+    pub transition: &'static str,
+    /// Exact producer source state.
+    pub source_state: &'static str,
+    /// Exact producer target state.
+    pub target_state: &'static str,
+}
+
+impl PartialEq for LinkedViaRouteDescriptor {
+    fn eq(&self, other: &Self) -> bool {
+        self.machine == other.machine
+            && self.via_module_path == other.via_module_path
+            && self.route_name == other.route_name
+            && (self.resolved_route_type_name)() == (other.resolved_route_type_name)()
+            && self.route_id == other.route_id
+            && self.transition == other.transition
+            && self.source_state == other.source_state
+            && self.target_state == other.target_state
+    }
+}
+
+impl Eq for LinkedViaRouteDescriptor {}
+
 /// One declared reference type carried by the linked build inventory.
 #[derive(Clone, Copy, Debug)]
 pub struct LinkedReferenceTypeDescriptor {
@@ -680,6 +850,9 @@ pub struct LinkedReferenceTypeDescriptor {
     pub resolved_type_name: fn() -> &'static str,
     /// Exact machine path segments resolved from the declaration target.
     pub to_machine_path: &'static [&'static str],
+    /// Compiler-resolved concrete machine type identity for the declared
+    /// target machine.
+    pub resolved_target_machine_type_name: fn() -> &'static str,
     /// Target state marker name written in the declaration.
     pub to_state: &'static str,
 }
@@ -689,6 +862,8 @@ impl PartialEq for LinkedReferenceTypeDescriptor {
         self.rust_type_path == other.rust_type_path
             && (self.resolved_type_name)() == (other.resolved_type_name)()
             && self.to_machine_path == other.to_machine_path
+            && (self.resolved_target_machine_type_name)()
+                == (other.resolved_target_machine_type_name)()
             && self.to_state == other.to_state
     }
 }
@@ -696,7 +871,7 @@ impl PartialEq for LinkedReferenceTypeDescriptor {
 impl Eq for LinkedReferenceTypeDescriptor {}
 
 /// One declared validator-entry surface carried by the linked build inventory.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct LinkedValidatorEntryDescriptor {
     /// Rust-facing identity of the rebuilt machine family.
     pub machine: MachineDescriptor,
@@ -704,16 +879,33 @@ pub struct LinkedValidatorEntryDescriptor {
     pub source_module_path: &'static str,
     /// Human-facing source syntax for the persisted impl self type as written.
     pub source_type_display: &'static str,
+    /// Compiler-resolved source type identity for this validator impl.
+    pub resolved_source_type_name: fn() -> &'static str,
+    /// Optional longer-form source documentation from outer rustdoc comments.
+    pub docs: Option<&'static str>,
     /// State marker names this `#[validators]` impl can rebuild when it matches.
     pub target_states: &'static [&'static str],
 }
+
+impl PartialEq for LinkedValidatorEntryDescriptor {
+    fn eq(&self, other: &Self) -> bool {
+        self.machine == other.machine
+            && self.source_module_path == other.source_module_path
+            && self.source_type_display == other.source_type_display
+            && (self.resolved_source_type_name)() == (other.resolved_source_type_name)()
+            && self.docs == other.docs
+            && self.target_states == other.target_states
+    }
+}
+
+impl Eq for LinkedValidatorEntryDescriptor {}
 
 #[cfg(test)]
 mod tests {
     use super::{
         LinkedMachineGraph, LinkedStateDescriptor, LinkedTransitionDescriptor,
         LinkedTransitionInventory, LinkedValidatorEntryDescriptor, MachineDescriptor, MachineGraph,
-        MachineIntrospection, MachinePresentation, MachinePresentationDescriptor,
+        MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineRole,
         MachineStateIdentity, MachineTransitionRecorder, RecordedTransition, StateDescriptor,
         StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
         TransitionPresentation, TransitionPresentationInventory,
@@ -903,6 +1095,7 @@ mod tests {
             machine: MachineDescriptor {
                 module_path: "workflow",
                 rust_type_path: "workflow::Machine",
+                role: MachineRole::Protocol,
             },
             states: &STATES,
             transitions: TransitionInventory::new(|| &TRANSITIONS),
@@ -927,6 +1120,7 @@ mod tests {
             machine: MachineDescriptor {
                 module_path: "workflow",
                 rust_type_path: "workflow::Machine",
+                role: MachineRole::Protocol,
             },
             states: &STATES,
             transitions: TransitionInventory::new(|| &TRANSITIONS),
@@ -969,6 +1163,7 @@ mod tests {
                 MachineDescriptor {
                     module_path: "workflow",
                     rust_type_path: "workflow::Machine",
+                    role: MachineRole::Protocol,
                 },
                 StateId::Draft,
                 SUBMIT_FROM_DRAFT,
@@ -1054,6 +1249,7 @@ mod tests {
             method_name: "submit",
             label: Some("Submit"),
             description: None,
+            docs: Some("Submits the draft for review."),
             from: "Draft",
             to: &["Review"],
         }];
@@ -1067,6 +1263,7 @@ mod tests {
                 rust_name: "Draft",
                 label: None,
                 description: None,
+                docs: Some("Initial draft state."),
                 has_data: false,
                 direct_construction_available: true,
             },
@@ -1074,6 +1271,7 @@ mod tests {
                 rust_name: "Review",
                 label: Some("Review"),
                 description: None,
+                docs: Some("Review state with payload."),
                 has_data: true,
                 direct_construction_available: true,
             },
@@ -1089,18 +1287,29 @@ mod tests {
             machine: MachineDescriptor {
                 module_path: "workflow",
                 rust_type_path: "workflow::Machine",
+                role: MachineRole::Protocol,
             },
             label: Some("Workflow"),
             description: None,
+            docs: Some("Workflow machine docs."),
             states: &STATES,
             transitions: LinkedTransitionInventory::new(linked_transitions),
             static_links: &LINKS,
         };
 
         assert_eq!(linked.state("Review"), Some(&STATES[1]));
+        assert_eq!(linked.docs, Some("Workflow machine docs."));
+        assert_eq!(
+            linked.state("Draft").and_then(|state| state.docs),
+            Some("Initial draft state.")
+        );
         assert_eq!(
             linked.transition_from_method("Draft", "submit"),
             Some(&linked_transitions()[0])
+        );
+        assert_eq!(
+            linked_transitions()[0].docs,
+            Some("Submits the draft for review.")
         );
         assert_eq!(linked.transitions_from("Draft").count(), 1);
         assert_eq!(linked.static_links, &LINKS);
@@ -1108,19 +1317,31 @@ mod tests {
 
     #[test]
     fn linked_validator_entry_descriptor_exposes_declared_surface() {
+        fn db_row_type_name() -> &'static str {
+            "workflow::rows::DbRow"
+        }
+
         static ENTRY: LinkedValidatorEntryDescriptor = LinkedValidatorEntryDescriptor {
             machine: MachineDescriptor {
                 module_path: "workflow",
                 rust_type_path: "workflow::Machine",
+                role: MachineRole::Protocol,
             },
             source_module_path: "workflow::rows",
             source_type_display: "DbRow",
+            resolved_source_type_name: db_row_type_name,
+            docs: Some("Rebuilds workflow machines from database rows."),
             target_states: &["Draft", "Review"],
         };
 
         assert_eq!(ENTRY.machine.rust_type_path, "workflow::Machine");
         assert_eq!(ENTRY.source_module_path, "workflow::rows");
         assert_eq!(ENTRY.source_type_display, "DbRow");
+        assert_eq!((ENTRY.resolved_source_type_name)(), "workflow::rows::DbRow");
+        assert_eq!(
+            ENTRY.docs,
+            Some("Rebuilds workflow machines from database rows.")
+        );
         assert_eq!(ENTRY.target_states, &["Draft", "Review"]);
     }
 }

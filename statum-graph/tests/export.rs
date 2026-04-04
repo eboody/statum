@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use statum::{
     MachineDescriptor, MachineGraph, MachinePresentation, MachinePresentationDescriptor,
-    StateDescriptor, StatePresentation, TransitionDescriptor, TransitionInventory,
+    MachineRole, StateDescriptor, StatePresentation, TransitionDescriptor, TransitionInventory,
     TransitionPresentation, TransitionPresentationInventory,
 };
 use statum_graph::{render, ExportDocError, MachineDoc, MachineDocError};
@@ -327,6 +327,46 @@ fn mermaid_renders_one_edge_per_legal_target() {
 }
 
 #[test]
+fn mermaid_state_renders_roots_transitions_and_sinks() {
+    let doc = MachineDoc::from_machine::<branching::Flow<branching::Draft>>();
+    let mermaid = render::mermaid_state(&doc);
+
+    assert!(mermaid.contains("stateDiagram-v2"));
+    assert!(mermaid.contains("state \"Draft\" as s0"));
+    assert!(mermaid.contains("[*] --> s0"));
+    assert!(mermaid.contains("s1 --> s2 : maybe_decide"));
+    assert!(mermaid.contains("s1 --> s3 : maybe_decide"));
+    assert!(mermaid.contains("s4 --> [*]"));
+}
+
+#[test]
+fn mermaid_state_supports_multiple_roots_and_zero_roots() {
+    let multi_root = MachineDoc::from_machine::<multi_root::Flow<multi_root::First>>();
+    let multi_root_mermaid = render::mermaid_state(&multi_root);
+    assert_eq!(multi_root_mermaid.matches("[*] -->").count(), 2);
+    assert!(multi_root_mermaid.contains("s2 --> [*]"));
+
+    let no_root = MachineDoc::from_machine::<no_root::Flow<no_root::Draft>>();
+    let no_root_mermaid = render::mermaid_state(&no_root);
+    assert_eq!(no_root_mermaid.matches("[*] -->").count(), 0);
+    assert_eq!(no_root_mermaid.matches("--> [*]").count(), 0);
+}
+
+#[test]
+fn mermaid_state_uses_presented_labels() {
+    let doc = MachineDoc::from_machine::<presented::Flow<presented::Queued>>();
+    let export = doc
+        .export_with_presentation(&presented::flow::PRESENTATION)
+        .expect("generated presentation should join cleanly");
+
+    let mermaid = render::mermaid_state(&export);
+    assert!(mermaid.contains("state \"Queued\" as s0"));
+    assert!(mermaid.contains("state \"Running\" as s1"));
+    assert!(mermaid.contains("s0 --> s1 : Start"));
+    assert!(mermaid.contains("s2 --> [*]"));
+}
+
+#[test]
 fn export_doc_joins_generated_presentation_labels_and_descriptions() {
     let doc = MachineDoc::from_machine::<presented::Flow<presented::Queued>>();
     let export = doc
@@ -638,6 +678,7 @@ static INVALID_SOURCE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> =
     machine: MachineDescriptor {
         module_path: "tests::invalid_source",
         rust_type_path: "tests::invalid_source::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(invalid_source_transitions),
@@ -647,6 +688,7 @@ static INVALID_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> =
     machine: MachineDescriptor {
         module_path: "tests::invalid_target",
         rust_type_path: "tests::invalid_target::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(invalid_target_transitions),
@@ -656,6 +698,7 @@ static DUPLICATE_STATE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> 
     machine: MachineDescriptor {
         module_path: "tests::duplicate_state",
         rust_type_path: "tests::duplicate_state::Flow",
+        role: MachineRole::Protocol,
     },
     states: &DUPLICATE_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(invalid_target_transitions),
@@ -665,6 +708,7 @@ static PIPE_LABEL_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = Mac
     machine: MachineDescriptor {
         module_path: "tests::pipe_label",
         rust_type_path: "tests::pipe_label::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(pipe_label_transitions),
@@ -675,6 +719,7 @@ static DUPLICATE_TRANSITION_ID_GRAPH: MachineGraph<InvalidStateId, InvalidTransi
         machine: MachineDescriptor {
             module_path: "tests::duplicate_transition_id",
             rust_type_path: "tests::duplicate_transition_id::Flow",
+            role: MachineRole::Protocol,
         },
         states: &VALID_STATE_DESCRIPTORS,
         transitions: TransitionInventory::new(duplicate_transition_id_transitions),
@@ -684,6 +729,7 @@ static DUPLICATE_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId>
     machine: MachineDescriptor {
         module_path: "tests::duplicate_target",
         rust_type_path: "tests::duplicate_target::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(duplicate_target_transitions),
@@ -694,6 +740,7 @@ static DUPLICATE_TRANSITION_SITE_GRAPH: MachineGraph<InvalidStateId, InvalidTran
         machine: MachineDescriptor {
             module_path: "tests::duplicate_transition_site",
             rust_type_path: "tests::duplicate_transition_site::Flow",
+            role: MachineRole::Protocol,
         },
         states: &VALID_STATE_DESCRIPTORS,
         transitions: TransitionInventory::new(duplicate_transition_site_transitions),
@@ -741,6 +788,7 @@ static FLAKY_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineG
     machine: MachineDescriptor {
         module_path: "tests::flaky_inventory",
         rust_type_path: "tests::flaky_inventory::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(flaky_transitions),
@@ -750,6 +798,7 @@ static EMPTY_STATE_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = Ma
     machine: MachineDescriptor {
         module_path: "tests::empty_state_list",
         rust_type_path: "tests::empty_state_list::Flow",
+        role: MachineRole::Protocol,
     },
     states: &EMPTY_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(|| &EMPTY_TRANSITIONS),
@@ -759,6 +808,7 @@ static EMPTY_TARGET_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = M
     machine: MachineDescriptor {
         module_path: "tests::empty_target_set",
         rust_type_path: "tests::empty_target_set::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(empty_target_transitions),
@@ -768,6 +818,7 @@ static VALID_GRAPH: MachineGraph<InvalidStateId, InvalidTransitionId> = MachineG
     machine: MachineDescriptor {
         module_path: "tests::valid_presentation",
         rust_type_path: "tests::valid_presentation::Flow",
+        role: MachineRole::Protocol,
     },
     states: &VALID_STATE_DESCRIPTORS,
     transitions: TransitionInventory::new(valid_transitions),

@@ -2090,6 +2090,11 @@ fn generate_machine_state_surface(
             #[allow(unused_imports)]
             use super::*;
 
+            pub mod via {
+                #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+                pub struct Route<const ID: u64>;
+            }
+
             pub struct Fields #extra_machine_generics {
                 #(#fields_struct_fields),*
             }
@@ -2121,8 +2126,16 @@ fn generate_machine_module_introspection(
     item: &ItemStruct,
 ) -> Result<TokenStream, TokenStream> {
     let presentation_types = resolve_presentation_types(machine_info)?;
-    let linked_state_entries = linked_state_entries(machine_info)?;
-    let static_machine_link_entries = static_machine_link_entries(machine_info)?;
+    let linked_state_entries = match linked_state_entries(machine_info) {
+        Ok(entries) => entries,
+        Err(err) if err.is_empty() => Vec::new(),
+        Err(err) => return Err(err),
+    };
+    let static_machine_link_entries = match static_machine_link_entries(machine_info) {
+        Ok(entries) => entries,
+        Err(err) if err.is_empty() => Vec::new(),
+        Err(err) => return Err(err),
+    };
     let state_presentation_entry_macro_ident =
         machine_state_presentation_entry_macro_ident(machine_info);
     let transition_slice_ident = transition_slice_ident(
@@ -2158,10 +2171,16 @@ fn generate_machine_module_introspection(
             .as_ref()
             .and_then(|value| value.description.as_deref()),
     );
+    let machine_docs = optional_lit_str_tokens(machine_info.docs.as_deref());
     let machine_meta_ty = presentation_type_tokens(presentation_types.machine.as_ref());
     let state_meta_ty = presentation_type_tokens(presentation_types.state.as_ref());
     let transition_meta_ty = presentation_type_tokens(presentation_types.transition.as_ref());
-    let linked_relation_registrations = linked_relation_registrations(machine_info, item)?;
+    let linked_relation_registrations = match linked_relation_registrations(machine_info, item) {
+        Ok(registrations) => registrations,
+        Err(err) if err.is_empty() => Vec::new(),
+        Err(err) => return Err(err),
+    };
+    let machine_role = machine_info.role.tokens();
 
     Ok(quote! {
         #[allow(clippy::enum_variant_names)]
@@ -2266,6 +2285,9 @@ fn generate_machine_module_introspection(
         pub use self::#linked_transition_slice_ident as __STATUM_LINKED_TRANSITIONS;
 
         #[doc(hidden)]
+        pub const MACHINE_ROLE: statum::__private::MachineRole = #machine_role;
+
+        #[doc(hidden)]
         pub type __StatumTransitionPresentationMetadata = #transition_meta_ty;
 
         fn __statum_transitions() -> &'static [statum::TransitionDescriptor<StateId, TransitionId>] {
@@ -2276,6 +2298,7 @@ fn generate_machine_module_introspection(
             machine: statum::MachineDescriptor {
                 module_path: #module_path,
                 rust_type_path: #rust_type_path,
+                role: #machine_role,
             },
             states: __STATUM_STATES,
             transitions: statum::TransitionInventory::new(__statum_transitions),
@@ -2312,9 +2335,11 @@ fn generate_machine_module_introspection(
                 machine: statum::MachineDescriptor {
                     module_path: #module_path,
                     rust_type_path: #rust_type_path,
+                    role: #machine_role,
                 },
                 label: #machine_presentation_label,
                 description: #machine_presentation_description,
+                docs: #machine_docs,
                 states: __STATUM_LINKED_STATES,
                 transitions: statum::__private::LinkedTransitionInventory::new(__statum_linked_transitions),
                 static_links: __STATUM_STATIC_MACHINE_LINKS,
@@ -2343,6 +2368,7 @@ fn linked_state_entries(machine_info: &MachineInfo) -> Result<Vec<TokenStream>, 
                     .as_ref()
                     .and_then(|value| value.description.as_deref()),
             );
+            let docs = optional_lit_str_tokens(variant.docs.as_deref());
             let has_data = !matches!(variant.shape, crate::state::VariantShape::Unit);
 
             Ok(quote! {
@@ -2350,6 +2376,7 @@ fn linked_state_entries(machine_info: &MachineInfo) -> Result<Vec<TokenStream>, 
                     rust_name: #rust_name,
                     label: #label,
                     description: #description,
+                    docs: #docs,
                     has_data: #has_data,
                     direct_construction_available: true,
                 }
@@ -2481,7 +2508,18 @@ fn relation_registrations_for_targets(
                 RelationTargetCandidate::DirectMachine {
                     machine_path,
                     state_name,
+                    ty: _,
                 } => {
+                    let helper_machine_path = machine_path.join("::");
+                    let helper_machine_path_lit =
+                        LitStr::new(&helper_machine_path, Span::call_site());
+                    let helper_ident = format_ident!(
+                        "__statum_relation_machine_type_name_{:016x}",
+                        stable_hash(&format!(
+                            "{key_prefix}::{index}::{}",
+                            helper_machine_path
+                        ))
+                    );
                     let machine_path = machine_path.iter().map(|segment| {
                         let segment = LitStr::new(segment, Span::call_site());
                         quote! { #segment }
@@ -2492,10 +2530,50 @@ fn relation_registrations_for_targets(
                         quote! {
                             statum::__private::LinkedRelationTarget::DirectMachine {
                                 machine_path: &[#(#machine_path),*],
+                                resolved_machine_type_name: #helper_ident,
                                 state: #state_name,
                             }
                         },
-                        quote! {},
+                        quote! {
+                            #[doc(hidden)]
+                            fn #helper_ident() -> &'static str {
+                                #helper_machine_path_lit
+                            }
+                        },
+                    )
+                }
+                RelationTargetCandidate::AttestedProducerRoute {
+                    via_module_path,
+                    route_name,
+                    route_ty,
+                } => {
+                    let route_ty_tokens = route_ty.to_token_stream().to_string();
+                    let helper_ident = format_ident!(
+                        "__statum_relation_attested_route_type_name_{:016x}",
+                        stable_hash(&format!(
+                            "{key_prefix}::{index}::{}",
+                            route_ty_tokens
+                        ))
+                    );
+                    let via_module_path = LitStr::new(&via_module_path, Span::call_site());
+                    let route_name = LitStr::new(&route_name, Span::call_site());
+                    let route_id = stable_hash(&route_ty_tokens);
+                    (
+                        quote! { statum::__private::LinkedRelationBasis::AttestedTypeSyntax },
+                        quote! {
+                            statum::__private::LinkedRelationTarget::AttestedProducerRoute {
+                                via_module_path: #via_module_path,
+                                route_name: #route_name,
+                                resolved_route_type_name: #helper_ident,
+                                route_id: #route_id,
+                            }
+                        },
+                        quote! {
+                            #[doc(hidden)]
+                            fn #helper_ident() -> &'static str {
+                                ::core::any::type_name::<#route_ty>()
+                            }
+                        },
                     )
                 }
                 RelationTargetCandidate::DeclaredReferenceType { ty } => {
@@ -2534,6 +2612,7 @@ fn relation_registrations_for_targets(
                         machine: statum::MachineDescriptor {
                             module_path: #machine_module_path,
                             rust_type_path: #machine_rust_type_path,
+                            role: MACHINE_ROLE,
                         },
                         kind: #kind_tokens,
                         source: #source_tokens,

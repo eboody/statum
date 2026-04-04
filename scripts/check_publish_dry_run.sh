@@ -10,6 +10,8 @@ publish_order=(
   "statum-core"
   "statum-macros"
   "statum"
+  "statum-graph"
+  "cargo-statum-graph"
 )
 
 extra_args=()

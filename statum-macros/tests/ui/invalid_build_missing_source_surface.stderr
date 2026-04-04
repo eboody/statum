@@ -1,0 +1,16 @@
+error: Failed to resolve the #[state] enum for machine `Flow`.
+       Statum could not recover an exact module path for machine `Flow` during macro expansion, so a real cargo build cannot prove which `#[state]` enum owns this machine safely enough to keep compiling.
+       If this only happens inside rust-analyzer, the editor build may stay partial until a real cargo build runs.
+       Expected a `#[state]` enum named `AuditState` in module `unknown`.
+       Statum only resolves `#[state]` enums that have already expanded before this `#[machine]` declaration.
+       No plain enum with that expected name was found in that module either.
+       No same-named `#[state]` enums were found in other modules of this file.
+       No `#[state]` enums were found in that module.
+       Help: make sure the machine's first generic names the right `#[state]` enum in this module and declare that `#[state]` enum before the machine.
+       Correct shape: `struct Flow<ExpectedState> { ... }` where `ExpectedState` is a `#[state]` enum in `unknown`.
+  --> tests/ui/invalid_build_missing_source_surface.rs:18:1
+   |
+18 | #[machine]
+   | ^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

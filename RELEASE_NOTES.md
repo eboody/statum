@@ -1,5 +1,23 @@
 # Release Notes
 
+## v0.7.1 (2026-03-31)
+
+### Changes
+- Fixed `cargo-statum-graph` runner preparation so installed `inspect`, `export`, and `suggest` commands auto-detect a local path-based Statum checkout from the target workspace dependency graph and patch the generated runner to that same root.
+- Added fail-closed handling for workspaces that reach multiple distinct local Statum roots and regression coverage for both the local-checkout detection path and the ambiguity case.
+
+## v0.7.0 (2026-03-31)
+
+### Breaking Changes
+- Removed the old journey compatibility layer and the `journeys!`-first inspector path in favor of composition machines as the primary workspace-flow model.
+- Removed the legacy `#[transition(Machine)]` compatibility syntax. `#[transition]` now uses the inherent impl target only.
+
+### Changes
+- Added exact composition-machine roles, direct child-machine composition semantics, detached handoff composition relations, and composition-first inspector workflows.
+- Renamed `cargo statum-graph codebase` to `cargo statum-graph export` and kept `codebase` as a compatibility alias for this release.
+- Added stable cached runner homes for `cargo statum-graph inspect`, `export`, and `suggest`, plus session-local inspector caching for large-workspace navigation.
+- Tightened linked exact codebase export around composition semantics and cached exact relation indexing without changing the runtime authority boundary.
+
 ## v0.6.7 (2026-03-23)
 
 ### Changes

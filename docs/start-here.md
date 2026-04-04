@@ -65,6 +65,12 @@ It shows:
 
 Use the focused docs rather than reading everything:
 
+- [Machine introspection and exact relation graphs](introspection.md) if you
+  care about graph export, inspector detail, or exact cross-machine
+  relationships such as `*_and_attest()` plus `#[via(...)]`
+- [Composition machine migration](composition-migration.md) if you want the
+  inspector to derive the main workspace flow from typed orchestration instead
+  of external narrative scaffolding
 - [Typed rehydration and validators](persistence-and-validators.md)
 - [Patterns and guidance](patterns.md)
 - [Migration guide](migration.md) if you are upgrading an older Statum codebase

@@ -9,11 +9,17 @@
 //! validator-entry surfaces emitted by compiled `#[validators]` impls, direct
 //! construction availability per state, legacy direct payload links, and exact
 //! static relations inferred from supported type syntax plus nominal
-//! `#[machine_ref(...)]` declarations. Validator node labels use the impl self
+//! `#[machine_ref(...)]` declarations. When the source machine is marked
+//! `role = composition` and the exact relation comes from direct child-machine
+//! type syntax, the codebase export also classifies it as composition-owned
+//! direct-child semantics for renderer and inspector projection. Validator
+//! node labels use the impl self
 //! type as written in source, so they are display syntax rather than canonical
 //! Rust type identity. Method-level `#[cfg]` and `#[cfg_attr]` on validator
 //! methods are rejected at the macro layer. `include!()`-generated validator
-//! impls are also rejected.
+//! impls are also rejected. The linked codebase surface also carries source
+//! rustdoc separately as `docs` on machines, states, transitions, and
+//! validator-entry surfaces.
 //!
 //! Use [`MachineDoc::from_machine`] for Statum-generated machine families and
 //! [`MachineDoc::try_from_graph`] when you need to validate an externally
@@ -22,7 +28,9 @@
 //! This crate does not model orchestration order across machines or
 //! runtime-selected branches for one run. Optional presentation metadata may
 //! be joined onto the validated machine graph for renderer output, but it does
-//! not change the authoritative structural surface.
+//! not change the authoritative structural surface. Use
+//! `#[present(description = ...)]` for concise renderer copy and ordinary outer
+//! rustdoc comments (`///`) for fuller codebase/inspector detail.
 
 use std::collections::{HashMap, HashSet};
 
@@ -35,9 +43,10 @@ mod export;
 pub mod render;
 
 pub use codebase::{
-    CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine, CodebaseMachineRelationGroup,
-    CodebaseRelation, CodebaseRelationBasis, CodebaseRelationCount, CodebaseRelationDetail,
-    CodebaseRelationKind, CodebaseRelationSource, CodebaseState, CodebaseTransition,
+    CodebaseAttestedRoute, CodebaseDoc, CodebaseDocError, CodebaseLink, CodebaseMachine,
+    CodebaseMachineRelationGroup, CodebaseMachineRelationGroupSemantic, CodebaseRelation,
+    CodebaseRelationBasis, CodebaseRelationCount, CodebaseRelationDetail, CodebaseRelationKind,
+    CodebaseRelationSemantic, CodebaseRelationSource, CodebaseState, CodebaseTransition,
     CodebaseValidatorEntry,
 };
 pub use export::{

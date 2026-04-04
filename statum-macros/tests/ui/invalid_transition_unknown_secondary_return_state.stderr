@@ -31,6 +31,12 @@ help: you might be missing a type parameter
 24 | impl<Ghost> Machine<A> {
    |     +++++++
 
+error[E0425]: cannot find type `Ghost` in this scope
+  --> tests/ui/invalid_transition_unknown_secondary_return_state.rs:37:34
+   |
+37 |     fn to_ghost(self) -> Machine<Ghost> {
+   |                                  ^^^^^ not found in this scope
+
 error[E0599]: no variant or associated item named `Ghost` found for enum `StateId` in the current scope
   --> tests/ui/invalid_transition_unknown_secondary_return_state.rs:23:1
    |

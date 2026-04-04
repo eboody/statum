@@ -1,4 +1,5 @@
 use proc_macro::TokenStream;
+use macro_registry::callsite::best_effort_source_context_for_span_or_callsite;
 use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{Fields, Item, Type, parse_macro_input};
@@ -41,7 +42,8 @@ pub fn parse_machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    let line_number = item_struct.ident.span().start().line;
+    let line_number = best_effort_source_context_for_span_or_callsite(item_struct.ident.span())
+        .line_number;
     let module_path = match resolved_current_module_path(item_struct.ident.span(), "#[machine_ref]") {
         Ok(path) => path,
         Err(err) => return err,
@@ -59,6 +61,8 @@ pub fn parse_machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
     let state_name_lit = syn::LitStr::new(&state_name, Span::call_site());
     let targets_ident = linked_reference_targets_ident(&rust_type_path, line_number);
     let type_name_ident = linked_reference_type_name_ident(&rust_type_path, line_number);
+    let target_machine_type_name_ident =
+        linked_reference_target_machine_type_name_ident(&rust_type_path, line_number);
     let registration_ident = linked_reference_registration_ident(&rust_type_path, line_number);
     let item_ident = &item_struct.ident;
 
@@ -71,6 +75,11 @@ pub fn parse_machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
         #[doc(hidden)]
         fn #type_name_ident() -> &'static str {
             ::core::any::type_name::<#item_ident>()
+        }
+
+        #[doc(hidden)]
+        fn #target_machine_type_name_ident() -> &'static str {
+            ::core::any::type_name::<#target_type>()
         }
 
         impl statum::MachineReference for #item_ident {
@@ -88,6 +97,7 @@ pub fn parse_machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
                 rust_type_path: #rust_type_path_lit,
                 resolved_type_name: #type_name_ident,
                 to_machine_path: <#item_ident as statum::MachineReference>::TARGET.machine_path,
+                resolved_target_machine_type_name: #target_machine_type_name_ident,
                 to_state: <#item_ident as statum::MachineReference>::TARGET.state,
             };
     }
@@ -127,6 +137,18 @@ fn linked_reference_type_name_ident(rust_type_path: &str, line_number: usize) ->
     format_ident!(
         "__statum_machine_ref_type_name_{:016x}",
         stable_hash(&format!("{rust_type_path}::{line_number}::type_name"))
+    )
+}
+
+fn linked_reference_target_machine_type_name_ident(
+    rust_type_path: &str,
+    line_number: usize,
+) -> syn::Ident {
+    format_ident!(
+        "__statum_machine_ref_target_machine_type_name_{:016x}",
+        stable_hash(&format!(
+            "{rust_type_path}::{line_number}::target_machine_type_name"
+        ))
     )
 }
 

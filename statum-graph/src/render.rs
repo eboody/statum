@@ -123,6 +123,85 @@ where
     lines.join("\n")
 }
 
+/// Renders a validated machine-local topology as Mermaid state diagram text.
+///
+/// Output ordering is deterministic for one validated export surface. The
+/// diagram shows exact machine-local states, exact legal transitions, roots
+/// derived from the static graph, and terminal sink states with no outgoing
+/// transitions.
+pub fn mermaid_state<D>(doc: &D) -> String
+where
+    D: ExportSource + ?Sized,
+{
+    let doc = doc.export_doc();
+    let doc = doc.as_ref();
+
+    let mut lines = Vec::new();
+    push_comment_lines(&mut lines, "%%", doc);
+    lines.push("stateDiagram-v2".to_string());
+
+    if !doc.states().is_empty() {
+        lines.push(String::new());
+    }
+
+    for state in doc.states() {
+        lines.push(format!(
+            "    state \"{}\" as {}",
+            escape_mermaid_label(&state.display_label()),
+            state.node_id()
+        ));
+    }
+
+    let roots = doc
+        .states()
+        .iter()
+        .filter(|state| state.is_root)
+        .collect::<Vec<_>>();
+    if !roots.is_empty() {
+        lines.push(String::new());
+        for state in roots {
+            lines.push(format!("    [*] --> {}", state.node_id()));
+        }
+    }
+
+    if !doc.transitions().is_empty() {
+        lines.push(String::new());
+    }
+
+    let mut has_outgoing = vec![false; doc.states().len()];
+    for transition in doc.transitions() {
+        has_outgoing[transition.from] = true;
+        let from = doc
+            .state(transition.from)
+            .expect("ExportDoc transition source should exist")
+            .node_id();
+        for target in &transition.to {
+            let to = doc
+                .state(*target)
+                .expect("ExportDoc transition target should exist")
+                .node_id();
+            lines.push(format!(
+                "    {from} --> {to} : {}",
+                escape_mermaid_edge_label(transition.display_label())
+            ));
+        }
+    }
+
+    let sinks = doc
+        .states()
+        .iter()
+        .filter(|state| !has_outgoing[state.index])
+        .collect::<Vec<_>>();
+    if !sinks.is_empty() {
+        lines.push(String::new());
+        for state in sinks {
+            lines.push(format!("    {} --> [*]", state.node_id()));
+        }
+    }
+
+    lines.join("\n")
+}
+
 /// Renders a validated machine-local topology as DOT text.
 pub fn dot<D>(doc: &D) -> String
 where

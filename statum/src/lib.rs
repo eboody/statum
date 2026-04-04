@@ -191,7 +191,10 @@
 //! `machine::PRESENTATION` constant from `#[present(...)]` attributes. Add
 //! `#[presentation_types(...)]` on the machine when those attributes should
 //! carry typed `metadata = ...` payloads instead of just labels and
-//! descriptions.
+//! descriptions. Keep `#[present(description = ...)]` concise: it is the short
+//! UI copy surface. For fuller docs that should also appear in rustdoc and the
+//! linked inspector detail pane, use outer rustdoc comments (`///`) on the
+//! machine, state variants, transition methods, and `#[validators]` impls.
 //!
 //! ```rust
 //! use statum::{
@@ -277,17 +280,18 @@ pub use statum_core::__private;
 pub use statum_core::projection;
 #[doc(inline)]
 pub use statum_core::{
-    linked_machines, linked_reference_types, linked_relations, linked_validator_entries, Branch,
-    CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, LinkedMachineGraph,
-    LinkedReferenceTypeDescriptor, LinkedRelationBasis, LinkedRelationDescriptor,
-    LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget, LinkedStateDescriptor,
-    LinkedTransitionDescriptor, LinkedTransitionInventory, LinkedValidatorEntryDescriptor,
-    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineReference, MachineReferenceTarget, MachineStateIdentity,
-    MachineTransitionRecorder, RebuildAttempt, RebuildReport, RecordedTransition, Rejection,
-    Result, StateDescriptor, StateMarker, StatePresentation, StaticMachineLinkDescriptor,
-    TransitionDescriptor, TransitionInventory, TransitionPresentation,
-    TransitionPresentationInventory, UnitState, Validation,
+    linked_machines, linked_reference_types, linked_relations, linked_validator_entries,
+    linked_via_routes, Attested, Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith,
+    DataState, Error, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
+    LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
+    LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
+    LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachineDescriptor, MachineGraph,
+    MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineReference,
+    MachineReferenceTarget, MachineRole, MachineStateIdentity, MachineTransitionRecorder,
+    RebuildAttempt, RebuildReport, RecordedTransition, Rejection, Result, StateDescriptor,
+    StateMarker, StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor,
+    TransitionInventory, TransitionPresentation, TransitionPresentationInventory, UnitState,
+    Validation,
 };
 
 /// Define the legal lifecycle phases for a machine.
@@ -336,6 +340,16 @@ pub use statum_macros::state;
 /// - a compatibility alias `machine::State = machine::SomeState`
 /// - a machine-scoped `machine::Fields` struct for heterogeneous batch rebuilds
 ///
+/// By default a machine has the `protocol` role. Use
+/// `#[machine(role = composition)]` when the machine exists to orchestrate
+/// other machines or exact detached handoff evidence into a higher-level flow.
+/// When a composition machine directly carries child machines in state
+/// payloads, machine fields, or transition parameters, Statum exports those as
+/// composition-owned exact relations for graph export and inspector views.
+/// The same composition-owned exact relation surface now covers detached
+/// attested handoffs carried through `statum::Attested<_, Route>` wrappers or
+/// `#[via(...)]` consumer parameters.
+///
 /// If you need derives, place them below `#[machine]`.
 ///
 /// ```rust
@@ -367,7 +381,9 @@ pub use statum_macros::machine;
 /// machine relation without repeating that relation at every use site. In v1
 /// this surface is trait-backed, supports nominal structs and tuple structs
 /// only, and expects an explicit `crate::`, `self::`, `super::`, or absolute
-/// target path; plain type aliases are rejected.
+/// target path; plain type aliases are rejected. When the reference is a
+/// stable artifact or handoff type, point it at the earliest stable producer
+/// state for that artifact instead of a later consumer state.
 pub use statum_macros::machine_ref;
 
 /// Validate and generate legal transitions for one source state.
@@ -385,6 +401,13 @@ pub use statum_macros::machine_ref;
 /// - `self.transition_with(data)` for data-bearing target states
 /// - `self.transition_map(|current| next_data)` when the next payload is built
 ///   from the current payload
+///
+/// Direct single-target transitions also get generated `*_and_attest()`
+/// companions. Use those when another machine needs exact producer
+/// provenance. If the consumer boundary is a detached artifact instead of the
+/// child machine value, map the attested machine once with
+/// `.map_inner(Artifact::from)` and keep the same `#[via(...)]` consumer
+/// binder.
 ///
 /// ```rust
 /// use statum::{machine, state, transition};

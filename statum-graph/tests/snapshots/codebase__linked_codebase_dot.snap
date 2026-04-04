@@ -23,7 +23,7 @@ digraph "statum_codebase" {
         m2_g [label="", shape=point, width=0.01, height=0.01, style=invis]
     }
     subgraph "cluster_m3" {
-        label="Workflow Machine";
+        label="Workflow Machine [composition]";
         m3_s0 [label="Draft [build]"]
         m3_s1 [label="In Progress [build]"]
         m3_s2 [label="Complete [build]"]
@@ -40,7 +40,7 @@ digraph "statum_codebase" {
     m3_s1 -> m3_s2 [label="finish"]
 
     m1_g -> m2_g [ltail="cluster_m1", lhead="cluster_m2", style="bold,dotted", color="#2563eb", fontcolor="#2563eb", penwidth=2, minlen=2, label="exact refs: payload"]
-    m3_g -> m2_g [ltail="cluster_m3", lhead="cluster_m2", style="bold,dotted", color="#2563eb", fontcolor="#2563eb", penwidth=2, minlen=2, label="exact refs: payload, param"]
+    m3_g -> m2_g [ltail="cluster_m3", lhead="cluster_m2", style="bold,dotted", color="#2563eb", fontcolor="#2563eb", penwidth=2, minlen=2, label="composition refs: payload, param"]
 
     m1_s0 -> m2_s2 [style=dashed, label="child"]
     m3_s1 -> m2_s1 [style=dashed, label="state_data"]

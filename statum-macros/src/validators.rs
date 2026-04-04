@@ -16,6 +16,7 @@ use signatures::{
     AnalyzedValidatorReturn, ValidatorDiagnosticContext, ValidatorReturnKind,
     analyze_validator_return_type, validate_validator_signature, validator_state_name_from_ident,
 };
+use crate::parse_doc_attrs;
 
 pub(super) struct ValidatorMethodSpec {
     pub(super) validator_ident: Ident,
@@ -126,6 +127,7 @@ pub fn parse_validators(
         diagnostic_machine.module_path.as_ref(),
         proc_macro2::Span::call_site(),
     );
+    let machine_module_tokens = format_ident!("{}", crate::to_snake_case(&machine_name));
     let machine_rust_type_path = syn::LitStr::new(
         &format!("{}::{}", diagnostic_machine.module_path, machine_name),
         proc_macro2::Span::call_site(),
@@ -145,6 +147,17 @@ pub fn parse_validators(
     let source_module_path = syn::LitStr::new(module_path, proc_macro2::Span::call_site());
     let source_type_display =
         syn::LitStr::new(&persisted_type_display, proc_macro2::Span::call_site());
+    let linked_validator_source_type_name_ident = linked_validator_source_type_name_ident(
+        &machine_name,
+        module_path,
+        &persisted_type_display,
+        line_number,
+    );
+    let docs = match parse_doc_attrs(&item_impl.attrs) {
+        Ok(docs) => docs,
+        Err(err) => return err.to_compile_error().into(),
+    };
+    let linked_docs = optional_lit_str_tokens(docs.as_deref());
     let validator_target_states = validator_methods
         .iter()
         .map(|method| syn::LitStr::new(&method.variant_name, proc_macro2::Span::call_site()))
@@ -154,6 +167,11 @@ pub fn parse_validators(
         static #linked_validator_targets_ident: &[&str] = &[#(#validator_target_states),*];
 
         #[doc(hidden)]
+        fn #linked_validator_source_type_name_ident() -> &'static str {
+            ::core::any::type_name::<#struct_ident>()
+        }
+
+        #[doc(hidden)]
         #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_VALIDATOR_ENTRIES)]
         #[linkme(crate = statum::__private::linkme)]
         static #linked_validator_registration_ident: statum::__private::LinkedValidatorEntryDescriptor =
@@ -161,9 +179,12 @@ pub fn parse_validators(
                 machine: statum::MachineDescriptor {
                     module_path: #machine_module_path,
                     rust_type_path: #machine_rust_type_path,
+                    role: #machine_module_tokens::MACHINE_ROLE,
                 },
                 source_module_path: #source_module_path,
                 source_type_display: #source_type_display,
+                resolved_source_type_name: #linked_validator_source_type_name_ident,
+                docs: #linked_docs,
                 target_states: #linked_validator_targets_ident,
             };
     };
@@ -307,6 +328,21 @@ fn linked_validator_targets_ident(
     )
 }
 
+fn linked_validator_source_type_name_ident(
+    machine_name: &str,
+    module_path: &str,
+    persisted_type_display: &str,
+    line_number: usize,
+) -> Ident {
+    let key = format!(
+        "{machine_name}::validator-source-type::{module_path}::{persisted_type_display}::{line_number}"
+    );
+    format_ident!(
+        "__statum_validator_source_type_name_{:016x}",
+        stable_hash(&key)
+    )
+}
+
 fn stable_hash(input: &str) -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for byte in input.as_bytes() {
@@ -314,6 +350,16 @@ fn stable_hash(input: &str) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+fn optional_lit_str_tokens(value: Option<&str>) -> proc_macro2::TokenStream {
+    match value {
+        Some(value) => {
+            let value = syn::LitStr::new(value, proc_macro2::Span::call_site());
+            quote! { Some(#value) }
+        }
+        None => quote! { None },
+    }
 }
 
 fn generate_empty_validator_methods_error(

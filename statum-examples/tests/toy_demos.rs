@@ -79,3 +79,13 @@ fn example_15_transition_map() {
 fn example_16_machine_introspection() {
     toy_demos::example_16_machine_introspection::run();
 }
+
+#[test]
+fn example_17_attested_composition() {
+    toy_demos::example_17_attested_composition::run();
+}
+
+#[test]
+fn example_18_composition_machine() {
+    toy_demos::example_18_composition_machine::run();
+}
