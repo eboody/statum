@@ -34,7 +34,7 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 
 ```toml
 [dependencies]
-statum = "0.6.7"
+statum = "0.8.1"
 ```
 
 ## 60-Second Example

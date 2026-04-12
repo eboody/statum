@@ -3,6 +3,13 @@ use std::path::Path;
 
 use crate::pathing::module_path_from_file_with_root;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum LineModulePath {
+    Unset,
+    Exact { path: String, depth: usize },
+    Ambiguous,
+}
+
 fn compose_module_path(base: &str, nested: &str) -> String {
     if base == "crate" {
         nested.to_string()
@@ -13,7 +20,7 @@ fn compose_module_path(base: &str, nested: &str) -> String {
 
 pub(crate) fn resolve_module_path_from_lines(
     base_module: &str,
-    line_modules: &[String],
+    line_modules: &[LineModulePath],
     line_number: usize,
 ) -> Option<String> {
     if line_number == 0 {
@@ -21,8 +28,12 @@ pub(crate) fn resolve_module_path_from_lines(
     }
 
     match line_modules.get(line_number - 1) {
-        Some(path) if !path.is_empty() => Some(compose_module_path(base_module, path)),
-        _ => Some(base_module.to_string()),
+        Some(LineModulePath::Exact { path, .. }) => Some(compose_module_path(base_module, path)),
+        Some(LineModulePath::Unset) | None => Some(base_module.to_string()),
+        // A single source line can contain more than one inline module scope. This
+        // line-based resolver refuses to guess when sibling scopes share a line or the
+        // deepest scope also closes on that line.
+        Some(LineModulePath::Ambiguous) => None,
     }
 }
 
@@ -50,7 +61,15 @@ struct ModuleRange {
     path: String,
     start_line: usize,
     end_line: usize,
+    close_line: usize,
     depth: usize,
+}
+
+#[derive(Clone, Debug)]
+struct LineCoverage {
+    path: String,
+    depth: usize,
+    close_boundary: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -69,22 +88,29 @@ enum BlockContext {
     },
 }
 
-fn build_line_module_paths(content: &str) -> Option<Vec<String>> {
+fn build_line_module_paths(content: &str) -> Option<Vec<LineModulePath>> {
     let line_count = content.lines().count().max(1);
     let tokens = tokenize_source(content);
     let module_ranges = scan_inline_module_ranges(&tokens);
-    let mut line_paths = vec![String::new(); line_count];
+    let mut line_coverages = vec![Vec::new(); line_count];
 
     for range in module_ranges {
-        set_line_range(
-            &mut line_paths,
+        add_line_range(
+            &mut line_coverages,
             range.start_line,
             range.end_line,
+            range.close_line,
             &range.path,
+            range.depth,
         );
     }
 
-    Some(line_paths)
+    Some(
+        line_coverages
+            .into_iter()
+            .map(resolve_line_coverage)
+            .collect(),
+    )
 }
 
 fn tokenize_source(content: &str) -> Vec<ScannedToken> {
@@ -500,6 +526,7 @@ fn scan_inline_module_ranges(tokens: &[ScannedToken]) -> Vec<ModuleRange> {
                             path,
                             start_line,
                             end_line,
+                            close_line: token.line,
                             depth,
                         });
                         active_modules.pop();
@@ -534,22 +561,69 @@ fn matching_close(open: char) -> char {
     }
 }
 
-fn set_line_range(line_paths: &mut [String], start_line: usize, end_line: usize, path: &str) {
+fn add_line_range(
+    line_coverages: &mut [Vec<LineCoverage>],
+    start_line: usize,
+    end_line: usize,
+    close_line: usize,
+    path: &str,
+    depth: usize,
+) {
     if start_line == 0 || end_line < start_line {
         return;
     }
 
     for line in start_line..=end_line {
-        if let Some(slot) = line_paths.get_mut(line - 1) {
-            *slot = path.to_string();
+        if let Some(slot) = line_coverages.get_mut(line - 1) {
+            slot.push(LineCoverage {
+                path: path.to_string(),
+                depth,
+                close_boundary: line == close_line,
+            });
         }
+    }
+}
+
+fn resolve_line_coverage(coverages: Vec<LineCoverage>) -> LineModulePath {
+    if coverages.is_empty() {
+        return LineModulePath::Unset;
+    }
+
+    let max_depth = coverages
+        .iter()
+        .map(|coverage| coverage.depth)
+        .max()
+        .expect("non-empty");
+
+    let mut deepest = coverages
+        .iter()
+        .filter(|coverage| coverage.depth == max_depth)
+        .collect::<Vec<_>>();
+    deepest.sort_by(|left, right| left.path.cmp(&right.path));
+    deepest.dedup_by(|left, right| left.path == right.path);
+
+    if deepest.len() != 1 {
+        return LineModulePath::Ambiguous;
+    }
+
+    let deepest = deepest[0];
+    let overlaps_other_path = coverages
+        .iter()
+        .any(|coverage| coverage.path != deepest.path);
+    if overlaps_other_path && deepest.close_boundary {
+        return LineModulePath::Ambiguous;
+    }
+
+    LineModulePath::Exact {
+        path: deepest.path.clone(),
+        depth: deepest.depth,
     }
 }
 
 pub(crate) fn parse_file_modules(
     file_path: &str,
     module_root: &Path,
-) -> Option<(String, Vec<String>)> {
+) -> Option<(String, Vec<LineModulePath>)> {
     let content = fs::read_to_string(file_path).ok()?;
     let base_module = module_path_from_file_with_root(file_path, module_root);
     let line_modules = build_line_module_paths(&content)?;

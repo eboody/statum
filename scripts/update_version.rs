@@ -1,26 +1,25 @@
-// cargo-deps: toml="0.8.8"
+// cargo-deps: regex="1", toml="0.8.8"
 
 extern crate toml;
+extern crate regex;
 
 use std::env;
 use std::fs;
+use regex::Regex;
 use toml::Value;
 
-const PUBLISHED_CRATES: [&str; 5] = [
-    "module_path_extractor",
-    "macro_registry",
+const PUBLISHED_CRATES: [&str; 3] = [
     "statum-core",
     "statum-macros",
     "statum",
 ];
-const ALL_CRATES: [&str; 6] = [
-    "module_path_extractor",
-    "macro_registry",
+const ALL_CRATES: [&str; 4] = [
     "statum-core",
     "statum-macros",
     "statum",
     "statum-examples",
 ];
+const VERSIONED_SNIPPET_FILES: [&str; 2] = ["README.md", "statum/README.md"];
 
 fn parse_semver_triplet(input: &str, field: &str) -> Result<[u32; 3], Box<dyn std::error::Error>> {
     let parts: Vec<u32> = input
@@ -86,6 +85,22 @@ fn apply_internal_versions(doc: &mut Value, new_version: &str) {
     }
 }
 
+fn update_install_snippets(
+    file_path: &str,
+    dependency_regex: &Regex,
+    new_version: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let content = fs::read_to_string(file_path)?;
+    let replaced = dependency_regex.replace_all(
+        &content,
+        format!("statum = \"{new_version}\""),
+    );
+
+    fs::write(file_path, replaced.as_ref())?;
+    println!("Updated install snippet in {file_path}");
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
@@ -95,6 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let new_version = args[1].trim().to_string();
     parse_semver_triplet(&new_version, "Target version")?;
+    let dependency_regex = Regex::new(r#"statum = "\d+\.\d+\.\d+""#)?;
 
     let root_cargo_path = "statum/Cargo.toml";
     let cargo_content = fs::read_to_string(root_cargo_path)?;
@@ -117,6 +133,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         fs::write(&cargo_path, toml::to_string_pretty(&doc)?)?;
         println!("Updated version metadata in {}", cargo_path);
+    }
+
+    for file_path in VERSIONED_SNIPPET_FILES {
+        update_install_snippets(file_path, &dependency_regex, &new_version)?;
     }
 
     Ok(())

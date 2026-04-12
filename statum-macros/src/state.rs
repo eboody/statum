@@ -1,4 +1,4 @@
-use macro_registry::callsite::{current_source_file, module_path_for_line};
+use crate::callsite::{current_source_file, module_path_for_line};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::sync::{OnceLock, RwLock};

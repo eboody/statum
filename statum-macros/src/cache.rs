@@ -3,7 +3,7 @@ use std::fs;
 use std::sync::{OnceLock, RwLock};
 use std::time::UNIX_EPOCH;
 
-use crate::parser::parse_file_modules;
+use crate::parser::{LineModulePath, parse_file_modules};
 use crate::pathing::module_root_from_file;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -16,7 +16,7 @@ pub(crate) struct FileFingerprint {
 pub(crate) struct ParsedFileModules {
     pub(crate) fingerprint: FileFingerprint,
     pub(crate) base_module: String,
-    pub(crate) line_modules: Vec<String>,
+    pub(crate) line_modules: Vec<LineModulePath>,
 }
 
 #[derive(Clone, Debug)]
@@ -110,10 +110,9 @@ pub(crate) fn get_or_parse_file_modules(
         .read()
         .ok()
         .and_then(|cache| cache.get(file_path).cloned())
+        && cached.fingerprint == fingerprint
     {
-        if cached.fingerprint == fingerprint {
-            return Some(cached);
-        }
+        return Some(cached);
     }
 
     let module_root = module_root_from_file(file_path);

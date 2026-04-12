@@ -9,9 +9,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use toml::Value;
 
-const PUBLISH_ORDER: [&str; 5] = [
-    "module_path_extractor",
-    "macro_registry",
+const PUBLISH_ORDER: [&str; 3] = [
     "statum-core",
     "statum-macros",
     "statum",
@@ -24,7 +22,31 @@ fn has_publish_conflict(context: &str, stdout: &str, stderr: &str) -> bool {
 }
 
 fn can_publish_dry_run(crate_name: &str) -> bool {
-    matches!(crate_name, "module_path_extractor" | "statum-core")
+    matches!(crate_name, "statum-core")
+}
+
+fn crates_io_version_exists(
+    crate_name: &str,
+    version: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let url = format!("https://crates.io/api/v1/crates/{crate_name}/{version}");
+    let output = Command::new("curl").args(["-fsSI", &url]).output()?;
+
+    if output.status.success() {
+        return Ok(true);
+    }
+
+    if output.status.code() == Some(22) {
+        return Ok(false);
+    }
+
+    if !output.stdout.is_empty() {
+        println!("stdout:\n{}", String::from_utf8_lossy(&output.stdout));
+    }
+    if !output.stderr.is_empty() {
+        eprintln!("stderr:\n{}", String::from_utf8_lossy(&output.stderr));
+    }
+    Err(format!("Failed to query crates.io for {crate_name} {version}").into())
 }
 
 fn run(mut cmd: Command, context: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -85,6 +107,19 @@ fn verify_versions_match() -> Result<String, Box<dyn std::error::Error>> {
     Ok(first)
 }
 
+fn ensure_versions_are_unpublished(version: &str) -> Result<(), Box<dyn std::error::Error>> {
+    for crate_name in PUBLISH_ORDER {
+        if crates_io_version_exists(crate_name, version)? {
+            return Err(format!(
+                "{crate_name} is already published at version {version}; bump versions before release"
+            )
+            .into());
+        }
+    }
+
+    Ok(())
+}
+
 fn read_line_trimmed() -> Result<String, Box<dyn std::error::Error>> {
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
@@ -112,6 +147,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let version = verify_versions_match()?;
     println!("✓ All publishable crates are aligned at version {version}");
+    ensure_versions_are_unpublished(&version)?;
+    println!("✓ No publishable crate is already on crates.io at version {version}");
 
     println!("\nRunning pre-publish checks...");
     run(

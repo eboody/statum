@@ -1,4 +1,4 @@
-use module_path_extractor::{find_module_path, get_pseudo_module_path, get_source_info};
+use crate::module_path::{find_module_path, get_source_info};
 use std::path::Path;
 
 fn normalize_file_path(file_path: &str) -> String {
@@ -33,11 +33,6 @@ pub fn current_module_path_opt() -> Option<String> {
 pub fn current_module_path_at_line(line_number: usize) -> Option<String> {
     let file_path = current_source_file()?;
     module_path_for_line(&file_path, line_number)
-}
-
-/// Returns the best-effort module path for the current macro call-site.
-pub fn current_module_path() -> String {
-    current_module_path_opt().unwrap_or_else(get_pseudo_module_path)
 }
 
 /// Resolves the module path for a specific source file and line number.

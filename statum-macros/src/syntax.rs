@@ -3,8 +3,7 @@ use std::fs;
 use std::path::{Path as FsPath, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use macro_registry::callsite::current_source_info;
-use macro_registry::registry;
+use crate::callsite::current_source_info;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use syn::spanned::Spanned;
@@ -22,12 +21,6 @@ impl AsRef<str> for ModulePath {
 impl fmt::Display for ModulePath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
-    }
-}
-
-impl registry::RegistryKey for ModulePath {
-    fn from_module_path(module_path: String) -> Self {
-        Self(module_path)
     }
 }
 

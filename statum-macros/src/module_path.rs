@@ -1,24 +1,8 @@
-extern crate proc_macro;
-
-mod cache;
-mod parser;
-mod pathing;
-
-#[cfg(doctest)]
-#[doc = include_str!("../README.md")]
-mod readme_doctests {}
-
-use std::path::Path;
-
 use crate::cache::{
-    clear_line_cache_for_file, file_fingerprint, get_or_parse_file_modules, store_line_result,
+    self, clear_line_cache_for_file, file_fingerprint, get_or_parse_file_modules, store_line_result,
 };
-use parser::{parse_file_modules, resolve_module_path_from_lines};
-use pathing::normalize_file_path;
-pub use pathing::{
-    module_path_from_file, module_path_from_file_with_root, module_path_to_file,
-    module_root_from_file,
-};
+use crate::parser::resolve_module_path_from_lines;
+use crate::pathing::normalize_file_path;
 
 /// Extracts the file path and line number where the macro was invoked.
 pub fn get_source_info() -> Option<(String, usize)> {
@@ -70,26 +54,22 @@ pub fn find_module_path(file_path: &str, line_number: usize) -> Option<String> {
 }
 
 /// Reads the file and extracts the module path at the given line, using a known module root.
+#[cfg(test)]
 pub fn find_module_path_in_file(
     file_path: &str,
     line_number: usize,
-    module_root: &Path,
+    module_root: &std::path::Path,
 ) -> Option<String> {
     let normalized_file_path = normalize_file_path(file_path);
-    let (base_module, line_modules) = parse_file_modules(&normalized_file_path, module_root)?;
+    let (base_module, line_modules) =
+        crate::parser::parse_file_modules(&normalized_file_path, module_root)?;
     resolve_module_path_from_lines(&base_module, &line_modules, line_number)
-}
-
-/// Gets the full pseudo-absolute module path of the current macro invocation.
-pub fn get_pseudo_module_path() -> String {
-    get_source_info()
-        .and_then(|(file, line)| find_module_path(&file, line))
-        .unwrap_or_else(|| "unknown".to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pathing::{module_path_from_file, module_path_to_file};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::thread;
@@ -212,6 +192,46 @@ mod tests {
             find_module_path_in_file(&lib.to_string_lossy(), 19, &src).as_deref(),
             Some("beta")
         );
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
+    fn find_module_path_in_file_rejects_same_line_sibling_modules() {
+        let crate_dir = unique_temp_dir("same_line_siblings");
+        let src = crate_dir.join("src");
+        let lib = src.join("lib.rs");
+
+        write_file(
+            &lib,
+            "mod alpha { pub fn left() {} } mod beta { pub fn right() {} }\n",
+        );
+
+        assert_eq!(
+            find_module_path_in_file(&lib.to_string_lossy(), 1, &src),
+            None
+        );
+        assert_eq!(find_module_path(&lib.to_string_lossy(), 1), None);
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
+    fn find_module_path_in_file_rejects_same_line_nested_module_boundaries() {
+        let crate_dir = unique_temp_dir("same_line_nested");
+        let src = crate_dir.join("src");
+        let lib = src.join("lib.rs");
+
+        write_file(
+            &lib,
+            "mod outer { pub fn left() {} mod inner { pub fn right() {} } }\n",
+        );
+
+        assert_eq!(
+            find_module_path_in_file(&lib.to_string_lossy(), 1, &src),
+            None
+        );
+        assert_eq!(find_module_path(&lib.to_string_lossy(), 1), None);
 
         let _ = fs::remove_dir_all(crate_dir);
     }

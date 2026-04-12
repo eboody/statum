@@ -1,5 +1,5 @@
-use macro_registry::callsite::{current_source_file, current_source_info, module_path_for_line};
-use macro_registry::query;
+use crate::callsite::{current_source_file, current_source_info, module_path_for_line};
+use crate::query;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use syn::{Generics, Ident, ItemStruct, LitStr, Type, Visibility};

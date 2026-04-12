@@ -147,8 +147,11 @@ fn sort_and_dedup(candidates: &mut Vec<ItemCandidate>) {
             .then(left.module_path.cmp(&right.module_path))
             .then(left.line_number.cmp(&right.line_number))
     });
-    candidates
-        .dedup_by(|left, right| left.name == right.name && left.line_number == right.line_number);
+    candidates.dedup_by(|left, right| {
+        left.name == right.name
+            && left.module_path == right.module_path
+            && left.line_number == right.line_number
+    });
 }
 
 #[cfg(test)]
@@ -241,6 +244,33 @@ mod beta {
         assert_eq!(candidates[0].module_path, "alpha");
 
         let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
+    }
+
+    #[test]
+    fn sort_and_dedup_keeps_same_line_candidates_in_distinct_modules() {
+        let mut candidates = vec![
+            ItemCandidate {
+                name: "Machine".into(),
+                line_number: 1,
+                module_path: "beta".into(),
+            },
+            ItemCandidate {
+                name: "Machine".into(),
+                line_number: 1,
+                module_path: "alpha".into(),
+            },
+            ItemCandidate {
+                name: "Machine".into(),
+                line_number: 1,
+                module_path: "beta".into(),
+            },
+        ];
+
+        sort_and_dedup(&mut candidates);
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].module_path, "alpha");
+        assert_eq!(candidates[1].module_path, "beta");
     }
 
     #[test]

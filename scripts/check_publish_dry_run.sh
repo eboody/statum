@@ -5,8 +5,6 @@ repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root"
 
 publish_order=(
-  "module_path_extractor"
-  "macro_registry"
   "statum-core"
   "statum-macros"
   "statum"
@@ -19,7 +17,7 @@ fi
 
 can_publish_dry_run() {
   case "$1" in
-    module_path_extractor|statum-core)
+    statum-core)
       return 0
       ;;
     *)
@@ -28,7 +26,52 @@ can_publish_dry_run() {
   esac
 }
 
+version_for_crate() {
+  awk '
+    $0 == "[package]" { in_package = 1; next }
+    /^\[/ { in_package = 0 }
+    in_package && /^version = "/ {
+      gsub(/^version = "/, "", $0)
+      gsub(/"$/, "", $0)
+      print
+      exit
+    }
+  ' "$1/Cargo.toml"
+}
+
+crates_io_version_exists() {
+  local crate="$1"
+  local version="$2"
+  local status=0
+
+  curl -fsSI "https://crates.io/api/v1/crates/$crate/$version" >/dev/null || status=$?
+  case "$status" in
+    0)
+      return 0
+      ;;
+    22)
+      return 1
+      ;;
+  esac
+
+  if [[ $status -ne 0 ]]; then
+    echo "error: failed to query crates.io for $crate $version" >&2
+    exit "$status"
+  fi
+}
+
 for crate in "${publish_order[@]}"; do
+  version=$(version_for_crate "$crate")
+  if [[ -z "$version" ]]; then
+    echo "error: failed to read package version for $crate" >&2
+    exit 1
+  fi
+
+  if crates_io_version_exists "$crate" "$version"; then
+    echo "error: $crate is already published at version $version; bump versions before release" >&2
+    exit 1
+  fi
+
   if can_publish_dry_run "$crate"; then
     echo "Dry-run publishing $crate..."
 

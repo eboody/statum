@@ -19,6 +19,7 @@ pub struct StructEntry {
 }
 
 /// Impl entry extracted from a parsed source file.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct ImplEntry {
     pub item: syn::ItemImpl,
@@ -666,10 +667,12 @@ mod workflow {
 
         let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
         assert_eq!(analysis.impls.len(), 1);
-        assert!(analysis.impls[0]
-            .attrs
-            .iter()
-            .any(|attr| attr == "transition"));
+        assert!(
+            analysis.impls[0]
+                .attrs
+                .iter()
+                .any(|attr| attr == "transition")
+        );
         assert_eq!(analysis.impls[0].line_number, 4);
 
         let _ = fs::remove_file(path);

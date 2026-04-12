@@ -1,5 +1,5 @@
-use macro_registry::callsite::current_source_info;
-use macro_registry::query;
+use crate::callsite::current_source_info;
+use crate::query;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use std::collections::HashSet;

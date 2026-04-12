@@ -16,6 +16,13 @@
 #[doc = include_str!("../README.md")]
 mod readme_doctests {}
 
+mod analysis;
+mod cache;
+mod callsite;
+mod module_path;
+mod parser;
+mod pathing;
+mod query;
 mod syntax;
 
 moddef::moddef!(
@@ -39,12 +46,12 @@ pub(crate) use syntax::{
     extract_derives, source_file_fingerprint,
 };
 
+use crate::callsite::{current_module_path_at_line, current_module_path_opt};
 use crate::{
     LoadedMachineLookupFailure, MachinePath, ambiguous_transition_machine_error,
     ambiguous_transition_machine_fallback_error, lookup_loaded_machine_in_module,
     lookup_unique_loaded_machine_by_name,
 };
-use macro_registry::callsite::{current_module_path_at_line, current_module_path_opt};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use syn::{Item, ItemImpl, parse_macro_input};

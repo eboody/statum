@@ -3,8 +3,8 @@ use quote::quote;
 use std::collections::HashSet;
 use syn::{Ident, ItemImpl};
 
-use macro_registry::callsite::current_source_info;
-use macro_registry::query;
+use crate::callsite::current_source_info;
+use crate::query;
 
 use crate::{
     EnumInfo, LoadedMachineLookupFailure, LoadedStateLookupFailure, MachineInfo, MachinePath,
