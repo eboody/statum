@@ -18,6 +18,13 @@ pub struct StructEntry {
     pub attrs: Vec<String>,
 }
 
+/// Type alias entry extracted from a parsed source file.
+#[derive(Clone)]
+pub struct TypeAliasEntry {
+    pub item: syn::ItemType,
+    pub line_number: usize,
+}
+
 /// Impl entry extracted from a parsed source file.
 #[allow(dead_code)]
 #[derive(Clone)]
@@ -32,6 +39,7 @@ pub struct ImplEntry {
 pub struct FileAnalysis {
     pub enums: Vec<EnumEntry>,
     pub structs: Vec<StructEntry>,
+    pub type_aliases: Vec<TypeAliasEntry>,
     pub impls: Vec<ImplEntry>,
 }
 
@@ -39,6 +47,7 @@ pub struct FileAnalysis {
 struct DeclarationLines {
     enums: VecDeque<usize>,
     structs: VecDeque<usize>,
+    type_aliases: VecDeque<usize>,
     impls: VecDeque<usize>,
 }
 
@@ -96,6 +105,12 @@ fn collect_items(
                     item: item_struct,
                 });
             }
+            syn::Item::Type(item_type) => {
+                analysis.type_aliases.push(TypeAliasEntry {
+                    line_number: lines.type_aliases.pop_front()?,
+                    item: item_type,
+                });
+            }
             syn::Item::Impl(item_impl) => {
                 analysis.impls.push(ImplEntry {
                     attrs: attribute_names(&item_impl.attrs),
@@ -131,6 +146,7 @@ fn scan_declaration_lines(content: &str) -> DeclarationLines {
                 match keyword.as_str() {
                     "enum" => lines.enums.push_back(token.line),
                     "struct" => lines.structs.push_back(token.line),
+                    "type" => lines.type_aliases.push_back(token.line),
                     "impl" => lines.impls.push_back(token.line),
                     "mod" => {
                         if matches!(

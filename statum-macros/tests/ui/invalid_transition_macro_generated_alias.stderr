@@ -1,16 +1,16 @@
-error: Invalid transition return type for `Machine<Draft>::decide`: expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape.
+error: Invalid transition return type for `Machine<Draft>::maybe_accept`: expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape.
 
        Expected:
-         fn decide(self) -> Machine<NextState>
+         fn maybe_accept(self) -> Machine<NextState>
 
        Actual:
-         Decision < Machine < Accepted > , Machine < Rejected > >
+         Maybe < Machine < Accepted > >
 
        Help:
          return `Machine<NextState>` directly using the same machine path as the impl target, or use a source-declared type alias that expands to it.
          Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.
          Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module.
-  --> tests/ui/invalid_transition_custom_branch_enum.rs:30:38
+  --> tests/ui/invalid_transition_macro_generated_alias.rs:32:30
    |
-30 |     fn decide(self, accept: bool) -> Decision<Machine<Accepted>, Machine<Rejected>> {
-   |                                      ^^^^^^^^
+32 |     fn maybe_accept(self) -> Maybe<Machine<Accepted>> {
+   |                              ^^^^^

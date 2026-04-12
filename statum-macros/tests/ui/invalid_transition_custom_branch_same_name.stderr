@@ -1,4 +1,4 @@
-error: Invalid transition return type for `Machine<Draft>::decide`: expected the impl target machine path directly, or the same path wrapped in a canonical `::core::option::Option`, `::core::result::Result`, or `::statum::Branch`.
+error: Invalid transition return type for `Machine<Draft>::decide`: expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape.
 
        Expected:
          fn decide(self) -> Machine<NextState>
@@ -7,8 +7,9 @@ error: Invalid transition return type for `Machine<Draft>::decide`: expected the
          Branch < Machine < Accepted > , Machine < Rejected > >
 
        Help:
-         return `Machine<NextState>` directly using the same machine path as the impl target, or wrap that same machine path in `::core::option::Option<...>`, `::core::result::Result<..., E>`, or `::statum::Branch<..., ...>` and build the next state with `self.transition()` or `self.transition_with(...)`.
-         Bare, aliased, or differently-qualified wrapper and machine paths are rejected because transition introspection only accepts exact syntactic return shapes.
+         return `Machine<NextState>` directly using the same machine path as the impl target, or use a source-declared type alias that expands to it.
+         Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.
+         Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module.
   --> tests/ui/invalid_transition_custom_branch_same_name.rs:31:38
    |
 31 |     fn decide(self, accept: bool) -> Branch<Machine<Accepted>, Machine<Rejected>> {

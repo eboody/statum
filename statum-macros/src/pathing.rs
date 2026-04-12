@@ -84,8 +84,7 @@ pub fn module_path_from_file_with_root(file_path: &str, module_root: &Path) -> S
 }
 
 /// Maps a module path (e.g. `crate::foo::bar`) to a source file.
-#[cfg(test)]
-pub fn module_path_to_file(
+pub(crate) fn module_path_to_file(
     module_path: &str,
     current_file: &str,
     module_root: &Path,

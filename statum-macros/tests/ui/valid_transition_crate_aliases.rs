@@ -10,7 +10,8 @@ pub use statum_core::{
 
 use statum_macros::{machine, state, transition};
 
-type Maybe<T> = ::core::option::Option<T>;
+type Result<T> = ::core::result::Result<T, ()>;
+type Flow<State> = Machine<State>;
 
 #[state]
 enum State {
@@ -21,10 +22,14 @@ enum State {
 #[machine]
 struct Machine<State> {}
 
-#[transition]
-impl Machine<Draft> {
-    fn maybe_accept(self) -> Maybe<Machine<Accepted>> {
-        Some(self.transition())
+mod auth {
+    use super::*;
+
+    #[transition]
+    impl Machine<Draft> {
+        fn accept(self) -> crate::Result<crate::Flow<Accepted>> {
+            Ok(self.transition())
+        }
     }
 }
 

@@ -39,13 +39,15 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_transition_unknown_source_state.rs");
     t.compile_fail("tests/ui/invalid_transition_unknown_return_state.rs");
     t.compile_fail("tests/ui/invalid_transition_unknown_secondary_return_state.rs");
-    t.compile_fail("tests/ui/invalid_transition_option_alias.rs");
+    t.compile_fail("tests/ui/invalid_transition_cfg_ambiguous_alias.rs");
     t.compile_fail("tests/ui/invalid_transition_custom_option_enum.rs");
     t.compile_fail("tests/ui/invalid_transition_custom_result_enum.rs");
     t.compile_fail("tests/ui/invalid_transition_custom_branch_same_name.rs");
     t.compile_fail("tests/ui/invalid_transition_custom_branch_enum.rs");
     t.compile_fail("tests/ui/invalid_transition_foreign_same_leaf_machine.rs");
     t.compile_fail("tests/ui/invalid_transition_self_qualified_machine.rs");
+    t.compile_fail("tests/ui/invalid_transition_macro_generated_alias.rs");
+    t.compile_fail("tests/ui/invalid_transition_include_generated_alias.rs");
     t.compile_fail("tests/ui/invalid_transition_map_undeclared_edge.rs");
     t.compile_fail("tests/ui/invalid_transition_include_ambiguous_machine_name.rs");
     t.compile_fail("tests/ui/invalid_legacy_transition_helper_trait.rs");
@@ -90,6 +92,8 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_matrix.rs");
     t.pass("tests/ui/valid_same_names_different_modules.rs");
     t.pass("tests/ui/valid_transition_nested_wrappers.rs");
+    t.pass("tests/ui/valid_transition_source_aliases.rs");
+    t.pass("tests/ui/valid_transition_crate_aliases.rs");
     t.pass("tests/ui/valid_transition_branch.rs");
     t.pass("tests/ui/valid_into_machines_by.rs");
     t.pass("tests/ui/valid_transition_map.rs");

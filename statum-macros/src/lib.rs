@@ -129,7 +129,8 @@ pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Apply `#[transition]` to an `impl Machine<CurrentState>` block. Each method
 /// must consume `self` and return a legal `Machine<NextState>` shape or a
-/// supported wrapper around it, such as `Result<Machine<NextState>, E>`,
+/// source-declared type alias that expands to that shape, or a supported
+/// wrapper around it, such as `Result<Machine<NextState>, E>`,
 /// `Option<Machine<NextState>>`, or
 /// `statum::Branch<Machine<Left>, Machine<Right>>`.
 #[proc_macro_attribute]

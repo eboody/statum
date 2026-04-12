@@ -16,6 +16,14 @@ pub struct ItemCandidate {
     pub module_path: String,
 }
 
+/// A type alias discovered in source with its resolved module path.
+#[derive(Clone)]
+pub struct TypeAliasCandidate {
+    pub item: syn::ItemType,
+    pub line_number: usize,
+    pub module_path: String,
+}
+
 /// Returns candidates of `kind` in `module_path`, optionally requiring `required_attr`.
 pub fn candidates_in_module(
     file_path: &str,
@@ -82,6 +90,45 @@ pub fn plain_item_line_in_module(
             .then_some(entry.line_number)
         }),
     }
+}
+
+/// Returns type aliases of `alias_name` declared in `module_path`.
+pub fn type_aliases_in_module(
+    file_path: &str,
+    module_path: &str,
+    alias_name: &str,
+) -> Vec<TypeAliasCandidate> {
+    let Some(analysis) = get_file_analysis(file_path) else {
+        return Vec::new();
+    };
+
+    let mut candidates = analysis
+        .type_aliases
+        .iter()
+        .filter(|entry| entry.item.ident == alias_name)
+        .filter_map(|entry| {
+            let resolved_module = module_path_for_line(file_path, entry.line_number)?;
+            (resolved_module == module_path).then(|| TypeAliasCandidate {
+                item: entry.item.clone(),
+                line_number: entry.line_number,
+                module_path: resolved_module,
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        left.item
+            .ident
+            .to_string()
+            .cmp(&right.item.ident.to_string())
+            .then(left.module_path.cmp(&right.module_path))
+            .then(left.line_number.cmp(&right.line_number))
+    });
+    candidates.dedup_by(|left, right| {
+        left.item.ident == right.item.ident
+            && left.module_path == right.module_path
+            && left.line_number == right.line_number
+    });
+    candidates
 }
 
 /// Formats candidates for user-facing diagnostics.

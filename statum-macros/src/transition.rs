@@ -1,12 +1,14 @@
-use crate::callsite::current_source_info;
+use crate::callsite::{current_module_path_opt, current_source_info};
+use crate::pathing::{module_path_from_file_with_root, module_path_to_file, module_root_from_file};
 use crate::query;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use syn::spanned::Spanned;
 use syn::{
     AngleBracketedGenericArguments, Block, FnArg, GenericArgument, Ident, ImplItem, ImplItemFn,
-    ItemImpl, LitStr, PathArguments, ReturnType, Type, TypePath,
+    ItemImpl, LitStr, PathArguments, ReturnType, Type, TypePath, visit_mut::VisitMut,
 };
 
 use crate::machine::{
@@ -41,10 +43,15 @@ impl TransitionFn {
         let Some(return_type) = self.return_type.as_ref() else {
             return Err(invalid_return_type_error(self, "missing return type"));
         };
-        let Some((_, return_state)) = parse_machine_and_state(return_type, target_type) else {
+        let contexts = candidate_alias_resolution_contexts(self.return_type_span);
+        let resolved = contexts
+            .iter()
+            .find_map(|context| parse_machine_and_state_in_context(return_type, target_type, Some(context)))
+            .or_else(|| parse_machine_and_state_in_context(return_type, target_type, None));
+        let Some((_, return_state)) = resolved else {
             return Err(invalid_return_type_error(
                 self,
-                "expected the impl target machine path directly, or the same path wrapped in a canonical `::core::option::Option`, `::core::result::Result`, or `::statum::Branch`",
+                "expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape",
             ));
         };
 
@@ -55,14 +62,19 @@ impl TransitionFn {
         let Some(return_type) = self.return_type.as_ref() else {
             return Err(invalid_return_type_error(self, "missing return type"));
         };
-        let return_states = collect_machine_and_states(return_type, target_type)
+        let contexts = candidate_alias_resolution_contexts(self.return_type_span);
+        let return_states = contexts
+            .iter()
+            .map(|context| collect_machine_and_states_in_context(return_type, target_type, Some(context)))
+            .find(|states| !states.is_empty())
+            .unwrap_or_else(|| collect_machine_and_states_in_context(return_type, target_type, None))
             .into_iter()
             .map(|(_, state)| state)
             .collect::<Vec<_>>();
         if return_states.is_empty() {
             return Err(invalid_return_type_error(
                 self,
-                "expected the impl target machine path directly, or the same path wrapped in a canonical `::core::option::Option`, `::core::result::Result`, or `::statum::Branch`",
+                "expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape",
             ));
         }
 
@@ -187,12 +199,9 @@ pub fn validate_transition_functions(
 ) -> Option<TokenStream> {
     if tr_impl.functions.is_empty() {
         let message = format!(
-            "Error: #[transition] impl for `{}<{}>` must contain at least one method returning `{}` or the same machine path wrapped in a canonical `::core::option::Option<{}>`, `::core::result::Result<{}, E>`, or `::statum::Branch<{}, {}>`.",
+            "Error: #[transition] impl for `{}<{}>` must contain at least one method returning `{}`, a source-backed type alias that expands to `{}`, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape.",
             tr_impl.machine_name,
             tr_impl.source_state,
-            machine_return_signature(&tr_impl.machine_name),
-            machine_return_signature(&tr_impl.machine_name),
-            machine_return_signature(&tr_impl.machine_name),
             machine_return_signature(&tr_impl.machine_name),
             machine_return_signature(&tr_impl.machine_name),
         );
@@ -792,7 +801,7 @@ fn invalid_return_type_error(func: &TransitionFn, reason: &str) -> TokenStream {
         "Invalid transition return type for `{}<{}>::{func_name}`: {reason}.\n\n\
 Expected:\n  fn {func_name}(self) -> {machine_name}<NextState>\n\n\
 Actual:\n  {return_type}\n\n\
-Help:\n  return `{machine_name}<NextState>` directly using the same machine path as the impl target, or wrap that same machine path in `::core::option::Option<...>`, `::core::result::Result<..., E>`, or `::statum::Branch<..., ...>` and build the next state with `self.transition()` or `self.transition_with(...)`.\n  Bare, aliased, or differently-qualified wrapper and machine paths are rejected because transition introspection only accepts exact syntactic return shapes."
+Help:\n  return `{machine_name}<NextState>` directly using the same machine path as the impl target, or use a source-declared type alias that expands to it.\n  Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.\n  Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module."
         ,
         machine_name,
         func.source_state,
@@ -865,55 +874,278 @@ fn compile_error_at(span: Span, message: &str) -> TokenStream {
     }
 }
 
-/// Attempts to parse `ty` into the form:
-///
-///   - the same machine path as the impl target, with a different state marker
-///   - `::core::option::Option<...>` or `::std::option::Option<...>`
-///   - `::core::result::Result<..., E>` or `::std::result::Result<..., E>`
-///   - `::statum::Branch<..., ...>` or `::statum_core::Branch<..., ...>`
-///
-/// On success, returns (`"Machine"`, `"SomeState"`).
-pub fn parse_machine_and_state(ty: &Type, target_type: &Type) -> Option<(String, String)> {
-    parse_primary_machine_and_state(ty, target_type)
+#[derive(Clone, Debug)]
+struct AliasResolutionContext {
+    file_path: String,
+    module_path: String,
+    module_root: PathBuf,
+    root_module_path: String,
 }
 
-/// Attempts to parse the primary visible next state from `ty`.
-///
-/// This preserves transition helper behavior by following the first generic
-/// argument through supported wrappers until it reaches the same machine path
-/// used by the impl target.
-pub fn parse_primary_machine_and_state(ty: &Type, target_type: &Type) -> Option<(String, String)> {
-    let mut current = ty;
-    loop {
-        match classify_primary_return_wrapper(current, target_type)? {
-            PrimaryReturnWrapper::Machine(segment) => {
-                return extract_machine_state_from_segment(segment)
-                    .map(|(machine, state, _)| (machine, state));
-            }
-            PrimaryReturnWrapper::Option(inner)
-            | PrimaryReturnWrapper::Result(inner)
-            | PrimaryReturnWrapper::Branch(inner) => {
-                current = inner;
+#[derive(Clone)]
+struct ResolvedTypeAlias {
+    item: syn::ItemType,
+    context: AliasResolutionContext,
+}
+
+struct TypeAliasSubstituter<'a> {
+    substitutions: &'a HashMap<String, Type>,
+}
+
+impl VisitMut for TypeAliasSubstituter<'_> {
+    fn visit_type_mut(&mut self, ty: &mut Type) {
+        if let Type::Path(type_path) = ty
+            && type_path.qself.is_none()
+            && type_path.path.leading_colon.is_none()
+            && type_path.path.segments.len() == 1
+        {
+            let segment = &type_path.path.segments[0];
+            if matches!(segment.arguments, PathArguments::None)
+                && let Some(replacement) = self.substitutions.get(&segment.ident.to_string())
+            {
+                *ty = replacement.clone();
+                return;
             }
         }
+
+        syn::visit_mut::visit_type_mut(self, ty);
     }
 }
 
-/// Collects every `Machine<State>` target mentioned in supported wrapper trees.
-///
-/// This is used for exact branch introspection and intentionally inspects both
-/// sides of `Result<T, E>` while still ignoring arbitrary non-machine payloads.
-pub fn collect_machine_and_states(ty: &Type, target_type: &Type) -> Vec<(String, String)> {
-    let mut targets = Vec::new();
-    collect_machine_targets(ty, target_type, &mut targets);
-    targets
+fn current_alias_resolution_context() -> Option<AliasResolutionContext> {
+    let (file_path, _) = current_source_info()?;
+    let module_path = current_module_path_opt()?;
+    Some(AliasResolutionContext {
+        module_root: module_root_from_file(&file_path),
+        root_module_path: source_observation_root_module(&file_path),
+        file_path,
+        module_path,
+    })
 }
 
-enum PrimaryReturnWrapper<'a> {
-    Machine(&'a syn::PathSegment),
-    Option(&'a Type),
-    Result(&'a Type),
-    Branch(&'a Type),
+fn current_alias_resolution_context_for_span(span: Span) -> Option<AliasResolutionContext> {
+    let (file_path, line_number) = crate::callsite::source_info_for_span(span)?;
+    let module_path = crate::callsite::module_path_for_line(&file_path, line_number)?;
+    Some(AliasResolutionContext {
+        module_root: module_root_from_file(&file_path),
+        root_module_path: source_observation_root_module(&file_path),
+        file_path,
+        module_path,
+    })
+}
+
+fn candidate_alias_resolution_contexts(span: Option<Span>) -> Vec<AliasResolutionContext> {
+    let mut contexts = Vec::new();
+
+    if let Some(context) = current_alias_resolution_context() {
+        contexts.push(context);
+    }
+    if let Some(span) = span
+        && let Some(context) = current_alias_resolution_context_for_span(span)
+        && !contexts
+            .iter()
+            .any(|existing| existing.file_path == context.file_path && existing.module_path == context.module_path)
+    {
+        contexts.push(context);
+    }
+
+    contexts
+}
+
+fn source_observation_root_module(file_path: &str) -> String {
+    if let Some(crate_root) = crate::crate_root_for_file(file_path) {
+        let src_root = PathBuf::from(crate_root).join("src");
+        if PathBuf::from(file_path).starts_with(&src_root) {
+            return "crate".to_owned();
+        }
+    }
+
+    let module_root = module_root_from_file(file_path);
+    module_path_from_file_with_root(file_path, &module_root)
+}
+
+fn resolve_type_alias(
+    path: &syn::Path,
+    context: &AliasResolutionContext,
+) -> Option<ResolvedTypeAlias> {
+    let alias_name = path.segments.last()?.ident.to_string();
+    let target_module = alias_module_path(path, context)?;
+    let local_candidates =
+        query::type_aliases_in_module(&context.file_path, &target_module, &alias_name);
+    if local_candidates.len() == 1 {
+        let candidate = local_candidates.into_iter().next()?;
+        return Some(ResolvedTypeAlias {
+            item: candidate.item,
+            context: AliasResolutionContext {
+                file_path: context.file_path.clone(),
+                module_path: target_module,
+                module_root: context.module_root.clone(),
+                root_module_path: context.root_module_path.clone(),
+            },
+        });
+    }
+    if local_candidates.len() > 1 {
+        return None;
+    }
+
+    let alias_file = module_path_to_file(&target_module, &context.file_path, &context.module_root)?;
+    let alias_file = alias_file.to_string_lossy().into_owned();
+    let candidates = query::type_aliases_in_module(&alias_file, &target_module, &alias_name);
+    if candidates.len() != 1 {
+        return None;
+    }
+
+    let candidate = candidates.into_iter().next()?;
+    Some(ResolvedTypeAlias {
+        item: candidate.item,
+        context: AliasResolutionContext {
+            file_path: alias_file,
+            module_path: target_module,
+            module_root: context.module_root.clone(),
+            root_module_path: context.root_module_path.clone(),
+        },
+    })
+}
+
+fn alias_module_path(path: &syn::Path, context: &AliasResolutionContext) -> Option<String> {
+    if path.leading_colon.is_some() {
+        return None;
+    }
+
+    let segments = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    let alias_name_index = segments.len().checked_sub(1)?;
+    if alias_name_index == 0 {
+        return Some(context.module_path.to_owned());
+    }
+
+    let mut index = 0usize;
+    let mut base = match segments.first()?.as_str() {
+        "crate" => {
+            index = 1;
+            context.root_module_path.clone()
+        }
+        "self" => {
+            index = 1;
+            context.module_path.to_owned()
+        }
+        "super" => {
+            let mut module = context.module_path.to_owned();
+            while segments.get(index).is_some_and(|segment| segment == "super") {
+                module = parent_module_path(&module)?;
+                index += 1;
+            }
+            module
+        }
+        _ => return None,
+    };
+
+    for segment in segments[index..alias_name_index].iter() {
+        base = child_module_path(&base, segment);
+    }
+
+    Some(base)
+}
+
+fn parent_module_path(module_path: &str) -> Option<String> {
+    if module_path == "crate" {
+        return None;
+    }
+
+    module_path
+        .rsplit_once("::")
+        .map(|(parent, _)| parent.to_owned())
+        .or_else(|| Some("crate".to_owned()))
+}
+
+fn child_module_path(base: &str, child: &str) -> String {
+    if base == "crate" {
+        child.to_owned()
+    } else {
+        format!("{base}::{child}")
+    }
+}
+
+fn instantiate_type_alias(item: &syn::ItemType, path: &syn::Path) -> Option<Type> {
+    let segment = path.segments.last()?;
+    let actual_type_args = match &segment.arguments {
+        PathArguments::None => Vec::new(),
+        PathArguments::AngleBracketed(args) => {
+            if args
+                .args
+                .iter()
+                .any(|arg| !matches!(arg, GenericArgument::Type(_)))
+            {
+                return None;
+            }
+            args.args
+                .iter()
+                .filter_map(|arg| match arg {
+                    GenericArgument::Type(ty) => Some(ty.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        }
+        PathArguments::Parenthesized(_) => return None,
+    };
+
+    let mut substitutions = HashMap::new();
+    let mut actual_index = 0usize;
+    for param in &item.generics.params {
+        let syn::GenericParam::Type(type_param) = param else {
+            return None;
+        };
+
+        let actual = if let Some(actual) = actual_type_args.get(actual_index) {
+            actual_index += 1;
+            actual.clone()
+        } else if let Some(default) = &type_param.default {
+            default.clone()
+        } else {
+            return None;
+        };
+
+        substitutions.insert(type_param.ident.to_string(), actual);
+    }
+
+    if actual_index != actual_type_args.len() {
+        return None;
+    }
+
+    let mut expanded = (*item.ty).clone();
+    TypeAliasSubstituter {
+        substitutions: &substitutions,
+    }
+    .visit_type_mut(&mut expanded);
+    Some(expanded)
+}
+
+fn expand_source_type_alias(
+    ty: &Type,
+    context: Option<&AliasResolutionContext>,
+    visited: &mut HashSet<String>,
+) -> Option<(Type, AliasResolutionContext, String)> {
+    let context = context?;
+    let type_path = type_path(ty)?;
+    let resolved = resolve_type_alias(&type_path.path, context)?;
+    let visit_key = format!(
+        "{}::{}::{}",
+        resolved.context.file_path,
+        resolved.context.module_path,
+        resolved.item.ident
+    );
+    if !visited.insert(visit_key.clone()) {
+        return None;
+    }
+
+    let expanded = instantiate_type_alias(&resolved.item, &type_path.path);
+    if expanded.is_none() {
+        visited.remove(&visit_key);
+    }
+    expanded.map(|expanded| (expanded, resolved.context, visit_key))
 }
 
 #[derive(Clone, Copy)]
@@ -923,31 +1155,106 @@ enum SupportedWrapper {
     Branch,
 }
 
-fn classify_primary_return_wrapper<'a>(
-    ty: &'a Type,
-    target_type: &Type,
-) -> Option<PrimaryReturnWrapper<'a>> {
-    let type_path = type_path(ty)?;
+/// Attempts to parse `ty` into the form:
+///
+///   - the same machine path as the impl target, with a different state marker
+///   - a source-backed type alias that expands to that machine path
+///   - a supported wrapper around either of those
+///
+/// On success, returns (`"Machine"`, `"SomeState"`).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn parse_machine_and_state(ty: &Type, target_type: &Type) -> Option<(String, String)> {
+    parse_primary_machine_and_state_in_context(ty, target_type, None)
+}
 
-    if let Some(segment) = machine_segment_matching_target(&type_path.path, target_type) {
-        return Some(PrimaryReturnWrapper::Machine(segment));
+fn parse_machine_and_state_in_context(
+    ty: &Type,
+    target_type: &Type,
+    context: Option<&AliasResolutionContext>,
+) -> Option<(String, String)> {
+    parse_primary_machine_and_state_in_context(ty, target_type, context)
+}
+
+/// Attempts to parse the primary visible next state from `ty`.
+///
+/// This preserves transition helper behavior by following the first machine-
+/// carrying branch through supported wrappers and ordinary source-declared type
+/// aliases until it reaches the same machine path used by the impl target.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn parse_primary_machine_and_state(ty: &Type, target_type: &Type) -> Option<(String, String)> {
+    parse_primary_machine_and_state_in_context(ty, target_type, None)
+}
+
+fn parse_primary_machine_and_state_in_context(
+    ty: &Type,
+    target_type: &Type,
+    context: Option<&AliasResolutionContext>,
+) -> Option<(String, String)> {
+    let mut visited = HashSet::new();
+    parse_primary_machine_and_state_inner(ty, target_type, context, &mut visited)
+}
+
+fn parse_primary_machine_and_state_inner(
+    ty: &Type,
+    target_type: &Type,
+    context: Option<&AliasResolutionContext>,
+    visited: &mut HashSet<String>,
+) -> Option<(String, String)> {
+    let type_path = type_path(ty)?;
+    let segment = type_path.path.segments.last()?;
+
+    if machine_segment_matching_target(&type_path.path, target_type).is_some() {
+        return extract_machine_state_from_segment(segment).map(|(machine, state, _)| (machine, state));
     }
 
-    let segment = type_path.path.segments.last()?;
+    if let Some((expanded, alias_context, visit_key)) = expand_source_type_alias(ty, context, visited) {
+        let result = parse_primary_machine_and_state_inner(
+            &expanded,
+            target_type,
+            Some(&alias_context),
+            visited,
+        );
+        visited.remove(&visit_key);
+        return result;
+    }
+
     match supported_wrapper(&type_path.path)? {
-        SupportedWrapper::Option => {
-            extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Option)
-        }
-        SupportedWrapper::Result => {
-            extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Result)
-        }
-        SupportedWrapper::Branch => {
-            extract_first_generic_type_ref(&segment.arguments).map(PrimaryReturnWrapper::Branch)
-        }
+        SupportedWrapper::Option => extract_first_generic_type_ref(&segment.arguments)
+            .and_then(|inner| parse_primary_machine_and_state_inner(inner, target_type, context, visited)),
+        SupportedWrapper::Result | SupportedWrapper::Branch => extract_first_generic_type_ref(
+            &segment.arguments,
+        )
+        .and_then(|inner| parse_primary_machine_and_state_inner(inner, target_type, context, visited)),
     }
 }
 
-fn collect_machine_targets(ty: &Type, target_type: &Type, targets: &mut Vec<(String, String)>) {
+/// Collects every `Machine<State>` target mentioned in supported wrapper trees.
+///
+/// This is used for exact branch introspection and intentionally inspects both
+/// sides of `Result<T, E>` while still ignoring arbitrary non-machine payloads.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn collect_machine_and_states(ty: &Type, target_type: &Type) -> Vec<(String, String)> {
+    collect_machine_and_states_in_context(ty, target_type, None)
+}
+
+fn collect_machine_and_states_in_context(
+    ty: &Type,
+    target_type: &Type,
+    context: Option<&AliasResolutionContext>,
+) -> Vec<(String, String)> {
+    let mut targets = Vec::new();
+    let mut visited = HashSet::new();
+    collect_machine_targets_inner(ty, target_type, context, &mut visited, &mut targets);
+    targets
+}
+
+fn collect_machine_targets_inner(
+    ty: &Type,
+    target_type: &Type,
+    context: Option<&AliasResolutionContext>,
+    visited: &mut HashSet<String>,
+    targets: &mut Vec<(String, String)>,
+) {
     let Some(type_path) = type_path(ty) else {
         return;
     };
@@ -962,16 +1269,22 @@ fn collect_machine_targets(ty: &Type, target_type: &Type, targets: &mut Vec<(Str
         return;
     }
 
+    if let Some((expanded, alias_context, visit_key)) = expand_source_type_alias(ty, context, visited) {
+        collect_machine_targets_inner(&expanded, target_type, Some(&alias_context), visited, targets);
+        visited.remove(&visit_key);
+        return;
+    }
+
     match supported_wrapper(&type_path.path) {
         Some(SupportedWrapper::Option) => {
             if let Some(inner) = extract_first_generic_type_ref(&segment.arguments) {
-                collect_machine_targets(inner, target_type, targets);
+                collect_machine_targets_inner(inner, target_type, context, visited, targets);
             }
         }
         Some(SupportedWrapper::Result | SupportedWrapper::Branch) => {
             if let Some(types) = extract_generic_type_refs(&segment.arguments) {
                 for inner in types {
-                    collect_machine_targets(inner, target_type, targets);
+                    collect_machine_targets_inner(inner, target_type, context, visited, targets);
                 }
             }
         }
@@ -1179,13 +1492,30 @@ fn extract_generic_type_refs(args: &PathArguments) -> Option<Vec<&Type>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_machine_and_states, extract_impl_machine_and_state, parse_machine_and_state,
-        parse_primary_machine_and_state,
+        AliasResolutionContext, collect_machine_and_states, collect_machine_and_states_in_context,
+        extract_impl_machine_and_state, module_root_from_file, parse_machine_and_state,
+        parse_machine_and_state_in_context, parse_primary_machine_and_state,
     };
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
     use syn::Type;
 
     fn parse_type(source: &str) -> Type {
         syn::parse_str(source).expect("valid type")
+    }
+
+    fn write_temp_rust_file(contents: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let crate_dir = std::env::temp_dir().join(format!("statum_transition_alias_{nanos}"));
+        let src_dir = crate_dir.join("src");
+        fs::create_dir_all(&src_dir).expect("create temp crate");
+        let path = src_dir.join("lib.rs");
+        fs::write(&path, contents).expect("write temp file");
+        path
     }
 
     #[test]
@@ -1315,4 +1645,63 @@ mod tests {
         let ty = parse_type("Machine<crate::Draft>");
         assert!(extract_impl_machine_and_state(&ty).is_none());
     }
+
+    #[test]
+    fn parser_resolves_crate_root_aliases_from_submodules() {
+        let path = write_temp_rust_file(
+            r#"
+pub type Result<T> = ::core::result::Result<T, ()>;
+pub type Flow<State> = Machine<State>;
+
+mod auth {
+    pub fn marker() {}
+}
+"#,
+        );
+        let target = parse_type("Machine<Draft>");
+        let ty = parse_type("crate::Result<crate::Flow<Accepted>>");
+        let context = AliasResolutionContext {
+            module_root: module_root_from_file(path.to_str().expect("path")),
+            root_module_path: "crate".into(),
+            file_path: path.to_string_lossy().into_owned(),
+            module_path: "auth".into(),
+        };
+
+        assert_eq!(
+            parse_machine_and_state_in_context(&ty, &target, Some(&context)),
+            Some(("Machine".to_owned(), "Accepted".to_owned()))
+        );
+        assert_eq!(
+            collect_machine_and_states_in_context(&ty, &target, Some(&context)),
+            vec![("Machine".to_owned(), "Accepted".to_owned())]
+        );
+
+        let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
+    }
+
+    #[test]
+    fn parser_resolves_crate_root_aliases_in_real_fixture_file() {
+        let path = format!(
+            "{}/tests/ui/valid_transition_crate_aliases.rs",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let target = parse_type("Machine<Draft>");
+        let ty = parse_type("crate::Result<crate::Flow<Accepted>>");
+        let context = AliasResolutionContext {
+            module_root: module_root_from_file(&path),
+            root_module_path: "valid_transition_crate_aliases".into(),
+            file_path: path,
+            module_path: "valid_transition_crate_aliases::auth".into(),
+        };
+
+        assert_eq!(
+            parse_machine_and_state_in_context(&ty, &target, Some(&context)),
+            Some(("Machine".to_owned(), "Accepted".to_owned()))
+        );
+        assert_eq!(
+            collect_machine_and_states_in_context(&ty, &target, Some(&context)),
+            vec![("Machine".to_owned(), "Accepted".to_owned())]
+        );
+    }
+
 }
