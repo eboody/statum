@@ -2,8 +2,8 @@
 
 extern crate toml;
 
+use std::env;
 use std::fs;
-use std::io;
 use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
@@ -120,33 +120,29 @@ fn ensure_versions_are_unpublished(version: &str) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-fn read_line_trimmed() -> Result<String, Box<dyn std::error::Error>> {
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_string())
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ensure_clean_worktree()?;
-
-    println!("Enter target version (e.g. 1.0.0):");
-    let target_version = read_line_trimmed()?;
-    if target_version.is_empty() {
-        return Err("Target version cannot be empty".into());
+    let args: Vec<String> = env::args().collect();
+    if args.len() > 2 {
+        return Err(format!(
+            "Usage: {} [expected_version]",
+            args.first().map(String::as_str).unwrap_or("publish.rs")
+        )
+        .into());
     }
 
-    println!("\nUpdating versions...");
-    run(
-        {
-            let mut cmd = Command::new("cargo");
-            cmd.args(["script", "scripts/update_version.rs", "--", &target_version]);
-            cmd
-        },
-        "Version update",
-    )?;
+    ensure_clean_worktree()?;
 
     let version = verify_versions_match()?;
-    println!("✓ All publishable crates are aligned at version {version}");
+    if let Some(expected_version) = args.get(1) {
+        if expected_version != &version {
+            return Err(format!(
+                "Workspace is aligned at version {version}, expected {expected_version}"
+            )
+            .into());
+        }
+    }
+
+    println!("Publishing aligned workspace version {version}");
     ensure_versions_are_unpublished(&version)?;
     println!("✓ No publishable crate is already on crates.io at version {version}");
 
@@ -209,13 +205,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    println!(
-        "\nPublish readiness checks passed for version {version}. Type 'publish' to continue with actual publish:"
-    );
-    let confirm = read_line_trimmed()?;
-    if confirm != "publish" {
-        return Err("Publish aborted by user".into());
-    }
+    println!("\nPublish readiness checks passed for version {version}.");
 
     for (idx, crate_name) in PUBLISH_ORDER.iter().enumerate() {
         println!("\nPublishing {crate_name}...");
