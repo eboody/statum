@@ -108,4 +108,5 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_builder_overwrite.rs");
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
+    t.pass("tests/ui/workspace_member/crates/app/src/lib.rs");
 }

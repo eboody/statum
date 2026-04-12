@@ -3,12 +3,27 @@ use crate::cache::{
 };
 use crate::parser::resolve_module_path_from_lines;
 use crate::pathing::normalize_file_path;
+use proc_macro2::Span;
 
 /// Extracts the file path and line number where the macro was invoked.
 pub fn get_source_info() -> Option<(String, usize)> {
     // `proc_macro` APIs panic when used outside a proc-macro context.
     // Return `None` instead of panicking so callers can degrade gracefully.
     let span = std::panic::catch_unwind(proc_macro::Span::call_site).ok()?;
+    source_info_from_proc_span(span)
+}
+
+pub fn get_source_info_for_span(span: Span) -> Option<(String, usize)> {
+    // Prefer the item's own span because `call_site` can be missing or lossy in
+    // proc-macro server contexts. Fall back to `call_site` to preserve the older
+    // best-effort path when span-local file info is unavailable.
+    std::panic::catch_unwind(move || span.unwrap())
+        .ok()
+        .and_then(source_info_from_proc_span)
+        .or_else(get_source_info)
+}
+
+fn source_info_from_proc_span(span: proc_macro::Span) -> Option<(String, usize)> {
     let line_number = span.start().line();
 
     if let Some(local_file) = span.local_file() {

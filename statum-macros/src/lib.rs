@@ -46,7 +46,7 @@ pub(crate) use syntax::{
     extract_derives, source_file_fingerprint,
 };
 
-use crate::callsite::{current_module_path_at_line, current_module_path_opt};
+use crate::callsite::{current_module_path_opt, module_path_for_span};
 use crate::{
     LoadedMachineLookupFailure, MachinePath, ambiguous_transition_machine_error,
     ambiguous_transition_machine_fallback_error, lookup_loaded_machine_in_module,
@@ -54,6 +54,7 @@ use crate::{
 };
 use proc_macro::TokenStream;
 use proc_macro2::Span;
+use syn::spanned::Spanned;
 use syn::{Item, ItemImpl, parse_macro_input};
 
 /// Define the legal lifecycle phases for a Statum machine.
@@ -213,20 +214,19 @@ pub fn transition(
 /// `.build_reports()`.
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let module_path = match resolved_current_module_path(Span::call_site(), "#[validators]") {
+    let item_impl = parse_macro_input!(item as ItemImpl);
+    let module_path = match resolved_current_module_path(item_impl.self_ty.span(), "#[validators]")
+    {
         Ok(path) => path,
         Err(err) => return err,
     };
-    parse_validators(attr, item, &module_path)
+    parse_validators(attr, item_impl, &module_path)
 }
 
 fn resolved_current_module_path(span: Span, macro_name: &str) -> Result<String, TokenStream> {
-    let line_number = span.start().line;
-    let resolved = if line_number == 0 {
-        current_module_path_opt()
-    } else {
-        current_module_path_at_line(line_number).or_else(current_module_path_opt)
-    };
+    let resolved = module_path_for_span(span)
+        .or_else(current_module_path_opt)
+        .or_else(|| crate::machine::is_rust_analyzer().then_some("crate".to_string()));
 
     resolved.ok_or_else(|| {
         let message = format!(

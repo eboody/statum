@@ -1,4 +1,3 @@
-use proc_macro::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use std::collections::HashMap;
 use syn::{Generics, Ident, ItemImpl, Type, parse_macro_input};
@@ -54,9 +53,12 @@ struct IntoMachineBuilderContext<'a> {
     machine_vis: &'a syn::Visibility,
 }
 
-pub fn parse_validators(attr: TokenStream, item: TokenStream, module_path: &str) -> TokenStream {
+pub fn parse_validators(
+    attr: proc_macro::TokenStream,
+    item_impl: ItemImpl,
+    module_path: &str,
+) -> proc_macro::TokenStream {
     let machine_ident = parse_macro_input!(attr as Ident);
-    let item_impl = parse_macro_input!(item as ItemImpl);
     let struct_ident = &item_impl.self_ty;
     let persisted_type_display = struct_ident.to_token_stream().to_string();
 

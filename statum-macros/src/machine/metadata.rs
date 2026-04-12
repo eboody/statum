@@ -1,4 +1,4 @@
-use crate::callsite::{current_source_file, current_source_info, module_path_for_line};
+use crate::callsite::{current_source_info, module_path_for_line, source_info_for_span};
 use crate::query;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
@@ -84,7 +84,30 @@ impl MachineInfo {
     }
 
     pub fn from_item_struct(item: &ItemStruct) -> syn::Result<Self> {
-        let Some(file_path) = current_source_file() else {
+        let line_number = item.ident.span().start().line;
+        let Some((file_path, line_number)) = source_info_for_span(item.ident.span()) else {
+            if is_rust_analyzer() {
+                return Ok(Self {
+                    name: item.ident.to_string(),
+                    vis: item.vis.to_token_stream().to_string(),
+                    derives: item
+                        .attrs
+                        .iter()
+                        .filter_map(extract_derives)
+                        .flatten()
+                        .collect(),
+                    presentation: parse_present_attrs(&item.attrs)?,
+                    presentation_types: parse_presentation_types_attr(&item.attrs)?,
+                    module_path: "crate".into(),
+                    line_number,
+                    fields: collect_fields(item),
+                    generics: item.generics.to_token_stream().to_string(),
+                    state_generic_name: extract_state_generic_name(&item.generics),
+                    file_path: None,
+                    crate_root: std::env::var("CARGO_MANIFEST_DIR").ok(),
+                    file_fingerprint: None,
+                });
+            }
             return Err(syn::Error::new(
                 item.ident.span(),
                 format!(
@@ -93,8 +116,29 @@ impl MachineInfo {
                 ),
             ));
         };
-        let line_number = item.ident.span().start().line;
         let Some(module_path) = module_path_for_line(&file_path, line_number) else {
+            if is_rust_analyzer() {
+                return Ok(Self {
+                    name: item.ident.to_string(),
+                    vis: item.vis.to_token_stream().to_string(),
+                    derives: item
+                        .attrs
+                        .iter()
+                        .filter_map(extract_derives)
+                        .flatten()
+                        .collect(),
+                    presentation: parse_present_attrs(&item.attrs)?,
+                    presentation_types: parse_presentation_types_attr(&item.attrs)?,
+                    module_path: "crate".into(),
+                    line_number,
+                    fields: collect_fields(item),
+                    generics: item.generics.to_token_stream().to_string(),
+                    state_generic_name: extract_state_generic_name(&item.generics),
+                    file_path: None,
+                    crate_root: std::env::var("CARGO_MANIFEST_DIR").ok(),
+                    file_fingerprint: None,
+                });
+            }
             return Err(syn::Error::new(
                 item.ident.span(),
                 format!(
@@ -137,7 +181,7 @@ impl MachineInfo {
         }
 
         let line_number = item.ident.span().start().line;
-        let file_path = current_source_file();
+        let file_path = crate::callsite::current_source_file();
         let presentation = parse_present_attrs(&item.attrs).ok()?;
         let presentation_types = parse_presentation_types_attr(&item.attrs).ok()?;
         Some(Self {
@@ -196,7 +240,7 @@ pub(crate) struct ParsedMachineField {
     pub(crate) field_type: Type,
 }
 
-pub(super) fn is_rust_analyzer() -> bool {
+pub(crate) fn is_rust_analyzer() -> bool {
     std::env::var("RUST_ANALYZER_INTERNALS").is_ok()
 }
 

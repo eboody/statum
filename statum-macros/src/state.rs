@@ -1,4 +1,4 @@
-use crate::callsite::{current_source_file, module_path_for_line};
+use crate::callsite::{module_path_for_line, source_info_for_span};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
 use std::sync::{OnceLock, RwLock};
@@ -338,7 +338,16 @@ pub fn invalid_state_target_error(item: &Item) -> TokenStream {
 
 impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
-        let Some(file_path) = current_source_file() else {
+        let line_number = item.ident.span().start().line;
+        let Some((file_path, line_number)) = source_info_for_span(item.ident.span()) else {
+            if crate::machine::is_rust_analyzer() {
+                return Self::from_item_enum_with_module_and_file(
+                    item,
+                    "crate".into(),
+                    None,
+                    line_number,
+                );
+            }
             return Err(syn::Error::new(
                 item.ident.span(),
                 format!(
@@ -347,8 +356,15 @@ impl EnumInfo {
                 ),
             ));
         };
-        let line_number = item.ident.span().start().line;
         let Some(module_path) = module_path_for_line(&file_path, line_number) else {
+            if crate::machine::is_rust_analyzer() {
+                return Self::from_item_enum_with_module_and_file(
+                    item,
+                    "crate".into(),
+                    None,
+                    line_number,
+                );
+            }
             return Err(syn::Error::new(
                 item.ident.span(),
                 format!(
@@ -370,7 +386,7 @@ impl EnumInfo {
         item: &ItemEnum,
         module_path: StateModulePath,
     ) -> syn::Result<Self> {
-        let file_path = current_source_file();
+        let file_path = crate::callsite::current_source_file();
         let line_number = item.ident.span().start().line;
         Self::from_item_enum_with_module_and_file(item, module_path, file_path, line_number)
     }
