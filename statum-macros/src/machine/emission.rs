@@ -42,11 +42,14 @@ pub fn generate_machine_impls(
     let machine_callback_ident = machine_family_callback_ident(machine_info);
     let machine_visitor_macro_ident = machine_visitor_macro_ident(machine_info);
     let state_presentation_macro_ident = machine_state_presentation_entry_macro_ident(machine_info);
-    let state_presentation_entry_macro =
+    let state_presentation_entry_macro = if cfg!(feature = "introspection") {
         match generate_state_presentation_entry_macro(machine_info, &state_presentation_macro_ident) {
             Ok(tokens) => tokens,
             Err(err) => return err,
-        };
+        }
+    } else {
+        quote! {}
+    };
     let variant_builder_init_macro_ident = machine_variant_builder_init_macro_ident(machine_info);
     let variant_builder_init_macro = generate_variant_builder_init_macro(
         machine_info,
@@ -131,21 +134,29 @@ fn generate_machine_family_callback(
     let builder_support = generate_builder_support(machine_info, parsed_machine, machine_ident);
     let machine_state_surface =
         generate_machine_state_surface(machine_info, item, parsed_machine, machine_ident)?;
-    let introspection_impls = generate_machine_introspection_impls(
-        machine_info,
-        parsed_machine,
-        machine_ident,
-        state_generic_ident,
-    );
+    let introspection_impls = if cfg!(feature = "introspection") {
+        generate_machine_introspection_impls(
+            machine_info,
+            parsed_machine,
+            machine_ident,
+            state_generic_ident,
+        )
+    } else {
+        quote! {}
+    };
     let machine_module_ident = machine_state_module_ident(machine_info);
     let machine_vis = parsed_machine.vis.clone();
-    let validator_support = generate_validator_support_macro(
-        machine_info,
-        parsed_machine,
-        machine_ident,
-        &machine_module_ident,
-        &machine_vis,
-    );
+    let validator_support = if cfg!(feature = "validators") {
+        generate_validator_support_macro(
+            machine_info,
+            parsed_machine,
+            machine_ident,
+            &machine_module_ident,
+            &machine_vis,
+        )
+    } else {
+        quote! {}
+    };
     let extra_machine_generics = extra_generics(&parsed_machine.generics);
     let extra_generic_param_entries = extra_machine_generics
         .params
@@ -2034,49 +2045,65 @@ fn generate_machine_state_surface(
     let extra_ty_args = extra_type_arguments_tokens(&parsed_machine.generics);
     let extra_impl_generics = extra_machine_generics.clone();
     let (_, some_state_ty_generics, some_state_where_clause) = extra_impl_generics.split_for_impl();
-    let fields_struct_fields = parsed_machine.fields.iter().map(|field| {
-        let field_ident = &field.ident;
-        let alias_ident = format_ident!(
-            "{}",
-            field_type_alias_name(&machine_info.name, &field.ident.to_string())
-        );
-        quote! {
-            pub #field_ident: super::#alias_ident #extra_ty_args
-        }
-    });
     let vis = parsed_machine.vis.clone();
     let module_ident = machine_state_module_ident(machine_info);
-    let introspection_surface = generate_machine_module_introspection(machine_info, item)?;
+    let introspection_surface = if cfg!(feature = "introspection") {
+        generate_machine_module_introspection(machine_info, item)?
+    } else {
+        quote! {}
+    };
     let extra_params = extra_machine_generics.params.iter();
     let extra_where_clause = extra_machine_generics.where_clause.clone();
-    let into_machines_trait = if extra_machine_generics.params.is_empty() {
-        quote! {
-            pub trait IntoMachinesExt<Item>: Sized {
-                type Builder;
-                type BuilderWithFields<F>;
-
-                fn into_machines(self) -> Self::Builder;
-
-                fn into_machines_by<F>(self, fields: F) -> Self::BuilderWithFields<F>
-                where
-                    F: Fn(&Item) -> Fields;
+    let validator_surface = if cfg!(feature = "validators") {
+        let fields_struct_fields = parsed_machine.fields.iter().map(|field| {
+            let field_ident = &field.ident;
+            let alias_ident = format_ident!(
+                "{}",
+                field_type_alias_name(&machine_info.name, &field.ident.to_string())
+            );
+            quote! {
+                pub #field_ident: super::#alias_ident #extra_ty_args
             }
+        });
+        let into_machines_trait = if extra_machine_generics.params.is_empty() {
+            quote! {
+                pub trait IntoMachinesExt<Item>: Sized {
+                    type Builder;
+                    type BuilderWithFields<F>;
+
+                    fn into_machines(self) -> Self::Builder;
+
+                    fn into_machines_by<F>(self, fields: F) -> Self::BuilderWithFields<F>
+                    where
+                        F: Fn(&Item) -> Fields;
+                }
+            }
+        } else {
+            quote! {
+                pub trait IntoMachinesExt<Item, #(#extra_params),*>: Sized
+                #extra_where_clause
+                {
+                    type Builder;
+                    type BuilderWithFields<F>;
+
+                    fn into_machines(self) -> Self::Builder;
+
+                    fn into_machines_by<F>(self, fields: F) -> Self::BuilderWithFields<F>
+                    where
+                        F: Fn(&Item) -> Fields #extra_ty_args;
+                }
+            }
+        };
+
+        quote! {
+            pub struct Fields #extra_machine_generics {
+                #(#fields_struct_fields),*
+            }
+
+            #into_machines_trait
         }
     } else {
-        quote! {
-            pub trait IntoMachinesExt<Item, #(#extra_params),*>: Sized
-            #extra_where_clause
-            {
-                type Builder;
-                type BuilderWithFields<F>;
-
-                fn into_machines(self) -> Self::Builder;
-
-                fn into_machines_by<F>(self, fields: F) -> Self::BuilderWithFields<F>
-                where
-                    F: Fn(&Item) -> Fields #extra_ty_args;
-            }
-        }
+        quote! {}
     };
     let state_machine_ty = machine_type_with_state(
         quote! { super::#machine_ident },
@@ -2095,10 +2122,6 @@ fn generate_machine_state_surface(
                 pub struct Route<const ID: u64>;
             }
 
-            pub struct Fields #extra_machine_generics {
-                #(#fields_struct_fields),*
-            }
-
             #[allow(clippy::enum_variant_names)]
             pub enum SomeState #extra_machine_generics {
                 $( $variant(#state_machine_ty) ),*
@@ -2106,7 +2129,7 @@ fn generate_machine_state_surface(
 
             pub type State #extra_machine_generics = SomeState #extra_ty_args;
 
-            #into_machines_trait
+            #validator_surface
 
             impl #extra_impl_generics SomeState #some_state_ty_generics #some_state_where_clause {
                 $(
@@ -2140,16 +2163,19 @@ fn generate_machine_module_introspection(
         machine_state_presentation_entry_macro_ident(machine_info);
     let transition_slice_ident = transition_slice_ident(
         &machine_info.name,
+        machine_info.module_path.as_ref(),
         machine_info.file_path.as_deref(),
         machine_info.line_number,
     );
     let transition_presentation_slice_ident = transition_presentation_slice_ident(
         &machine_info.name,
+        machine_info.module_path.as_ref(),
         machine_info.file_path.as_deref(),
         machine_info.line_number,
     );
     let linked_transition_slice_ident = linked_transition_slice_ident(
         &machine_info.name,
+        machine_info.module_path.as_ref(),
         machine_info.file_path.as_deref(),
         machine_info.line_number,
     );

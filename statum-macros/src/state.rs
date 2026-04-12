@@ -1,5 +1,6 @@
+use macro_registry::analysis::get_file_analysis;
 use macro_registry::callsite::{
-    best_effort_source_context_for_span_or_callsite, module_path_for_span,
+    best_effort_source_context_for_span_or_callsite, module_path_for_line, module_path_for_span,
     source_info_for_span_or_callsite,
 };
 use proc_macro2::TokenStream;
@@ -334,6 +335,14 @@ pub(crate) fn lookup_loaded_state_enum_best_effort(
     }
 
     if let Some(current_file_path) = current_file_path {
+        let source_scan = source_state_candidates_in_file(current_file_path, enum_path, enum_name);
+        if !source_scan.candidates.is_empty() {
+            return lookup_loaded_state_candidates(source_scan.candidates);
+        }
+        if source_scan.raw_match_found {
+            return Err(LoadedStateLookupFailure::NotFound);
+        }
+
         let same_file = loaded_state_candidates_matching_with_crate_root(
             current_crate_root,
             |state| {
@@ -357,6 +366,60 @@ pub(crate) fn lookup_loaded_state_enum_best_effort(
     }
 
     Err(LoadedStateLookupFailure::NotFound)
+}
+
+// rust-analyzer can miss expansion-time registry state for a local `#[state]`
+// item. In that best-effort path, scan the current file and recover the enum in
+// the requested module before falling back to weaker same-file registry guesses.
+fn source_state_candidates_in_file(
+    file_path: &str,
+    enum_path: Option<&StateModulePath>,
+    enum_name: Option<&str>,
+) -> SourceStateScan {
+    let Some(analysis) = get_file_analysis(file_path) else {
+        return SourceStateScan::default();
+    };
+
+    let mut raw_match_found = false;
+    let mut candidates = analysis
+        .enums
+        .iter()
+        .filter(|entry| entry.attrs.iter().any(|attr| attr == "state"))
+        .filter(|entry| enum_name.is_none_or(|enum_name| entry.item.ident == enum_name))
+        .filter_map(|entry| {
+            let module_path = module_path_for_line(file_path, entry.line_number)?;
+            if enum_path.is_some_and(|enum_path| module_path != enum_path.as_ref()) {
+                return None;
+            }
+            raw_match_found = true;
+
+            EnumInfo::from_item_enum_with_module_and_file(
+                &entry.item,
+                module_path.into(),
+                Some(file_path.to_owned()),
+                entry.line_number,
+            )
+            .ok()
+        })
+        .collect::<Vec<_>>();
+
+    candidates.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then(left.module_path.as_ref().cmp(right.module_path.as_ref()))
+            .then(left.line_number.cmp(&right.line_number))
+    });
+    candidates.dedup_by(|left, right| same_loaded_state(left, right));
+    SourceStateScan {
+        raw_match_found,
+        candidates,
+    }
+}
+
+#[derive(Default)]
+struct SourceStateScan {
+    raw_match_found: bool,
+    candidates: Vec<EnumInfo>,
 }
 
 pub fn format_loaded_state_candidates(candidates: &[EnumInfo]) -> String {
@@ -893,6 +956,11 @@ pub fn store_state_enum(enum_info: &EnumInfo) {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use macro_registry::callsite::module_path_for_line;
     use quote::ToTokens;
     use syn::parse_quote;
 
@@ -915,6 +983,19 @@ mod tests {
         info.crate_root = crate_root.map(str::to_owned);
         info.file_fingerprint = None;
         info
+    }
+
+    fn write_temp_rust_file(contents: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let crate_dir = std::env::temp_dir().join(format!("statum_state_lookup_{nanos}"));
+        let src_dir = crate_dir.join("src");
+        fs::create_dir_all(&src_dir).expect("create temp crate");
+        let path = src_dir.join("lib.rs");
+        fs::write(&path, contents).expect("write temp file");
+        path
     }
 
     #[test]
@@ -1121,5 +1202,158 @@ mod tests {
             failure,
             Err(super::LoadedStateLookupFailure::Ambiguous(_))
         ));
+    }
+
+    #[test]
+    fn best_effort_state_lookup_scans_same_file_for_exact_module_match() {
+        let path = write_temp_rust_file(
+            r#"
+mod inbound {
+    #[state]
+    pub enum State {
+        Completed,
+    }
+}
+
+mod outbound {
+    #[state]
+    pub enum State {
+        Released,
+    }
+}
+
+mod workflow {
+    #[state]
+    pub enum State {
+        Declared,
+    }
+}
+"#,
+        );
+        let path_str = path.to_str().expect("path");
+        let workflow_module_path =
+            module_path_for_line(path_str, 16).expect("workflow module path");
+        let workflow_state_path: StateModulePath = workflow_module_path.clone().into();
+        let crate_root = path
+            .parent()
+            .expect("src")
+            .parent()
+            .expect("crate")
+            .to_str()
+            .expect("crate path");
+
+        let resolved = lookup_loaded_state_enum_best_effort(
+            Some(&workflow_state_path),
+            Some("State"),
+            Some(path_str),
+            Some(crate_root),
+        )
+        .unwrap_or_else(|_| panic!("source scan should resolve the local workflow state"));
+
+        assert_eq!(resolved.module_path.as_ref(), workflow_module_path);
+        assert_eq!(resolved.line_number, 18);
+
+        let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
+    }
+
+    #[test]
+    fn best_effort_state_lookup_source_scan_keeps_same_file_ambiguity() {
+        let path = write_temp_rust_file(
+            r#"
+mod alpha {
+    #[state]
+    pub enum State {
+        Draft,
+    }
+}
+
+mod beta {
+    #[state]
+    pub enum State {
+        Ready,
+    }
+}
+"#,
+        );
+        let path_str = path.to_str().expect("path");
+        let crate_root = path
+            .parent()
+            .expect("src")
+            .parent()
+            .expect("crate")
+            .to_str()
+            .expect("crate path");
+
+        let failure = lookup_loaded_state_enum_best_effort(
+            None,
+            Some("State"),
+            Some(path_str),
+            Some(crate_root),
+        );
+
+        assert!(matches!(
+            failure,
+            Err(super::LoadedStateLookupFailure::Ambiguous(_))
+        ));
+
+        let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
+    }
+
+    #[test]
+    fn best_effort_state_lookup_does_not_fall_through_invalid_local_source_match() {
+        let path = write_temp_rust_file(
+            r#"
+mod workflow {
+    #[state]
+    pub enum State<T> {
+        Draft(T),
+    }
+}
+
+mod sibling {
+    #[state]
+    pub enum State {
+        Ready,
+    }
+}
+"#,
+        );
+        let path_str = path.to_str().expect("path");
+        let workflow_module_path =
+            module_path_for_line(path_str, 4).expect("workflow module path");
+        let workflow_state_path: StateModulePath = workflow_module_path.into();
+        let crate_root = path
+            .parent()
+            .expect("src")
+            .parent()
+            .expect("crate")
+            .to_str()
+            .expect("crate path");
+        let sibling: syn::ItemEnum = parse_quote! {
+            pub enum State {
+                Ready,
+            }
+        };
+
+        store_state_enum(&state_info(
+            sibling,
+            "sibling",
+            Some(path_str),
+            Some(crate_root),
+        ));
+
+        let failure = lookup_loaded_state_enum_best_effort(
+            Some(&workflow_state_path),
+            Some("State"),
+            Some(path_str),
+            Some(crate_root),
+        );
+
+        assert!(matches!(
+            failure,
+            Err(super::LoadedStateLookupFailure::NotFound)
+        ));
+
+        let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
     }
 }

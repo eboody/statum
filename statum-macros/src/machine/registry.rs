@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(any(feature = "introspection", feature = "validators")),
+    allow(dead_code)
+)]
+
 use std::sync::{OnceLock, RwLock};
 
 use super::{MachineInfo, MachinePath};

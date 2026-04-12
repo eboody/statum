@@ -13,6 +13,7 @@ docs_files=(
   "statum/README.md"
   "statum-core/README.md"
   "statum-macros/README.md"
+  "statum-typestate/README.md"
   "macro_registry/README.md"
   "module_path_extractor/README.md"
   "statum-examples/README.md"

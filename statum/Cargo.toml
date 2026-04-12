@@ -1,10 +1,12 @@
 [dependencies.statum-core]
+default-features = false
 path = "../statum-core"
-version = "0.7.0"
+version = "0.7.1"
 
 [dependencies.statum-macros]
+default-features = false
 path = "../statum-macros"
-version = "0.7.0"
+version = "0.7.1"
 
 [dev-dependencies.tokio]
 features = ["full"]
@@ -28,7 +30,15 @@ name = "statum"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.7.0"
+version = "0.7.1"
+
+[features]
+default = ["full"]
+full = ["validators", "introspection", "machine_ref", "projection"]
+validators = ["statum-core/validators", "statum-macros/validators"]
+introspection = ["statum-core/introspection", "statum-macros/introspection"]
+machine_ref = ["statum-core/machine_ref", "statum-macros/machine_ref"]
+projection = ["statum-core/projection"]
 
 [package.metadata.modum]
 generic_nouns = [

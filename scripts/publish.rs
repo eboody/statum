@@ -9,11 +9,12 @@ use std::thread::sleep;
 use std::time::Duration;
 use toml::Value;
 
-const PUBLISH_ORDER: [&str; 5] = [
+const PUBLISH_ORDER: [&str; 6] = [
     "module_path_extractor",
     "macro_registry",
     "statum-core",
     "statum-macros",
+    "statum-typestate",
     "statum",
 ];
 const VERSION_EXISTS_WARNING: &str = "already exists on crates.io index";

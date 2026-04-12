@@ -1,0 +1,31 @@
+[dependencies.statum-core]
+path = "../statum-core"
+version = "0.7.1"
+
+[dependencies.statum-macros]
+default-features = false
+path = "../statum-macros"
+version = "0.7.1"
+
+[lib]
+name = "statum"
+
+[package]
+authors = ["Eran Boodnero <eran@eran.codes>"]
+categories = ["rust-patterns"]
+description = "Typestate-only Statum surface for representing legal workflow and protocol states explicitly in Rust"
+documentation = "https://docs.rs/statum-typestate"
+edition = "2021"
+keywords = [
+    "typestate",
+    "correctness",
+    "workflow",
+    "protocol",
+    "state-machine",
+]
+license = "MIT"
+name = "statum-typestate"
+readme = "README.md"
+repository = "https://github.com/eboody/statum"
+rust-version = "1.93"
+version = "0.7.1"

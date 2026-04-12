@@ -108,6 +108,10 @@ pub struct MachineInfo {
     pub role: MachineRoleAttr,
     pub file_path: Option<String>,
     pub crate_root: Option<String>,
+    #[cfg_attr(
+        not(any(feature = "introspection", feature = "validators")),
+        allow(dead_code)
+    )]
     pub file_fingerprint: Option<SourceFingerprint>,
 }
 

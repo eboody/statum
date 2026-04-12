@@ -128,9 +128,19 @@ pub fn machine(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Apply `#[machine_ref(crate::Machine<crate::State>)]` to a nominal struct or
 /// tuple struct when a field or transition parameter should carry an exact
 /// machine relation without repeating that relation at every use site.
+#[cfg(feature = "machine_ref")]
 #[proc_macro_attribute]
 pub fn machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
     machine_ref::parse_machine_ref(attr, item)
+}
+
+#[cfg(not(feature = "machine_ref"))]
+#[proc_macro_attribute]
+pub fn machine_ref(_attr: TokenStream, _item: TokenStream) -> TokenStream {
+    feature_gate_error(
+        "machine_ref",
+        "`#[machine_ref(...)]` requires the `machine_ref` feature.",
+    )
 }
 
 /// Validate and generate legal transitions for one source state.
@@ -185,6 +195,7 @@ pub fn transition(
 /// ordinary membership checks or `Validation<T>` when rebuild reports should
 /// carry stable rejection details through `.build_report()` and
 /// `.build_reports()`.
+#[cfg(feature = "validators")]
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_impl = parse_macro_input!(item as ItemImpl);
@@ -199,15 +210,44 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     parse_validators(attr, item_impl, &module_path, line_number)
 }
 
+#[cfg(not(feature = "validators"))]
+#[proc_macro_attribute]
+pub fn validators(_attr: TokenStream, _item: TokenStream) -> TokenStream {
+    feature_gate_error(
+        "validators",
+        "`#[validators(...)]` requires the `validators` feature.",
+    )
+}
+
+#[cfg(feature = "validators")]
 #[doc(hidden)]
 #[proc_macro]
 pub fn __statum_emit_validator_methods_impl(input: TokenStream) -> TokenStream {
     validators::emit_validator_methods_impl(input)
 }
 
+#[cfg(not(feature = "validators"))]
+#[doc(hidden)]
+#[proc_macro]
+pub fn __statum_emit_validator_methods_impl(_input: TokenStream) -> TokenStream {
+    feature_gate_error(
+        "validators",
+        "`__statum_emit_validator_methods_impl!` requires the `validators` feature.",
+    )
+}
+
 #[allow(unexpected_cfgs)]
 pub(crate) fn is_rust_analyzer() -> bool {
     cfg!(rust_analyzer) || std::env::var("RUST_ANALYZER_INTERNALS").is_ok()
+}
+
+#[allow(dead_code)]
+fn feature_gate_error(feature: &str, message: &str) -> TokenStream {
+    let help = format!("Fix: enable `{feature}` on `statum` or `statum-macros` in Cargo.toml.");
+
+    syn::Error::new(Span::call_site(), format!("{message}\n{help}"))
+        .to_compile_error()
+        .into()
 }
 
 pub(crate) fn resolved_current_module_path(

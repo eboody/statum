@@ -1,6 +1,14 @@
 [dependencies]
-futures = "0.3"
-linkme = "0.3"
+futures = { version = "0.3", optional = true }
+linkme = { version = "0.3", optional = true }
+
+[features]
+default = ["full"]
+full = ["introspection", "validators", "machine_ref", "projection"]
+introspection = ["dep:linkme"]
+validators = ["dep:futures"]
+machine_ref = []
+projection = []
 
 [package]
 authors = ["Eran Boodnero <eran@eran.codes>"]
@@ -20,7 +28,7 @@ name = "statum-core"
 readme = "README.md"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.7.0"
+version = "0.7.1"
 
 [package.metadata.modum]
 weak_modules = [

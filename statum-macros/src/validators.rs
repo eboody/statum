@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "validators"), allow(dead_code))]
+
 use proc_macro::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{Ident, ItemImpl, Type, parse_macro_input};
@@ -123,70 +125,75 @@ pub fn parse_validators(
         "__statum_emit_{}_validator_report_variant",
         crate::to_snake_case(&machine_name)
     );
-    let machine_module_path = syn::LitStr::new(
-        diagnostic_machine.module_path.as_ref(),
-        proc_macro2::Span::call_site(),
-    );
-    let machine_module_tokens = format_ident!("{}", crate::to_snake_case(&machine_name));
-    let machine_rust_type_path = syn::LitStr::new(
-        &format!("{}::{}", diagnostic_machine.module_path, machine_name),
-        proc_macro2::Span::call_site(),
-    );
-    let linked_validator_registration_ident = linked_validator_registration_ident(
-        &machine_name,
-        module_path,
-        &persisted_type_display,
-        line_number,
-    );
-    let linked_validator_targets_ident = linked_validator_targets_ident(
-        &machine_name,
-        module_path,
-        &persisted_type_display,
-        line_number,
-    );
-    let source_module_path = syn::LitStr::new(module_path, proc_macro2::Span::call_site());
-    let source_type_display =
-        syn::LitStr::new(&persisted_type_display, proc_macro2::Span::call_site());
-    let linked_validator_source_type_name_ident = linked_validator_source_type_name_ident(
-        &machine_name,
-        module_path,
-        &persisted_type_display,
-        line_number,
-    );
-    let docs = match parse_doc_attrs(&item_impl.attrs) {
-        Ok(docs) => docs,
-        Err(err) => return err.to_compile_error().into(),
-    };
-    let linked_docs = optional_lit_str_tokens(docs.as_deref());
-    let validator_target_states = validator_methods
-        .iter()
-        .map(|method| syn::LitStr::new(&method.variant_name, proc_macro2::Span::call_site()))
-        .collect::<Vec<_>>();
-    let linked_validator_registration = quote! {
-        #[doc(hidden)]
-        static #linked_validator_targets_ident: &[&str] = &[#(#validator_target_states),*];
+    let linked_validator_registration = if cfg!(feature = "introspection") {
+        let machine_module_path = syn::LitStr::new(
+            diagnostic_machine.module_path.as_ref(),
+            proc_macro2::Span::call_site(),
+        );
+        let machine_module_tokens = format_ident!("{}", crate::to_snake_case(&machine_name));
+        let machine_rust_type_path = syn::LitStr::new(
+            &format!("{}::{}", diagnostic_machine.module_path, machine_name),
+            proc_macro2::Span::call_site(),
+        );
+        let linked_validator_registration_ident = linked_validator_registration_ident(
+            &machine_name,
+            module_path,
+            &persisted_type_display,
+            line_number,
+        );
+        let linked_validator_targets_ident = linked_validator_targets_ident(
+            &machine_name,
+            module_path,
+            &persisted_type_display,
+            line_number,
+        );
+        let source_module_path = syn::LitStr::new(module_path, proc_macro2::Span::call_site());
+        let source_type_display =
+            syn::LitStr::new(&persisted_type_display, proc_macro2::Span::call_site());
+        let linked_validator_source_type_name_ident = linked_validator_source_type_name_ident(
+            &machine_name,
+            module_path,
+            &persisted_type_display,
+            line_number,
+        );
+        let docs = match parse_doc_attrs(&item_impl.attrs) {
+            Ok(docs) => docs,
+            Err(err) => return err.to_compile_error().into(),
+        };
+        let linked_docs = optional_lit_str_tokens(docs.as_deref());
+        let validator_target_states = validator_methods
+            .iter()
+            .map(|method| syn::LitStr::new(&method.variant_name, proc_macro2::Span::call_site()))
+            .collect::<Vec<_>>();
 
-        #[doc(hidden)]
-        fn #linked_validator_source_type_name_ident() -> &'static str {
-            ::core::any::type_name::<#struct_ident>()
+        quote! {
+            #[doc(hidden)]
+            static #linked_validator_targets_ident: &[&str] = &[#(#validator_target_states),*];
+
+            #[doc(hidden)]
+            fn #linked_validator_source_type_name_ident() -> &'static str {
+                ::core::any::type_name::<#struct_ident>()
+            }
+
+            #[doc(hidden)]
+            #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_VALIDATOR_ENTRIES)]
+            #[linkme(crate = statum::__private::linkme)]
+            static #linked_validator_registration_ident: statum::__private::LinkedValidatorEntryDescriptor =
+                statum::__private::LinkedValidatorEntryDescriptor {
+                    machine: statum::MachineDescriptor {
+                        module_path: #machine_module_path,
+                        rust_type_path: #machine_rust_type_path,
+                        role: #machine_module_tokens::MACHINE_ROLE,
+                    },
+                    source_module_path: #source_module_path,
+                    source_type_display: #source_type_display,
+                    resolved_source_type_name: #linked_validator_source_type_name_ident,
+                    docs: #linked_docs,
+                    target_states: #linked_validator_targets_ident,
+                };
         }
-
-        #[doc(hidden)]
-        #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_VALIDATOR_ENTRIES)]
-        #[linkme(crate = statum::__private::linkme)]
-        static #linked_validator_registration_ident: statum::__private::LinkedValidatorEntryDescriptor =
-            statum::__private::LinkedValidatorEntryDescriptor {
-                machine: statum::MachineDescriptor {
-                    module_path: #machine_module_path,
-                    rust_type_path: #machine_rust_type_path,
-                    role: #machine_module_tokens::MACHINE_ROLE,
-                },
-                source_module_path: #source_module_path,
-                source_type_display: #source_type_display,
-                resolved_source_type_name: #linked_validator_source_type_name_ident,
-                docs: #linked_docs,
-                target_states: #linked_validator_targets_ident,
-            };
+    } else {
+        quote! {}
     };
     let async_mode = if validator_methods.iter().any(|method| method.is_async) {
         quote! { true }

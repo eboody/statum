@@ -8,41 +8,54 @@
 //! - runtime error and result types
 //! - projection helpers for event-log style rebuilds
 
+#[cfg(feature = "validators")]
 use std::borrow::Cow;
 
 #[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 mod readme_doctests {}
 
+#[cfg(feature = "introspection")]
 mod introspection;
 
+#[cfg(feature = "projection")]
 pub mod projection;
 
+#[cfg(feature = "introspection")]
 #[doc(hidden)]
 pub use introspection::__STATUM_LINKED_MACHINES;
+#[cfg(feature = "introspection")]
 #[doc(hidden)]
 pub use introspection::__STATUM_LINKED_REFERENCE_TYPES;
+#[cfg(feature = "introspection")]
 #[doc(hidden)]
 pub use introspection::__STATUM_LINKED_RELATIONS;
+#[cfg(feature = "introspection")]
 #[doc(hidden)]
 pub use introspection::__STATUM_LINKED_VALIDATOR_ENTRIES;
+#[cfg(feature = "introspection")]
 #[doc(hidden)]
 pub use introspection::__STATUM_LINKED_VIA_ROUTES;
 
 #[doc(hidden)]
 pub mod __private {
+    pub use crate::{Attested, StateFamily, StateFamilyMember};
+    #[cfg(feature = "introspection")]
     pub use crate::{
-        Attested, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
+        LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
         LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
         LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
         LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachinePresentation,
-        MachinePresentationDescriptor, MachineReference, MachineReferenceTarget, MachineRole,
-        RebuildAttempt, RebuildReport, StateFamily, StateFamilyMember, StatePresentation,
-        StaticMachineLinkDescriptor, TransitionPresentation, TransitionPresentationInventory,
-        __STATUM_LINKED_MACHINES, __STATUM_LINKED_REFERENCE_TYPES, __STATUM_LINKED_RELATIONS,
+        MachinePresentationDescriptor, MachineRole, StatePresentation, StaticMachineLinkDescriptor,
+        TransitionPresentation, TransitionPresentationInventory, __STATUM_LINKED_MACHINES,
+        __STATUM_LINKED_REFERENCE_TYPES, __STATUM_LINKED_RELATIONS,
         __STATUM_LINKED_VALIDATOR_ENTRIES, __STATUM_LINKED_VIA_ROUTES,
     };
+    #[cfg(feature = "validators")]
+    pub use crate::{RebuildAttempt, RebuildReport};
+    #[cfg(feature = "validators")]
     pub use futures;
+    #[cfg(feature = "introspection")]
     pub use linkme;
 
     #[derive(Debug)]
@@ -67,6 +80,7 @@ pub mod __private {
     }
 }
 
+#[cfg(feature = "introspection")]
 pub use introspection::{
     linked_machines, linked_reference_types, linked_relations, linked_validator_entries,
     linked_via_routes, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
@@ -119,6 +133,7 @@ pub trait UnitState: StateMarker<Data = ()> {}
 /// Implemented for tuple variants like `InReview(Assignment)`.
 pub trait DataState: StateMarker {}
 
+#[cfg(feature = "machine_ref")]
 /// One exact target declared for a nominal machine reference type.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MachineReferenceTarget {
@@ -128,6 +143,7 @@ pub struct MachineReferenceTarget {
     pub state: &'static str,
 }
 
+#[cfg(feature = "machine_ref")]
 /// One nominal type that carries an exact machine relation declared once.
 pub trait MachineReference {
     /// Exact target described by this nominal reference type.
@@ -255,6 +271,7 @@ impl<T, Via> AsRef<T> for Attested<T, Via> {
 /// ```
 pub type Result<T> = core::result::Result<T, Error>;
 
+#[cfg(feature = "validators")]
 /// A structured validator rejection captured during typed rehydration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rejection {
@@ -264,6 +281,7 @@ pub struct Rejection {
     pub message: Option<Cow<'static, str>>,
 }
 
+#[cfg(feature = "validators")]
 impl Rejection {
     /// Create a rejection with a stable reason key and no message.
     pub const fn new(reason_key: &'static str) -> Self {
@@ -282,12 +300,14 @@ impl Rejection {
     }
 }
 
+#[cfg(feature = "validators")]
 impl From<&'static str> for Rejection {
     fn from(reason_key: &'static str) -> Self {
         Self::new(reason_key)
     }
 }
 
+#[cfg(feature = "validators")]
 impl core::fmt::Display for Rejection {
     fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.message {
@@ -297,11 +317,14 @@ impl core::fmt::Display for Rejection {
     }
 }
 
+#[cfg(feature = "validators")]
 impl std::error::Error for Rejection {}
 
+#[cfg(feature = "validators")]
 /// An opt-in validator result that carries structured rejection details.
 pub type Validation<T> = core::result::Result<T, Rejection>;
 
+#[cfg(feature = "validators")]
 /// One validator evaluation recorded during typed rehydration.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RebuildAttempt {
@@ -317,6 +340,7 @@ pub struct RebuildAttempt {
     pub message: Option<Cow<'static, str>>,
 }
 
+#[cfg(feature = "validators")]
 /// A typed rehydration result plus the validator attempts that produced it.
 #[derive(Debug)]
 pub struct RebuildReport<M> {
@@ -326,6 +350,7 @@ pub struct RebuildReport<M> {
     pub result: Result<M>,
 }
 
+#[cfg(feature = "validators")]
 impl<M> RebuildReport<M> {
     /// Returns the first matching validator attempt, if any.
     pub fn matched_attempt(&self) -> Option<&RebuildAttempt> {

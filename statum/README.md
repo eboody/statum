@@ -19,8 +19,12 @@ This crate re-exports:
 
 ```toml
 [dependencies]
-statum = "0.7.0"
+statum = "0.7.1"
 ```
+
+If you want the smaller typestate-only surface, use the `statum-typestate`
+package instead. It still exports the crate name `statum`, but it omits
+validators, introspection, machine references, and projection helpers.
 
 Statum targets stable Rust and currently supports Rust `1.93+`.
 

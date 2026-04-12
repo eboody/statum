@@ -228,6 +228,7 @@ fn test_valid_macro_usage_with_rust_analyzer_missing_source_info() {
 
     let t = trybuild::TestCases::new();
     t.pass("tests/ui/valid_editor_missing_source_surface.rs");
+    t.pass("tests/ui/valid_editor_missing_source_surface_multiple_machines.rs");
 }
 
 #[test]

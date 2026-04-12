@@ -13,7 +13,7 @@
 //! - [`state`](macro@state) defines the legal phases.
 //! - [`machine`](macro@machine) defines the durable context carried across phases.
 //! - [`transition`](macro@transition) defines the legal edges between phases.
-//! - [`validators`](macro@validators) rebuilds typed machines from persisted data.
+//! - with the `validators` feature, [`validators`](macro@validators) rebuilds typed machines from persisted data.
 //!
 //! # Quick Start
 //!
@@ -66,8 +66,8 @@
 //!
 //! # Typed Rehydration
 //!
-//! `#[validators]` lets you rebuild persisted rows back into typed machine
-//! states:
+//! Enable the `validators` feature when you want to rebuild persisted rows
+//! back into typed machine states with `#[validators]`:
 //!
 //! ```rust
 //! use statum::{machine, state, validators, Error};
@@ -161,8 +161,8 @@
 //!
 //! # Machine Introspection
 //!
-//! Statum can also expose the static machine structure as typed metadata.
-//! This is useful when the same machine definition should drive:
+//! Enable the `introspection` feature when the same machine definition should
+//! also expose static machine structure as typed metadata for:
 //!
 //! - CLI explainers
 //! - generated docs
@@ -261,8 +261,8 @@
 //!
 //! - Start with [`state`](macro@state), [`machine`](macro@machine), and
 //!   [`transition`](macro@transition).
-//! - For stored rows and database rebuilds, read [`validators`](macro@validators).
-//! - For append-only event logs, use [`projection`] before validator rebuilds.
+//! - With the `validators` feature, read [`validators`](macro@validators) for stored rows and database rebuilds.
+//! - With the `projection` feature, use [`projection`] before validator rebuilds for append-only event logs.
 //! - The repository README and `docs/` directory contain longer guides and
 //!   showcase applications.
 
@@ -276,23 +276,33 @@ mod crate_readme_doctests {}
 
 #[doc(hidden)]
 pub use statum_core::__private;
+#[cfg(feature = "projection")]
 #[doc(inline)]
 pub use statum_core::projection;
+#[cfg(feature = "introspection")]
 #[doc(inline)]
 pub use statum_core::{
     linked_machines, linked_reference_types, linked_relations, linked_validator_entries,
-    linked_via_routes, Attested, Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith,
-    DataState, Error, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
+    linked_via_routes, LinkedMachineGraph, LinkedReferenceTypeDescriptor, LinkedRelationBasis,
     LinkedRelationDescriptor, LinkedRelationKind, LinkedRelationSource, LinkedRelationTarget,
     LinkedStateDescriptor, LinkedTransitionDescriptor, LinkedTransitionInventory,
     LinkedValidatorEntryDescriptor, LinkedViaRouteDescriptor, MachineDescriptor, MachineGraph,
-    MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineReference,
-    MachineReferenceTarget, MachineRole, MachineStateIdentity, MachineTransitionRecorder,
-    RebuildAttempt, RebuildReport, RecordedTransition, Rejection, Result, StateDescriptor,
-    StateMarker, StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor,
-    TransitionInventory, TransitionPresentation, TransitionPresentationInventory, UnitState,
-    Validation,
+    MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineRole,
+    MachineStateIdentity, MachineTransitionRecorder, RecordedTransition, StateDescriptor,
+    StatePresentation, StaticMachineLinkDescriptor, TransitionDescriptor, TransitionInventory,
+    TransitionPresentation, TransitionPresentationInventory,
 };
+#[doc(inline)]
+pub use statum_core::{
+    Attested, Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error,
+    Result, StateMarker, UnitState,
+};
+#[cfg(feature = "machine_ref")]
+#[doc(inline)]
+pub use statum_core::{MachineReference, MachineReferenceTarget};
+#[cfg(feature = "validators")]
+#[doc(inline)]
+pub use statum_core::{RebuildAttempt, RebuildReport, Rejection, Validation};
 
 /// Define the legal lifecycle phases for a machine.
 ///
@@ -338,7 +348,7 @@ pub use statum_macros::state;
 /// - a builder for new machines
 /// - a machine-scoped `machine::SomeState` enum for matching rebuilt machines
 /// - a compatibility alias `machine::State = machine::SomeState`
-/// - a machine-scoped `machine::Fields` struct for heterogeneous batch rebuilds
+/// - with the `validators` feature, a machine-scoped `machine::Fields` struct for heterogeneous batch rebuilds
 ///
 /// By default a machine has the `protocol` role. Use
 /// `#[machine(role = composition)]` when the machine exists to orchestrate
@@ -384,6 +394,7 @@ pub use statum_macros::machine;
 /// target path; plain type aliases are rejected. When the reference is a
 /// stable artifact or handoff type, point it at the earliest stable producer
 /// state for that artifact instead of a later consumer state.
+#[cfg(feature = "machine_ref")]
 pub use statum_macros::machine_ref;
 
 /// Validate and generate legal transitions for one source state.
@@ -434,6 +445,7 @@ pub use statum_macros::machine_ref;
 /// ```
 pub use statum_macros::transition;
 
+#[cfg(feature = "validators")]
 #[doc(hidden)]
 pub use statum_macros::__statum_emit_validator_methods_impl;
 /// Rebuild typed machines from persisted data.
@@ -521,4 +533,5 @@ pub use statum_macros::__statum_emit_validator_methods_impl;
 ///     Ok(())
 /// }
 /// ```
+#[cfg(feature = "validators")]
 pub use statum_macros::validators;

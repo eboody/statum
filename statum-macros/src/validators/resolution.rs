@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "validators"), allow(dead_code))]
+
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;

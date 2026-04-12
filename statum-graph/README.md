@@ -43,8 +43,8 @@ role-shaped nodes, and configurable edge-label density.
 
 ```toml
 [dependencies]
-statum = "0.7.0"
-statum-graph = "0.7.0"
+statum = "0.7.1"
+statum-graph = "0.7.1"
 ```
 
 ## Example

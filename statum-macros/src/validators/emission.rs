@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "validators"), allow(dead_code))]
+
 use std::collections::{HashMap, HashSet};
 
 use quote::{format_ident, quote};

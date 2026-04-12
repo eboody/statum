@@ -9,6 +9,7 @@ publish_order=(
   "macro_registry"
   "statum-core"
   "statum-macros"
+  "statum-typestate"
   "statum"
   "statum-graph"
   "cargo-statum-graph"

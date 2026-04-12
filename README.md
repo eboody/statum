@@ -36,8 +36,13 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 
 ```toml
 [dependencies]
-statum = "0.7.0"
+statum = "0.7.1"
 ```
+
+If you only want `#[state]`, `#[machine]`, and `#[transition]`, use the
+smaller `statum-typestate` package instead. It exports the same crate name,
+`statum`, but leaves out validators, introspection, machine references, and
+projection helpers.
 
 ## 60-Second Example
 

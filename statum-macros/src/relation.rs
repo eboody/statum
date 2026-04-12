@@ -1,3 +1,8 @@
+#![cfg_attr(
+    not(any(feature = "introspection", feature = "machine_ref")),
+    allow(dead_code)
+)]
+
 use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{

@@ -1,5 +1,8 @@
 use quote::format_ident;
+use std::sync::atomic::{AtomicU64, Ordering};
 use syn::Ident;
+
+static UNIQUE_SLICE_ID_FALLBACK: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn to_shouty_snake_identifier(value: &str) -> String {
     let mut result = String::new();
@@ -25,24 +28,26 @@ pub(crate) fn to_shouty_snake_identifier(value: &str) -> String {
 
 pub(crate) fn transition_slice_ident(
     machine_name: &str,
+    module_path: &str,
     file_path: Option<&str>,
     line_number: usize,
 ) -> Ident {
-    let key = format!(
-        "{machine_name}::{}::{line_number}",
-        file_path.unwrap_or_default()
-    );
+    let key = slice_scope_key(machine_name, module_path, file_path, line_number, "transitions");
     format_ident!("__STATUM_TRANSITIONS_{:016X}", stable_hash(&key))
 }
 
 pub(crate) fn transition_presentation_slice_ident(
     machine_name: &str,
+    module_path: &str,
     file_path: Option<&str>,
     line_number: usize,
 ) -> Ident {
-    let key = format!(
-        "{machine_name}::presentation::{}::{line_number}",
-        file_path.unwrap_or_default()
+    let key = slice_scope_key(
+        machine_name,
+        module_path,
+        file_path,
+        line_number,
+        "transition_presentation",
     );
     format_ident!(
         "__STATUM_TRANSITION_PRESENTATION_{:016X}",
@@ -52,14 +57,37 @@ pub(crate) fn transition_presentation_slice_ident(
 
 pub(crate) fn linked_transition_slice_ident(
     machine_name: &str,
+    module_path: &str,
     file_path: Option<&str>,
     line_number: usize,
 ) -> Ident {
-    let key = format!(
-        "{machine_name}::linked::{}::{line_number}",
-        file_path.unwrap_or_default()
+    let key = slice_scope_key(
+        machine_name,
+        module_path,
+        file_path,
+        line_number,
+        "linked_transitions",
     );
     format_ident!("__STATUM_LINKED_TRANSITIONS_{:016X}", stable_hash(&key))
+}
+
+fn slice_scope_key(
+    machine_name: &str,
+    module_path: &str,
+    file_path: Option<&str>,
+    line_number: usize,
+    kind: &str,
+) -> String {
+    if let Some(file_path) = file_path.filter(|_| line_number > 0) {
+        return format!("{kind}::{module_path}::{machine_name}::{file_path}::{line_number}");
+    }
+
+    if module_path != "unknown" {
+        return format!("{kind}::{module_path}::{machine_name}");
+    }
+
+    let fallback = UNIQUE_SLICE_ID_FALLBACK.fetch_add(1, Ordering::Relaxed);
+    format!("{kind}::{machine_name}::__fallback__::{fallback}")
 }
 
 fn stable_hash(input: &str) -> u64 {
@@ -87,9 +115,15 @@ mod tests {
 
     #[test]
     fn transition_slice_ident_tracks_machine_source() {
-        let first = transition_slice_ident("ReviewFlow", Some("src/alpha.rs"), 40).to_string();
-        let second = transition_slice_ident("ReviewFlow", Some("src/beta.rs"), 40).to_string();
-        let third = transition_slice_ident("ReviewFlow", Some("src/alpha.rs"), 91).to_string();
+        let first =
+            transition_slice_ident("ReviewFlow", "crate::alpha", Some("src/alpha.rs"), 40)
+                .to_string();
+        let second =
+            transition_slice_ident("ReviewFlow", "crate::alpha", Some("src/beta.rs"), 40)
+                .to_string();
+        let third =
+            transition_slice_ident("ReviewFlow", "crate::alpha", Some("src/alpha.rs"), 91)
+                .to_string();
 
         assert!(first.starts_with("__STATUM_TRANSITIONS_"));
         assert!(second.starts_with("__STATUM_TRANSITIONS_"));
@@ -100,12 +134,27 @@ mod tests {
 
     #[test]
     fn transition_presentation_slice_ident_tracks_machine_source() {
-        let first =
-            transition_presentation_slice_ident("ReviewFlow", Some("src/alpha.rs"), 40).to_string();
-        let second =
-            transition_presentation_slice_ident("ReviewFlow", Some("src/beta.rs"), 40).to_string();
-        let third =
-            transition_presentation_slice_ident("ReviewFlow", Some("src/alpha.rs"), 91).to_string();
+        let first = transition_presentation_slice_ident(
+            "ReviewFlow",
+            "crate::alpha",
+            Some("src/alpha.rs"),
+            40,
+        )
+        .to_string();
+        let second = transition_presentation_slice_ident(
+            "ReviewFlow",
+            "crate::alpha",
+            Some("src/beta.rs"),
+            40,
+        )
+        .to_string();
+        let third = transition_presentation_slice_ident(
+            "ReviewFlow",
+            "crate::alpha",
+            Some("src/alpha.rs"),
+            91,
+        )
+        .to_string();
 
         assert!(first.starts_with("__STATUM_TRANSITION_PRESENTATION_"));
         assert!(second.starts_with("__STATUM_TRANSITION_PRESENTATION_"));
@@ -116,17 +165,48 @@ mod tests {
 
     #[test]
     fn linked_transition_slice_ident_tracks_machine_source() {
-        let first = linked_transition_slice_ident("ReviewFlow", Some("src/alpha.rs"), 40)
-            .to_string();
-        let second = linked_transition_slice_ident("ReviewFlow", Some("src/beta.rs"), 40)
-            .to_string();
-        let third = linked_transition_slice_ident("ReviewFlow", Some("src/alpha.rs"), 91)
-            .to_string();
+        let first = linked_transition_slice_ident(
+            "ReviewFlow",
+            "crate::alpha",
+            Some("src/alpha.rs"),
+            40,
+        )
+        .to_string();
+        let second = linked_transition_slice_ident(
+            "ReviewFlow",
+            "crate::alpha",
+            Some("src/beta.rs"),
+            40,
+        )
+        .to_string();
+        let third = linked_transition_slice_ident(
+            "ReviewFlow",
+            "crate::alpha",
+            Some("src/alpha.rs"),
+            91,
+        )
+        .to_string();
 
         assert!(first.starts_with("__STATUM_LINKED_TRANSITIONS_"));
         assert!(second.starts_with("__STATUM_LINKED_TRANSITIONS_"));
         assert!(third.starts_with("__STATUM_LINKED_TRANSITIONS_"));
         assert_ne!(first, second);
         assert_ne!(first, third);
+    }
+
+    #[test]
+    fn transition_slice_ident_uses_module_path_when_source_identity_is_missing() {
+        let first = transition_slice_ident("Flow", "crate::alpha", None, 0).to_string();
+        let second = transition_slice_ident("Flow", "crate::beta", None, 0).to_string();
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn transition_slice_ident_fallback_counter_avoids_unknown_source_collisions() {
+        let first = transition_slice_ident("Flow", "unknown", None, 0).to_string();
+        let second = transition_slice_ident("Flow", "unknown", None, 0).to_string();
+
+        assert_ne!(first, second);
     }
 }

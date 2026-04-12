@@ -548,155 +548,175 @@ pub fn generate_transition_impl(
 
         #( #machine_target_resolver_macro_path!(#transition_binding_callback_ident, #unique_return_state_idents); )*
     };
-    let (relation_machine_module_path_string, relation_machine_rust_type_path_string) =
-        match relation_source_machine_descriptor(tr_impl) {
-            Ok(value) => value,
-            Err(err) => return err,
-        };
-    let relation_machine_module_path =
-        LitStr::new(&relation_machine_module_path_string, Span::call_site());
-    let relation_machine_rust_type_path =
-        LitStr::new(&relation_machine_rust_type_path_string, Span::call_site());
-    let transition_registrations = tr_impl.functions.iter().enumerate().map(|(idx, function)| {
-        let return_states = match function.return_states(target_type) {
-            Ok(states) => states,
-            Err(err) => return err,
-        };
-        let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
-        let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
-        let targets_ident = format_ident!("__STATUM_TRANSITION_TARGETS_{}", unique_suffix);
-        let registration_ident = format_ident!("__STATUM_TRANSITION_SITE_{}", unique_suffix);
-        let linked_registration_ident =
-            format_ident!("__STATUM_LINKED_TRANSITION_SITE_{}", unique_suffix);
-        let id_const_ident = format_ident!(
-            "{}",
-            to_shouty_snake_identifier(&function.name.to_string())
-        );
-        let method_name = LitStr::new(&function.name.to_string(), function.name.span());
-        let source_state_ident = format_ident!("{}", tr_impl.source_state);
-        let source_state_name = LitStr::new(&tr_impl.source_state, function.name.span());
-        let linked_label = optional_lit_str_tokens(
-            function
-                .presentation
-                .as_ref()
-                .and_then(|value| value.label.as_deref()),
-            function.name.span(),
-        );
-        let linked_description = optional_lit_str_tokens(
-            function
-                .presentation
-                .as_ref()
-                .and_then(|value| value.description.as_deref()),
-            function.name.span(),
-        );
-        let linked_docs =
-            optional_lit_str_tokens(function.docs.as_deref(), function.name.span());
-        let target_state_idents = return_states.iter().map(|state| {
-            let state_ident = format_ident!("{}", state);
-            quote! { #machine_module_path::StateId::#state_ident }
-        });
-        let target_state_names = return_states.iter().map(|state| {
-            let state = LitStr::new(state, function.name.span());
-            quote! { #state }
-        });
-        let target_state_count = return_states.len();
-        let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
-        let relation_registrations = transition_param_relation_registrations(
-            tr_impl,
-            function,
-            idx,
-            &machine_module_path,
-            &relation_machine_module_path,
-            &relation_machine_rust_type_path,
-            &cfg_attrs,
-        );
-        let via_route_registration = attested_route_registration(
-            tr_impl,
-            function,
-            idx,
-            &machine_module_path,
-            &relation_machine_module_path,
-            &relation_machine_rust_type_path,
-            &cfg_attrs,
-        );
+    let introspection_registrations = if cfg!(feature = "introspection") {
+        let (relation_machine_module_path_string, relation_machine_rust_type_path_string) =
+            match relation_source_machine_descriptor(tr_impl) {
+                Ok(value) => value,
+                Err(err) => return err,
+            };
+        let relation_machine_module_path =
+            LitStr::new(&relation_machine_module_path_string, Span::call_site());
+        let relation_machine_rust_type_path =
+            LitStr::new(&relation_machine_rust_type_path_string, Span::call_site());
+        let transition_registrations = tr_impl
+            .functions
+            .iter()
+            .enumerate()
+            .map(|(idx, function)| {
+                let return_states = match function.return_states(target_type) {
+                    Ok(states) => states,
+                    Err(err) => return err,
+                };
+                let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
+                let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
+                let targets_ident = format_ident!("__STATUM_TRANSITION_TARGETS_{}", unique_suffix);
+                let registration_ident = format_ident!("__STATUM_TRANSITION_SITE_{}", unique_suffix);
+                let linked_registration_ident =
+                    format_ident!("__STATUM_LINKED_TRANSITION_SITE_{}", unique_suffix);
+                let id_const_ident = format_ident!(
+                    "{}",
+                    to_shouty_snake_identifier(&function.name.to_string())
+                );
+                let method_name = LitStr::new(&function.name.to_string(), function.name.span());
+                let source_state_ident = format_ident!("{}", tr_impl.source_state);
+                let source_state_name = LitStr::new(&tr_impl.source_state, function.name.span());
+                let linked_label = optional_lit_str_tokens(
+                    function
+                        .presentation
+                        .as_ref()
+                        .and_then(|value| value.label.as_deref()),
+                    function.name.span(),
+                );
+                let linked_description = optional_lit_str_tokens(
+                    function
+                        .presentation
+                        .as_ref()
+                        .and_then(|value| value.description.as_deref()),
+                    function.name.span(),
+                );
+                let linked_docs =
+                    optional_lit_str_tokens(function.docs.as_deref(), function.name.span());
+                let target_state_idents = return_states.iter().map(|state| {
+                    let state_ident = format_ident!("{}", state);
+                    quote! { #machine_module_path::StateId::#state_ident }
+                });
+                let target_state_names = return_states.iter().map(|state| {
+                    let state = LitStr::new(state, function.name.span());
+                    quote! { #state }
+                });
+                let target_state_count = return_states.len();
+                let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
+                let relation_registrations = transition_param_relation_registrations(
+                    tr_impl,
+                    function,
+                    idx,
+                    &machine_module_path,
+                    &relation_machine_module_path,
+                    &relation_machine_rust_type_path,
+                    &cfg_attrs,
+                );
+                let via_route_registration = attested_route_registration(
+                    tr_impl,
+                    function,
+                    idx,
+                    &machine_module_path,
+                    &relation_machine_module_path,
+                    &relation_machine_rust_type_path,
+                    &cfg_attrs,
+                );
+
+                quote! {
+                    #(#cfg_attrs)*
+                    static #targets_ident: [#machine_module_path::StateId; #target_state_count] = [
+                        #(#target_state_idents),*
+                    ];
+
+                    #(#cfg_attrs)*
+                    static #token_ident: statum::__private::TransitionToken =
+                        statum::__private::TransitionToken::new();
+
+                    #(#cfg_attrs)*
+                    #[statum::__private::linkme::distributed_slice(#machine_module_path::__STATUM_TRANSITIONS)]
+                    #[linkme(crate = statum::__private::linkme)]
+                    static #registration_ident:
+                        statum::TransitionDescriptor<#machine_module_path::StateId, #machine_module_path::TransitionId> =
+                        statum::TransitionDescriptor {
+                            id: #machine_module_path::TransitionId::from_token(&#token_ident),
+                            method_name: #method_name,
+                            from: #machine_module_path::StateId::#source_state_ident,
+                            to: &#targets_ident,
+                        };
+
+                    #(#cfg_attrs)*
+                    #[statum::__private::linkme::distributed_slice(#machine_module_path::__STATUM_LINKED_TRANSITIONS)]
+                    #[linkme(crate = statum::__private::linkme)]
+                    static #linked_registration_ident: statum::__private::LinkedTransitionDescriptor =
+                        statum::__private::LinkedTransitionDescriptor {
+                            method_name: #method_name,
+                            label: #linked_label,
+                            description: #linked_description,
+                            docs: #linked_docs,
+                            from: #source_state_name,
+                            to: &[#(#target_state_names),*],
+                        };
+
+                    #(#cfg_attrs)*
+                    impl #impl_generics #target_type #where_clause {
+                        pub const #id_const_ident: #machine_module_path::TransitionId =
+                            #machine_module_path::TransitionId::from_token(&#token_ident);
+                    }
+
+                    #via_route_registration
+                    #(#relation_registrations)*
+                }
+            })
+            .collect::<Vec<_>>();
+        let transition_presentation_registrations = tr_impl
+            .functions
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, function)| {
+                let presentation = function.presentation.as_ref()?;
+                let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
+                let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
+                let registration_ident =
+                    format_ident!("__STATUM_TRANSITION_PRESENTATION_{}", unique_suffix);
+                let label =
+                    optional_lit_str_tokens(presentation.label.as_deref(), function.name.span());
+                let description =
+                    optional_lit_str_tokens(presentation.description.as_deref(), function.name.span());
+                let metadata = match transition_presentation_metadata_tokens(presentation) {
+                    Ok(tokens) => tokens,
+                    Err(err) => return Some(err),
+                };
+                let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
+
+                Some(quote! {
+                    #(#cfg_attrs)*
+                    #[statum::__private::linkme::distributed_slice(#machine_module_path::__STATUM_TRANSITION_PRESENTATIONS)]
+                    #[linkme(crate = statum::__private::linkme)]
+                    static #registration_ident:
+                        statum::__private::TransitionPresentation<
+                            #machine_module_path::TransitionId,
+                            #machine_module_path::__StatumTransitionPresentationMetadata,
+                        > =
+                        statum::__private::TransitionPresentation {
+                            id: #machine_module_path::TransitionId::from_token(&#token_ident),
+                            label: #label,
+                            description: #description,
+                            metadata: #metadata,
+                        };
+                })
+            })
+            .collect::<Vec<_>>();
 
         quote! {
-            #(#cfg_attrs)*
-            static #targets_ident: [#machine_module_path::StateId; #target_state_count] = [
-                #(#target_state_idents),*
-            ];
-
-            #(#cfg_attrs)*
-            static #token_ident: statum::__private::TransitionToken =
-                statum::__private::TransitionToken::new();
-
-            #(#cfg_attrs)*
-            #[statum::__private::linkme::distributed_slice(#machine_module_path::__STATUM_TRANSITIONS)]
-            #[linkme(crate = statum::__private::linkme)]
-            static #registration_ident:
-                statum::TransitionDescriptor<#machine_module_path::StateId, #machine_module_path::TransitionId> =
-                statum::TransitionDescriptor {
-                    id: #machine_module_path::TransitionId::from_token(&#token_ident),
-                    method_name: #method_name,
-                    from: #machine_module_path::StateId::#source_state_ident,
-                    to: &#targets_ident,
-                };
-
-            #(#cfg_attrs)*
-            #[statum::__private::linkme::distributed_slice(#machine_module_path::__STATUM_LINKED_TRANSITIONS)]
-            #[linkme(crate = statum::__private::linkme)]
-            static #linked_registration_ident: statum::__private::LinkedTransitionDescriptor =
-                statum::__private::LinkedTransitionDescriptor {
-                    method_name: #method_name,
-                    label: #linked_label,
-                    description: #linked_description,
-                    docs: #linked_docs,
-                    from: #source_state_name,
-                    to: &[#(#target_state_names),*],
-                };
-
-            #(#cfg_attrs)*
-            impl #impl_generics #target_type #where_clause {
-                pub const #id_const_ident: #machine_module_path::TransitionId =
-                    #machine_module_path::TransitionId::from_token(&#token_ident);
-            }
-
-            #via_route_registration
-            #(#relation_registrations)*
+            #(#transition_registrations)*
+            #(#transition_presentation_registrations)*
         }
-    });
-    let transition_presentation_registrations = tr_impl.functions.iter().enumerate().filter_map(|(idx, function)| {
-        let presentation = function.presentation.as_ref()?;
-        let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
-        let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
-        let registration_ident =
-            format_ident!("__STATUM_TRANSITION_PRESENTATION_{}", unique_suffix);
-        let label = optional_lit_str_tokens(presentation.label.as_deref(), function.name.span());
-        let description =
-            optional_lit_str_tokens(presentation.description.as_deref(), function.name.span());
-        let metadata = match transition_presentation_metadata_tokens(presentation) {
-            Ok(tokens) => tokens,
-            Err(err) => return Some(err),
-        };
-        let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
-
-        Some(quote! {
-            #(#cfg_attrs)*
-            #[statum::__private::linkme::distributed_slice(#machine_module_path::__STATUM_TRANSITION_PRESENTATIONS)]
-            #[linkme(crate = statum::__private::linkme)]
-            static #registration_ident:
-                statum::__private::TransitionPresentation<
-                    #machine_module_path::TransitionId,
-                    #machine_module_path::__StatumTransitionPresentationMetadata,
-                > =
-                statum::__private::TransitionPresentation {
-                    id: #machine_module_path::TransitionId::from_token(&#token_ident),
-                    label: #label,
-                    description: #description,
-                    metadata: #metadata,
-                };
-        })
-    });
+    } else {
+        quote! {}
+    };
     let attested_companions = generate_attested_companion_methods(
         &input.generics,
         target_type,
@@ -709,8 +729,7 @@ pub fn generate_transition_impl(
 
     quote! {
         #transition_support_bindings
-        #(#transition_registrations)*
-        #(#transition_presentation_registrations)*
+        #introspection_registrations
         #sanitized_input
         #attested_companions
         #via_binders

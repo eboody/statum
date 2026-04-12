@@ -6,20 +6,22 @@ use std::env;
 use std::fs;
 use toml::Value;
 
-const PUBLISHED_CRATES: [&str; 7] = [
+const PUBLISHED_CRATES: [&str; 8] = [
     "module_path_extractor",
     "macro_registry",
     "statum-core",
     "statum-macros",
+    "statum-typestate",
     "statum",
     "statum-graph",
     "cargo-statum-graph",
 ];
-const ALL_CRATES: [&str; 8] = [
+const ALL_CRATES: [&str; 9] = [
     "module_path_extractor",
     "macro_registry",
     "statum-core",
     "statum-macros",
+    "statum-typestate",
     "statum",
     "statum-graph",
     "cargo-statum-graph",

@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "machine_ref"), allow(dead_code))]
+
 use proc_macro::TokenStream;
 use macro_registry::callsite::best_effort_source_context_for_span_or_callsite;
 use proc_macro2::Span;
@@ -65,6 +67,23 @@ pub fn parse_machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
         linked_reference_target_machine_type_name_ident(&rust_type_path, line_number);
     let registration_ident = linked_reference_registration_ident(&rust_type_path, line_number);
     let item_ident = &item_struct.ident;
+    let linked_registration = if cfg!(feature = "introspection") {
+        quote! {
+            #[doc(hidden)]
+            #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_REFERENCE_TYPES)]
+            #[linkme(crate = statum::__private::linkme)]
+            static #registration_ident: statum::__private::LinkedReferenceTypeDescriptor =
+                statum::__private::LinkedReferenceTypeDescriptor {
+                    rust_type_path: #rust_type_path_lit,
+                    resolved_type_name: #type_name_ident,
+                    to_machine_path: <#item_ident as statum::MachineReference>::TARGET.machine_path,
+                    resolved_target_machine_type_name: #target_machine_type_name_ident,
+                    to_state: <#item_ident as statum::MachineReference>::TARGET.state,
+                };
+        }
+    } else {
+        quote! {}
+    };
 
     quote! {
         #item_struct
@@ -89,17 +108,7 @@ pub fn parse_machine_ref(attr: TokenStream, item: TokenStream) -> TokenStream {
             };
         }
 
-        #[doc(hidden)]
-        #[statum::__private::linkme::distributed_slice(statum::__private::__STATUM_LINKED_REFERENCE_TYPES)]
-        #[linkme(crate = statum::__private::linkme)]
-        static #registration_ident: statum::__private::LinkedReferenceTypeDescriptor =
-            statum::__private::LinkedReferenceTypeDescriptor {
-                rust_type_path: #rust_type_path_lit,
-                resolved_type_name: #type_name_ident,
-                to_machine_path: <#item_ident as statum::MachineReference>::TARGET.machine_path,
-                resolved_target_machine_type_name: #target_machine_type_name_ident,
-                to_state: <#item_ident as statum::MachineReference>::TARGET.state,
-            };
+        #linked_registration
     }
     .into()
 }

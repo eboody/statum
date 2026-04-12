@@ -30,6 +30,16 @@ impl PresentationTypesAttr {
 }
 
 pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<PresentationAttr>> {
+    if !cfg!(feature = "introspection") {
+        if let Some(attr) = attrs.iter().find(|attr| attr.path().is_ident("present")) {
+            return Err(feature_disabled_attr_error(
+                attr,
+                "`#[present(...)]` requires the `introspection` feature.",
+            ));
+        }
+        return Ok(None);
+    }
+
     let mut presentation = PresentationAttr::default();
     let mut found = false;
 
@@ -98,6 +108,19 @@ pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<Presentati
 pub fn parse_presentation_types_attr(
     attrs: &[Attribute],
 ) -> syn::Result<Option<PresentationTypesAttr>> {
+    if !cfg!(feature = "introspection") {
+        if let Some(attr) = attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("presentation_types"))
+        {
+            return Err(feature_disabled_attr_error(
+                attr,
+                "`#[presentation_types(...)]` requires the `introspection` feature.",
+            ));
+        }
+        return Ok(None);
+    }
+
     let mut presentation_types = PresentationTypesAttr::default();
     let mut found = false;
 
@@ -221,6 +244,13 @@ fn expect_string_literal(
     Ok(lit.clone())
 }
 
+fn feature_disabled_attr_error(attr: &Attribute, message: &str) -> syn::Error {
+    syn::Error::new_spanned(
+        attr,
+        format!("{message}\nFix: enable `introspection` on `statum` or `statum-macros`."),
+    )
+}
+
 fn assign_unique_string_slot(
     slot: &mut Option<String>,
     ident: &syn::Ident,
@@ -260,7 +290,7 @@ fn normalize_doc_attr_value(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_doc_attrs;
+    use super::{parse_doc_attrs, parse_present_attrs, parse_presentation_types_attr};
 
     #[test]
     fn parse_doc_attrs_normalizes_and_preserves_blank_lines() {
@@ -284,5 +314,23 @@ mod tests {
         ];
 
         assert_eq!(parse_doc_attrs(&attrs).expect("docs"), None);
+    }
+
+    #[cfg(not(feature = "introspection"))]
+    #[test]
+    fn present_attrs_require_introspection_feature() {
+        let attrs = vec![syn::parse_quote!(#[present(label = "Queued")])];
+        let err = parse_present_attrs(&attrs).expect_err("feature gate error");
+
+        assert!(err.to_string().contains("requires the `introspection` feature"));
+    }
+
+    #[cfg(not(feature = "introspection"))]
+    #[test]
+    fn presentation_types_require_introspection_feature() {
+        let attrs = vec![syn::parse_quote!(#[presentation_types(state = StateMeta)])];
+        let err = parse_presentation_types_attr(&attrs).expect_err("feature gate error");
+
+        assert!(err.to_string().contains("requires the `introspection` feature"));
     }
 }
