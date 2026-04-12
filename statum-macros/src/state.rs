@@ -340,21 +340,12 @@ impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
         let line_number = item.ident.span().start().line;
         let Some((file_path, line_number)) = source_info_for_span(item.ident.span()) else {
-            if crate::machine::is_rust_analyzer() {
-                return Self::from_item_enum_with_module_and_file(
-                    item,
-                    "crate".into(),
-                    None,
-                    line_number,
-                );
-            }
-            return Err(syn::Error::new(
-                item.ident.span(),
-                format!(
-                    "Internal error: could not read source information for `#[state]` enum `{}`.",
-                    item.ident
-                ),
-            ));
+            return Self::from_item_enum_with_module_and_file(
+                item,
+                "crate".into(),
+                None,
+                line_number,
+            );
         };
         let Some(module_path) = module_path_for_line(&file_path, line_number) else {
             if crate::machine::is_rust_analyzer() {

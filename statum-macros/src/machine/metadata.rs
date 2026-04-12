@@ -86,35 +86,26 @@ impl MachineInfo {
     pub fn from_item_struct(item: &ItemStruct) -> syn::Result<Self> {
         let line_number = item.ident.span().start().line;
         let Some((file_path, line_number)) = source_info_for_span(item.ident.span()) else {
-            if is_rust_analyzer() {
-                return Ok(Self {
-                    name: item.ident.to_string(),
-                    vis: item.vis.to_token_stream().to_string(),
-                    derives: item
-                        .attrs
-                        .iter()
-                        .filter_map(extract_derives)
-                        .flatten()
-                        .collect(),
-                    presentation: parse_present_attrs(&item.attrs)?,
-                    presentation_types: parse_presentation_types_attr(&item.attrs)?,
-                    module_path: "crate".into(),
-                    line_number,
-                    fields: collect_fields(item),
-                    generics: item.generics.to_token_stream().to_string(),
-                    state_generic_name: extract_state_generic_name(&item.generics),
-                    file_path: None,
-                    crate_root: std::env::var("CARGO_MANIFEST_DIR").ok(),
-                    file_fingerprint: None,
-                });
-            }
-            return Err(syn::Error::new(
-                item.ident.span(),
-                format!(
-                    "Internal error: could not read source information for `#[machine]` struct `{}`.",
-                    item.ident
-                ),
-            ));
+            return Ok(Self {
+                name: item.ident.to_string(),
+                vis: item.vis.to_token_stream().to_string(),
+                derives: item
+                    .attrs
+                    .iter()
+                    .filter_map(extract_derives)
+                    .flatten()
+                    .collect(),
+                presentation: parse_present_attrs(&item.attrs)?,
+                presentation_types: parse_presentation_types_attr(&item.attrs)?,
+                module_path: "crate".into(),
+                line_number,
+                fields: collect_fields(item),
+                generics: item.generics.to_token_stream().to_string(),
+                state_generic_name: extract_state_generic_name(&item.generics),
+                file_path: None,
+                crate_root: std::env::var("CARGO_MANIFEST_DIR").ok(),
+                file_fingerprint: None,
+            });
         };
         let Some(module_path) = module_path_for_line(&file_path, line_number) else {
             if is_rust_analyzer() {

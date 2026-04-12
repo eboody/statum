@@ -227,7 +227,7 @@ pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
 fn resolved_current_module_path(span: Span, macro_name: &str) -> Result<String, TokenStream> {
     let resolved = module_path_for_span(span)
         .or_else(current_module_path_opt)
-        .or_else(|| crate::machine::is_rust_analyzer().then_some("crate".to_string()));
+        .or_else(|| crate::callsite::source_info_for_span(span).is_none().then_some("crate".to_string()));
 
     resolved.ok_or_else(|| {
         let message = format!(
