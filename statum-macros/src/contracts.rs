@@ -78,6 +78,7 @@ impl ResolvedMachineRef {
 pub(crate) struct TransitionContract {
     pub(crate) machine_name: String,
     pub(crate) source_state_name: String,
+    pub(crate) primary_next_state: String,
     pub(crate) next_states: Vec<String>,
     pub(crate) strict_introspection: bool,
     pub(crate) written_return_type: Option<String>,

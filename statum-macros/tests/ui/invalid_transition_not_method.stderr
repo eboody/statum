@@ -1,4 +1,7 @@
 error: Error: `#[transition]` method `Machine<A>::to_b` must take `self` or `mut self` as its receiver.
+       Found: `fn to_b(...)`
+       Expected: `fn to_b(self) -> Machine<NextState>`
+       Fix: change the method receiver to `self` or `mut self`.
   --> tests/ui/invalid_transition_not_method.rs:25:5
    |
 25 |     fn to_b(_value: u64) -> Machine<B> {

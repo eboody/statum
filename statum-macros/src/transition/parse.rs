@@ -5,6 +5,7 @@ use super::diagnostics::{
 use super::resolve::{
     candidate_alias_resolution_contexts, collect_machine_and_states_in_context,
     collect_machine_and_states_strict, extract_impl_machine_and_state,
+    parse_machine_and_state_in_context, parse_primary_machine_and_state_strict,
 };
 use crate::diagnostics::{DiagnosticMessage, compact_display, compile_error_at};
 use crate::{PresentationAttr, parse_present_attrs, strip_present_attrs};
@@ -38,6 +39,31 @@ pub struct TransitionIntrospectAttr {
 }
 
 impl TransitionFn {
+    pub fn return_state(&self, target_type: &Type) -> Result<String, TokenStream> {
+        let (return_type, uses_strict_resolution) =
+            self.validated_semantic_return_type(target_type)?;
+        let resolved = if uses_strict_resolution {
+            parse_primary_machine_and_state_strict(&return_type, target_type)
+        } else {
+            let contexts = candidate_alias_resolution_contexts(self.return_type_span);
+            contexts
+                .iter()
+                .find_map(|context| {
+                    parse_machine_and_state_in_context(&return_type, target_type, Some(context))
+                })
+                .or_else(|| parse_machine_and_state_in_context(&return_type, target_type, None))
+        };
+        let Some((_, return_state)) = resolved else {
+            return Err(invalid_return_type_error(
+                self,
+                target_type,
+                "expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape",
+            ));
+        };
+
+        Ok(return_state)
+    }
+
     pub fn return_states(&self, target_type: &Type) -> Result<Vec<String>, TokenStream> {
         let (return_type, uses_strict_resolution) =
             self.validated_semantic_return_type(target_type)?;
@@ -83,6 +109,16 @@ impl TransitionFn {
             return Ok((return_type.clone(), crate::strict_introspection_enabled()));
         };
 
+        let Some((_, introspection_primary_state)) =
+            parse_primary_machine_and_state_strict(&introspection.return_type, target_type)
+        else {
+            return Err(invalid_introspect_return_error(
+                introspection,
+                self,
+                "expected a direct machine path or a supported `Option`, `Result`, or `statum::Branch` wrapper around that machine path",
+            ));
+        };
+
         let introspection_states = collect_machine_and_states_strict(
             &introspection.return_type,
             target_type,
@@ -90,19 +126,17 @@ impl TransitionFn {
         .into_iter()
         .map(|(_, state)| state)
         .collect::<Vec<_>>();
-        if introspection_states.is_empty() {
-            return Err(invalid_introspect_return_error(
-                introspection,
-                self,
-                "expected a direct machine path or a supported `Option`, `Result`, or `statum::Branch` wrapper around that machine path",
-            ));
-        }
 
         let strict_written_states = collect_machine_and_states_strict(return_type, target_type)
             .into_iter()
             .map(|(_, state)| state)
             .collect::<Vec<_>>();
-        if !strict_written_states.is_empty() && strict_written_states != introspection_states {
+        let strict_written_primary = parse_primary_machine_and_state_strict(return_type, target_type)
+            .map(|(_, state)| state);
+        if !strict_written_states.is_empty()
+            && (strict_written_primary.as_deref() != Some(introspection_primary_state.as_str())
+                || strict_written_states != introspection_states)
+        {
             return Err(mismatched_introspect_return_error(
                 introspection,
                 self,

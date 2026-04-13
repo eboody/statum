@@ -39,6 +39,14 @@ fn parse_primary_machine_and_state_in_context(
     parse_primary_machine_and_state_with_alias_policy(ty, target_type, context, true)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn parse_primary_machine_and_state_strict(
+    ty: &Type,
+    target_type: &Type,
+) -> Option<(String, String)> {
+    parse_primary_machine_and_state_with_alias_policy(ty, target_type, None, false)
+}
+
 fn parse_primary_machine_and_state_with_alias_policy(
     ty: &Type,
     target_type: &Type,
