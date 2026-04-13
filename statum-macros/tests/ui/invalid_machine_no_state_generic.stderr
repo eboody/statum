@@ -1,5 +1,7 @@
 error: Error: machine `Machine` is missing its `#[state]` generic.
-       Fix: declare `Machine<State>` where `State` is the `#[state]` enum in this module.
+       Found: `struct Machine { ... }`
+       Expected: `struct Machine<WorkflowState> { ... }`
+       Fix: declare `Machine<State>` where `State` is the local `#[state]` enum.
   --> tests/ui/invalid_machine_no_state_generic.rs:15:8
    |
 15 | struct Machine {

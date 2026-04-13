@@ -1,8 +1,9 @@
 use crate::callsite::{current_source_info, module_path_for_line, source_info_for_span};
+use crate::diagnostics::{DiagnosticMessage, compact_text, compile_error_at};
 use crate::query;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
-use syn::{Generics, Ident, ItemStruct, LitStr, Type, Visibility};
+use syn::{Generics, Ident, ItemStruct, Type, Visibility};
 
 use crate::{
     EnumInfo, LoadedStateLookupFailure, ModulePath, SourceFingerprint, StateModulePath,
@@ -341,21 +342,35 @@ fn missing_state_enum_error(
             format_loaded_state_candidates(&candidates)
         ),
     };
-    let message = format!(
-        "Error: machine `{}` could not resolve its `#[state]` enum in module `{}`.\nFix: make the machine's first generic name the local `#[state]` enum and declare that enum before the machine.\n{}\n{}\n{}{}\n{}\n{}\nCorrect shape: `struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`.",
+    let message = DiagnosticMessage::new(format!(
+        "machine `{}` could not resolve its `#[state]` enum in module `{}`.",
+        machine_info.name, machine_info.module_path
+    ))
+    .found(format!(
+        "`struct {}{} {{ ... }}`",
         machine_info.name,
-        machine_info.module_path,
-        expected_line,
-        authority_line,
-        ordering_line,
-        missing_attr_line.unwrap_or_else(|| "No plain enum with that expected name was found in that module either.".to_string()),
-        elsewhere_line,
-        available_line,
-        machine_info.name,
-        machine_info.module_path,
-    );
-    let message = LitStr::new(&message, Span::call_site());
-    quote! { compile_error!(#message); }
+        compact_text(&machine_info.generics)
+    ))
+    .expected(format!(
+        "`struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`",
+        machine_info.name, machine_info.module_path
+    ))
+    .fix("make the machine's first generic name the local `#[state]` enum and declare that enum before the machine.".to_string())
+    .reason(expected_line)
+    .note(authority_line)
+    .section(
+        "Note",
+        ordering_line
+            .trim_end()
+            .to_string(),
+    )
+    .note(
+        missing_attr_line
+            .unwrap_or_else(|| "No plain enum with that expected name was found in that module either.".to_string()),
+    )
+    .candidates(elsewhere_line)
+    .candidates(available_line);
+    compile_error_at(Span::call_site(), &message)
 }
 
 fn available_state_candidates_in_module(

@@ -1,4 +1,6 @@
 error: Error: machine `BuildMachine` derives `Clone`, but `#[state]` enum `BuildState` does not.
+       Found: `#[derive(Clone)] struct BuildMachine<BuildState> { ... }`
+       Expected: `#[derive(Clone)] enum BuildState { ... }`
        Fix: add `#[derive(Clone)]` to `BuildState` so the generated state markers and `BuildMachine` stay compatible.
   --> tests/ui/invalid_machine_missing_state_derive.rs:23:8
    |

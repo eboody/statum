@@ -1,0 +1,10 @@
+error: Error: `#[transition]` does not accept arguments.
+       Found: `#[transition(label = "Submit")]`
+       Expected: `#[transition] impl WorkflowMachine<Draft> { ... }`
+       Fix: remove the attribute arguments and declare transition behavior with methods inside the impl block.
+  --> tests/ui/invalid_transition_attr_args.rs:22:1
+   |
+22 | #[transition(label = "Submit")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `transition` (in Nightly builds, run with -Z macro-backtrace for more info)

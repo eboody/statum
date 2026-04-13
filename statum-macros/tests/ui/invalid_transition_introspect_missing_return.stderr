@@ -1,0 +1,8 @@
+error: Error: `#[introspect(...)]` requires parentheses.
+       Found: `#[introspect]`
+       Expected: `#[introspect(return = WorkflowMachine<NextState>)]`
+       Fix: write `#[introspect(return = ...)]` on the transition method.
+  --> tests/ui/invalid_transition_introspect_missing_return.rs:24:5
+   |
+24 |     #[introspect]
+   |     ^

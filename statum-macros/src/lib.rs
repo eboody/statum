@@ -19,6 +19,7 @@ mod readme_doctests {}
 mod analysis;
 mod cache;
 mod callsite;
+mod diagnostics;
 mod module_path;
 mod parser;
 mod pathing;
@@ -47,6 +48,7 @@ pub(crate) use syntax::{
 };
 
 use crate::callsite::{current_module_path_opt, module_path_for_span};
+use crate::diagnostics::DiagnosticMessage;
 use crate::{
     LoadedMachineLookupFailure, MachinePath, ambiguous_transition_machine_error,
     ambiguous_transition_machine_fallback_error, lookup_loaded_machine_in_module,
@@ -68,7 +70,19 @@ pub(crate) fn strict_introspection_enabled() -> bool {
 /// variant plus the state-family traits used by `#[machine]`, `#[transition]`,
 /// and `#[validators]`.
 #[proc_macro_attribute]
-pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn state(attr: TokenStream, item: TokenStream) -> TokenStream {
+    if !attr.is_empty() {
+        return syn::Error::new(
+            Span::call_site(),
+            DiagnosticMessage::new("`#[state]` does not accept arguments.")
+                .found(format!("`#[state({attr})]`"))
+                .expected("`#[state] enum WorkflowState { Draft, Review(ReviewData) }`")
+                .fix("remove the attribute arguments and describe states with enum variants instead.".to_string())
+                .render(),
+        )
+        .to_compile_error()
+        .into();
+    }
     let input = parse_macro_input!(item as Item);
     let input = match input {
         Item::Enum(item_enum) => item_enum,
@@ -107,7 +121,11 @@ pub fn machine(attr: TokenStream, item: TokenStream) -> TokenStream {
     if !attr.is_empty() {
         return syn::Error::new(
             Span::call_site(),
-            "Error: `#[machine]` does not accept arguments.\nFix: write `#[machine] struct Machine<StateEnum> { ... }` and link the machine to `#[state]` through its first generic parameter.",
+            DiagnosticMessage::new("`#[machine]` does not accept arguments.")
+                .found(format!("`#[machine({attr})]`"))
+                .expected("`#[machine] struct WorkflowMachine<WorkflowState> { ... }`")
+                .fix("remove the attribute arguments and link the machine to `#[state]` through its first generic parameter.".to_string())
+                .render(),
         )
         .to_compile_error()
         .into();
@@ -150,9 +168,21 @@ pub fn machine(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// local `#[introspect(return = ...)]` escape hatch on the method.
 #[proc_macro_attribute]
 pub fn transition(
-    _attr: proc_macro::TokenStream,
+    attr: proc_macro::TokenStream,
     item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
+    if !attr.is_empty() {
+        return syn::Error::new(
+            Span::call_site(),
+            DiagnosticMessage::new("`#[transition]` does not accept arguments.")
+                .found(format!("`#[transition({attr})]`"))
+                .expected("`#[transition] impl WorkflowMachine<Draft> { ... }`")
+                .fix("remove the attribute arguments and declare transition behavior with methods inside the impl block.".to_string())
+                .render(),
+        )
+        .to_compile_error()
+        .into();
+    }
     let input = parse_macro_input!(item as ItemImpl);
 
     // -- Step 1: Parse
@@ -236,6 +266,17 @@ pub fn transition(
 /// it emits a compile error asking for an anchored path instead.
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
+    if attr.is_empty() {
+        return syn::Error::new(
+            Span::call_site(),
+            DiagnosticMessage::new("`#[validators(...)]` requires a machine path.")
+                .expected("`#[validators(WorkflowMachine)] impl PersistedRow { ... }`")
+                .fix("pass the target Statum machine type in the attribute, for example `#[validators(self::flow::WorkflowMachine)]`.".to_string())
+                .render(),
+        )
+        .to_compile_error()
+        .into();
+    }
     let item_impl = parse_macro_input!(item as ItemImpl);
     let module_path = match resolved_current_module_path(item_impl.self_ty.span(), "#[validators]")
     {

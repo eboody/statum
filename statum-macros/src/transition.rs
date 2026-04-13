@@ -15,6 +15,7 @@ use self::diagnostics::{
     machine_return_signature,
 };
 use self::parse::TransitionImpl;
+use crate::diagnostics::DiagnosticMessage;
 use crate::MachineInfo;
 use proc_macro2::TokenStream;
 use syn::spanned::Spanned;
@@ -24,13 +25,18 @@ pub fn validate_transition_functions(
     machine_info: &MachineInfo,
 ) -> Option<TokenStream> {
     if tr_impl.functions.is_empty() {
-        let message = format!(
-            "Error: #[transition] impl for `{}<{}>` must contain at least one method returning `{}`, a source-backed type alias that expands to `{}`, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape.",
+        let message = DiagnosticMessage::new(format!(
+            "`#[transition]` impl for `{}<{}>` must contain at least one transition method.",
             tr_impl.machine_name,
             tr_impl.source_state,
+        ))
+        .found(format!("`impl {}<{}> {{}}`", tr_impl.machine_name, tr_impl.source_state))
+        .expected(format!(
+            "`fn submit(self) -> {}` or a supported wrapper around that same machine path",
             machine_return_signature(&tr_impl.machine_name),
-            machine_return_signature(&tr_impl.machine_name),
-        );
+        ))
+        .fix("add at least one method that consumes `self` and returns the next `#[machine]` state.")
+        .render();
         return Some(compile_error_at(tr_impl.target_type.span(), &message));
     }
 
@@ -54,12 +60,16 @@ pub fn validate_transition_functions(
 
     for func in &tr_impl.functions {
         if !func.has_receiver {
-            let message = format!(
-                "Error: `#[transition]` method `{}<{}>::{}` must take `self` or `mut self` as its receiver.",
+            let message = DiagnosticMessage::new(format!(
+                "`#[transition]` method `{}<{}>::{}` must take `self` or `mut self` as its receiver.",
                 tr_impl.machine_name,
                 tr_impl.source_state,
                 func.name,
-            );
+            ))
+            .found(format!("`fn {}(...)`", func.name))
+            .expected(format!("`fn {}(self) -> {}`", func.name, machine_return_signature(&tr_impl.machine_name)))
+            .fix("change the method receiver to `self` or `mut self`.".to_string())
+            .render();
             return Some(compile_error_at(func.span, &message));
         }
 

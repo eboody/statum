@@ -1,5 +1,7 @@
 error: Error: `#[machine]` does not accept arguments.
-       Fix: write `#[machine] struct Machine<StateEnum> { ... }` and link the machine to `#[state]` through its first generic parameter.
+       Found: `#[machine(start = Draft)]`
+       Expected: `#[machine] struct WorkflowMachine<WorkflowState> { ... }`
+       Fix: remove the attribute arguments and link the machine to `#[state]` through its first generic parameter.
   --> tests/ui/invalid_machine_unknown_attr_key.rs:18:1
    |
 18 | #[machine(start = Draft)]

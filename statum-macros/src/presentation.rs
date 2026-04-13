@@ -1,6 +1,8 @@
 use quote::ToTokens;
 use syn::{Attribute, Expr, ExprLit, Lit, LitStr, Type};
 
+use crate::diagnostics::{DiagnosticMessage, compact_display, error_at, error_spanned};
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PresentationAttr {
     pub label: Option<String>,
@@ -35,13 +37,23 @@ pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<Presentati
 
     for attr in attrs.iter().filter(|attr| attr.path().is_ident("present")) {
         found = true;
+        if !matches!(attr.meta, syn::Meta::List(_)) {
+            let message = DiagnosticMessage::new("`#[present(...)]` requires parentheses.")
+                .found(format!("`#[{}]`", compact_display(&attr.meta)))
+                .expected("`#[present(label = \"...\", description = \"...\")]`")
+                .fix("write `#[present(...)]` with key/value pairs inside the parentheses.".to_string());
+            return Err(error_spanned(attr, &message));
+        }
         attr.parse_nested_meta(|meta| {
             let path = meta.path.clone();
             let Some(ident) = path.get_ident() else {
-                return Err(syn::Error::new_spanned(
-                    &path,
-                    "Error: `#[present(...)]` keys must be simple identifiers like `label = \"...\"`.",
-                ));
+                let message = DiagnosticMessage::new(
+                    "`#[present(...)]` keys must be simple identifiers.",
+                )
+                .found(format!("`{}`", compact_display(&path)))
+                .expected("`label = \"...\"`, `description = \"...\"`, or `metadata = Expr`")
+                .fix("write `#[present(label = \"...\", description = \"...\")]`.");
+                return Err(error_spanned(&path, &message));
             };
 
             let value = meta.value()?;
@@ -54,6 +66,7 @@ pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<Presentati
                         &mut presentation.label,
                         ident,
                         lit.value(),
+                        format!("\"{}\"", lit.value()),
                         "present",
                     )?;
                 }
@@ -63,6 +76,7 @@ pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<Presentati
                         &mut presentation.description,
                         ident,
                         lit.value(),
+                        format!("\"{}\"", lit.value()),
                         "present",
                     )?;
                 }
@@ -71,17 +85,18 @@ pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<Presentati
                         &mut presentation.metadata,
                         ident,
                         expr.to_token_stream().to_string(),
+                        compact_display(&expr),
                         "present",
                     )?;
                 }
                 _ => {
-                    return Err(syn::Error::new_spanned(
-                        ident,
-                        format!(
-                            "Error: unknown `#[present(...)]` key `{}`.\nSupported keys: `label`, `description`, `metadata`.",
-                            ident
-                        ),
-                    ));
+                    let message = DiagnosticMessage::new(format!(
+                        "unknown `#[present(...)]` key `{ident}`."
+                    ))
+                    .found(format!("`{ident} = {}`", compact_display(&expr)))
+                    .expected("`label = \"...\"`, `description = \"...\"`, or `metadata = Expr`")
+                    .fix("replace that key or remove it.");
+                    return Err(error_spanned(ident, &message));
                 }
             }
             Ok(())
@@ -106,13 +121,27 @@ pub fn parse_presentation_types_attr(
         .filter(|attr| attr.path().is_ident("presentation_types"))
     {
         found = true;
+        if !matches!(attr.meta, syn::Meta::List(_)) {
+            let message = DiagnosticMessage::new(
+                "`#[presentation_types(...)]` requires parentheses.",
+            )
+            .found(format!("`#[{}]`", compact_display(&attr.meta)))
+            .expected(
+                "`#[presentation_types(machine = MachineMeta, state = StateMeta, transition = TransitionMeta)]`",
+            )
+            .fix("write `#[presentation_types(...)]` with key/type pairs inside the parentheses.".to_string());
+            return Err(error_spanned(attr, &message));
+        }
         attr.parse_nested_meta(|meta| {
             let path = meta.path.clone();
             let Some(ident) = path.get_ident() else {
-                return Err(syn::Error::new_spanned(
-                    &path,
-                    "Error: `#[presentation_types(...)]` keys must be simple identifiers like `state = MyStateMeta`.",
-                ));
+                let message = DiagnosticMessage::new(
+                    "`#[presentation_types(...)]` keys must be simple identifiers.",
+                )
+                .found(format!("`{}`", compact_display(&path)))
+                .expected("`machine = MachineMeta`, `state = StateMeta`, or `transition = TransitionMeta`")
+                .fix("write `#[presentation_types(state = StateMeta)]` with plain identifier keys.");
+                return Err(error_spanned(&path, &message));
             };
 
             let value = meta.value()?;
@@ -124,6 +153,7 @@ pub fn parse_presentation_types_attr(
                     assign_unique_string_slot(
                         &mut presentation_types.machine,
                         ident,
+                        ty_string.clone(),
                         ty_string,
                         "presentation_types",
                     )?;
@@ -132,6 +162,7 @@ pub fn parse_presentation_types_attr(
                     assign_unique_string_slot(
                         &mut presentation_types.state,
                         ident,
+                        ty_string.clone(),
                         ty_string,
                         "presentation_types",
                     )?;
@@ -140,18 +171,21 @@ pub fn parse_presentation_types_attr(
                     assign_unique_string_slot(
                         &mut presentation_types.transition,
                         ident,
+                        ty_string.clone(),
                         ty_string,
                         "presentation_types",
                     )?;
                 }
                 _ => {
-                    return Err(syn::Error::new_spanned(
-                        ident,
-                        format!(
-                            "Error: unknown `#[presentation_types(...)]` key `{}`.\nSupported keys: `machine`, `state`, `transition`.",
-                            ident
-                        ),
-                    ));
+                    let message = DiagnosticMessage::new(format!(
+                        "unknown `#[presentation_types(...)]` key `{ident}`."
+                    ))
+                    .found(format!("`{ident} = {ty_string}`"))
+                    .expected(
+                        "`machine = MachineMeta`, `state = StateMeta`, or `transition = TransitionMeta`",
+                    )
+                    .fix("replace that key or remove it.");
+                    return Err(error_spanned(ident, &message));
                 }
             }
 
@@ -182,12 +216,13 @@ fn expect_string_literal(
         lit: Lit::Str(lit), ..
     }) = expr
     else {
-        return Err(syn::Error::new(
-            span,
-            format!(
-                "Error: `#[present({ident} = ...)]` expects a string literal.\nFix: write `#[present({ident} = \"...\")]`."
-            ),
-        ));
+        let message = DiagnosticMessage::new(format!(
+            "`#[present({ident} = ...)]` expects a string literal."
+        ))
+        .found(format!("`{ident} = {}`", compact_display(expr)))
+        .expected(format!("`{ident} = \"...\"`"))
+        .fix(format!("write `#[present({ident} = \"...\")]`."));
+        return Err(error_at(span, &message));
     };
 
     Ok(lit.clone())
@@ -196,7 +231,8 @@ fn expect_string_literal(
 fn assign_unique_string_slot(
     slot: &mut Option<String>,
     ident: &syn::Ident,
-    value: String,
+    stored_value: String,
+    found_display: String,
     attr_name: &str,
 ) -> Result<(), syn::Error> {
     if slot.is_some() {
@@ -204,15 +240,18 @@ fn assign_unique_string_slot(
             "present" => "presentation field".to_string(),
             _ => format!("{attr_name} field"),
         };
-        return Err(syn::Error::new_spanned(
-            ident,
-            format!(
-                "Error: duplicate `#[{attr_name}(...)]` key `{ident}`.\nFix: specify each {field_label} at most once per item.",
-            ),
+        let message = DiagnosticMessage::new(format!(
+            "duplicate `#[{attr_name}(...)]` key `{ident}`."
+        ))
+        .found(format!("`{ident} = {found_display}`"))
+        .expected(format!("one `{ident}` {field_label} entry"))
+        .fix(format!(
+            "specify `{ident}` at most once inside `#[{attr_name}(...)]`."
         ));
+        return Err(error_spanned(ident, &message));
     }
 
-    *slot = Some(value);
+    *slot = Some(stored_value);
     Ok(())
 }
 

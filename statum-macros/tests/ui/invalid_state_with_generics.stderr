@@ -1,6 +1,7 @@
-error: Error: #[state] enum `GenericState` cannot declare generics.
-       Fix: keep `GenericState` non-generic and move generic data into payload types.
-       Found: `enum GenericState< 'a, T > { ... }`.
+error: Error: `#[state]` enum `GenericState` cannot declare generics.
+       Found: `enum GenericState<'a, T> { ... }`
+       Expected: `enum GenericState { Draft, Review(ReviewData) }`
+       Fix: keep `GenericState` non-generic and move the generic data into a payload type such as `ReviewData<T>`.
   --> tests/ui/invalid_state_with_generics.rs:13:18
    |
 13 | enum GenericState<'a, T> {

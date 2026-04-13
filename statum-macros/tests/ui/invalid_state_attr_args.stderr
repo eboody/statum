@@ -1,0 +1,16 @@
+error: Error: `#[state]` does not accept arguments.
+       Found: `#[state(start = Draft)]`
+       Expected: `#[state] enum WorkflowState { Draft, Review(ReviewData) }`
+       Fix: remove the attribute arguments and describe states with enum variants instead.
+  --> tests/ui/invalid_state_attr_args.rs:13:1
+   |
+13 | #[state(start = Draft)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `state` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/invalid_state_attr_args.rs:16:2
+   |
+16 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_state_attr_args.rs`

@@ -7,11 +7,12 @@ use super::resolve::{
     collect_machine_and_states_strict, extract_impl_machine_and_state,
     parse_machine_and_state_in_context, parse_primary_machine_and_state_strict,
 };
+use crate::diagnostics::{DiagnosticMessage, compact_display, compile_error_at};
 use crate::{PresentationAttr, parse_present_attrs, strip_present_attrs};
 use proc_macro2::{Span, TokenStream};
 use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
-use syn::{Block, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, ReturnType, Type};
+use syn::{Block, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, ReturnType, Type};
 
 #[allow(unused)]
 pub struct TransitionFn {
@@ -154,13 +155,13 @@ pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, Tok
     let Some((machine_name, machine_span, source_state, source_state_span)) =
         extract_impl_machine_and_state(&target_type)
     else {
-        let message = LitStr::new(
-            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
-            target_type.span(),
-        );
-        return Err(quote::quote_spanned! { target_type.span() =>
-            compile_error!(#message);
-        });
+        let message = DiagnosticMessage::new(
+            "`#[transition]` must be applied to an impl target like `Machine<State>`.",
+        )
+        .found(format!("`impl {}`", compact_display(&target_type)))
+        .expected("`#[transition] impl WorkflowMachine<Draft> { ... }`")
+        .fix("apply `#[transition]` to an impl for the local `#[machine]` type and one concrete state marker.");
+        return Err(compile_error_at(target_type.span(), &message));
     };
 
     let mut functions = Vec::new();
@@ -254,6 +255,13 @@ fn parse_transition_introspect_attrs(
     for attr in attrs.iter().filter(|attr| attr.path().is_ident("introspect")) {
         found = true;
         attr_span = Some(attr.span());
+        if !matches!(attr.meta, syn::Meta::List(_)) {
+            let message = DiagnosticMessage::new("`#[introspect(...)]` requires parentheses.")
+                .found(format!("`#[{}]`", compact_display(&attr.meta)))
+                .expected("`#[introspect(return = WorkflowMachine<NextState>)]`")
+                .fix("write `#[introspect(return = ...)]` on the transition method.".to_string());
+            return Err(syn::Error::new(attr.span(), message.render()));
+        }
         attr.parse_nested_meta(|meta| parse_transition_introspect_meta(meta, &mut return_type))?;
     }
 
@@ -264,7 +272,10 @@ fn parse_transition_introspect_attrs(
     let Some(return_type) = return_type else {
         return Err(syn::Error::new(
             attr_span.unwrap_or(Span::call_site()),
-            "Error: `#[introspect(...)]` requires `return = <Type>`.\nFix: write `#[introspect(return = Machine<NextState>)]` on the transition method.",
+            DiagnosticMessage::new("`#[introspect(...)]` requires `return = <Type>`.")
+                .expected("`#[introspect(return = WorkflowMachine<NextState>)]`")
+                .fix("declare the exact transition return shape with `return = ...`.".to_string())
+                .render(),
         ));
     };
 
@@ -280,31 +291,40 @@ fn parse_transition_introspect_meta(
 ) -> syn::Result<()> {
     let path = meta.path.clone();
     let Some(ident) = path.get_ident() else {
-        return Err(syn::Error::new_spanned(
-            &path,
-            "Error: `#[introspect(...)]` keys must be simple identifiers like `return = Machine<NextState>`.",
-        ));
+        let message = DiagnosticMessage::new(
+            "`#[introspect(...)]` keys must be simple identifiers.",
+        )
+        .found(format!("`{}`", compact_display(&path)))
+        .expected("`return = WorkflowMachine<NextState>`")
+        .fix("write `#[introspect(return = ...)]`.".to_string());
+        return Err(syn::Error::new_spanned(&path, message.render()));
     };
 
     match ident.to_string().as_str() {
         "return" => {
             if return_type.is_some() {
-                return Err(syn::Error::new_spanned(
-                    ident,
-                    "Error: duplicate `#[introspect(...)]` key `return`.\nFix: specify `return = ...` at most once per method.",
-                ));
+                let message = DiagnosticMessage::new(
+                    "duplicate `#[introspect(...)]` key `return`.",
+                )
+                .found("`return = ...`")
+                .expected("one `return = ...` entry")
+                .fix("specify `return = ...` at most once per method.");
+                return Err(syn::Error::new_spanned(ident, message.render()));
             }
 
             let value = meta.value()?;
             *return_type = Some(value.parse()?);
             Ok(())
         }
-        _ => Err(syn::Error::new_spanned(
-            ident,
-            format!(
-                "Error: unknown `#[introspect(...)]` key `{ident}`.\nSupported keys: `return`."
-            ),
-        )),
+        _ => {
+            let message = DiagnosticMessage::new(format!(
+                "unknown `#[introspect(...)]` key `{ident}`."
+            ))
+            .found(format!("`{ident} = ...`"))
+            .expected("`return = WorkflowMachine<NextState>`")
+            .fix("use the `return` key or remove the extra entry.".to_string());
+            Err(syn::Error::new_spanned(ident, message.render()))
+        }
     }
 }
 

@@ -6,6 +6,7 @@ use super::resolve::{
 use crate::callsite::current_source_info;
 use crate::query;
 use crate::{EnumInfo, MachineInfo, format_loaded_machine_candidates};
+use crate::diagnostics::{DiagnosticMessage, compact_display};
 use proc_macro2::{Span, TokenStream};
 use quote::ToTokens;
 use std::collections::HashSet;
@@ -281,11 +282,15 @@ pub(super) fn invalid_introspect_return_error(
     func: &TransitionFn,
     reason: &str,
 ) -> TokenStream {
-    let message = format!(
-        "Error: `#[introspect(return = ...)]` on transition `{}<{}>::{}` is invalid.\nFix: use a direct machine path or a supported `Option`, `Result`, or `statum::Branch` wrapper around that machine path.\nReason: {reason}.",
+    let message = DiagnosticMessage::new(format!(
+        "`#[introspect(return = ...)]` on transition `{}<{}>::{}` is invalid.",
         func.machine_name, func.source_state, func.name,
-    );
-    compile_error_at(introspection.span, &message)
+    ))
+    .found(format!("`#[introspect(return = {})]`", compact_display(&introspection.return_type)))
+    .expected("a direct machine path or a supported `Option`, `Result`, or `statum::Branch` wrapper around that machine path")
+    .reason(reason.to_string())
+    .fix("rewrite `return = ...` so it names the legal transition targets directly.".to_string());
+    compile_error_at(introspection.span, &message.render())
 }
 
 pub(super) fn mismatched_introspect_return_error(
@@ -293,14 +298,22 @@ pub(super) fn mismatched_introspect_return_error(
     func: &TransitionFn,
     actual_return_type: &Type,
 ) -> TokenStream {
-    let message = format!(
-        "Error: `#[introspect(return = ...)]` on transition `{}<{}>::{}` does not match the directly readable written return type.\nFix: either remove the annotation or make it describe the same legal targets as `{}`.",
+    let actual_return = compact_display(actual_return_type);
+    let message = DiagnosticMessage::new(format!(
+        "`#[introspect(return = ...)]` on transition `{}<{}>::{}` does not match the directly readable written return type.",
         func.machine_name,
         func.source_state,
         func.name,
-        actual_return_type.to_token_stream(),
-    );
-    compile_error_at(introspection.span, &message)
+    ))
+    .found(format!(
+        "`#[introspect(return = {})]` with method return `{actual_return}`",
+        compact_display(&introspection.return_type)
+    ))
+    .expected(format!(
+        "an annotation describing the same legal targets as `{actual_return}`"
+    ))
+    .fix("either remove the annotation or make it match the written signature.".to_string());
+    compile_error_at(introspection.span, &message.render())
 }
 
 pub(super) fn machine_return_signature(machine_name: &str) -> String {

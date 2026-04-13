@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use syn::{Ident, ItemImpl, Path, PathArguments};
 
 use crate::callsite::current_source_info;
+use crate::diagnostics::{DiagnosticMessage, compile_error_at, compact_display};
 use crate::pathing::{module_path_from_file_with_root, module_root_from_file};
 use crate::query;
 
@@ -104,24 +105,13 @@ pub(super) fn validate_validator_coverage(
             .map(|variant| format!("is_{}", to_snake_case(&variant.name)))
             .collect::<Vec<_>>()
             .join(", ");
-        return Err(quote! {
-            compile_error!(concat!(
-                "Error: `#[validators(",
-                #machine_attr_display,
-                ")]` on `impl ",
-                #persisted_type_display,
-                "` defines methods that do not match any variant in `",
-                #state_enum_name,
-                "`: ",
-                #unknown_list,
-                ".\n",
-                "Valid validator methods for `",
-                #machine_name,
-                "` are: ",
-                #valid_list,
-                "."
-            ));
-        });
+        let message = DiagnosticMessage::new(format!(
+            "`#[validators({machine_attr_display})]` on `impl {persisted_type_display}` defines methods that do not match any variant in `{state_enum_name}`."
+        ))
+        .found(format!("unknown validator methods: `{unknown_list}`"))
+        .expected(format!("one `is_{{state}}` method per `{machine_name}` state: `{valid_list}`"))
+        .fix("rename or remove methods that do not correspond to a `#[state]` variant.".to_string());
+        return Err(compile_error_at(proc_macro2::Span::call_site(), &message));
     }
 
     let mut missing = Vec::new();
@@ -139,20 +129,15 @@ pub(super) fn validate_validator_coverage(
             .collect::<Vec<_>>()
             .join(", ");
         let state_enum_name = &state_enum.name;
-        return Err(quote! {
-            compile_error!(concat!(
-                "Error: `#[validators(",
-                #machine_attr_display,
-                ")]` on `impl ",
-                #persisted_type_display,
-                "` is missing validator methods for `",
-                #state_enum_name,
-                "`: ",
-                #missing_list,
-                ".\n",
-                "Fix: add one validator per state variant (snake_case), e.g. `fn is_draft(&self) -> Result<()>`."
-            ));
-        });
+        let message = DiagnosticMessage::new(format!(
+            "`#[validators({machine_attr_display})]` on `impl {persisted_type_display}` is missing validator methods for `{state_enum_name}`."
+        ))
+        .found(format!("missing validator methods: `{missing_list}`"))
+        .expected(format!(
+            "one `is_{{state}}` method per `{state_enum_name}` variant"
+        ))
+        .fix("add one validator per state variant in snake_case, for example `fn is_draft(&self) -> Result<(), _>`.".to_string());
+        return Err(compile_error_at(proc_macro2::Span::call_site(), &message));
     }
 
     Ok(())
@@ -228,14 +213,26 @@ pub(super) fn resolve_machine_metadata(
                 format_loaded_machine_candidates(&candidates)
             ),
         };
-        let message = format!(
-            "Error: `#[validators({})]` could not resolve a matching `#[machine]` in module `{module_path}`.\nFix: point `#[validators(...)]` at the Statum machine type declared in that module and declare that `#[machine]` item before this validators impl.\n{authority_line}\n{relative_path_line}{ordering_line}{}\n{elsewhere_line}\n{available_line}\nCorrect shape: `#[validators({suggested_attr})] impl PersistedRow {{ ... }}`.",
+        let message = DiagnosticMessage::new(format!(
+            "`#[validators({})]` could not resolve a matching `#[machine]` in module `{module_path}`.",
             machine_attr.attr_display,
-            missing_attr_line.unwrap_or_else(|| "No plain struct with that name was found in this module either.".to_string()),
-        );
-        quote! {
-            compile_error!(#message);
-        }
+        ))
+        .found(format!("`#[validators({})]`", machine_attr.attr_display))
+        .expected(format!("`#[validators({suggested_attr})]`"))
+        .fix("point `#[validators(...)]` at the Statum machine type declared in that module and declare that `#[machine]` item before this validators impl.".to_string())
+        .reason(authority_line)
+        .assumption(relative_path_line.trim_end().to_string())
+        .note(ordering_line.trim_end().to_string())
+        .note(
+            missing_attr_line
+                .unwrap_or_else(|| "No plain struct with that name was found in this module either.".to_string()),
+        )
+        .candidates(elsewhere_line)
+        .candidates(available_line)
+        .help(format!(
+            "Correct shape: `#[validators({suggested_attr})] impl PersistedRow {{ ... }}`."
+        ));
+        compile_error_at(proc_macro2::Span::call_site(), &message)
     })
 }
 
@@ -311,28 +308,44 @@ pub(super) fn resolve_state_enum_info(
                 format_loaded_state_candidates(&candidates)
             ),
         };
-        let message = format!(
-            "Error: machine `{machine_name}` could not resolve its `#[state]` enum in module `{module_path}` for this `#[validators]` impl.\nFix: make the machine's first generic name the right local `#[state]` enum and declare that enum before the machine and validators impl.\n{expected_line}\n{authority_line}\n{ordering_line}{}\n{elsewhere_line}\n{available_line}\nCorrect shape: `struct {machine_name}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum declared in `{module_path}`.",
-            missing_attr_line.unwrap_or_else(|| "No plain enum with that expected name was found in this module either.".to_string())
-        );
-        quote! {
-            compile_error!(#message);
-        }
+        let message = DiagnosticMessage::new(format!(
+            "machine `{machine_name}` could not resolve its `#[state]` enum in module `{module_path}` for this `#[validators]` impl."
+        ))
+        .expected(format!(
+            "`struct {machine_name}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum declared in `{module_path}`"
+        ))
+        .fix("make the machine's first generic name the right local `#[state]` enum and declare that enum before the machine and validators impl.".to_string())
+        .reason(expected_line)
+        .note(authority_line)
+        .note(ordering_line.trim_end().to_string())
+        .note(
+            missing_attr_line
+                .unwrap_or_else(|| "No plain enum with that expected name was found in this module either.".to_string()),
+        )
+        .candidates(elsewhere_line)
+        .candidates(available_line);
+        compile_error_at(proc_macro2::Span::call_site(), &message)
     })
 }
 
 fn validate_validator_machine_path(machine_path: &Path) -> Result<(), TokenStream> {
     let Some(last_segment) = machine_path.segments.last() else {
-        return Err(quote! {
-            compile_error!("Error: `#[validators(...)]` requires a machine path like `Machine` or `crate::flow::Machine`.");
-        });
+        let message = DiagnosticMessage::new(
+            "`#[validators(...)]` requires a machine path.",
+        )
+        .expected("`Machine` or `crate::flow::Machine`")
+        .fix("write `#[validators(Machine)]` for the current module or an anchored path like `#[validators(crate::flow::Machine)]`.");
+        return Err(compile_error_at(proc_macro2::Span::call_site(), &message));
     };
 
     if machine_path.leading_colon.is_some() {
-        let message = "Error: `#[validators(...)]` does not accept leading-`::` paths.\nFix: use `crate::flow::Machine`, `self::Machine`, `super::Machine`, or bare `Machine` for the current module.";
-        return Err(quote! {
-            compile_error!(#message);
-        });
+        let message = DiagnosticMessage::new(
+            "`#[validators(...)]` does not accept leading-`::` paths.",
+        )
+        .found(format!("`{}`", compact_display(machine_path)))
+        .expected("`Machine`, `self::flow::Machine`, `super::flow::Machine`, or `crate::flow::Machine`")
+        .fix("drop the leading `::` and anchor the path with `crate::`, `self::`, or `super::` when needed.");
+        return Err(compile_error_at(proc_macro2::Span::call_site(), &message));
     }
 
     if machine_path
@@ -340,18 +353,24 @@ fn validate_validator_machine_path(machine_path: &Path) -> Result<(), TokenStrea
         .iter()
         .any(|segment| !matches!(segment.arguments, PathArguments::None))
     {
-        let message = "Error: `#[validators(...)]` expects a machine type path without generic arguments.\nFix: write `#[validators(Machine)]` or `#[validators(crate::flow::Machine)]`.";
-        return Err(quote! {
-            compile_error!(#message);
-        });
+        let message = DiagnosticMessage::new(
+            "`#[validators(...)]` expects a machine type path without generic arguments.",
+        )
+        .found(format!("`{}`", compact_display(machine_path)))
+        .expected("`Machine` or `crate::flow::Machine`")
+        .fix("remove generic arguments from the attribute path. Statum reads the machine type itself, not a concrete instantiation.");
+        return Err(compile_error_at(proc_macro2::Span::call_site(), &message));
     }
 
     let reserved = last_segment.ident.to_string();
     if reserved == "crate" || reserved == "self" || reserved == "super" {
-        let message = "Error: `#[validators(...)]` must end with the Statum machine type name.\nFix: write `#[validators(Machine)]` or `#[validators(crate::flow::Machine)]`.";
-        return Err(quote! {
-            compile_error!(#message);
-        });
+        let message = DiagnosticMessage::new(
+            "`#[validators(...)]` must end with the Statum machine type name.",
+        )
+        .found(format!("`{}`", compact_display(machine_path)))
+        .expected("`Machine` or `crate::flow::Machine`")
+        .fix("end the path with the machine type itself, for example `#[validators(crate::flow::Machine)]`.");
+        return Err(compile_error_at(proc_macro2::Span::call_site(), &message));
     }
 
     Ok(())
@@ -380,14 +399,17 @@ fn resolve_validator_machine_module_path(
     if crate::strict_introspection_enabled() && relative_is_ambiguous {
         let suggestion = preferred_machine_attr_suggestion(current_module_path, machine_name, None, machine_name)
             .unwrap_or_else(|| format!("crate::path::{machine_name}"));
-        let message = format!(
-            "Error: `#[validators({})]` is not accepted in strict introspection mode.\nFix: use a direct machine path rooted at `crate::`, `self::`, or `super::`, for example `#[validators({suggestion})]`.\nReason: relative multi-segment paths like `{}` can name either module paths or imported aliases, and strict mode only accepts locally readable machine bindings.",
-            path_display(machine_path),
-            path_display(machine_path),
-        );
-        return Err(quote! {
-            compile_error!(#message);
-        });
+        let written_path = path_display(machine_path);
+        let message = DiagnosticMessage::new(format!(
+            "`#[validators({written_path})]` is not accepted in strict introspection mode."
+        ))
+        .found(format!("`#[validators({written_path})]`"))
+        .expected(format!("`#[validators({suggestion})]`"))
+        .fix("use a direct machine path rooted at `crate::`, `self::`, or `super::`.".to_string())
+        .reason(format!(
+            "relative multi-segment paths like `{written_path}` can name either module paths or imported aliases, and strict mode only accepts locally readable machine bindings."
+        ));
+        return Err(compile_error_at(proc_macro2::Span::call_site(), &message));
     }
 
     let mut index = 0usize;

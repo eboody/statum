@@ -2,6 +2,7 @@ use quote::{ToTokens, format_ident, quote};
 use std::collections::HashMap;
 use syn::{Generics, Ident, ItemImpl, Path, Type, parse_macro_input};
 
+use crate::diagnostics::{DiagnosticMessage, compile_error_at};
 use crate::VariantInfo;
 use crate::machine::{
     builder_generics, extra_generics, extra_type_arguments_tokens, generic_argument_tokens,
@@ -149,21 +150,14 @@ pub fn parse_validators(
             .collect::<Vec<_>>()
             .join(", ");
         let state_enum_name = state_enum_info.name.clone();
-        return quote! {
-            compile_error!(concat!(
-                "Error: `#[validators(",
-                #machine_attr_display,
-                ")]` on `impl ",
-                #persisted_type_display,
-                "` must define at least one validator method.\n",
-                "Expected one method per `",
-                #state_enum_name,
-                "` variant: ",
-                #expected_methods,
-                "."
-            ));
-        }
-        .into();
+        let message = DiagnosticMessage::new(format!(
+            "`#[validators({machine_attr_display})]` on `impl {persisted_type_display}` must define at least one validator method."
+        ))
+        .expected(format!(
+            "one method per `{state_enum_name}` variant: `{expected_methods}`"
+        ))
+        .fix("add validator methods like `fn is_draft(&self) -> Result<(), _>`.".to_string());
+        return compile_error_at(proc_macro2::Span::call_site(), &message).into();
     }
 
     let machine_vis = parsed_machine.vis.clone();

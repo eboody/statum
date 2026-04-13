@@ -1,6 +1,7 @@
-error: Error: machine `Machine` uses `S : Clone` as its state generic, but the `#[state]` enum in this module is `MachineState`.
+error: Error: machine `Machine` uses `S: Clone` as its state generic, but the `#[state]` enum in this module is `MachineState`.
+       Found: `struct Machine<S: Clone> { ... }`
+       Expected: `struct Machine<MachineState> { ... }`
        Fix: declare `Machine<MachineState>`.
-       Found: `struct Machine< S : Clone > { ... }`.
   --> tests/ui/invalid_machine_wrong_generic.rs:20:16
    |
 20 | struct Machine<S: Clone> {

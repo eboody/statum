@@ -1,5 +1,7 @@
-error: Error: #[state] must be applied to an enum, but `NotAnEnum` is a struct.
-       Fix: declare `enum NotAnEnum { ... }` with unit variants like `Draft` or single-payload variants like `InReview(ReviewData)`, or remove `#[state]`.
+error: Error: #[state] must be applied to an enum.
+       Found: `struct NotAnEnum { ... }`
+       Expected: `enum NotAnEnum { Draft, InReview(InReviewData) }`
+       Fix: change `NotAnEnum` from a struct into a `#[state]` enum, or remove `#[state]`.
   --> tests/ui/invalid_state_not_enum.rs:13:8
    |
 13 | struct NotAnEnum {

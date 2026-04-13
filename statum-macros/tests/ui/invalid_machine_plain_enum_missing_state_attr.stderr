@@ -1,11 +1,12 @@
 error: Error: machine `WorkflowMachine` could not resolve its `#[state]` enum in module `invalid_machine_plain_enum_missing_state_attr`.
+       Found: `struct WorkflowMachine<WorkflowState> { ... }`
+       Expected: `struct WorkflowMachine<ExpectedState> { ... }` where `ExpectedState` is a `#[state]` enum in `invalid_machine_plain_enum_missing_state_attr`
        Fix: make the machine's first generic name the local `#[state]` enum and declare that enum before the machine.
-       Expected a `#[state]` enum named `WorkflowState` in module `invalid_machine_plain_enum_missing_state_attr`.
-       Statum only resolves `#[state]` enums that have already expanded before this `#[machine]` declaration.
-       An enum named `WorkflowState` exists on line 14, but it is not annotated with `#[state]`.
-       No same-named `#[state]` enums were found in other modules of this file.
-       No `#[state]` enums were found in that module.
-       Correct shape: `struct WorkflowMachine<ExpectedState> { ... }` where `ExpectedState` is a `#[state]` enum in `invalid_machine_plain_enum_missing_state_attr`.
+       Reason: Expected a `#[state]` enum named `WorkflowState` in module `invalid_machine_plain_enum_missing_state_attr`.
+       Note: Statum only resolves `#[state]` enums that have already expanded before this `#[machine]` declaration.
+       Note: An enum named `WorkflowState` exists on line 14, but it is not annotated with `#[state]`.
+       Candidates: No same-named `#[state]` enums were found in other modules of this file.
+       Candidates: No `#[state]` enums were found in that module.
   --> tests/ui/invalid_machine_plain_enum_missing_state_attr.rs:18:1
    |
 18 | #[machine]

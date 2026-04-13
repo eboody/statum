@@ -1,5 +1,7 @@
-error: Error: #[state] enum `BadState` variant `Draft` carries 2 fields, but Statum supports at most one payload type per state.
-       Fix: wrap those fields in a separate payload type and use `Draft(DraftData)`.
+error: Error: `#[state]` enum `BadState` variant `Draft` carries 2 fields, but Statum supports at most one payload type per state.
+       Found: `Draft(u32, u32)`
+       Expected: `Draft(DraftData)`
+       Fix: wrap the current fields in a payload type like `struct DraftData { ... }` and use `enum BadState { Draft(DraftData) }`.
   --> tests/ui/invalid_state_tuple_variant.rs:14:5
    |
 14 |     Draft(u32, u32),

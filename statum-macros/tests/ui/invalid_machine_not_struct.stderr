@@ -1,5 +1,7 @@
-error: Error: #[machine] must be applied to a struct, but `NotAStruct` is an enum.
-       Fix: declare `struct NotAStruct<State> { ... }` and apply `#[machine]` to that struct.
+error: Error: #[machine] must be applied to a struct.
+       Found: `enum NotAStruct { ... }`
+       Expected: `struct NotAStruct<WorkflowState> { ... }`
+       Fix: change `NotAStruct` from an enum into a `#[machine]` struct whose first generic names the local `#[state]` enum.
   --> tests/ui/invalid_machine_not_struct.rs:15:6
    |
 15 | enum NotAStruct {

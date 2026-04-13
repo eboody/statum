@@ -1,6 +1,7 @@
 #[test]
 fn test_invalid_state_usage() {
     let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/invalid_state_attr_args.rs");
     t.compile_fail("tests/ui/invalid_state_not_enum.rs");
     t.compile_fail("tests/ui/invalid_state_empty_enum.rs");
     t.compile_fail("tests/ui/invalid_state_cfg_variant.rs");
@@ -9,6 +10,7 @@ fn test_invalid_state_usage() {
     t.compile_fail("tests/ui/invalid_state_tuple_variant.rs");
     t.compile_fail("tests/ui/invalid_state_with_generics.rs");
     t.compile_fail("tests/ui/invalid_presentation_duplicate_key.rs");
+    t.compile_fail("tests/ui/invalid_presentation_missing_parens.rs");
     t.compile_fail("tests/ui/invalid_presentation_metadata_without_types.rs");
     t.compile_fail("tests/ui/invalid_presentation_unknown_key.rs");
 }
@@ -29,6 +31,20 @@ fn test_invalid_machine_usage() {
     t.compile_fail("tests/ui/invalid_machine_builder_reserved_field_name.rs");
     t.compile_fail("tests/ui/invalid_machine_builder_duplicate_field.rs");
     t.compile_fail("tests/ui/invalid_machine_builder_duplicate_state_data.rs");
+}
+
+#[test]
+fn test_invalid_transition_attribute_usage() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/invalid_transition_attr_args.rs");
+    t.compile_fail("tests/ui/invalid_transition_introspect_missing_return.rs");
+    t.compile_fail("tests/ui/invalid_transition_introspect_unknown_key.rs");
+}
+
+#[test]
+fn test_invalid_validators_attribute_usage() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/invalid_validators_missing_machine_path.rs");
 }
 
 #[cfg(not(feature = "strict-introspection"))]

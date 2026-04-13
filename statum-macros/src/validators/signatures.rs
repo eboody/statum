@@ -2,6 +2,8 @@ use proc_macro2::TokenStream;
 use quote::ToTokens;
 use syn::{FnArg, GenericArgument, Ident, Pat, PathArguments, ReturnType, Type};
 
+use crate::diagnostics::{DiagnosticMessage, compact_display};
+
 use super::type_equivalence::types_equivalent;
 
 pub(super) struct ValidatorDiagnosticContext<'a> {
@@ -33,25 +35,22 @@ pub(super) fn validate_validator_signature(
     if func.sig.inputs.len() != 1 {
         let collision_line = explicit_param_collision_line(&func.sig.inputs, context.machine_fields);
         let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
-        let message = format!(
-            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must declare only `&self`.\nFound parameters: `({})`.\n{}\n{}\nCorrect shapes: {expected_signature}.",
+        let message = DiagnosticMessage::new(format!(
+            "validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must declare only `&self`.",
             func.sig.ident,
             context.persisted_type_display,
             context.machine_name,
             context.state_enum_name,
             context.variant_name,
-            func.sig
-                .inputs
-                .iter()
-                .map(ToTokens::to_token_stream)
-                .map(|tokens| tokens.to_string())
-                .collect::<Vec<_>>()
-                .join(", "),
-            collision_line.unwrap_or_else(|| {
-                "Validator methods do not accept explicit machine-field parameters.".to_string()
-            }),
-            injected_machine_fields_line(context.machine_name, context.machine_fields),
-        );
+        ))
+        .found(format!("`fn {}({})`", func.sig.ident, compact_display(&func.sig.inputs)))
+        .expected(expected_signature.clone())
+        .reason(collision_line.unwrap_or_else(|| {
+            "validator methods do not accept explicit machine-field parameters.".to_string()
+        }))
+        .note(injected_machine_fields_line(context.machine_name, context.machine_fields))
+        .fix("remove explicit parameters and read injected machine fields by bare name inside the validator body.".to_string())
+        .render();
         let error = if let Some(extra_input) = func.sig.inputs.iter().nth(1) {
             syn::Error::new_spanned(extra_input, message)
         } else {
@@ -64,30 +63,38 @@ pub(super) fn validate_validator_signature(
             if receiver.reference.is_none() || receiver.mutability.is_some() {
                 let receiver_display = receiver.to_token_stream().to_string();
                 let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
-                let message = format!(
-                    "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self`, not `{}`.\n{}\nCorrect shapes: {expected_signature}.",
+                let message = DiagnosticMessage::new(format!(
+                    "validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self`, not `{}`.",
                     func.sig.ident,
                     context.persisted_type_display,
                     context.machine_name,
                     context.state_enum_name,
                     context.variant_name,
                     receiver_display,
-                    injected_machine_fields_line(context.machine_name, context.machine_fields),
-                );
+                ))
+                .found(format!("`fn {}({receiver_display})`", func.sig.ident))
+                .expected(expected_signature)
+                .note(injected_machine_fields_line(context.machine_name, context.machine_fields))
+                .fix("change the receiver to `&self`.".to_string())
+                .render();
                 return Err(syn::Error::new_spanned(receiver, message).to_compile_error());
             }
         }
         FnArg::Typed(_) => {
             let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
-            let message = format!(
-                "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self` as its receiver.\n{}\nCorrect shapes: {expected_signature}.",
+            let message = DiagnosticMessage::new(format!(
+                "validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self` as its receiver.",
                 func.sig.ident,
                 context.persisted_type_display,
                 context.machine_name,
                 context.state_enum_name,
                 context.variant_name,
-                injected_machine_fields_line(context.machine_name, context.machine_fields),
-            );
+            ))
+            .found(format!("`fn {}({})`", func.sig.ident, compact_display(&func.sig.inputs[0])))
+            .expected(expected_signature)
+            .note(injected_machine_fields_line(context.machine_name, context.machine_fields))
+            .fix("rewrite the method to take `&self` and no other parameters.".to_string())
+            .render();
             return Err(syn::Error::new_spanned(&func.sig.inputs[0], message).to_compile_error());
         }
     }
@@ -101,8 +108,8 @@ pub(super) fn validate_validator_return_type(
 ) -> Result<ValidatorReturnKind, TokenStream> {
     let ReturnType::Type(_, return_ty) = &func.sig.output else {
         let expected_ok_display = expected_ok_type.to_token_stream().to_string();
-        let message = format!(
-            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` or `Validation<{}>`.\n{}.",
+        let message = DiagnosticMessage::new(format!(
+            "validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` or `Validation<{}>`.",
             func.sig.ident,
             context.persisted_type_display,
             context.machine_name,
@@ -110,8 +117,15 @@ pub(super) fn validate_validator_return_type(
             context.variant_name,
             expected_ok_display,
             expected_ok_display,
-            expected_state_shape(context.state_enum_name, context.variant_name, &expected_ok_display),
-        );
+        ))
+        .expected(expected_validator_signature(&func.sig.ident, expected_ok_type))
+        .reason(expected_state_shape(
+            context.state_enum_name,
+            context.variant_name,
+            &expected_ok_display,
+        ))
+        .fix("add an explicit validator return type.".to_string())
+        .render();
         return Err(syn::Error::new_spanned(&func.sig.output, message).to_compile_error());
     };
 
@@ -119,16 +133,22 @@ pub(super) fn validate_validator_return_type(
         Some(info) => info,
         None => {
             let expected_ok_display = expected_ok_type.to_token_stream().to_string();
-            let message = format!(
-                "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return a supported validator result whose payload is `{}`.\nFound return type `{}`.\nSupported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, aliases like `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`.",
+            let message = DiagnosticMessage::new(format!(
+                "validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return a supported validator result whose payload is `{}`.",
                 func.sig.ident,
                 context.persisted_type_display,
                 context.machine_name,
                 context.state_enum_name,
                 context.variant_name,
                 expected_ok_display,
-                return_ty.to_token_stream(),
-            );
+            ))
+            .found(format!("`{}`", compact_display(return_ty)))
+            .expected(format!(
+                "`Result<{expected_ok_display}, _>` or `Validation<{expected_ok_display}>`"
+            ))
+            .note("supported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, aliases like `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`.")
+            .fix("rewrite the return type to use one of the supported validator result wrappers.".to_string())
+            .render();
             return Err(syn::Error::new_spanned(return_ty, message).to_compile_error());
         }
     };
@@ -137,8 +157,8 @@ pub(super) fn validate_validator_return_type(
         let expected_ok_display = expected_ok_type.to_token_stream().to_string();
         let actual_return_type = return_ty.to_token_stream().to_string();
         let actual_ok_display = actual_ok_ty.to_token_stream().to_string();
-        let message = format!(
-            "Error: validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` or `Validation<{}>` (or an equivalent supported alias), but found `{}` with payload `{}`.",
+        let message = DiagnosticMessage::new(format!(
+            "validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must return `Result<{}, _>` or `Validation<{}>` (or an equivalent supported alias).",
             func.sig.ident,
             context.persisted_type_display,
             context.machine_name,
@@ -146,9 +166,18 @@ pub(super) fn validate_validator_return_type(
             context.variant_name,
             expected_ok_display,
             expected_ok_display,
-            actual_return_type,
-            actual_ok_display,
-        );
+        ))
+        .found(format!(
+            "`{actual_return_type}` with payload `{actual_ok_display}`"
+        ))
+        .expected(format!(
+            "`Result<{expected_ok_display}, _>` or `Validation<{expected_ok_display}>`"
+        ))
+        .fix(format!(
+            "change the validator to return `{expected_ok_display}` for `{}::{}`.",
+            context.state_enum_name, context.variant_name
+        ))
+        .render();
         return Err(syn::Error::new_spanned(return_ty, message).to_compile_error());
     }
 

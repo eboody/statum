@@ -1,5 +1,7 @@
-error: Error: #[state] enum `WorkflowState` variant `Review` field `priority` uses `#[cfg_attr]`, but Statum does not support conditionally compiled state payload fields.
-       Fix: move the cfg gate to the whole variant or wrap cfg-specific payload shape behind a separate type.
+error: Error: `#[state]` enum `WorkflowState` variant `Review` field `priority` uses `#[cfg_attr]`, but Statum does not support conditionally compiled state payload fields.
+       Found: `#[cfg_attr(any(), allow(dead_code))] priority: u8`
+       Expected: an unconditional payload field for `Review`
+       Fix: move the cfg gate to the whole variant or wrap the cfg-specific payload shape behind a separate type.
   --> tests/ui/invalid_state_cfg_payload_field.rs:16:9
    |
 16 | /         #[cfg_attr(any(), allow(dead_code))]

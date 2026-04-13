@@ -1,4 +1,6 @@
-error: Error: #[machine] struct `WorkflowMachine` field `hidden` uses `#[cfg]`, but Statum does not support conditionally compiled machine fields.
+error: Error: `#[machine]` struct `WorkflowMachine` field `hidden` uses `#[cfg]`, but Statum does not support conditionally compiled machine fields.
+       Found: `#[cfg(any())] hidden: &'static str`
+       Expected: an unconditional `hidden` field in `WorkflowMachine`
        Fix: move the cfg gate to the whole `#[machine]` item or split cfg-specific field sets into separate machines.
   --> tests/ui/invalid_machine_cfg_field.rs:21:5
    |

@@ -1,4 +1,6 @@
 error: Error: machine `Workflow` field `build` conflicts with Statum's generated builder helper `build()`.
+       Found: `build: String`
+       Expected: a machine field name other than `build`
        Fix: rename that machine field before using `#[machine]`.
   --> tests/ui/invalid_machine_builder_reserved_field_name.rs:20:5
    |

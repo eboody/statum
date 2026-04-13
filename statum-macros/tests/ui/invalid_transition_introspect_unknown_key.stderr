@@ -1,0 +1,8 @@
+error: Error: unknown `#[introspect(...)]` key `result`.
+       Found: `result = ...`
+       Expected: `return = WorkflowMachine<NextState>`
+       Fix: use the `return` key or remove the extra entry.
+  --> tests/ui/invalid_transition_introspect_unknown_key.rs:24:18
+   |
+24 |     #[introspect(result = WorkflowMachine<Review>)]
+   |                  ^^^^^^
