@@ -1,9 +1,9 @@
 [dependencies]
-futures = "0.3"
-linkme = "0.3"
+futures.workspace = true
+linkme.workspace = true
 
 [package]
-authors = ["Eran Boodnero <eran@eran.codes>"]
+authors.workspace = true
 categories = ["rust-patterns"]
 description = "Core types for representing legal workflow and protocol states explicitly in Rust"
 documentation = "https://docs.rs/statum-core"
@@ -15,12 +15,12 @@ keywords = [
     "protocol",
     "state-machine",
 ]
-license = "MIT"
+license.workspace = true
 name = "statum-core"
 readme = "README.md"
-repository = "https://github.com/eboody/statum"
-rust-version = "1.93"
-version = "0.8.5"
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
 
 [package.metadata.modum]
 weak_modules = [

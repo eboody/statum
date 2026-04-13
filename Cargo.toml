@@ -1,11 +1,41 @@
 [workspace]
 resolver = "2"
-members = ["statum-core", "statum-macros", "statum", "statum-examples"]
+members = [
+    "statum",
+    "statum-core",
+    "statum-macros",
+    "statum-examples",
+]
+
+[workspace.package]
+authors = ["Eran Boodnero <eran@eran.codes>"]
+license = "MIT"
+repository = "https://github.com/eboody/statum"
+rust-version = "1.93"
+version = "0.8.5"
 
 [workspace.dependencies]
-statum = { path = "statum" }
+axum = "0.8"
+clap = "4.5"
+futures = "0.3"
+linkme = "0.3"
+moddef = "0.2.6"
+proc-macro2 = "1.0"
+quote = "1.0"
+serde = "1"
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false }
+syn = "2.0"
+tokio = "1"
+tower = "0.5"
+trybuild = "1.0"
+
+statum = { path = "statum", version = "0.8.5" }
+statum-core = { path = "statum-core", version = "0.8.5" }
+statum-macros = { path = "statum-macros", version = "0.8.5" }
 
 [workspace.metadata.scripts]
 version-bump = "cargo script scripts/update_version.rs -- 1.0.0"
 publish = "cargo script scripts/publish.rs"
 publish-dry-run = "bash scripts/check_publish_dry_run.sh"
+workspace-hygiene = "bash scripts/check_workspace_hygiene.sh"

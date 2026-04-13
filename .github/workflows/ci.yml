@@ -51,9 +51,23 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
+      - name: Workspace hygiene
+        run: bash scripts/check_workspace_hygiene.sh
       - name: Build docs
-        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+
+  cross-platform-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test all features
+        run: cargo test --workspace --all-features
 
   msrv-1-93:
     runs-on: ubuntu-latest
@@ -71,7 +85,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-1-93-
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
   security-deny:
     runs-on: ubuntu-latest
