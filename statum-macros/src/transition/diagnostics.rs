@@ -1,7 +1,8 @@
 use super::parse::{TransitionFn, TransitionIntrospectAttr};
 use super::resolve::{
-    AliasResolutionContext, collect_machine_and_states_strict, expand_source_type_alias,
-    extract_generic_type_refs, machine_segment_matching_target, supported_wrapper, type_path,
+    AliasResolutionContext, expand_source_type_alias, extract_generic_type_refs,
+    machine_segment_matching_target, parse_primary_machine_and_state_strict, supported_wrapper,
+    type_path,
 };
 use crate::source::{current_source_info, format_candidates};
 use crate::{EnumInfo, MachineInfo, format_loaded_machine_candidates};
@@ -211,7 +212,8 @@ fn strict_diagnostic_expanded_return_type_inner(
         let result =
             strict_diagnostic_expanded_return_type_inner(&expanded, target_type, Some(&alias_context), visited)
                 .or_else(|| {
-                    (!collect_machine_and_states_strict(&expanded, target_type).is_empty())
+                    parse_primary_machine_and_state_strict(&expanded, target_type)
+                        .is_some()
                         .then_some(expanded.clone())
                 });
         visited.remove(&visit_key);
@@ -250,7 +252,7 @@ fn strict_diagnostic_expanded_return_type_inner(
         type_index += 1;
     }
 
-    if expanded_any && !collect_machine_and_states_strict(&expanded_ty, target_type).is_empty() {
+    if expanded_any && parse_primary_machine_and_state_strict(&expanded_ty, target_type).is_some() {
         Some(expanded_ty)
     } else {
         None

@@ -68,6 +68,8 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_transition_foreign_same_leaf_machine.rs");
     t.compile_fail("tests/ui/invalid_transition_macro_generated_alias.rs");
     t.compile_fail("tests/ui/invalid_transition_include_generated_alias.rs");
+    t.compile_fail("tests/ui/invalid_transition_result_machine_in_error_branch.rs");
+    t.compile_fail("tests/ui/invalid_transition_introspect_primary_branch_mismatch.rs");
     t.compile_fail("tests/ui/invalid_transition_map_undeclared_edge.rs");
     t.compile_fail("tests/ui/invalid_transition_include_ambiguous_machine_name.rs");
     t.compile_fail("tests/ui/invalid_legacy_transition_helper_trait.rs");
@@ -149,6 +151,8 @@ fn test_valid_macro_usage() {
 fn test_invalid_transition_usage_strict() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/strict_invalid_transition_alias_requires_introspect.rs");
+    t.compile_fail("tests/ui/strict_invalid_transition_result_machine_in_error_branch.rs");
+    t.compile_fail("tests/ui/invalid_transition_introspect_primary_branch_mismatch.rs");
 }
 
 #[cfg(feature = "strict-introspection")]

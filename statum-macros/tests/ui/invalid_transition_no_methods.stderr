@@ -1,4 +1,7 @@
-error: Error: #[transition] impl for `Machine<A>` must contain at least one method returning `Machine<NextState>`, a source-backed type alias that expands to `Machine<NextState>`, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape.
+error: Error: `#[transition]` impl for `Machine<A>` must contain at least one transition method.
+       Found: `impl Machine<A> {}`
+       Expected: `fn submit(self) -> Machine<NextState>` or a supported wrapper around that same machine path
+       Fix: add at least one method that consumes `self` and returns the next `#[machine]` state.
   --> tests/ui/invalid_transition_no_methods.rs:24:6
    |
 24 | impl Machine<A> {}

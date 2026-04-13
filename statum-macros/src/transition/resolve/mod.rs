@@ -14,6 +14,7 @@ pub(super) use strategy::{
     collect_machine_and_states, collect_machine_and_states_in_context,
     collect_machine_and_states_strict, parse_machine_and_state,
     parse_machine_and_state_in_context, parse_primary_machine_and_state,
+    parse_primary_machine_and_state_strict,
 };
 
 #[cfg(test)]

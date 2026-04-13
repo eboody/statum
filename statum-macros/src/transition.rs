@@ -81,6 +81,17 @@ pub fn validate_transition_functions(
             Ok(contract) => contract,
             Err(err) => return Some(err),
         };
+        if state_enum_info
+            .get_variant_from_name(&contract.primary_next_state)
+            .is_none()
+        {
+            return Some(invalid_transition_method_state_error(
+                func,
+                &tr_impl.machine_name,
+                &contract.primary_next_state,
+                &state_enum_info,
+            ));
+        }
         for return_state in contract.next_states {
             if state_enum_info.get_variant_from_name(&return_state).is_none() {
                 return Some(invalid_transition_method_state_error(

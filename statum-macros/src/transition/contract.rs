@@ -12,6 +12,7 @@ pub(super) fn build_transition_contract(
     Ok(TransitionContract {
         machine_name: func.machine_name.clone(),
         source_state_name: func.source_state.clone(),
+        primary_next_state: func.return_state(target_type)?,
         next_states: func.return_states(target_type)?,
         strict_introspection: crate::strict_introspection_enabled() || func.introspection.is_some(),
         written_return_type: func.return_type.as_ref().map(compact_display),
