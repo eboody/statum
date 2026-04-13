@@ -125,7 +125,7 @@
 //!     };
 //!
 //!     let row_id = row.id;
-//!     let machine = row.into_machine().id(row_id).build()?;
+//!     let machine = Task::rebuild(&row).id(row_id).build()?;
 //!     match machine {
 //!         task::SomeState::InReview(task) => assert_eq!(task.state_data, "alice"),
 //!         _ => panic!("expected in-review task"),
@@ -407,8 +407,8 @@ pub use statum_macros::transition;
 ///
 /// The generated API includes:
 ///
-/// - `row.into_machine()` for single-item rebuilds
-/// - `.into_machines()` when all items share the same machine fields
+/// - `Task::rebuild(&row)` for single-item rebuilds
+/// - `Task::rebuild_many(rows)` and `.into_machines()` when all items share the same machine fields
 /// - `.into_machines_by(|row| machine::Fields { ... })` when each item needs
 ///   different machine fields
 /// - `.build_report()` / `.build_reports()` when you want rebuild attempts and
@@ -473,7 +473,7 @@ pub use statum_macros::transition;
 ///     };
 ///
 ///     let row_id = row.id;
-///     let _task = row.into_machine().id(row_id).build()?;
+///     let _task = Task::rebuild(&row).id(row_id).build()?;
 ///     Ok(())
 /// }
 /// ```

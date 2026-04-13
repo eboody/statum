@@ -12,7 +12,9 @@ the earlier `0.5` migration notes for older code. If you are starting fresh on
 3. Keep using `Machine::<State>::builder()`, `into_machine()`,
    `.into_machines()`, and `.into_machines_by(...)`; those call shapes are
    unchanged.
-4. Treat generated builder internals as implementation details rather than
+4. `Machine::rebuild(&row)` and `Machine::rebuild_many(rows)` are additive
+   validator-side helpers if you want the machine type to own the entrypoint.
+5. Treat generated builder internals as implementation details rather than
    stable public API.
 
 ## `statum::bon` Is Gone
@@ -182,14 +184,17 @@ let review = Machine::<InReview>::builder()
     .build();
 ```
 
-You can still use the generated positional constructor if you want it, but the
-builder is the intended path.
+Use `Machine::rebuild(&row)` and `Machine::rebuild_many(rows)` as additive
+entrypoints at the validator boundary when you want the machine type to own the
+rebuild call shape. `row.into_machine()` and `.into_machines()` still work.
 
 ## New Additive Helpers
 
 `0.5` and later also add surface area you may want during migration:
 
 - `.into_machines_by(...)` for heterogeneous batch machine context
+- `Machine::rebuild(&row)` and `Machine::rebuild_many(rows)` for type-first
+  validator entrypoints
 - `statum::Validation<T>`, `.build_report()`, and `.build_reports()` when
   rebuild traces need stable reason keys or messages
 - `statum::projection::{ProjectionReducer, reduce_one, reduce_grouped}` for

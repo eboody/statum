@@ -17,7 +17,7 @@ You define:
 
 Statum generates:
 
-- `into_machine()` for rebuilding one machine.
+- `TaskMachine::rebuild(&row)` and `into_machine()` for rebuilding one machine.
 - A machine-scoped enum like `task_machine::SomeState`.
   `task_machine::State` remains an alias for compatibility.
 - A machine-scoped `task_machine::Fields` struct for heterogeneous batch reconstruction.
@@ -31,8 +31,9 @@ actually represents `Draft`, `InReview`, `Published`, or nothing legal at all.
 
 Use:
 
-- `into_machine()` when rebuilding one persisted value
-- `.into_machines()` when every item shares the same machine fields
+- `TaskMachine::rebuild(&row)` when rebuilding one persisted value
+- `into_machine()` as the fallback single-item entrypoint
+- `TaskMachine::rebuild_many(rows)` or `.into_machines()` when every item shares the same machine fields
 - `.into_machines_by(|row| task_machine::Fields { ... })` when each item needs
   different machine fields
 
@@ -98,7 +99,7 @@ impl DbRow {
 }
 
 fn rebuild(row: &DbRow) -> statum::Result<task_machine::SomeState> {
-    row.into_machine()
+    TaskMachine::rebuild(row)
         .client("acme".to_owned())
         .name("spec".to_owned())
         .build()
@@ -187,17 +188,18 @@ let machine = row
     .await?;
 ```
 
+The async form also works through `TaskMachine::rebuild(&row)`.
+
 This is useful when typed rehydration requires a network call or a database fetch.
 
 Example: [../statum-examples/src/toy_demos/09-persistent-data.rs](../statum-examples/src/toy_demos/09-persistent-data.rs)
 
 ## Batch Reconstruction
 
-For collections in the same module as the `#[validators]` impl, `.into_machines()` works directly when every item shares the same machine fields:
+For collections in the same module as the `#[validators]` impl, `TaskMachine::rebuild_many(rows)` is the type-first batch entrypoint and `.into_machines()` is the fallback:
 
 ```rust
-let machines = rows
-    .into_machines()
+let machines = TaskMachine::rebuild_many(rows)
     .client("acme".to_owned())
     .build()
     .await;

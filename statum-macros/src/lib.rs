@@ -99,13 +99,20 @@ pub fn state(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// alias `machine::State = machine::SomeState`, and helper items such as
 /// `machine::Fields` for heterogeneous batch rebuilds.
 #[proc_macro_attribute]
-pub fn machine(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn machine(attr: TokenStream, item: TokenStream) -> TokenStream {
+    if !attr.is_empty() {
+        return syn::Error::new(
+            Span::call_site(),
+            "Error: `#[machine]` does not accept arguments.\nFix: write `#[machine] struct Machine<StateEnum> { ... }` and link the machine to `#[state]` through its first generic parameter.",
+        )
+        .to_compile_error()
+        .into();
+    }
     let input = parse_macro_input!(item as Item);
     let input = match input {
         Item::Struct(item_struct) => item_struct,
         other => return invalid_machine_target_error(&other).into(),
     };
-
     let machine_info = match MachineInfo::from_item_struct(&input) {
         Ok(info) => info,
         Err(err) => return err.to_compile_error().into(),

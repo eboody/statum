@@ -34,7 +34,7 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 
 ```toml
 [dependencies]
-statum = "0.8.4"
+statum = "0.8.5"
 ```
 
 ## 60-Second Example
@@ -248,8 +248,7 @@ fn main() -> statum::Result<()> {
         status: Status::InReview,
     };
 
-    let machine = row
-        .into_machine()
+    let machine = TaskMachine::rebuild(&row)
         .client("acme".to_owned())
         .name("spec".to_owned())
         .build()?;
@@ -265,6 +264,9 @@ fn main() -> statum::Result<()> {
     Ok(())
 }
 ```
+
+`row.into_machine()` and `.into_machines()` still work. `TaskMachine::rebuild(...)`
+and `TaskMachine::rebuild_many(...)` are the type-first entry points.
 
 Key details:
 
@@ -315,8 +317,10 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
 - Return `statum::Result<()>` or `statum::Validation<()>` for unit states.
 - Return `statum::Result<StateData>` or `statum::Validation<StateData>` for
   data-bearing states.
-- Prefer `into_machine()` for single-item reconstruction.
+- Prefer `Machine::rebuild(&row)` for single-item reconstruction.
+- `row.into_machine()` remains supported as the fallback entrypoint.
 - For collections that share machine fields, call `.into_machines()`.
+- `Machine::rebuild_many(rows)` is the matching type-first batch entrypoint.
 - For collections where machine fields vary per item, call `.into_machines_by(|row| machine::Fields { ... })`.
 - From other modules, import `machine::IntoMachinesExt as _` first.
 

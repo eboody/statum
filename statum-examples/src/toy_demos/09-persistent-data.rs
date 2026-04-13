@@ -70,8 +70,7 @@ pub async fn run() {
     let my_client = "my_client".to_string();
 
     // machine::SomeState is the generated sum type for all possible typed machine states.
-    let machine_state: machine::SomeState = article
-        .into_machine()
+    let machine_state: machine::SomeState = Machine::rebuild(&article)
         .client(my_client)
         .build()
         .await

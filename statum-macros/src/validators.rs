@@ -5,6 +5,7 @@ use syn::{Generics, Ident, ItemImpl, Type, parse_macro_input};
 use crate::VariantInfo;
 use crate::machine::{
     builder_generics, extra_generics, extra_type_arguments_tokens, generic_argument_tokens,
+    machine_type_with_state,
 };
 
 mod emission;
@@ -176,6 +177,7 @@ pub fn parse_validators(
     });
 
     let into_machine_builder_ident = format_ident!("__Statum{}IntoMachine", machine_ident);
+    let into_machines_builder_ident = format_ident!("__Statum{}IntoMachines", machine_ident);
     let into_machine_builder_impl = generate_into_machine_builder(IntoMachineBuilderContext {
         builder_ident: &into_machine_builder_ident,
         struct_ident,
@@ -194,10 +196,27 @@ pub fn parse_validators(
     let into_machine_slot_defaults = (0..field_names.len())
         .map(|_| quote! { false })
         .collect::<Vec<_>>();
+    let into_machines_builder_ty_generics = generic_argument_tokens(
+        into_machine_extra_generics.params.iter(),
+        None,
+        &into_machine_slot_defaults,
+    );
     let into_machine_builder_ty_generics = generic_argument_tokens(
         into_machine_extra_generics.params.iter(),
         Some(quote! { '_ }),
         &into_machine_slot_defaults,
+    );
+    let rebuild_builder_ty_generics = generic_argument_tokens(
+        into_machine_extra_generics.params.iter(),
+        Some(quote! { '__statum_row }),
+        &into_machine_slot_defaults,
+    );
+    let uninitialized_state_ident =
+        format_ident!("Uninitialized{}", state_enum_info.name);
+    let uninitialized_machine_ty = machine_type_with_state(
+        quote! { #machine_ident },
+        &parsed_machine.generics,
+        quote! { #uninitialized_state_ident },
     );
 
     let machine_builder_impl = quote! {
@@ -215,6 +234,28 @@ pub fn parse_validators(
             }
 
             #(#modified_methods)*
+        }
+
+        impl #into_machine_method_generics #uninitialized_machine_ty #into_machine_method_where_clause {
+            #machine_vis fn rebuild<'__statum_row>(
+                item: &'__statum_row #struct_ident,
+            ) -> #into_machine_builder_ident #rebuild_builder_ty_generics {
+                item.into_machine()
+            }
+
+            #machine_vis fn rebuild_many<T>(
+                items: T,
+            ) -> #into_machines_builder_ident #into_machines_builder_ty_generics
+            where
+                T: Into<Vec<#struct_ident>>,
+            {
+                #into_machines_builder_ident {
+                    __statum_items: items.into(),
+                    #(
+                        #field_names: core::option::Option::None
+                    ),*
+                }
+            }
         }
 
         #into_machine_builder_impl

@@ -3,7 +3,7 @@ use quote::ToTokens;
 use syn::{Item, ItemStruct};
 
 use crate::{
-    ItemTarget, StateModulePath, lookup_loaded_state_enum, lookup_loaded_state_enum_by_name,
+    ItemTarget, StateModulePath, VariantShape, lookup_loaded_state_enum, lookup_loaded_state_enum_by_name,
 };
 
 use super::metadata::is_rust_analyzer;
@@ -86,6 +86,10 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
     let machine_derives = machine_info.derives.clone();
     let state_derives = matching_state_enum.derives.clone();
     let state_name = matching_state_enum.name.clone();
+    let has_data_bearing_state = matching_state_enum
+        .variants
+        .iter()
+        .any(|variant| !matches!(variant.shape, VariantShape::Unit));
 
     let missing_derives: Vec<String> = machine_derives
         .iter()
@@ -109,7 +113,33 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
         return Some(syn::Error::new_spanned(first_generic_param, message).to_compile_error());
     }
 
+    for field in &item.fields {
+        let Some(field_ident) = field.ident.as_ref() else {
+            continue;
+        };
+        let Some(conflict) =
+            reserved_builder_machine_field_conflict(field_ident.to_string().as_str(), has_data_bearing_state)
+        else {
+            continue;
+        };
+        let message = format!(
+            "Error: machine `{machine_name}` field `{field_ident}` conflicts with Statum's generated builder helper {conflict}.\nFix: rename that machine field before using `#[machine]`."
+        );
+        return Some(syn::Error::new_spanned(field_ident, message).to_compile_error());
+    }
+
     None
+}
+
+fn reserved_builder_machine_field_conflict(
+    field_name: &str,
+    has_data_bearing_state: bool,
+) -> Option<&'static str> {
+    match field_name {
+        "build" => Some("`build()`"),
+        "state_data" if has_data_bearing_state => Some("`state_data(...)`"),
+        _ => None,
+    }
 }
 
 fn cfg_like_attr_name(attrs: &[syn::Attribute]) -> Option<&'static str> {

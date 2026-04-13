@@ -57,8 +57,7 @@ pub async fn run() {
     let articles: Vec<Article> = pretend_db_call().await.unwrap();
 
     // The builder is async because one validator is async.
-    let machine_states = articles
-        .into_machines()
+    let machine_states = Machine::rebuild_many(articles)
         .client("client".to_string())
         .build()
         .await;

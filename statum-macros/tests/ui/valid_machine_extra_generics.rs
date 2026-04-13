@@ -110,6 +110,23 @@ fn main() {
         _ => panic!("expected review state"),
     }
 
+    let rebuilt_via_type = Workflow::<UninitializedWorkflowState, String, 2>::rebuild(&Row {
+        status: "review",
+        reviewer: Some("carol"),
+    })
+    .ctx("type-owned".to_owned())
+    .slots([7, 7])
+    .build()
+    .unwrap();
+    match rebuilt_via_type {
+        workflow::SomeState::Review(machine) => {
+            assert_eq!(machine.ctx, "type-owned".to_owned());
+            assert_eq!(machine.state_data, "carol".to_owned());
+            assert_eq!(machine.slots, [7, 7]);
+        }
+        _ => panic!("expected review state"),
+    }
+
     let batch = vec![Row {
         status: "draft",
         reviewer: None,
@@ -123,6 +140,23 @@ fn main() {
         workflow::SomeState::Draft(machine) => {
             assert_eq!(machine.ctx, "batch".to_owned());
             assert_eq!(machine.slots, [5, 6]);
+        }
+        _ => panic!("expected draft state"),
+    }
+
+    let rebuilt_batch = Workflow::<UninitializedWorkflowState, String, 2>::rebuild_many(vec![
+        Row {
+            status: "draft",
+            reviewer: None,
+        },
+    ])
+    .ctx("typed-batch".to_owned())
+    .slots([3, 4])
+    .build();
+    match rebuilt_batch.into_iter().next().unwrap().unwrap() {
+        workflow::SomeState::Draft(machine) => {
+            assert_eq!(machine.ctx, "typed-batch".to_owned());
+            assert_eq!(machine.slots, [3, 4]);
         }
         _ => panic!("expected draft state"),
     }

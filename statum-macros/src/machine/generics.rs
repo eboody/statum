@@ -83,7 +83,7 @@ pub(crate) fn generic_argument_tokens<'a>(
     }
 }
 
-fn generic_argument_token(param: &GenericParam) -> TokenStream {
+pub(crate) fn generic_argument_token(param: &GenericParam) -> TokenStream {
     match param {
         GenericParam::Lifetime(lifetime) => {
             let lifetime = &lifetime.lifetime;
