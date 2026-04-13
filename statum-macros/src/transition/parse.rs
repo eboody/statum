@@ -1,0 +1,318 @@
+use super::diagnostics::{
+    invalid_introspect_return_error, invalid_return_type_error,
+    mismatched_introspect_return_error,
+};
+use super::resolve::{
+    candidate_alias_resolution_contexts, collect_machine_and_states_in_context,
+    collect_machine_and_states_strict, extract_impl_machine_and_state,
+    parse_machine_and_state_in_context, parse_primary_machine_and_state_strict,
+};
+use crate::{PresentationAttr, parse_present_attrs, strip_present_attrs};
+use proc_macro2::{Span, TokenStream};
+use syn::meta::ParseNestedMeta;
+use syn::spanned::Spanned;
+use syn::{Block, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, ReturnType, Type};
+
+#[allow(unused)]
+pub struct TransitionFn {
+    pub name: Ident,
+    pub attrs: Vec<syn::Attribute>,
+    pub presentation: Option<PresentationAttr>,
+    pub introspection: Option<TransitionIntrospectAttr>,
+    pub has_receiver: bool,
+    pub return_type: Option<Type>,
+    pub return_type_span: Option<Span>,
+    pub machine_name: String,
+    pub source_state: String,
+    pub generics: Vec<Ident>,
+    pub internals: Block,
+    pub is_async: bool,
+    pub vis: syn::Visibility,
+    pub span: proc_macro2::Span,
+}
+
+#[derive(Clone)]
+pub struct TransitionIntrospectAttr {
+    pub return_type: Type,
+    pub span: Span,
+}
+
+impl TransitionFn {
+    pub fn return_state(&self, target_type: &Type) -> Result<String, TokenStream> {
+        let (return_type, uses_strict_resolution) =
+            self.validated_semantic_return_type(target_type)?;
+        let resolved = if uses_strict_resolution {
+            parse_primary_machine_and_state_strict(&return_type, target_type)
+        } else {
+            let contexts = candidate_alias_resolution_contexts(self.return_type_span);
+            contexts
+                .iter()
+                .find_map(|context| {
+                    parse_machine_and_state_in_context(&return_type, target_type, Some(context))
+                })
+                .or_else(|| parse_machine_and_state_in_context(&return_type, target_type, None))
+        };
+        let Some((_, return_state)) = resolved else {
+            return Err(invalid_return_type_error(
+                self,
+                target_type,
+                "expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape",
+            ));
+        };
+
+        Ok(return_state)
+    }
+
+    pub fn return_states(&self, target_type: &Type) -> Result<Vec<String>, TokenStream> {
+        let (return_type, uses_strict_resolution) =
+            self.validated_semantic_return_type(target_type)?;
+        let return_states = if uses_strict_resolution {
+            collect_machine_and_states_strict(&return_type, target_type)
+        } else {
+            let contexts = candidate_alias_resolution_contexts(self.return_type_span);
+            contexts
+                .iter()
+                .map(|context| {
+                    collect_machine_and_states_in_context(&return_type, target_type, Some(context))
+                })
+                .find(|states| !states.is_empty())
+                .unwrap_or_else(|| collect_machine_and_states_in_context(&return_type, target_type, None))
+        }
+        .into_iter()
+        .map(|(_, state)| state)
+        .collect::<Vec<_>>();
+        if return_states.is_empty() {
+            return Err(invalid_return_type_error(
+                self,
+                target_type,
+                "expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape",
+            ));
+        }
+
+        Ok(return_states)
+    }
+
+    fn validated_semantic_return_type(
+        &self,
+        target_type: &Type,
+    ) -> Result<(Type, bool), TokenStream> {
+        let Some(return_type) = self.return_type.as_ref() else {
+            return Err(invalid_return_type_error(
+                self,
+                target_type,
+                "missing return type",
+            ));
+        };
+
+        let Some(introspection) = self.introspection.as_ref() else {
+            return Ok((return_type.clone(), crate::strict_introspection_enabled()));
+        };
+
+        let introspection_states = collect_machine_and_states_strict(
+            &introspection.return_type,
+            target_type,
+        )
+        .into_iter()
+        .map(|(_, state)| state)
+        .collect::<Vec<_>>();
+        if introspection_states.is_empty() {
+            return Err(invalid_introspect_return_error(
+                introspection,
+                self,
+                "expected a direct machine path or a supported `Option`, `Result`, or `statum::Branch` wrapper around that machine path",
+            ));
+        }
+
+        let strict_written_states = collect_machine_and_states_strict(return_type, target_type)
+            .into_iter()
+            .map(|(_, state)| state)
+            .collect::<Vec<_>>();
+        if !strict_written_states.is_empty() && strict_written_states != introspection_states {
+            return Err(mismatched_introspect_return_error(
+                introspection,
+                self,
+                return_type,
+            ));
+        }
+
+        Ok((introspection.return_type.clone(), true))
+    }
+}
+
+pub struct TransitionImpl {
+    pub target_type: Type,
+    pub machine_name: String,
+    pub machine_span: Span,
+    pub source_state: String,
+    pub source_state_span: Span,
+    pub attrs: Vec<syn::Attribute>,
+    pub functions: Vec<TransitionFn>,
+}
+
+pub fn parse_transition_impl(item_impl: &ItemImpl) -> Result<TransitionImpl, TokenStream> {
+    let target_type = *item_impl.self_ty.clone();
+    let Some((machine_name, machine_span, source_state, source_state_span)) =
+        extract_impl_machine_and_state(&target_type)
+    else {
+        let message = LitStr::new(
+            "Invalid #[transition] target type. Expected an impl target like `Machine<State>`.",
+            target_type.span(),
+        );
+        return Err(quote::quote_spanned! { target_type.span() =>
+            compile_error!(#message);
+        });
+    };
+
+    let mut functions = Vec::new();
+    for item in &item_impl.items {
+        if let ImplItem::Fn(method) = item {
+            functions.push(parse_transition_fn(method, &machine_name, &source_state)?);
+        }
+    }
+
+    Ok(TransitionImpl {
+        target_type,
+        machine_name,
+        machine_span,
+        source_state,
+        source_state_span,
+        attrs: item_impl.attrs.clone(),
+        functions,
+    })
+}
+
+fn parse_transition_fn(
+    method: &ImplItemFn,
+    machine_name: &str,
+    source_state: &str,
+) -> Result<TransitionFn, TokenStream> {
+    let has_receiver = matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)));
+
+    let return_type = match &method.sig.output {
+        ReturnType::Type(_, ty) => Some(*ty.clone()),
+        ReturnType::Default => None,
+    };
+    let return_type_span = match &method.sig.output {
+        ReturnType::Type(_, ty) => Some(ty.span()),
+        ReturnType::Default => None,
+    };
+
+    let generics = method
+        .sig
+        .generics
+        .params
+        .iter()
+        .filter_map(|param| {
+            if let syn::GenericParam::Type(type_param) = param {
+                Some(type_param.ident.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let is_async = method.sig.asyncness.is_some();
+
+    Ok(TransitionFn {
+        name: method.sig.ident.clone(),
+        attrs: method.attrs.clone(),
+        presentation: parse_present_attrs(&method.attrs).map_err(|err| err.to_compile_error())?,
+        introspection: parse_transition_introspect_attrs(&method.attrs)
+            .map_err(|err| err.to_compile_error())?,
+        has_receiver,
+        return_type,
+        return_type_span,
+        machine_name: machine_name.to_owned(),
+        source_state: source_state.to_owned(),
+        generics,
+        internals: method.block.clone(),
+        is_async,
+        vis: method.vis.to_owned(),
+        span: method.span(),
+    })
+}
+
+pub(super) fn strip_present_attrs_from_transition_impl(input: &ItemImpl) -> ItemImpl {
+    let mut sanitized = input.clone();
+    sanitized.attrs = strip_present_attrs(&sanitized.attrs);
+    for item in &mut sanitized.items {
+        if let ImplItem::Fn(method) = item {
+            method.attrs = strip_present_attrs(&method.attrs);
+            method.attrs = strip_transition_introspect_attrs(&method.attrs);
+        }
+    }
+    sanitized
+}
+
+fn parse_transition_introspect_attrs(
+    attrs: &[syn::Attribute],
+) -> syn::Result<Option<TransitionIntrospectAttr>> {
+    let mut return_type = None;
+    let mut found = false;
+    let mut attr_span = None;
+
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("introspect")) {
+        found = true;
+        attr_span = Some(attr.span());
+        attr.parse_nested_meta(|meta| parse_transition_introspect_meta(meta, &mut return_type))?;
+    }
+
+    if !found {
+        return Ok(None);
+    }
+
+    let Some(return_type) = return_type else {
+        return Err(syn::Error::new(
+            attr_span.unwrap_or(Span::call_site()),
+            "Error: `#[introspect(...)]` requires `return = <Type>`.\nFix: write `#[introspect(return = Machine<NextState>)]` on the transition method.",
+        ));
+    };
+
+    Ok(Some(TransitionIntrospectAttr {
+        return_type,
+        span: attr_span.unwrap_or(Span::call_site()),
+    }))
+}
+
+fn parse_transition_introspect_meta(
+    meta: ParseNestedMeta<'_>,
+    return_type: &mut Option<Type>,
+) -> syn::Result<()> {
+    let path = meta.path.clone();
+    let Some(ident) = path.get_ident() else {
+        return Err(syn::Error::new_spanned(
+            &path,
+            "Error: `#[introspect(...)]` keys must be simple identifiers like `return = Machine<NextState>`.",
+        ));
+    };
+
+    match ident.to_string().as_str() {
+        "return" => {
+            if return_type.is_some() {
+                return Err(syn::Error::new_spanned(
+                    ident,
+                    "Error: duplicate `#[introspect(...)]` key `return`.\nFix: specify `return = ...` at most once per method.",
+                ));
+            }
+
+            let value = meta.value()?;
+            *return_type = Some(value.parse()?);
+            Ok(())
+        }
+        _ => Err(syn::Error::new_spanned(
+            ident,
+            format!(
+                "Error: unknown `#[introspect(...)]` key `{ident}`.\nSupported keys: `return`."
+            ),
+        )),
+    }
+}
+
+pub(super) fn strip_transition_introspect_attrs(
+    attrs: &[syn::Attribute],
+) -> Vec<syn::Attribute> {
+    attrs.iter()
+        .filter(|attr| !attr.path().is_ident("introspect"))
+        .cloned()
+        .collect()
+}

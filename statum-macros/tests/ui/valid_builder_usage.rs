@@ -54,24 +54,21 @@ impl Row {
 
 fn main() {
     let machine = WorkflowMachine::<Draft>::builder()
-        .name("first".to_owned())
-        .name("second".to_owned())
-        .state_data(DraftData { title: "first" })
-        .state_data(DraftData { title: "second" })
+        .name("draft".to_owned())
+        .state_data(DraftData { title: "from builder" })
         .build();
-    assert_eq!(machine.name, "second");
-    assert_eq!(machine.state_data.title, "second");
+    assert_eq!(machine.name, "draft");
+    assert_eq!(machine.state_data.title, "from builder");
 
     let rebuilt = Row { status: "draft" }
         .into_machine()
-        .name("first".to_owned())
-        .name("second".to_owned())
+        .name("rebuilt".to_owned())
         .build()
         .unwrap();
 
     match rebuilt {
         workflow_machine::SomeState::Draft(machine) => {
-            assert_eq!(machine.name, "second");
+            assert_eq!(machine.name, "rebuilt");
             assert_eq!(machine.state_data.title, "from row");
         }
         workflow_machine::SomeState::Done(_) => panic!("expected draft"),

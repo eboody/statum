@@ -342,8 +342,9 @@ fn missing_state_enum_error(
         ),
     };
     let message = format!(
-        "Failed to resolve the #[state] enum for machine `{}`.\n{}\n{}\n{}{}\n{}\n{}\nHelp: make sure the machine's first generic names the right `#[state]` enum in this module and declare that `#[state]` enum before the machine.\nCorrect shape: `struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`.",
+        "Error: machine `{}` could not resolve its `#[state]` enum in module `{}`.\nFix: make the machine's first generic name the local `#[state]` enum and declare that enum before the machine.\n{}\n{}\n{}{}\n{}\n{}\nCorrect shape: `struct {}<ExpectedState> {{ ... }}` where `ExpectedState` is a `#[state]` enum in `{}`.",
         machine_info.name,
+        machine_info.module_path,
         expected_line,
         authority_line,
         ordering_line,

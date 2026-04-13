@@ -27,8 +27,11 @@ fn test_invalid_machine_usage() {
     t.compile_fail("tests/ui/invalid_machine_declared_before_state.rs");
     t.compile_fail("tests/ui/invalid_machine_unknown_attr_key.rs");
     t.compile_fail("tests/ui/invalid_machine_builder_reserved_field_name.rs");
+    t.compile_fail("tests/ui/invalid_machine_builder_duplicate_field.rs");
+    t.compile_fail("tests/ui/invalid_machine_builder_duplicate_state_data.rs");
 }
 
+#[cfg(not(feature = "strict-introspection"))]
 #[test]
 fn test_invalid_transition_usage() {
     let t = trybuild::TestCases::new();
@@ -47,7 +50,6 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_transition_custom_branch_same_name.rs");
     t.compile_fail("tests/ui/invalid_transition_custom_branch_enum.rs");
     t.compile_fail("tests/ui/invalid_transition_foreign_same_leaf_machine.rs");
-    t.compile_fail("tests/ui/invalid_transition_self_qualified_machine.rs");
     t.compile_fail("tests/ui/invalid_transition_macro_generated_alias.rs");
     t.compile_fail("tests/ui/invalid_transition_include_generated_alias.rs");
     t.compile_fail("tests/ui/invalid_transition_map_undeclared_edge.rs");
@@ -55,6 +57,7 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_legacy_transition_helper_trait.rs");
 }
 
+#[cfg(not(feature = "strict-introspection"))]
 #[test]
 fn test_invalid_validators_usage() {
     let t = trybuild::TestCases::new();
@@ -66,15 +69,19 @@ fn test_invalid_validators_usage() {
     t.compile_fail("tests/ui/invalid_validators_no_methods.rs");
     t.compile_fail("tests/ui/invalid_validators_unknown_state_method.rs");
     t.compile_fail("tests/ui/invalid_validators_unknown_machine.rs");
+    t.compile_fail("tests/ui/invalid_validators_relative_path_alias.rs");
     t.compile_fail("tests/ui/invalid_validators_plain_struct_machine_name.rs");
     t.compile_fail("tests/ui/invalid_validators_parameter_name_collision.rs");
     t.compile_fail("tests/ui/invalid_validators_declared_before_machine.rs");
+    t.compile_fail("tests/ui/invalid_rebuild_builder_duplicate_field.rs");
+    t.compile_fail("tests/ui/invalid_rebuild_many_builder_duplicate_field.rs");
     t.compile_fail("tests/ui/invalid_legacy_superstate.rs");
     t.compile_fail("tests/ui/invalid_legacy_machine_builder.rs");
     t.compile_fail("tests/ui/invalid_legacy_machines_builder.rs");
     t.compile_fail("tests/ui/invalid_legacy_state_helper_traits.rs");
 }
 
+#[cfg(not(feature = "strict-introspection"))]
 #[test]
 fn test_valid_macro_usage() {
     let t = trybuild::TestCases::new();
@@ -95,7 +102,9 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_same_names_different_modules.rs");
     t.pass("tests/ui/valid_transition_nested_wrappers.rs");
     t.pass("tests/ui/valid_transition_source_aliases.rs");
+    t.pass("tests/ui/valid_transition_self_qualified_machine.rs");
     t.pass("tests/ui/valid_transition_crate_aliases.rs");
+    t.pass("tests/ui/strict_valid_transition_introspect_return.rs");
     t.pass("tests/ui/valid_transition_branch.rs");
     t.pass("tests/ui/valid_into_machines_by.rs");
     t.pass("tests/ui/valid_transition_map.rs");
@@ -110,9 +119,37 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_machine_field_aliases_local_validators.rs");
     t.pass("tests/ui/valid_machine_field_module_paths.rs");
     t.pass("tests/ui/valid_machine_field_aliases_renamed_import.rs");
+    t.pass("tests/ui/valid_validators_relative_module_path.rs");
+    t.pass("tests/ui/strict_valid_validators_explicit_machine_path.rs");
     t.pass("tests/ui/valid_cfg_hidden_duplicate_state_machine.rs");
-    t.pass("tests/ui/valid_builder_overwrite.rs");
+    t.pass("tests/ui/valid_builder_usage.rs");
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
     t.pass("tests/ui/workspace_member/crates/app/src/lib.rs");
+}
+
+#[cfg(feature = "strict-introspection")]
+#[test]
+fn test_invalid_transition_usage_strict() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/strict_invalid_transition_alias_requires_introspect.rs");
+}
+
+#[cfg(feature = "strict-introspection")]
+#[test]
+fn test_invalid_validators_usage_strict() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/strict_invalid_validators_relative_path.rs");
+}
+
+#[cfg(feature = "strict-introspection")]
+#[test]
+fn test_valid_macro_usage_strict() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/strict_valid_transition_direct.rs");
+    t.pass("tests/ui/strict_valid_transition_introspect_return.rs");
+    t.pass("tests/ui/strict_valid_validators_explicit_machine_path.rs");
+    t.pass("tests/ui/strict_valid_validators_self_path.rs");
+    t.pass("tests/ui/strict_valid_validators_super_path.rs");
+    t.pass("tests/ui/strict_valid_validators_external_layout.rs");
 }

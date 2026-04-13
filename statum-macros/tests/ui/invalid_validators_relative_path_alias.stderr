@@ -1,0 +1,16 @@
+error: Error: `#[validators(flows::WorkflowMachine)]` could not resolve a matching `#[machine]` in module `invalid_validators_relative_path_alias::flows`.
+       Fix: point `#[validators(...)]` at the Statum machine type declared in that module and declare that `#[machine]` item before this validators impl.
+       Statum only resolves `#[machine]` items that have already expanded before this `#[validators]` impl.
+       Path note: Statum interpreted `flows::WorkflowMachine` as the local child-module path `self::flows::WorkflowMachine`.
+       Imported aliases and re-exports are not supported in `#[validators(...)]` path resolution.
+       If you meant that local module, declare the `#[machine]` there or spell it `#[validators(self::flows::WorkflowMachine)]` for clarity. If you meant a different module, anchor the real path, for example `#[validators(crate::invalid_validators_relative_path_alias::workflow_defs::WorkflowMachine)]`.
+       No plain struct with that name was found in this module either.
+       Same-named `#[machine]` items elsewhere in this file: `WorkflowMachine` in `invalid_validators_relative_path_alias::workflow_defs` (line 22).
+       No `#[machine]` items were found in this module.
+       Correct shape: `#[validators(crate::invalid_validators_relative_path_alias::workflow_defs::WorkflowMachine)] impl PersistedRow { ... }`.
+  --> tests/ui/invalid_validators_relative_path_alias.rs:33:1
+   |
+33 | #[validators(flows::WorkflowMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)

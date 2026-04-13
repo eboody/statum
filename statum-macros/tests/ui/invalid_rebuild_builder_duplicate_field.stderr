@@ -1,0 +1,17 @@
+error[E0599]: no method named `name` found for struct `__StatumWorkflowMachineIntoMachine<'_, true>` in the current scope
+  --> tests/ui/invalid_rebuild_builder_duplicate_field.rs:37:10
+   |
+25 |   #[validators(WorkflowMachine)]
+   |   ------------------------------ method `name` not found for this struct
+...
+34 |       let _ = row
+   |  _____________-
+35 | |         .into_machine()
+36 | |         .name("first".to_owned())
+37 | |         .name("second".to_owned())
+   | |         -^^^^ method not found in `__StatumWorkflowMachineIntoMachine<'_, true>`
+   | |_________|
+   |
+   |
+   = note: the method was found for
+           - `__StatumWorkflowMachineIntoMachine<'__statum_row>`

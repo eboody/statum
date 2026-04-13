@@ -1,0 +1,9 @@
+error: Error: `#[validators(flows::WorkflowMachine)]` is not accepted in strict introspection mode.
+       Fix: use a direct machine path rooted at `crate::`, `self::`, or `super::`, for example `#[validators(crate::strict_invalid_validators_relative_path::flows::WorkflowMachine)]`.
+       Reason: relative multi-segment paths like `flows::WorkflowMachine` can name either module paths or imported aliases, and strict mode only accepts locally readable machine bindings.
+  --> tests/ui/strict_invalid_validators_relative_path.rs:31:1
+   |
+31 | #[validators(flows::WorkflowMachine)]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)

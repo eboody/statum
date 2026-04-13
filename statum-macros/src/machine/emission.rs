@@ -41,6 +41,7 @@ pub fn generate_machine_impls(machine_info: &MachineInfo, item: &ItemStruct) -> 
             &generics,
             &state_generic_ident,
             &state_enum.get_trait_name(),
+            &transition_support_module_ident(machine_info),
         )
         {
             Ok(def) => def,
@@ -254,6 +255,29 @@ fn transition_support(
             }
         }
     };
+    let declared_transition_map_edge_trait = if extra_generics.params.is_empty() {
+        quote! {
+            pub trait DeclaredTransitionMapEdge<N: #trait_name + statum::StateMarker> {
+                type CurrentData;
+
+                fn transition_map<F>(self, f: F) -> #next_machine_ty
+                where
+                    F: FnOnce(Self::CurrentData) -> <N as statum::StateMarker>::Data;
+            }
+        }
+    } else {
+        quote! {
+            pub trait DeclaredTransitionMapEdge<N: #trait_name + statum::StateMarker, #(#extra_params),*>
+            #extra_where_clause
+            {
+                type CurrentData;
+
+                fn transition_map<F>(self, f: F) -> #next_machine_ty
+                where
+                    F: FnOnce(Self::CurrentData) -> <N as statum::StateMarker>::Data;
+            }
+        }
+    };
 
     quote! {
         #[doc(hidden)]
@@ -262,10 +286,11 @@ fn transition_support(
 
             #transition_to_trait
             #transition_with_trait
+            #declared_transition_map_edge_trait
         }
 
         #[allow(unused_imports)]
-        use #support_module_ident::{TransitionTo as _, TransitionWith as _};
+        use #support_module_ident::{DeclaredTransitionMapEdge as _, TransitionTo as _, TransitionWith as _};
     }
 }
 
@@ -810,6 +835,7 @@ fn generate_struct_definition(
     generics: &Generics,
     state_generic_ident: &Ident,
     state_trait_ident: &Ident,
+    support_module_ident: &Ident,
 ) -> Result<TokenStream, TokenStream> {
     let mut field_tokens = Vec::with_capacity(parsed_machine.fields.len());
     for field in &parsed_machine.fields {
@@ -831,6 +857,30 @@ fn generate_struct_definition(
     let vis = parsed_machine.vis.clone();
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let next_machine_ty = machine_type_with_state(quote! { #machine_ident }, generics, quote! { N });
+    let extra_generics = extra_generics(generics);
+    let extra_ty_args = extra_generics
+        .params
+        .iter()
+        .map(|param| match param {
+            GenericParam::Lifetime(lifetime) => {
+                let lifetime = &lifetime.lifetime;
+                quote! { #lifetime }
+            }
+            GenericParam::Type(ty) => {
+                let ident = &ty.ident;
+                quote! { #ident }
+            }
+            GenericParam::Const(const_param) => {
+                let ident = &const_param.ident;
+                quote! { #ident }
+            }
+        })
+        .collect::<Vec<TokenStream>>();
+    let transition_map_trait_generics = if extra_ty_args.is_empty() {
+        quote! { <N> }
+    } else {
+        quote! { <N, #(#extra_ty_args),*> }
+    };
 
     Ok(quote! {
         #derives
@@ -844,11 +894,11 @@ fn generate_struct_definition(
             #vis fn transition_map<N, F>(self, f: F) -> #next_machine_ty
             where
                 N: #state_trait_ident + statum::StateMarker,
-                Self: statum::CanTransitionMap<N, Output = #next_machine_ty>,
-                F: FnOnce(<Self as statum::CanTransitionMap<N>>::CurrentData) ->
+                Self: #support_module_ident::DeclaredTransitionMapEdge #transition_map_trait_generics,
+                F: FnOnce(<Self as #support_module_ident::DeclaredTransitionMapEdge #transition_map_trait_generics>::CurrentData) ->
                     <N as statum::StateMarker>::Data,
             {
-                <Self as statum::CanTransitionMap<N>>::transition_map(self, f)
+                <Self as #support_module_ident::DeclaredTransitionMapEdge #transition_map_trait_generics>::transition_map(self, f)
             }
         }
     })
@@ -942,10 +992,6 @@ fn generate_custom_builder_tokens(
         })
         .collect::<Vec<_>>();
     let builder_defaults = builder_generics(&extra_generics, false, &slot_state_idents, true);
-    let builder_impl_generics_decl =
-        builder_generics(&extra_generics, false, &slot_state_idents, false);
-    let (builder_impl_generics, builder_ty_generics, builder_where_clause) =
-        builder_impl_generics_decl.split_for_impl();
     let builder_init = slot_storage_idents.iter().map(|storage_ident| {
         quote! { #storage_ident: core::option::Option::None }
     });
@@ -986,6 +1032,28 @@ fn generate_custom_builder_tokens(
         } else {
             field_names[slot_idx - usize::from(has_state_data)].clone()
         };
+        let available_slot_idents = slot_state_idents
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, ident)| (idx != slot_idx).then_some(ident.clone()))
+            .collect::<Vec<_>>();
+        let setter_impl_generics_decl =
+            builder_generics(&extra_generics, false, &available_slot_idents, false);
+        let (setter_impl_generics, _, setter_where_clause) =
+            setter_impl_generics_decl.split_for_impl();
+        let current_generics = slot_state_idents
+            .iter()
+            .enumerate()
+            .map(|(idx, ident)| {
+                if idx == slot_idx {
+                    quote! { false }
+                } else {
+                    quote! { #ident }
+                }
+            })
+            .collect::<Vec<_>>();
+        let current_ty_generics =
+            generic_argument_tokens(extra_generics.params.iter(), None, &current_generics);
         let target_generics = if slot_state_idents.is_empty() {
             extra_ty_args.clone()
         } else {
@@ -1010,9 +1078,11 @@ fn generate_custom_builder_tokens(
             }
         });
         quote! {
-            #builder_vis fn #setter_ident(self, value: #slot_type) -> #variant_builder_ident #target_generics {
-                #variant_builder_ident {
-                    #(#assignments),*
+            impl #setter_impl_generics #variant_builder_ident #current_ty_generics #setter_where_clause {
+                #builder_vis fn #setter_ident(self, value: #slot_type) -> #variant_builder_ident #target_generics {
+                    #variant_builder_ident {
+                        #(#assignments),*
+                    }
                 }
             }
         }
@@ -1030,10 +1100,7 @@ fn generate_custom_builder_tokens(
                 }
             }
         }
-
-        impl #builder_impl_generics #variant_builder_ident #builder_ty_generics #builder_where_clause {
-            #(#setters)*
-        }
+        #(#setters)*
 
         impl #extra_impl_generics #variant_builder_ident #complete_builder_ty_generics #extra_where_clause {
             #builder_vis fn build(self) -> #machine_state_ty {

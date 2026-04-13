@@ -1,0 +1,21 @@
+error: Error: transition method `WorkflowMachine<Draft>::submit` returns an unsupported type.
+       Fix: return `WorkflowMachine<NextState>` directly, or wrap that same machine path in a supported `Option`, `Result`, or `statum::Branch` shape.
+       Reason: expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape.
+
+       Expected:
+         fn submit(self) -> WorkflowMachine<NextState>
+
+       Actual:
+         Next
+
+       Notes:
+         Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.
+         Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module.
+       Strict mode help:
+         add `#[introspect(return = ::core::result::Result<WorkflowMachine<Review>, WorkflowMachine <
+       Rejected>>)]` to this method, or rewrite the signature to use that direct type.
+         Source-backed alias expansion is diagnostics-only in strict mode.
+  --> tests/ui/strict_invalid_transition_alias_requires_introspect.rs:28:39
+   |
+28 |     fn submit(self, approve: bool) -> Next {
+   |                                       ^^^^

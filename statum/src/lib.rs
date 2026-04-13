@@ -170,22 +170,26 @@
 //! - exact transition assertions in tests
 //! - runtime replay or debug tooling
 //!
-//! The important detail is that the graph is exact at the transition-site
-//! level. A consumer can ask for the legal targets of one specific method on
-//! one specific source state.
+//! With the `strict-introspection` feature enabled, the graph is exact at the
+//! transition-site level. A consumer can ask for the legal targets of one
+//! specific method on one specific source state and treat that metadata as the
+//! authoritative static graph surface.
 //!
-//! The graph is derived from macro-expanded, cfg-pruned `#[transition]`
-//! method signatures. Supported return shapes are direct machine returns plus
-//! canonical wrapper paths around machine types:
+//! Strict introspection is derived from locally readable `#[transition]`
+//! method signatures plus any explicit `#[introspect(return = ...)]` escape
+//! hatches. Supported return shapes are direct machine returns plus canonical
+//! wrapper paths around machine types:
 //! `::core::option::Option<Machine<NextState>>`,
 //! `::core::result::Result<Machine<NextState>, E>`, and
 //! `::statum::Branch<Machine<Left>, Machine<Right>>`.
 //! Unsupported custom decision enums, wrapper aliases, and differently-qualified
-//! machine paths are rejected instead of approximated. Whole-item `#[cfg]`
-//! gates are supported, but nested `#[cfg]` or `#[cfg_attr]` on `#[state]`
-//! variants, variant payload fields, or `#[machine]` fields are rejected
-//! because they would otherwise drift the generated metadata from the active
-//! build.
+//! machine paths are rejected instead of approximated. In the default feature
+//! set, Statum still follows some source-backed aliases for ergonomics, but
+//! that mode should be treated as convenient metadata rather than the strongest
+//! exactness guarantee. Whole-item `#[cfg]` gates are supported, but nested
+//! `#[cfg]` or `#[cfg_attr]` on `#[state]` variants, variant payload fields,
+//! or `#[machine]` fields are rejected because they would otherwise drift the
+//! generated metadata from the active build.
 //!
 //! For small amounts of human-facing metadata, Statum can also generate a
 //! `machine::PRESENTATION` constant from `#[present(...)]` attributes. Add
@@ -362,6 +366,9 @@ pub use statum_macros::machine;
 /// `::core::result::Result<Machine<NextState>, E>`,
 /// `::core::option::Option<Machine<NextState>>`, or
 /// `::statum::Branch<Machine<Left>, Machine<Right>>`.
+/// When the `strict-introspection` feature is enabled, transition graph
+/// semantics must be directly readable from that written return type or from a
+/// local `#[introspect(return = ...)]` escape hatch on the method.
 ///
 /// Inside the impl, use:
 ///
@@ -397,8 +404,12 @@ pub use statum_macros::transition;
 
 /// Rebuild typed machines from persisted data.
 ///
-/// `#[validators(Machine)]` is attached to an `impl PersistedRow` block. Statum
-/// resolves the state family from the machine definition. Define one
+/// `#[validators(Machine)]` or an anchored path such as
+/// `#[validators(self::path::Machine)]`,
+/// `#[validators(super::path::Machine)]`, or
+/// `#[validators(crate::path::Machine)]` is attached to an
+/// `impl PersistedRow` block. Statum resolves the state family from the
+/// machine definition. Define one
 /// `is_{state}` method per state variant:
 ///
 /// - return `statum::Result<()>` or `statum::Validation<()>` for unit states
@@ -415,7 +426,11 @@ pub use statum_macros::transition;
 ///   stable rejection details alongside the normal result
 ///
 /// Machine fields are available by name inside validator bodies through
-/// generated bindings. Persisted-row fields still live on `self`.
+/// generated bindings. Persisted-row fields still live on `self`. In relaxed
+/// mode, bare multi-segment paths like `#[validators(flow::Machine)]` are
+/// treated as local child-module paths, not imported aliases or re-exports.
+/// If Statum cannot resolve that local path, it emits a compile error asking
+/// for an anchored path instead.
 ///
 /// ```rust
 /// use statum::{machine, state, validators, Error};

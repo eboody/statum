@@ -1,0 +1,16 @@
+error[E0599]: no method named `state_data` found for struct `WorkflowMachineDraftBuilder<true>` in the current scope
+  --> tests/ui/invalid_machine_builder_duplicate_state_data.rs:28:10
+   |
+22 |   #[machine]
+   |   ---------- method `state_data` not found for this struct
+...
+26 |       let _ = WorkflowMachine::<Draft>::builder()
+   |  _____________-
+27 | |         .state_data(DraftData { title: "first" })
+28 | |         .state_data(DraftData { title: "second" })
+   | |         -^^^^^^^^^^ method not found in `WorkflowMachineDraftBuilder<true>`
+   | |_________|
+   |
+   |
+   = note: the method was found for
+           - `WorkflowMachineDraftBuilder`

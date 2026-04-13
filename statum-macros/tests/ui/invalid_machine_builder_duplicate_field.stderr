@@ -1,0 +1,16 @@
+error[E0599]: no method named `name` found for struct `WorkflowMachineDraftBuilder<true>` in the current scope
+  --> tests/ui/invalid_machine_builder_duplicate_field.rs:26:10
+   |
+18 |   #[machine]
+   |   ---------- method `name` not found for this struct
+...
+24 |       let _ = WorkflowMachine::<Draft>::builder()
+   |  _____________-
+25 | |         .name("first".to_owned())
+26 | |         .name("second".to_owned())
+   | |         -^^^^ method not found in `WorkflowMachineDraftBuilder<true>`
+   | |_________|
+   |
+   |
+   = note: the method was found for
+           - `WorkflowMachineDraftBuilder`

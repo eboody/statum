@@ -425,6 +425,56 @@ mod tests {
     }
 
     #[test]
+    fn find_module_path_handles_external_module_rs_files() {
+        let crate_dir = unique_temp_dir("external_module_rs");
+        let src = crate_dir.join("src");
+        let lib = src.join("lib.rs");
+        let flows = src.join("flows.rs");
+
+        write_file(&lib, "mod flows;\n");
+        write_file(
+            &flows,
+            "mod nested {\n    pub fn marker() {}\n}\n\npub fn root() {}\n",
+        );
+
+        assert_eq!(
+            find_module_path(&flows.to_string_lossy(), 2).as_deref(),
+            Some("flows::nested")
+        );
+        assert_eq!(
+            find_module_path(&flows.to_string_lossy(), 4).as_deref(),
+            Some("flows")
+        );
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
+    fn find_module_path_handles_external_mod_rs_files() {
+        let crate_dir = unique_temp_dir("external_module_mod_rs");
+        let src = crate_dir.join("src");
+        let lib = src.join("lib.rs");
+        let flows_mod = src.join("flows").join("mod.rs");
+
+        write_file(&lib, "mod flows;\n");
+        write_file(
+            &flows_mod,
+            "mod nested {\n    pub fn marker() {}\n}\n\npub fn root() {}\n",
+        );
+
+        assert_eq!(
+            find_module_path(&flows_mod.to_string_lossy(), 2).as_deref(),
+            Some("flows::nested")
+        );
+        assert_eq!(
+            find_module_path(&flows_mod.to_string_lossy(), 4).as_deref(),
+            Some("flows")
+        );
+
+        let _ = fs::remove_dir_all(crate_dir);
+    }
+
+    #[test]
     fn find_module_path_handles_nested_trybuild_style_fixture() {
         let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../statum-macros/tests/ui/valid_helper_trait_visibility.rs");

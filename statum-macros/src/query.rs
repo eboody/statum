@@ -205,7 +205,7 @@ fn sort_and_dedup(candidates: &mut Vec<ItemCandidate>) {
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn write_temp_rust_file(contents: &str) -> PathBuf {
@@ -219,6 +219,28 @@ mod tests {
         let path = src_dir.join("lib.rs");
         fs::write(&path, contents).expect("write temp file");
         path
+    }
+
+    fn write_temp_crate(files: &[(&str, &str)]) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let crate_dir = std::env::temp_dir().join(format!("statum_query_layout_{nanos}"));
+
+        for (relative_path, contents) in files {
+            let path = crate_dir.join(relative_path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create temp crate parent");
+            }
+            fs::write(path, contents).expect("write temp crate file");
+        }
+
+        crate_dir
+    }
+
+    fn remove_temp_crate(crate_dir: &Path) {
+        let _ = fs::remove_dir_all(crate_dir);
     }
 
     #[test]
@@ -457,5 +479,52 @@ mod beta {
         assert_eq!(candidates[0].line_number, 12);
 
         let _ = fs::remove_dir_all(path.parent().expect("src").parent().expect("crate"));
+    }
+
+    #[test]
+    fn candidates_in_module_reads_external_module_rs_files() {
+        let crate_dir = write_temp_crate(&[
+            ("src/lib.rs", "mod flows;\n"),
+            (
+                "src/flows.rs",
+                "#[machine]\npub struct WorkflowMachine<State> {\n    id: u64,\n}\n",
+            ),
+        ]);
+        let flows = crate_dir.join("src").join("flows.rs");
+
+        let candidates = candidates_in_module(
+            flows.to_str().expect("path"),
+            "flows",
+            ItemKind::Struct,
+            Some("machine"),
+        );
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "WorkflowMachine");
+        assert_eq!(candidates[0].module_path, "flows");
+        assert_eq!(candidates[0].line_number, 2);
+
+        remove_temp_crate(&crate_dir);
+    }
+
+    #[test]
+    fn type_aliases_in_module_reads_external_mod_rs_files() {
+        let crate_dir = write_temp_crate(&[
+            ("src/lib.rs", "mod flows;\n"),
+            (
+                "src/flows/mod.rs",
+                "pub type Next = crate::Flow<crate::Accepted>;\n",
+            ),
+        ]);
+        let flows = crate_dir.join("src").join("flows").join("mod.rs");
+
+        let aliases = type_aliases_in_module(flows.to_str().expect("path"), "flows", "Next");
+
+        assert_eq!(aliases.len(), 1);
+        assert_eq!(aliases[0].item.ident, "Next");
+        assert_eq!(aliases[0].module_path, "flows");
+        assert_eq!(aliases[0].line_number, 1);
+
+        remove_temp_crate(&crate_dir);
     }
 }

@@ -37,6 +37,13 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 statum = "0.8.5"
 ```
 
+For the strongest introspection guarantee, enable strict mode:
+
+```toml
+[dependencies]
+statum = { version = "0.8.5", features = ["strict-introspection"] }
+```
+
 ## 60-Second Example
 
 ```rust
@@ -155,16 +162,24 @@ without rebuilding a parallel graph table by hand: CLI explainers, generated
 docs, graph exports, branch-strip views, test assertions about exact legal
 transitions, and replay or debug tooling.
 
-The generated graph is derived from macro-expanded, cfg-pruned
-`#[transition]` method signatures. Supported return shapes are direct
-`Machine<NextState>` values plus canonical wrapper paths around those machine
-types: `::core::option::Option<...>`, `::core::result::Result<..., E>`, and
-`::statum::Branch<..., ...>`. Unsupported custom decision enums, wrapper
+With `strict-introspection` enabled, the generated graph is exact at the
+transition-site level. In that mode, introspection semantics come only from
+directly readable `#[transition]` signatures or explicit
+`#[introspect(return = ...)]` escape hatches. Supported return shapes are
+direct `Machine<NextState>` values plus canonical wrapper paths around those
+machine types: `::core::option::Option<...>`, `::core::result::Result<..., E>`,
+and `::statum::Branch<..., ...>`. Unsupported custom decision enums, wrapper
 aliases, and differently-qualified machine paths are rejected instead of
-exported as best-effort graph metadata. Whole-item `#[cfg]` gates are
-supported, but nested `#[cfg]` or `#[cfg_attr]` on `#[state]` variants,
-variant payload fields, or `#[machine]` fields are rejected because they would
-otherwise drift the generated metadata from the active build.
+approximated.
+
+Without `strict-introspection`, Statum still follows some source-backed aliases
+for ergonomics. That default mode is useful metadata, but the exact-authority
+claim belongs to strict mode.
+
+Whole-item `#[cfg]` gates are supported, but nested `#[cfg]` or `#[cfg_attr]`
+on `#[state]` variants, variant payload fields, or `#[machine]` fields are
+rejected because they would otherwise drift the generated metadata from the
+active build.
 
 See [docs/introspection.md](docs/introspection.md) for the full guide and
 [statum-examples/src/toy_demos/16-machine-introspection.rs](statum-examples/src/toy_demos/16-machine-introspection.rs)
@@ -180,7 +195,7 @@ the generated sugar is not the right fit.
 
 ## Typed Rehydration
 
-`#[validators]` is the feature that turns stored data back into typed machines. Each `is_*` method checks whether the persisted value belongs to a state, returns `()` or state-specific data, and Statum builds the right typed output:
+`#[validators]` is the feature that turns stored data back into typed machines. Each `is_*` method checks whether the persisted value belongs to a state, returns `()` or state-specific data, and Statum builds the right typed output. Use `#[validators(Machine)]` for same-module machines and anchored paths like `#[validators(self::flow::Machine)]`, `#[validators(super::flow::Machine)]`, or `#[validators(crate::flow::Machine)]` when the machine lives elsewhere. In relaxed mode, bare multi-segment paths like `#[validators(flow::Machine)]` are treated as local child-module paths, not imported aliases or re-exports. If Statum cannot resolve that local path, it fails with a diagnostic that asks for an anchored path instead:
 
 ```rust
 use statum::{machine, state, validators};

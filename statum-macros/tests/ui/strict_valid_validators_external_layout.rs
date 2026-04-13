@@ -8,26 +8,11 @@ pub use statum_core::{
     StateDescriptor, StateMarker, TransitionDescriptor, UnitState,
 };
 
-use statum_macros::{machine, state, transition};
+#[path = "support/strict_validators_external_layout/flows.rs"]
+mod flows;
+#[path = "support/strict_validators_external_layout/rebuilders.rs"]
+mod rebuilders;
 
-mod flow {
-    use super::*;
-
-    #[state]
-    enum State {
-        Draft,
-        Accepted,
-    }
-
-    #[machine]
-    struct Machine<State> {}
-
-    #[transition]
-    impl Machine<Draft> {
-        fn finish(self) -> self::Machine<Accepted> {
-            self.transition()
-        }
-    }
+fn main() {
+    rebuilders::assert_rebuild();
 }
-
-fn main() {}

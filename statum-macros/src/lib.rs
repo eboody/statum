@@ -57,6 +57,10 @@ use proc_macro2::Span;
 use syn::spanned::Spanned;
 use syn::{Item, ItemImpl, parse_macro_input};
 
+pub(crate) fn strict_introspection_enabled() -> bool {
+    cfg!(feature = "strict-introspection")
+}
+
 /// Define the legal lifecycle phases for a Statum machine.
 ///
 /// Apply `#[state]` to an enum with unit variants, single-field tuple
@@ -140,6 +144,10 @@ pub fn machine(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// wrapper around it, such as `Result<Machine<NextState>, E>`,
 /// `Option<Machine<NextState>>`, or
 /// `statum::Branch<Machine<Left>, Machine<Right>>`.
+///
+/// When the `strict-introspection` feature is enabled, transition graph
+/// semantics must be directly readable from the written return type or from a
+/// local `#[introspect(return = ...)]` escape hatch on the method.
 #[proc_macro_attribute]
 pub fn transition(
     _attr: proc_macro::TokenStream,
@@ -213,13 +221,19 @@ pub fn transition(
 
 /// Rebuild typed machines from persisted data.
 ///
-/// Apply `#[validators(Machine)]` to an `impl PersistedRow` block. Statum
-/// expects one `is_{state}` method per state variant and generates
+/// Apply `#[validators(Machine)]` or an anchored path such as
+/// `#[validators(self::path::Machine)]`,
+/// `#[validators(super::path::Machine)]`, or
+/// `#[validators(crate::path::Machine)]` to an `impl PersistedRow` block.
+/// Statum expects one `is_{state}` method per state variant and generates
 /// `into_machine()`, `.into_machines()`, and `.into_machines_by(...)` helpers
 /// for typed rehydration. Validator methods can return `Result<T, _>` for
 /// ordinary membership checks or `Validation<T>` when rebuild reports should
 /// carry stable rejection details through `.build_report()` and
-/// `.build_reports()`.
+/// `.build_reports()`. In relaxed mode, bare multi-segment paths like
+/// `#[validators(flow::Machine)]` are treated as local child-module paths, not
+/// imported aliases or re-exports. If Statum cannot resolve that local path,
+/// it emits a compile error asking for an anchored path instead.
 #[proc_macro_attribute]
 pub fn validators(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_impl = parse_macro_input!(item as ItemImpl);
