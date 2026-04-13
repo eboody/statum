@@ -8,6 +8,7 @@ categories = ["rust-patterns"]
 description = "Core types for representing legal workflow and protocol states explicitly in Rust"
 documentation = "https://docs.rs/statum-core"
 edition = "2021"
+include = ["/src/**", "/README.md", "/LICENSE"]
 keywords = [
     "typestate",
     "correctness",

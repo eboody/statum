@@ -12,7 +12,7 @@ authors = ["Eran Boodnero <eran@eran.codes>"]
 license = "MIT"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.8.5"
+version = "0.8.6"
 
 [workspace.dependencies]
 axum = "0.8"
@@ -30,9 +30,9 @@ tokio = "1"
 tower = "0.5"
 trybuild = "1.0"
 
-statum = { path = "statum", version = "0.8.5" }
-statum-core = { path = "statum-core", version = "0.8.5" }
-statum-macros = { path = "statum-macros", version = "0.8.5" }
+statum = { path = "statum", version = "0.8.6" }
+statum-core = { path = "statum-core", version = "0.8.6" }
+statum-macros = { path = "statum-macros", version = "0.8.6" }
 
 [workspace.metadata.scripts]
 version-bump = "cargo script scripts/update_version.rs -- 1.0.0"

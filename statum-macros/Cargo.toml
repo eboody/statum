@@ -36,6 +36,7 @@ categories = ["rust-patterns"]
 description = "Proc macros for representing legal workflow and protocol states explicitly in Rust"
 documentation = "https://docs.rs/statum-macros"
 edition = "2024"
+include = ["/src/**", "/README.md", "/LICENSE"]
 keywords = [
     "typestate",
     "correctness",

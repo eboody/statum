@@ -268,10 +268,6 @@
 //!   showcase applications.
 
 #[cfg(doctest)]
-#[doc = include_str!("../../README.md")]
-mod root_readme_doctests {}
-
-#[cfg(doctest)]
 #[doc = include_str!("../README.md")]
 mod crate_readme_doctests {}
 

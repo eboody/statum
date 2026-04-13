@@ -27,16 +27,9 @@ can_publish_dry_run() {
 }
 
 version_for_crate() {
-  awk '
-    $0 == "[package]" { in_package = 1; next }
-    /^\[/ { in_package = 0 }
-    in_package && /^version = "/ {
-      gsub(/^version = "/, "", $0)
-      gsub(/"$/, "", $0)
-      print
-      exit
-    }
-  ' "$1/Cargo.toml"
+  local pkgid
+  pkgid=$(cargo pkgid -p "$1" 2>/dev/null) || return 1
+  printf '%s\n' "${pkgid##*#}"
 }
 
 crates_io_version_exists() {

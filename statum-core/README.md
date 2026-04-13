@@ -15,7 +15,7 @@ Public surface:
 
 ```toml
 [dependencies]
-statum-core = "0.5"
+statum-core = "0.8.6"
 ```
 
 ## Example

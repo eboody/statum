@@ -34,14 +34,14 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 
 ```toml
 [dependencies]
-statum = "0.8.5"
+statum = "0.8.6"
 ```
 
 For the strongest introspection guarantee, enable strict mode:
 
 ```toml
 [dependencies]
-statum = { version = "0.8.5", features = ["strict-introspection"] }
+statum = { version = "0.8.6", features = ["strict-introspection"] }
 ```
 
 ## 60-Second Example

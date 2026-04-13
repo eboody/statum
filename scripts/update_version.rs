@@ -13,13 +13,12 @@ const PUBLISHED_CRATES: [&str; 3] = [
     "statum-macros",
     "statum",
 ];
-const ALL_CRATES: [&str; 4] = [
-    "statum-core",
-    "statum-macros",
-    "statum",
-    "statum-examples",
+const VERSIONED_SNIPPET_FILES: [&str; 4] = [
+    "README.md",
+    "statum/README.md",
+    "statum-core/README.md",
+    "statum-macros/README.md",
 ];
-const VERSIONED_SNIPPET_FILES: [&str; 2] = ["README.md", "statum/README.md"];
 
 fn parse_semver_triplet(input: &str, field: &str) -> Result<[u32; 3], Box<dyn std::error::Error>> {
     let parts: Vec<u32> = input
@@ -56,47 +55,51 @@ fn apply_internal_dep_versions(table_value: &mut Value, new_version: &str) {
     }
 }
 
-fn apply_internal_versions(doc: &mut Value, new_version: &str) {
-    if let Some(package) = doc.get_mut("package") {
+fn apply_workspace_versions(doc: &mut Value, new_version: &str) {
+    let Some(workspace) = doc.get_mut("workspace") else {
+        return;
+    };
+    let Some(workspace_table) = workspace.as_table_mut() else {
+        return;
+    };
+
+    if let Some(package) = workspace_table.get_mut("package") {
         if let Some(package_table) = package.as_table_mut() {
             package_table.insert("version".to_string(), Value::String(new_version.to_string()));
         }
     }
 
-    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        if let Some(section_value) = doc.get_mut(section) {
-            apply_internal_dep_versions(section_value, new_version);
-        }
-    }
-
-    if let Some(targets) = doc.get_mut("target") {
-        if let Some(targets_table) = targets.as_table_mut() {
-            for (_, target_cfg) in targets_table.iter_mut() {
-                let Some(target_table) = target_cfg.as_table_mut() else {
-                    continue;
-                };
-                for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-                    if let Some(section_value) = target_table.get_mut(section) {
-                        apply_internal_dep_versions(section_value, new_version);
-                    }
-                }
-            }
-        }
+    if let Some(dependencies) = workspace_table.get_mut("dependencies") {
+        apply_internal_dep_versions(dependencies, new_version);
     }
 }
 
-fn update_install_snippets(
-    file_path: &str,
-    dependency_regex: &Regex,
-    new_version: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let content = fs::read_to_string(file_path)?;
-    let replaced = dependency_regex.replace_all(
-        &content,
-        format!("statum = \"{new_version}\""),
-    );
+fn update_install_snippets(file_path: &str, new_version: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut content = fs::read_to_string(file_path)?;
+    let replacements = [
+        (
+            Regex::new(r#"statum = "\d+\.\d+\.\d+""#)?,
+            format!("statum = \"{new_version}\""),
+        ),
+        (
+            Regex::new(r#"statum-core = "\d+\.\d+\.\d+""#)?,
+            format!("statum-core = \"{new_version}\""),
+        ),
+        (
+            Regex::new(r#"statum-macros = "\d+\.\d+\.\d+""#)?,
+            format!("statum-macros = \"{new_version}\""),
+        ),
+        (
+            Regex::new(r#"version = "\d+\.\d+\.\d+""#)?,
+            format!("version = \"{new_version}\""),
+        ),
+    ];
 
-    fs::write(file_path, replaced.as_ref())?;
+    for (regex, replacement) in replacements {
+        content = regex.replace_all(&content, replacement.as_str()).into_owned();
+    }
+
+    fs::write(file_path, content)?;
     println!("Updated install snippet in {file_path}");
     Ok(())
 }
@@ -110,12 +113,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let new_version = args[1].trim().to_string();
     parse_semver_triplet(&new_version, "Target version")?;
-    let dependency_regex = Regex::new(r#"statum = "\d+\.\d+\.\d+""#)?;
-
-    let root_cargo_path = "statum/Cargo.toml";
+    let root_cargo_path = "Cargo.toml";
     let cargo_content = fs::read_to_string(root_cargo_path)?;
     let cargo_toml: Value = toml::from_str(&cargo_content)?;
-    let current_version = cargo_toml["package"]["version"]
+    let current_version = cargo_toml["workspace"]["package"]["version"]
         .as_str()
         .ok_or("Version not found")?;
 
@@ -124,19 +125,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("Updating versions from {} to {}", current_version, new_version);
 
-    for crate_path in &ALL_CRATES {
-        let cargo_path = format!("{}/Cargo.toml", crate_path);
-        let content = fs::read_to_string(&cargo_path)?;
-        let mut doc: Value = toml::from_str(&content)?;
-
-        apply_internal_versions(&mut doc, &new_version);
-
-        fs::write(&cargo_path, toml::to_string_pretty(&doc)?)?;
-        println!("Updated version metadata in {}", cargo_path);
-    }
+    let mut root_doc: Value = toml::from_str(&cargo_content)?;
+    apply_workspace_versions(&mut root_doc, &new_version);
+    fs::write(root_cargo_path, toml::to_string_pretty(&root_doc)?)?;
+    println!("Updated version metadata in {}", root_cargo_path);
 
     for file_path in VERSIONED_SNIPPET_FILES {
-        update_install_snippets(file_path, &dependency_regex, &new_version)?;
+        update_install_snippets(file_path, &new_version)?;
     }
 
     Ok(())

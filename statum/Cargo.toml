@@ -18,6 +18,7 @@ categories = ["rust-patterns"]
 description = "Represent workflow and protocol state correctly in Rust by making invalid states unrepresentable"
 documentation = "https://docs.rs/statum"
 edition = "2021"
+include = ["/src/**", "/README.md", "/LICENSE"]
 keywords = [
     "typestate",
     "correctness",

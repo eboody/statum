@@ -1,13 +1,7 @@
-// cargo-deps: toml="0.8.8"
-
-extern crate toml;
-
 use std::env;
-use std::fs;
 use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
-use toml::Value;
 
 const PUBLISH_ORDER: [&str; 3] = [
     "statum-core",
@@ -84,12 +78,18 @@ fn ensure_clean_worktree() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn crate_version(crate_name: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let cargo_content = fs::read_to_string(format!("{crate_name}/Cargo.toml"))?;
-    let cargo_toml: Value = toml::from_str(&cargo_content)?;
-    cargo_toml["package"]["version"]
-        .as_str()
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| "Version not found".into())
+    let output = Command::new("cargo")
+        .args(["pkgid", "-p", crate_name])
+        .output()?;
+    if !output.status.success() {
+        return Err(format!("Failed to resolve cargo pkgid for {crate_name}").into());
+    }
+
+    let pkgid = String::from_utf8(output.stdout)?;
+    pkgid.trim()
+        .rsplit_once('#')
+        .map(|(_, version)| version.to_owned())
+        .ok_or_else(|| format!("Version not found in cargo pkgid output for {crate_name}").into())
 }
 
 fn verify_versions_match() -> Result<String, Box<dyn std::error::Error>> {
@@ -174,7 +174,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     run(
         {
             let mut cmd = Command::new("cargo");
-            cmd.args(["test", "--workspace"]);
+            cmd.args(["test", "--workspace", "--all-features"]);
             cmd
         },
         "cargo test",
