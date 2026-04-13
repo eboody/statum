@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::pathing::module_path_from_file_with_root;
+use super::pathing::module_path_from_file_with_root;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum LineModulePath {

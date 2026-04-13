@@ -3,8 +3,7 @@ use super::resolve::{
     AliasResolutionContext, collect_machine_and_states_strict, expand_source_type_alias,
     extract_generic_type_refs, machine_segment_matching_target, supported_wrapper, type_path,
 };
-use crate::callsite::current_source_info;
-use crate::query;
+use crate::source::{current_source_info, format_candidates};
 use crate::{EnumInfo, MachineInfo, format_loaded_machine_candidates};
 use crate::diagnostics::{DiagnosticMessage, compact_display};
 use proc_macro2::{Span, TokenStream};
@@ -28,7 +27,7 @@ pub fn missing_transition_machine_error(
     } else {
         format!(
             "Available `#[machine]` items in this module: {}.",
-            query::format_candidates(&available)
+            format_candidates(&available)
         )
     };
     let ordering_line = available
@@ -46,7 +45,7 @@ pub fn missing_transition_machine_error(
         .map(|candidates| {
             format!(
                 "Same-named `#[machine]` items elsewhere in this file: {}.",
-                query::format_candidates(&candidates)
+                format_candidates(&candidates)
             )
         })
         .unwrap_or_else(|| {
@@ -327,19 +326,24 @@ pub(super) fn compile_error_at(span: Span, message: &str) -> TokenStream {
     }
 }
 
-fn available_machine_candidates_in_module(module_path: &str) -> Vec<query::ItemCandidate> {
+fn available_machine_candidates_in_module(module_path: &str) -> Vec<crate::source::ItemCandidate> {
     let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
-    query::candidates_in_module(&file_path, module_path, query::ItemKind::Struct, Some("machine"))
+    crate::source::candidates_in_module(
+        &file_path,
+        module_path,
+        crate::source::ItemKind::Struct,
+        Some("machine"),
+    )
 }
 
 fn plain_struct_line_in_module(module_path: &str, struct_name: &str) -> Option<usize> {
     let (file_path, _) = current_source_info()?;
-    query::plain_item_line_in_module(
+    crate::source::plain_item_line_in_module(
         &file_path,
         module_path,
-        query::ItemKind::Struct,
+        crate::source::ItemKind::Struct,
         struct_name,
         Some("machine"),
     )
@@ -348,12 +352,12 @@ fn plain_struct_line_in_module(module_path: &str, struct_name: &str) -> Option<u
 fn same_named_machine_candidates_elsewhere(
     machine_name: &str,
     module_path: &str,
-) -> Option<Vec<query::ItemCandidate>> {
+) -> Option<Vec<crate::source::ItemCandidate>> {
     let (file_path, _) = current_source_info()?;
-    let candidates = query::same_named_candidates_elsewhere(
+    let candidates = crate::source::same_named_candidates_elsewhere(
         &file_path,
         module_path,
-        query::ItemKind::Struct,
+        crate::source::ItemKind::Struct,
         machine_name,
         Some("machine"),
     );

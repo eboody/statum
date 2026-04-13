@@ -16,15 +16,9 @@
 #[doc = include_str!("../README.md")]
 mod readme_doctests {}
 
-mod analysis;
-mod cache;
-mod callsite;
+mod contracts;
 mod diagnostics;
-mod module_path;
-mod parser;
-mod pathing;
-mod query;
-mod syntax;
+mod source;
 
 moddef::moddef!(
     flat (pub) mod {
@@ -42,13 +36,13 @@ pub(crate) use presentation::{
     PresentationAttr, PresentationTypesAttr, parse_present_attrs, parse_presentation_types_attr,
     strip_present_attrs,
 };
-pub(crate) use syntax::{
+pub(crate) use source::{
     ItemTarget, ModulePath, SourceFingerprint, crate_root_for_file, current_crate_root,
     extract_derives, source_file_fingerprint,
 };
 
-use crate::callsite::{current_module_path_opt, module_path_for_span};
 use crate::diagnostics::DiagnosticMessage;
+use crate::source::{current_module_path_opt, module_path_for_span, source_info_for_span};
 use crate::{
     LoadedMachineLookupFailure, MachinePath, ambiguous_transition_machine_error,
     ambiguous_transition_machine_fallback_error, lookup_loaded_machine_in_module,
@@ -290,7 +284,7 @@ fn resolved_current_module_path(span: Span, macro_name: &str) -> Result<String, 
     let resolved = module_path_for_span(span)
         .or_else(current_module_path_opt)
         .or_else(|| {
-            crate::callsite::source_info_for_span(span)
+            source_info_for_span(span)
                 .is_none()
                 .then_some("crate".to_string())
         });

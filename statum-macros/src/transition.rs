@@ -1,3 +1,6 @@
+//! Transition macro pipeline: parse impls, resolve return-shape contracts, then emit code.
+
+mod contract;
 mod diagnostics;
 mod emit;
 mod parse;
@@ -14,6 +17,7 @@ use self::diagnostics::{
     compile_error_at, invalid_transition_method_state_error, invalid_transition_state_error,
     machine_return_signature,
 };
+use self::contract::build_transition_contract;
 use self::parse::TransitionImpl;
 use crate::diagnostics::DiagnosticMessage;
 use crate::MachineInfo;
@@ -73,24 +77,11 @@ pub fn validate_transition_functions(
             return Some(compile_error_at(func.span, &message));
         }
 
-        let return_state = match func.return_state(&tr_impl.target_type) {
-            Ok(state) => state,
+        let contract = match build_transition_contract(func, &tr_impl.target_type) {
+            Ok(contract) => contract,
             Err(err) => return Some(err),
         };
-        if state_enum_info.get_variant_from_name(&return_state).is_none() {
-            return Some(invalid_transition_method_state_error(
-                func,
-                &tr_impl.machine_name,
-                &return_state,
-                &state_enum_info,
-            ));
-        }
-
-        let return_states = match func.return_states(&tr_impl.target_type) {
-            Ok(states) => states,
-            Err(err) => return Some(err),
-        };
-        for return_state in return_states {
+        for return_state in contract.next_states {
             if state_enum_info.get_variant_from_name(&return_state).is_none() {
                 return Some(invalid_transition_method_state_error(
                     func,

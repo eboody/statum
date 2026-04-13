@@ -3,10 +3,12 @@ use quote::{ToTokens, quote};
 use std::collections::HashSet;
 use syn::{Ident, ItemImpl, Path, PathArguments};
 
-use crate::callsite::current_source_info;
 use crate::diagnostics::{DiagnosticMessage, compile_error_at, compact_display};
-use crate::pathing::{module_path_from_file_with_root, module_root_from_file};
-use crate::query;
+use crate::source::{
+    ItemCandidate, ItemKind, candidates_in_module, current_source_info, format_candidates,
+    module_path_from_file_with_root, module_root_from_file, plain_item_line_in_module,
+    same_named_candidates_elsewhere,
+};
 
 use crate::{
     EnumInfo, LoadedMachineLookupFailure, LoadedStateLookupFailure, MachineInfo, MachinePath,
@@ -169,7 +171,7 @@ pub(super) fn resolve_machine_metadata(
         } else {
             format!(
                 "Available `#[machine]` items in this module: {}.",
-                query::format_candidates(&available)
+                format_candidates(&available)
             )
         };
         let ordering_line = available
@@ -189,7 +191,7 @@ pub(super) fn resolve_machine_metadata(
             .map(|candidates| {
                 format!(
                     "Same-named `#[machine]` items elsewhere in this file: {}.",
-                    query::format_candidates(&candidates)
+                    format_candidates(&candidates)
                 )
             })
             .unwrap_or_else(|| "No same-named `#[machine]` items were found in other modules of this file.".to_string());
@@ -255,7 +257,7 @@ pub(super) fn resolve_state_enum_info(
         } else {
             format!(
                 "Available `#[state]` enums in this module: {}.",
-                query::format_candidates(&available)
+                format_candidates(&available)
             )
         };
         let elsewhere_line = expected_state_name
@@ -263,7 +265,7 @@ pub(super) fn resolve_state_enum_info(
             .map(|candidates| {
                 format!(
                     "Same-named `#[state]` enums elsewhere in this file: {}.",
-                    query::format_candidates(&candidates)
+                    format_candidates(&candidates)
                 )
             })
             .unwrap_or_else(|| "No same-named `#[state]` enums were found in other modules of this file.".to_string());
@@ -553,29 +555,29 @@ fn source_observation_root_module() -> String {
     module_path_from_file_with_root(&file_path, &module_root)
 }
 
-fn available_machine_candidates_in_module(module_path: &str) -> Vec<query::ItemCandidate> {
+fn available_machine_candidates_in_module(module_path: &str) -> Vec<ItemCandidate> {
     let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
-    query::candidates_in_module(&file_path, module_path, query::ItemKind::Struct, Some("machine"))
+    candidates_in_module(&file_path, module_path, ItemKind::Struct, Some("machine"))
 }
 
-fn available_state_candidates_in_module(module_path: &str) -> Vec<query::ItemCandidate> {
+fn available_state_candidates_in_module(module_path: &str) -> Vec<ItemCandidate> {
     let Some((file_path, _)) = current_source_info() else {
         return Vec::new();
     };
-    query::candidates_in_module(&file_path, module_path, query::ItemKind::Enum, Some("state"))
+    candidates_in_module(&file_path, module_path, ItemKind::Enum, Some("state"))
 }
 
 fn same_named_machine_candidates_elsewhere(
     machine_name: &str,
     module_path: &str,
-) -> Option<Vec<query::ItemCandidate>> {
+) -> Option<Vec<ItemCandidate>> {
     let (file_path, _) = current_source_info()?;
-    let candidates = query::same_named_candidates_elsewhere(
+    let candidates = same_named_candidates_elsewhere(
         &file_path,
         module_path,
-        query::ItemKind::Struct,
+        ItemKind::Struct,
         machine_name,
         Some("machine"),
     );
@@ -585,12 +587,12 @@ fn same_named_machine_candidates_elsewhere(
 fn same_named_state_candidates_elsewhere(
     state_name: &str,
     module_path: &str,
-) -> Option<Vec<query::ItemCandidate>> {
+) -> Option<Vec<ItemCandidate>> {
     let (file_path, _) = current_source_info()?;
-    let candidates = query::same_named_candidates_elsewhere(
+    let candidates = same_named_candidates_elsewhere(
         &file_path,
         module_path,
-        query::ItemKind::Enum,
+        ItemKind::Enum,
         state_name,
         Some("state"),
     );
@@ -599,10 +601,10 @@ fn same_named_state_candidates_elsewhere(
 
 fn plain_struct_line_in_module(module_path: &str, struct_name: &str) -> Option<usize> {
     let (file_path, _) = current_source_info()?;
-    query::plain_item_line_in_module(
+    plain_item_line_in_module(
         &file_path,
         module_path,
-        query::ItemKind::Struct,
+        ItemKind::Struct,
         struct_name,
         Some("machine"),
     )
@@ -610,10 +612,10 @@ fn plain_struct_line_in_module(module_path: &str, struct_name: &str) -> Option<u
 
 fn plain_enum_line_in_module(module_path: &str, enum_name: &str) -> Option<usize> {
     let (file_path, _) = current_source_info()?;
-    query::plain_item_line_in_module(
+    plain_item_line_in_module(
         &file_path,
         module_path,
-        query::ItemKind::Enum,
+        ItemKind::Enum,
         enum_name,
         Some("state"),
     )

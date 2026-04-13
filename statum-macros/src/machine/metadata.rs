@@ -1,6 +1,8 @@
-use crate::callsite::{current_source_info, module_path_for_line, source_info_for_span};
 use crate::diagnostics::{DiagnosticMessage, compact_text, compile_error_at};
-use crate::query;
+use crate::source::{
+    ItemKind, candidates_in_module, current_source_info, module_path_for_line,
+    same_named_candidates_elsewhere, source_info_for_span,
+};
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use syn::{Generics, Ident, ItemStruct, Type, Visibility};
@@ -173,7 +175,7 @@ impl MachineInfo {
         }
 
         let line_number = item.ident.span().start().line;
-        let file_path = crate::callsite::current_source_file();
+        let file_path = current_source_info().map(|(file_path, _)| file_path);
         let presentation = parse_present_attrs(&item.attrs).ok()?;
         let presentation_types = parse_presentation_types_attr(&item.attrs).ok()?;
         Some(Self {
@@ -210,6 +212,7 @@ pub struct MachineField {
     pub field_type: String,
 }
 
+#[derive(Clone)]
 pub(crate) struct ParsedMachineInfo {
     pub(crate) vis: Visibility,
     pub(crate) derives: Vec<syn::Path>,
@@ -226,6 +229,7 @@ impl ParsedMachineInfo {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct ParsedMachineField {
     pub(crate) ident: Ident,
     pub(crate) vis: Visibility,
@@ -294,7 +298,7 @@ fn missing_state_enum_error(
     } else {
         format!(
             "Available `#[state]` enums in that module: {}.",
-            query::format_candidates(&available)
+            crate::source::format_candidates(&available)
         )
     };
     let ordering_line = expected.and_then(|name| {
@@ -324,7 +328,7 @@ fn missing_state_enum_error(
         .map(|candidates| {
             format!(
                 "Same-named `#[state]` enums elsewhere in this file: {}.",
-                query::format_candidates(&candidates)
+                crate::source::format_candidates(&candidates)
             )
         })
         .unwrap_or_else(|| "No same-named `#[state]` enums were found in other modules of this file.".to_string());
@@ -376,14 +380,14 @@ fn missing_state_enum_error(
 fn available_state_candidates_in_module(
     file_path: Option<&str>,
     module_path: &str,
-) -> Vec<query::ItemCandidate> {
+) -> Vec<crate::source::ItemCandidate> {
     let Some(file_path) = file_path
         .map(str::to_owned)
         .or_else(|| current_source_info().map(|(path, _)| path))
     else {
         return Vec::new();
     };
-    query::candidates_in_module(&file_path, module_path, query::ItemKind::Enum, Some("state"))
+    candidates_in_module(&file_path, module_path, ItemKind::Enum, Some("state"))
 }
 
 fn plain_enum_line_in_module(
@@ -394,10 +398,10 @@ fn plain_enum_line_in_module(
     let file_path = file_path
         .map(str::to_owned)
         .or_else(|| current_source_info().map(|(path, _)| path))?;
-    query::plain_item_line_in_module(
+    crate::source::plain_item_line_in_module(
         &file_path,
         module_path,
-        query::ItemKind::Enum,
+        ItemKind::Enum,
         enum_name,
         Some("state"),
     )
@@ -407,14 +411,14 @@ fn same_named_state_candidates_elsewhere(
     file_path: Option<&str>,
     enum_name: &str,
     module_path: &str,
-) -> Option<Vec<query::ItemCandidate>> {
+) -> Option<Vec<crate::source::ItemCandidate>> {
     let file_path = file_path
         .map(str::to_owned)
         .or_else(|| current_source_info().map(|(path, _)| path))?;
-    let candidates = query::same_named_candidates_elsewhere(
+    let candidates = same_named_candidates_elsewhere(
         &file_path,
         module_path,
-        query::ItemKind::Enum,
+        ItemKind::Enum,
         enum_name,
         Some("state"),
     );

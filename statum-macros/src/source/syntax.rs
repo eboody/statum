@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path as FsPath, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use crate::callsite::current_source_info;
+use super::callsite::current_source_info;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use syn::spanned::Spanned;
