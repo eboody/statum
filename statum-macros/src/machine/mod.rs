@@ -1,3 +1,5 @@
+//! `#[machine]` subsystem: validate machine structs, store registry facts, and emit machine surfaces.
+
 mod emission;
 mod generics;
 mod introspection;
@@ -16,6 +18,7 @@ pub(crate) use introspection::{
 };
 pub(crate) use metadata::is_rust_analyzer;
 pub use metadata::{MachineInfo, MachinePath};
+pub(crate) use metadata::ParsedMachineInfo;
 pub use registry::{
     LoadedMachineLookupFailure, format_loaded_machine_candidates,
     lookup_loaded_machine_in_module, lookup_unique_loaded_machine_by_name, store_machine_struct,

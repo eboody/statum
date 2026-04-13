@@ -1,4 +1,4 @@
-use crate::module_path::{find_module_path, get_source_info, get_source_info_for_span};
+use super::module_path::{find_module_path, get_source_info, get_source_info_for_span};
 use std::path::Path;
 
 fn normalize_file_path(file_path: &str) -> String {
@@ -22,12 +22,6 @@ pub fn current_source_info() -> Option<(String, usize)> {
 pub fn source_info_for_span(span: proc_macro2::Span) -> Option<(String, usize)> {
     get_source_info_for_span(span)
         .map(|(file_path, line_number)| (normalize_file_path(&file_path), line_number))
-}
-
-/// Returns the best-effort source file for the current macro call-site.
-#[cfg(test)]
-pub fn current_source_file() -> Option<String> {
-    current_source_info().map(|(file_path, _)| file_path)
 }
 
 /// Returns the best-effort module path for the current macro call-site.

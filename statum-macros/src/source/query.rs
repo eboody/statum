@@ -1,5 +1,5 @@
-use crate::analysis::get_file_analysis;
-use crate::callsite::module_path_for_line;
+use super::analysis::{FileAnalysis, get_file_analysis};
+use super::callsite::module_path_for_line;
 
 /// Item kinds discoverable through file analysis.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -146,7 +146,7 @@ pub fn format_candidates(candidates: &[ItemCandidate]) -> String {
 }
 
 fn collect_candidates(
-    analysis: &crate::analysis::FileAnalysis,
+    analysis: &FileAnalysis,
     file_path: &str,
     kind: ItemKind,
     name_filter: Option<&str>,

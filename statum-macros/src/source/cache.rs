@@ -3,8 +3,8 @@ use std::fs;
 use std::sync::{OnceLock, RwLock};
 use std::time::UNIX_EPOCH;
 
-use crate::parser::{LineModulePath, parse_file_modules};
-use crate::pathing::module_root_from_file;
+use super::parser::{LineModulePath, parse_file_modules};
+use super::pathing::module_root_from_file;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct FileFingerprint {
@@ -132,7 +132,7 @@ pub(crate) fn get_or_parse_file_modules(
 
 #[cfg(test)]
 pub(crate) fn line_cache_entries_for(file_path: &str) -> usize {
-    let normalized = crate::pathing::normalize_file_path(file_path);
+    let normalized = super::pathing::normalize_file_path(file_path);
     get_line_result_cache()
         .read()
         .expect("line cache lock")

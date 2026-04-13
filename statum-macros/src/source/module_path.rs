@@ -1,8 +1,8 @@
-use crate::cache::{
+use super::cache::{
     self, clear_line_cache_for_file, file_fingerprint, get_or_parse_file_modules, store_line_result,
 };
-use crate::parser::resolve_module_path_from_lines;
-use crate::pathing::normalize_file_path;
+use super::parser::resolve_module_path_from_lines;
+use super::pathing::normalize_file_path;
 use proc_macro2::Span;
 
 /// Extracts the file path and line number where the macro was invoked.
@@ -77,14 +77,14 @@ pub fn find_module_path_in_file(
 ) -> Option<String> {
     let normalized_file_path = normalize_file_path(file_path);
     let (base_module, line_modules) =
-        crate::parser::parse_file_modules(&normalized_file_path, module_root)?;
+        super::parser::parse_file_modules(&normalized_file_path, module_root)?;
     resolve_module_path_from_lines(&base_module, &line_modules, line_number)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pathing::{module_path_from_file, module_path_to_file};
+    use crate::source::pathing::{module_path_from_file, module_path_to_file};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::thread;

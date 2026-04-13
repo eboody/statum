@@ -5,7 +5,6 @@ use super::diagnostics::{
 use super::resolve::{
     candidate_alias_resolution_contexts, collect_machine_and_states_in_context,
     collect_machine_and_states_strict, extract_impl_machine_and_state,
-    parse_machine_and_state_in_context, parse_primary_machine_and_state_strict,
 };
 use crate::diagnostics::{DiagnosticMessage, compact_display, compile_error_at};
 use crate::{PresentationAttr, parse_present_attrs, strip_present_attrs};
@@ -39,31 +38,6 @@ pub struct TransitionIntrospectAttr {
 }
 
 impl TransitionFn {
-    pub fn return_state(&self, target_type: &Type) -> Result<String, TokenStream> {
-        let (return_type, uses_strict_resolution) =
-            self.validated_semantic_return_type(target_type)?;
-        let resolved = if uses_strict_resolution {
-            parse_primary_machine_and_state_strict(&return_type, target_type)
-        } else {
-            let contexts = candidate_alias_resolution_contexts(self.return_type_span);
-            contexts
-                .iter()
-                .find_map(|context| {
-                    parse_machine_and_state_in_context(&return_type, target_type, Some(context))
-                })
-                .or_else(|| parse_machine_and_state_in_context(&return_type, target_type, None))
-        };
-        let Some((_, return_state)) = resolved else {
-            return Err(invalid_return_type_error(
-                self,
-                target_type,
-                "expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape",
-            ));
-        };
-
-        Ok(return_state)
-    }
-
     pub fn return_states(&self, target_type: &Type) -> Result<Vec<String>, TokenStream> {
         let (return_type, uses_strict_resolution) =
             self.validated_semantic_return_type(target_type)?;
@@ -76,7 +50,7 @@ impl TransitionFn {
                 .map(|context| {
                     collect_machine_and_states_in_context(&return_type, target_type, Some(context))
                 })
-                .find(|states| !states.is_empty())
+                .find(|states: &Vec<(String, String)>| !states.is_empty())
                 .unwrap_or_else(|| collect_machine_and_states_in_context(&return_type, target_type, None))
         }
         .into_iter()
