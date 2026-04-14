@@ -1,8 +1,11 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::ToTokens;
+use std::collections::HashSet;
+use syn::spanned::Spanned;
 use syn::{FnArg, GenericArgument, Ident, Pat, PathArguments, ReturnType, Type};
 
 use crate::diagnostics::{DiagnosticMessage, compact_display};
+use crate::source::{candidate_alias_resolution_contexts, expand_source_type_alias};
 
 use super::type_equivalence::types_equivalent;
 
@@ -21,6 +24,10 @@ pub(super) enum ValidatorReturnKind {
     Diagnostic,
 }
 
+pub(super) struct ValidatorMethodContract {
+    pub(super) return_kind: ValidatorReturnKind,
+}
+
 pub(super) fn validator_state_name_from_ident(ident: &Ident) -> Option<String> {
     ident
         .to_string()
@@ -28,7 +35,16 @@ pub(super) fn validator_state_name_from_ident(ident: &Ident) -> Option<String> {
         .map(std::borrow::ToOwned::to_owned)
 }
 
-pub(super) fn validate_validator_signature(
+pub(super) fn build_validator_method_contract(
+    func: &syn::ImplItemFn,
+    context: &ValidatorDiagnosticContext<'_>,
+) -> Result<ValidatorMethodContract, proc_macro2::TokenStream> {
+    validate_validator_signature(func, context)?;
+    let return_kind = validate_validator_return_contract(func, context.expected_ok_type, context)?;
+    Ok(ValidatorMethodContract { return_kind })
+}
+
+fn validate_validator_signature(
     func: &syn::ImplItemFn,
     context: &ValidatorDiagnosticContext<'_>,
 ) -> Result<(), proc_macro2::TokenStream> {
@@ -101,7 +117,7 @@ pub(super) fn validate_validator_signature(
     Ok(())
 }
 
-pub(super) fn validate_validator_return_type(
+fn validate_validator_return_contract(
     func: &syn::ImplItemFn,
     expected_ok_type: &Type,
     context: &ValidatorDiagnosticContext<'_>,
@@ -129,7 +145,8 @@ pub(super) fn validate_validator_return_type(
         return Err(syn::Error::new_spanned(&func.sig.output, message).to_compile_error());
     };
 
-    let (actual_ok_ty, return_kind) = match extract_supported_validator_ok_type(return_ty) {
+    let (actual_ok_ty, return_kind) =
+        match extract_supported_validator_ok_type(return_ty, return_ty.span()) {
         Some(info) => info,
         None => {
             let expected_ok_display = expected_ok_type.to_token_stream().to_string();
@@ -146,7 +163,7 @@ pub(super) fn validate_validator_return_type(
             .expected(format!(
                 "`Result<{expected_ok_display}, _>` or `Validation<{expected_ok_display}>`"
             ))
-            .note("supported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, aliases like `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`.")
+            .note(supported_validator_wrapper_note())
             .fix("rewrite the return type to use one of the supported validator result wrappers.".to_string())
             .render();
             return Err(syn::Error::new_spanned(return_ty, message).to_compile_error());
@@ -253,13 +270,48 @@ fn expected_state_shape(state_enum_name: &str, variant_name: &str, expected_ok_d
 
 fn extract_supported_validator_ok_type(
     return_ty: &Type,
+    return_ty_span: Span,
 ) -> Option<(Type, ValidatorReturnKind)> {
+    let contexts = candidate_alias_resolution_contexts(Some(return_ty_span));
+    for context in &contexts {
+        let mut visited = HashSet::new();
+        if let Some(info) =
+            extract_supported_validator_ok_type_in_context(return_ty, Some(context), &mut visited)
+        {
+            return Some(info);
+        }
+    }
+
+    let mut visited = HashSet::new();
+    extract_supported_validator_ok_type_in_context(return_ty, None, &mut visited)
+}
+
+fn extract_supported_validator_ok_type_in_context(
+    return_ty: &Type,
+    context: Option<&crate::source::AliasResolutionContext>,
+    visited: &mut HashSet<String>,
+) -> Option<(Type, ValidatorReturnKind)> {
+    if let Some((expanded, alias_context, visit_key)) =
+        expand_source_type_alias(return_ty, context, visited)
+    {
+        let expanded_result =
+            extract_supported_validator_ok_type_in_context(&expanded, Some(&alias_context), visited);
+        visited.remove(&visit_key);
+        if expanded_result.is_some() {
+            return expanded_result;
+        }
+    }
+
+    direct_supported_validator_ok_type(return_ty)
+}
+
+fn direct_supported_validator_ok_type(return_ty: &Type) -> Option<(Type, ValidatorReturnKind)> {
     let Type::Path(type_path) = return_ty else {
         return None;
     };
 
     let last_segment = type_path.path.segments.last()?;
-    if last_segment.ident == "Validation" {
+    if last_segment.ident == "Validation" && path_is_supported_validation_wrapper(&type_path.path) {
         let PathArguments::AngleBracketed(args) = &last_segment.arguments else {
             return None;
         };
@@ -283,7 +335,7 @@ fn extract_supported_validator_ok_type(
             .map(|ty| (ty, ValidatorReturnKind::Diagnostic));
     }
 
-    if last_segment.ident != "Result" {
+    if last_segment.ident != "Result" || !path_is_supported_result_wrapper(&type_path.path) {
         return None;
     }
 
@@ -311,6 +363,34 @@ fn extract_supported_validator_ok_type(
     };
 
     type_args.first().cloned().map(|ty| (ty, return_kind))
+}
+
+fn supported_validator_wrapper_note() -> &'static str {
+    "supported forms: `Result<T, E>`, `core::result::Result<T, E>`, `std::result::Result<T, E>`, `statum::Result<T>`, direct `Result<T, statum::Rejection>`, and `Validation<T>` / `statum::Validation<T>`, plus source-declared type aliases that expand to those wrappers."
+}
+
+fn path_is_supported_validation_wrapper(path: &syn::Path) -> bool {
+    let segments = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    matches!(segments.as_slice(), [validation] if validation == "Validation")
+        || segments.as_slice() == ["statum", "Validation"]
+}
+
+fn path_is_supported_result_wrapper(
+    path: &syn::Path,
+) -> bool {
+    let segments = path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    matches!(segments.as_slice(), [result] if result == "Result")
+        || segments.as_slice() == ["statum", "Result"]
+        || segments.as_slice() == ["core", "result", "Result"]
+        || segments.as_slice() == ["std", "result", "Result"]
 }
 
 fn is_rejection_type(ty: &Type) -> bool {

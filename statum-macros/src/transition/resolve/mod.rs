@@ -1,8 +1,7 @@
-mod alias;
 mod shape;
 mod strategy;
 
-pub(super) use alias::{
+pub(super) use crate::source::{
     AliasResolutionContext, candidate_alias_resolution_contexts, expand_source_type_alias,
 };
 pub(super) use shape::{

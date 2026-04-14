@@ -1,5 +1,6 @@
 //! Source observation facade for file, module, and candidate facts used by the macros.
 
+mod aliases;
 mod analysis;
 mod cache;
 mod callsite;
@@ -9,6 +10,9 @@ mod pathing;
 mod query;
 mod syntax;
 
+pub(crate) use aliases::{
+    AliasResolutionContext, candidate_alias_resolution_contexts, expand_source_type_alias,
+};
 pub(crate) use callsite::{
     current_module_path_opt, current_source_info, module_path_for_line, module_path_for_span,
     source_info_for_span,

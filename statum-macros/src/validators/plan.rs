@@ -7,8 +7,7 @@ use super::emission::{
     ValidatorCheckContext, generate_validator_check, generate_validator_report_check,
 };
 use super::signatures::{
-    ValidatorDiagnosticContext, validate_validator_return_type, validate_validator_signature,
-    validator_state_name_from_ident,
+    ValidatorDiagnosticContext, build_validator_method_contract, validator_state_name_from_ident,
 };
 
 pub(super) fn collect_validator_checks(
@@ -56,9 +55,7 @@ pub(super) fn collect_validator_checks(
             machine_fields: context.field_names,
             expected_ok_type: &spec.expected_ok_type,
         };
-        validate_validator_signature(func, &diagnostic_context)?;
-        let return_kind =
-            validate_validator_return_type(func, &spec.expected_ok_type, &diagnostic_context)?;
+        let method_contract = build_validator_method_contract(func, &diagnostic_context)?;
 
         if func.sig.asyncness.is_some() {
             has_async = true;
@@ -73,7 +70,7 @@ pub(super) fn collect_validator_checks(
             &emission_context,
             &spec.variant_name,
             spec.has_state_data,
-            return_kind,
+            method_contract.return_kind,
             func.sig.asyncness.is_some(),
         ));
     }

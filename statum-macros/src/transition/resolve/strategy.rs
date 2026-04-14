@@ -2,7 +2,8 @@ use std::collections::HashSet;
 
 use syn::Type;
 
-use super::alias::{AliasResolutionContext, expand_source_type_alias};
+use crate::source::{AliasResolutionContext, expand_source_type_alias};
+
 use super::shape::{
     SupportedWrapper, extract_first_generic_type_ref, extract_generic_type_refs,
     extract_machine_state_from_segment, machine_segment_matching_target, supported_wrapper,

@@ -1,15 +1,14 @@
-use crate::source::{
-    current_module_path_opt, current_source_info, module_path_for_line,
-    module_path_from_file_with_root, module_path_to_file, module_root_from_file,
-    source_info_for_span, type_aliases_in_module,
-};
 use proc_macro2::Span;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use syn::visit_mut::VisitMut;
 use syn::{GenericArgument, PathArguments, Type};
 
-use super::type_path;
+use super::{
+    crate_root_for_file, current_module_path_opt, current_source_info, module_path_for_line,
+    module_path_from_file_with_root, module_path_to_file, module_root_from_file,
+    source_info_for_span, type_aliases_in_module,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct AliasResolutionContext {
@@ -46,6 +45,13 @@ impl VisitMut for TypeAliasSubstituter<'_> {
         }
 
         syn::visit_mut::visit_type_mut(self, ty);
+    }
+}
+
+fn type_path(ty: &Type) -> Option<&syn::TypePath> {
+    match ty {
+        Type::Path(type_path) if type_path.qself.is_none() => Some(type_path),
+        _ => None,
     }
 }
 
@@ -92,7 +98,7 @@ pub(crate) fn candidate_alias_resolution_contexts(
 }
 
 fn source_observation_root_module(file_path: &str) -> String {
-    if let Some(crate_root) = crate::source::crate_root_for_file(file_path) {
+    if let Some(crate_root) = crate_root_for_file(file_path) {
         let src_root = PathBuf::from(crate_root).join("src");
         if PathBuf::from(file_path).starts_with(&src_root) {
             return "crate".to_owned();
@@ -172,7 +178,10 @@ fn alias_module_path(path: &syn::Path, context: &AliasResolutionContext) -> Opti
         }
         "super" => {
             let mut module = context.module_path.to_owned();
-            while segments.get(index).is_some_and(|segment| segment == "super") {
+            while segments
+                .get(index)
+                .is_some_and(|segment| segment == "super")
+            {
                 module = parent_module_path(&module)?;
                 index += 1;
             }
@@ -181,7 +190,7 @@ fn alias_module_path(path: &syn::Path, context: &AliasResolutionContext) -> Opti
         _ => return None,
     };
 
-    for segment in segments[index..alias_name_index].iter() {
+    for segment in &segments[index..alias_name_index] {
         base = child_module_path(&base, segment);
     }
 

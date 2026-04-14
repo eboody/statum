@@ -112,6 +112,7 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_machine_state_surface.rs");
     t.pass("tests/ui/valid_validators_sync.rs");
     t.pass("tests/ui/valid_validators_result_aliases.rs");
+    t.pass("tests/ui/valid_validators_source_aliases.rs");
     t.pass("tests/ui/valid_validators_diagnostic_returns.rs");
     t.pass("tests/ui/valid_validators_generic_payload.rs");
     t.pass("tests/ui/valid_validators_async.rs");
