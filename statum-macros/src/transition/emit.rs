@@ -1,3 +1,4 @@
+use super::contract::build_transition_contract;
 use super::diagnostics::{
     compile_error_at, invalid_transition_method_state_error, invalid_transition_state_error,
 };
@@ -61,12 +62,12 @@ pub fn generate_transition_impl(
     let mut emitted_states = HashSet::new();
     let mut transition_impls = Vec::new();
     for function in &tr_impl.functions {
-        let return_states = match function.return_states(target_type) {
-            Ok(states) => states,
+        let contract = match build_transition_contract(function, target_type) {
+            Ok(contract) => contract,
             Err(err) => return err,
         };
 
-        for return_state in return_states {
+        for return_state in contract.next_states {
             if !emitted_states.insert(return_state.clone()) {
                 continue;
             }
@@ -170,10 +171,11 @@ pub fn generate_transition_impl(
         }
     }
     let transition_registrations = tr_impl.functions.iter().enumerate().map(|(idx, function)| {
-        let return_states = match function.return_states(target_type) {
-            Ok(states) => states,
+        let contract = match build_transition_contract(function, target_type) {
+            Ok(contract) => contract,
             Err(err) => return err,
         };
+        let return_states = contract.next_states;
         let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
         let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
         let targets_ident = format_ident!("__STATUM_TRANSITION_TARGETS_{}", unique_suffix);

@@ -84,6 +84,19 @@ pub(crate) struct TransitionContract {
     pub(crate) written_return_type: Option<String>,
 }
 
+impl TransitionContract {
+    pub(crate) fn all_next_states(&self) -> Vec<&str> {
+        let mut states = vec![self.primary_next_state.as_str()];
+        states.extend(
+            self.next_states
+                .iter()
+                .map(String::as_str)
+                .filter(|state| *state != self.primary_next_state),
+        );
+        states
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct ValidatorContract {
     pub(crate) resolved_machine: ResolvedMachineRef,
