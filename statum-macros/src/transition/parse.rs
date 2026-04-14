@@ -141,6 +141,7 @@ impl TransitionFn {
                 introspection,
                 self,
                 return_type,
+                target_type,
             ));
         }
 

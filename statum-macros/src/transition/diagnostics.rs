@@ -1,6 +1,8 @@
 use super::parse::{TransitionFn, TransitionIntrospectAttr};
 use super::resolve::{
-    AliasResolutionContext, expand_source_type_alias, extract_generic_type_refs,
+    AliasResolutionContext, SupportedWrapper, candidate_alias_resolution_contexts,
+    collect_machine_and_states_in_context, collect_machine_and_states_strict,
+    expand_source_type_alias, extract_first_generic_type_ref, extract_generic_type_refs,
     machine_segment_matching_target, parse_primary_machine_and_state_strict, supported_wrapper,
     type_path,
 };
@@ -140,34 +142,78 @@ pub(super) fn invalid_return_type_error(
     let return_type = func
         .return_type
         .as_ref()
-        .map(|ty| ty.to_token_stream().to_string())
+        .map(compact_type_display)
         .unwrap_or_else(|| "<none>".to_string());
     let machine_name = &func.machine_name;
     let uses_strict_resolution =
         crate::strict_introspection_enabled() || func.introspection.is_some();
-    let strict_notes = if uses_strict_resolution {
+    let observed = observed_return_shape(func, target_type);
+    let strict_help = if uses_strict_resolution {
         let suggestion = strict_introspect_return_suggestion(func, target_type)
             .map(|expanded| {
                 format!(
-                    "\nStrict mode help:\n  add `#[introspect(return = {expanded})]` to this method, or rewrite the signature to use that direct type."
+                    "add `#[introspect(return = {expanded})]` to this method, or rewrite the signature to use that direct type."
                 )
             })
             .unwrap_or_else(|| {
-                "\nStrict mode help:\n  add `#[introspect(return = Machine<NextState>)]` with a direct machine path and supported wrapper shape, or rewrite the signature to use that direct type.".to_string()
+                "add `#[introspect(return = Machine<NextState>)]` with a direct machine path and supported wrapper shape, or rewrite the signature to use that direct type.".to_string()
             });
         format!(
-            "{suggestion}\n  Source-backed alias expansion is diagnostics-only in strict mode."
+            "{suggestion}\nSource-backed alias expansion is diagnostics-only in strict mode."
         )
     } else {
         String::new()
     };
 
-    let message = format!(
-        "Error: transition method `{}<{}>::{func_name}` returns an unsupported type.\nFix: return `{machine_name}<NextState>` directly, or wrap that same machine path in a supported `Option`, `Result`, or `statum::Branch` shape.\nReason: {reason}.\n\nExpected:\n  fn {func_name}(self) -> {machine_name}<NextState>\n\nActual:\n  {return_type}\n\nNotes:\n  Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.\n  Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module.{strict_notes}",
-        machine_name,
-        func.source_state,
+    let expected = observed
+        .as_ref()
+        .map(|shape| shape.canonical_wrapped_signature(func_name, machine_name))
+        .unwrap_or_else(|| format!("`fn {func_name}(self) -> {machine_name}<NextState>`"));
+    let fix = observed
+        .as_ref()
+        .map(|shape| shape.fix_message(func_name, machine_name))
+        .unwrap_or_else(|| {
+            format!(
+                "return `{machine_name}<NextState>` directly, or wrap that same machine path in a supported `Option`, `Result`, or `statum::Branch` shape."
+            )
+        });
+
+    let mut message = DiagnosticMessage::new(format!(
+        "transition method `{}<{}>::{func_name}` returns an unsupported type.",
+        machine_name, func.source_state,
+    ))
+    .found(format!("`fn {func_name}(self) -> {return_type}`"))
+    .expected(expected)
+    .reason(reason.to_string())
+    .fix(fix);
+
+    if let Some(shape) = &observed
+        && let Some(primary_branch) = &shape.primary_branch
+    {
+        message = message.section("Primary branch", format!("`{primary_branch}`"));
+    }
+    if let Some(shape) = &observed
+        && !shape.secondary_machine_branches.is_empty()
+    {
+        message = message.section(
+            "Observed machine branches",
+            shape
+                .secondary_machine_branches
+                .iter()
+                .map(|branch| format!("`{branch}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+
+    message = message.note(
+        "Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.\nImported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module.",
     );
-    compile_error_at(func.return_type_span.unwrap_or(func.span), &message)
+    if !strict_help.is_empty() {
+        message = message.help(strict_help);
+    }
+
+    compile_error_at(func.return_type_span.unwrap_or(func.span), &message.render())
 }
 
 fn strict_introspect_return_suggestion(
@@ -278,6 +324,126 @@ fn compact_type_display(ty: &Type) -> String {
     display
 }
 
+struct ObservedReturnShape {
+    primary_branch: Option<String>,
+    secondary_machine_branches: Vec<String>,
+    wrapper: Option<SupportedWrapper>,
+    canonical_state: Option<String>,
+}
+
+impl ObservedReturnShape {
+    fn canonical_machine_target(&self, machine_name: &str) -> String {
+        match self.canonical_state.as_deref() {
+            Some(state) => format!("{machine_name}<{state}>"),
+            None => format!("{machine_name}<NextState>"),
+        }
+    }
+
+    fn canonical_annotation(&self, machine_name: &str) -> String {
+        let machine_target = self.canonical_machine_target(machine_name);
+        match self.wrapper {
+            Some(SupportedWrapper::Option) => {
+                format!("::core::option::Option<{machine_target}>")
+            }
+            Some(SupportedWrapper::Result) => {
+                format!("::core::result::Result<{machine_target}, E>")
+            }
+            Some(SupportedWrapper::Branch) => {
+                format!("::statum::Branch<{machine_target}, OtherBranch>")
+            }
+            None => machine_target,
+        }
+    }
+
+    fn canonical_wrapped_signature(&self, func_name: &syn::Ident, machine_name: &str) -> String {
+        format!("`fn {func_name}(self) -> {}`", self.canonical_annotation(machine_name))
+    }
+
+    fn fix_message(&self, func_name: &syn::Ident, machine_name: &str) -> String {
+        let machine_target = self.canonical_machine_target(machine_name);
+        match self.wrapper {
+            Some(SupportedWrapper::Option)
+            | Some(SupportedWrapper::Result)
+            | Some(SupportedWrapper::Branch) => format!(
+                "move `{machine_target}` into the primary branch, for example with {}, or return `{machine_target}` directly if you do not need the wrapper.",
+                self.canonical_wrapped_signature(func_name, machine_name)
+            ),
+            None => format!("return `{machine_target}` directly."),
+        }
+    }
+}
+
+fn observed_return_shape(func: &TransitionFn, target_type: &Type) -> Option<ObservedReturnShape> {
+    let return_type = func.return_type.as_ref()?;
+    let wrapper = raw_wrapper_kind(return_type);
+    let primary_branch = primary_branch_display(return_type);
+    let mut machine_branches = resolved_machine_branches(func, target_type);
+    let canonical_state = parse_primary_machine_and_state_strict(return_type, target_type)
+        .map(|(_, state)| state)
+        .or_else(|| {
+            machine_branches
+                .first()
+                .map(|branch| state_name_from_machine_target(branch).to_string())
+        });
+    if let Some(state) = canonical_state.as_deref() {
+        let canonical_machine = format!("{}<{state}>", func.machine_name);
+        machine_branches.retain(|branch| branch != &canonical_machine);
+    }
+
+    Some(ObservedReturnShape {
+        primary_branch,
+        secondary_machine_branches: machine_branches,
+        wrapper,
+        canonical_state,
+    })
+}
+
+fn resolved_machine_branches(func: &TransitionFn, target_type: &Type) -> Vec<String> {
+    let Some(return_type) = func.return_type.as_ref() else {
+        return Vec::new();
+    };
+    let uses_strict_resolution =
+        crate::strict_introspection_enabled() || func.introspection.is_some();
+    let targets = if uses_strict_resolution {
+        collect_machine_and_states_strict(return_type, target_type)
+    } else {
+        let contexts = candidate_alias_resolution_contexts(func.return_type_span);
+        contexts
+            .iter()
+            .map(|context| {
+                collect_machine_and_states_in_context(return_type, target_type, Some(context))
+            })
+            .find(|states| !states.is_empty())
+            .unwrap_or_else(|| collect_machine_and_states_in_context(return_type, target_type, None))
+    };
+
+    targets
+        .into_iter()
+        .map(|(machine, state)| format!("{machine}<{state}>"))
+        .collect()
+}
+
+fn raw_wrapper_kind(ty: &Type) -> Option<SupportedWrapper> {
+    let type_path = type_path(ty)?;
+    supported_wrapper(&type_path.path)
+}
+
+fn primary_branch_display(ty: &Type) -> Option<String> {
+    let type_path = type_path(ty)?;
+    let segment = type_path.path.segments.last()?;
+    match supported_wrapper(&type_path.path) {
+        Some(_) => extract_first_generic_type_ref(&segment.arguments).map(compact_type_display),
+        None => Some(compact_type_display(ty)),
+    }
+}
+
+fn state_name_from_machine_target(machine_target: &str) -> &str {
+    machine_target
+        .split_once('<')
+        .and_then(|(_, state)| state.strip_suffix('>'))
+        .unwrap_or("NextState")
+}
+
 pub(super) fn invalid_introspect_return_error(
     introspection: &TransitionIntrospectAttr,
     func: &TransitionFn,
@@ -298,9 +464,33 @@ pub(super) fn mismatched_introspect_return_error(
     introspection: &TransitionIntrospectAttr,
     func: &TransitionFn,
     actual_return_type: &Type,
+    target_type: &Type,
 ) -> TokenStream {
     let actual_return = compact_display(actual_return_type);
-    let message = DiagnosticMessage::new(format!(
+    let observed = observed_return_shape(func, target_type);
+    let annotation_primary = primary_branch_display(&introspection.return_type);
+    let expected = observed
+        .as_ref()
+        .map(|shape| {
+            format!(
+                "`#[introspect(return = {})]` and {}",
+                shape.canonical_annotation(&func.machine_name),
+                shape.canonical_wrapped_signature(&func.name, &func.machine_name)
+            )
+        })
+        .unwrap_or_else(|| format!("an annotation describing the same legal targets as `{actual_return}`"));
+    let fix = observed
+        .as_ref()
+        .map(|shape| {
+            format!(
+                "make the written primary branch `{}` so it matches `#[introspect(return = {})]`, or rewrite the method to {}.",
+                shape.canonical_machine_target(&func.machine_name),
+                shape.canonical_annotation(&func.machine_name),
+                shape.canonical_wrapped_signature(&func.name, &func.machine_name)
+            )
+        })
+        .unwrap_or_else(|| "either remove the annotation or make it match the written signature.".to_string());
+    let mut message = DiagnosticMessage::new(format!(
         "`#[introspect(return = ...)]` on transition `{}<{}>::{}` does not match the directly readable written return type.",
         func.machine_name,
         func.source_state,
@@ -310,10 +500,27 @@ pub(super) fn mismatched_introspect_return_error(
         "`#[introspect(return = {})]` with method return `{actual_return}`",
         compact_display(&introspection.return_type)
     ))
-    .expected(format!(
-        "an annotation describing the same legal targets as `{actual_return}`"
-    ))
-    .fix("either remove the annotation or make it match the written signature.".to_string());
+    .expected(expected)
+    .fix(fix);
+    if let Some(primary_branch) = observed.as_ref().and_then(|shape| shape.primary_branch.as_ref()) {
+        message = message.section("Written primary branch", format!("`{primary_branch}`"));
+    }
+    if let Some(primary_branch) = annotation_primary {
+        message = message.section("Annotated primary branch", format!("`{primary_branch}`"));
+    }
+    if let Some(shape) = &observed
+        && !shape.secondary_machine_branches.is_empty()
+    {
+        message = message.section(
+            "Observed machine branches",
+            shape
+                .secondary_machine_branches
+                .iter()
+                .map(|branch| format!("`{branch}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
     compile_error_at(introspection.span, &message.render())
 }
 

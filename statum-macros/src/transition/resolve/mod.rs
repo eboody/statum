@@ -6,8 +6,8 @@ pub(super) use alias::{
     AliasResolutionContext, candidate_alias_resolution_contexts, expand_source_type_alias,
 };
 pub(super) use shape::{
-    extract_generic_type_refs, extract_impl_machine_and_state, machine_segment_matching_target,
-    supported_wrapper, type_path,
+    SupportedWrapper, extract_first_generic_type_ref, extract_generic_type_refs,
+    extract_impl_machine_and_state, machine_segment_matching_target, supported_wrapper, type_path,
 };
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(super) use strategy::{

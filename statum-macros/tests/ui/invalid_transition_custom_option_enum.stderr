@@ -1,16 +1,11 @@
 error: Error: transition method `Machine<Draft>::maybe_accept` returns an unsupported type.
-       Fix: return `Machine<NextState>` directly, or wrap that same machine path in a supported `Option`, `Result`, or `statum::Branch` shape.
-       Reason: expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape.
-
-       Expected:
-         fn maybe_accept(self) -> Machine<NextState>
-
-       Actual:
-         Option < Machine < Accepted > >
-
-       Notes:
-         Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.
-         Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module.
+       Found: `fn maybe_accept(self) -> Option<Machine<Accepted>>`
+       Expected: `fn maybe_accept(self) -> Machine<NextState>`
+       Reason: expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape
+       Fix: return `Machine<NextState>` directly.
+       Primary branch: `Option<Machine<Accepted>>`
+       Note: Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.
+             Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module.
   --> tests/ui/invalid_transition_custom_option_enum.rs:30:44
    |
 30 |     fn maybe_accept(self, accept: bool) -> Option<Machine<Accepted>> {

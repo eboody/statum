@@ -1,7 +1,9 @@
 error: Error: `#[introspect(return = ...)]` on transition `Machine<Draft>::finish` does not match the directly readable written return type.
        Found: `#[introspect(return = Machine<Done>)]` with method return `::core::result::Result<(), Machine<Done>>`
-       Expected: an annotation describing the same legal targets as `::core::result::Result<(), Machine<Done>>`
-       Fix: either remove the annotation or make it match the written signature.
+       Expected: `#[introspect(return = ::core::result::Result<Machine<Done>, E>)]` and `fn finish(self) -> ::core::result::Result<Machine<Done>, E>`
+       Fix: make the written primary branch `Machine<Done>` so it matches `#[introspect(return = ::core::result::Result<Machine<Done>, E>)]`, or rewrite the method to `fn finish(self) -> ::core::result::Result<Machine<Done>, E>`.
+       Written primary branch: `()`
+       Annotated primary branch: `Machine<Done>`
   --> tests/ui/invalid_transition_introspect_primary_branch_mismatch.rs:24:5
    |
 24 |     #[introspect(return = Machine<Done>)]
