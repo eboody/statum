@@ -4,8 +4,8 @@ use syn::{GenericParam, Generics, Ident, ImplItem, ImplItemFn, Path, Type};
 use crate::machine::{
     builder_generics, extra_generics, extra_type_arguments_tokens, generic_argument_tokens,
 };
-use crate::validators::signatures::ValidatorReturnKind;
-use crate::to_snake_case;
+
+use super::contract::{ValidatorMethodContract, ValidatorReturnKind};
 
 pub(super) struct BatchBuilderContext<'a> {
     pub(super) machine_ident: &'a Ident,
@@ -29,25 +29,27 @@ pub(super) struct ValidatorCheckContext<'a> {
 
 pub(super) fn generate_validator_check(
     context: &ValidatorCheckContext<'_>,
-    variant_name: &str,
-    has_state_data: bool,
-    is_async: bool,
+    method: &ValidatorMethodContract,
 ) -> proc_macro2::TokenStream {
     let machine_path = context.machine_path;
     let machine_module_path = context.machine_module_path;
     let machine_generics = context.machine_generics;
     let field_names = context.field_names;
     let receiver = context.receiver;
-    let variant_ident = format_ident!("{}", variant_name);
-    let validator_fn_ident = format_ident!("is_{}", to_snake_case(variant_name));
-    let await_token = if is_async { quote! { .await } } else { quote! {} };
+    let variant_ident = format_ident!("{}", method.variant_name);
+    let validator_fn_ident = &method.validator_fn;
+    let await_token = if method.is_async {
+        quote! { .await }
+    } else {
+        quote! {}
+    };
     let field_builder_chain = quote! { #(.#field_names(#field_names))* };
     let machine_builder_path =
         machine_builder_path_tokens(machine_path, machine_generics, &variant_ident);
     let machine_state_variant_path =
         machine_state_variant_path_tokens(machine_module_path, machine_generics, &variant_ident);
 
-    if has_state_data {
+    if method.has_state_data {
         let builder_call = quote! {
             #machine_builder_path::builder()
                 #field_builder_chain
@@ -79,24 +81,25 @@ pub(super) fn generate_validator_check(
 
 pub(super) fn generate_validator_report_check(
     context: &ValidatorCheckContext<'_>,
-    variant_name: &str,
-    has_state_data: bool,
-    return_kind: ValidatorReturnKind,
-    is_async: bool,
+    method: &ValidatorMethodContract,
 ) -> proc_macro2::TokenStream {
     let machine_path = context.machine_path;
     let machine_module_path = context.machine_module_path;
     let machine_generics = context.machine_generics;
     let field_names = context.field_names;
     let receiver = context.receiver;
-    let variant_ident = format_ident!("{}", variant_name);
-    let validator_fn_ident = format_ident!("is_{}", to_snake_case(variant_name));
-    let await_token = if is_async { quote! { .await } } else { quote! {} };
+    let variant_ident = format_ident!("{}", method.variant_name);
+    let validator_fn_ident = &method.validator_fn;
+    let await_token = if method.is_async {
+        quote! { .await }
+    } else {
+        quote! {}
+    };
     let field_builder_chain = quote! { #(.#field_names(#field_names))* };
-    let matched_attempt = rebuild_attempt_tokens(&validator_fn_ident, &variant_ident, true);
-    let failed_attempt = rebuild_attempt_tokens(&validator_fn_ident, &variant_ident, false);
+    let matched_attempt = rebuild_attempt_tokens(validator_fn_ident, &variant_ident, true);
+    let failed_attempt = rebuild_attempt_tokens(validator_fn_ident, &variant_ident, false);
     let failed_attempt_with_rejection = failed_rebuild_attempt_with_rejection_tokens(
-        &validator_fn_ident,
+        validator_fn_ident,
         &variant_ident,
     );
     let machine_builder_path =
@@ -104,14 +107,14 @@ pub(super) fn generate_validator_report_check(
     let machine_state_variant_path =
         machine_state_variant_path_tokens(machine_module_path, machine_generics, &variant_ident);
 
-    if has_state_data {
+    if method.has_state_data {
         let builder_call = quote! {
             #machine_builder_path::builder()
                 #field_builder_chain
                 .state_data(__statum_state_data)
                 .build()
         };
-        match return_kind {
+        match method.return_kind {
             ValidatorReturnKind::Plain => quote! {
                 match #receiver.#validator_fn_ident(#(&#field_names),*)#await_token {
                     Ok(__statum_state_data) => {
@@ -143,7 +146,7 @@ pub(super) fn generate_validator_report_check(
                 #field_builder_chain
                 .build()
         };
-        match return_kind {
+        match method.return_kind {
             ValidatorReturnKind::Plain => quote! {
                 if #receiver.#validator_fn_ident(#(&#field_names),*)#await_token.is_ok() {
                     __statum_attempts.push(#matched_attempt);

@@ -33,7 +33,6 @@ pub(crate) struct ResolvedMachineRef {
     pub(crate) machine_name: String,
     pub(crate) machine_path: Path,
     pub(crate) machine_module_path: Path,
-    pub(crate) state_enum_name: String,
     pub(crate) field_names: Vec<Ident>,
     pub(crate) field_types: Vec<Type>,
     pub(crate) machine_state_ty: TokenStream,
@@ -47,7 +46,6 @@ impl ResolvedMachineRef {
         machine_ident: Ident,
         machine_path: Path,
         machine_module_path: Path,
-        state_enum_name: String,
         field_names: Vec<Ident>,
         field_types: Vec<Type>,
     ) -> Self {
@@ -61,7 +59,6 @@ impl ResolvedMachineRef {
             machine_ident,
             machine_path,
             machine_module_path,
-            state_enum_name,
             field_names,
             field_types,
             machine_state_ty,

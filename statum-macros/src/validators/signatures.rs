@@ -7,6 +7,10 @@ use syn::{FnArg, GenericArgument, Ident, Pat, PathArguments, ReturnType, Type};
 use crate::diagnostics::{DiagnosticMessage, compact_display};
 use crate::source::{candidate_alias_resolution_contexts, expand_source_type_alias};
 
+use super::contract::{
+    ValidatorMethodContract, ValidatorReturnKind, VariantSpec,
+    build_validator_method_contract as build_semantic_validator_method_contract,
+};
 use super::type_equivalence::types_equivalent;
 
 pub(super) struct ValidatorDiagnosticContext<'a> {
@@ -18,16 +22,6 @@ pub(super) struct ValidatorDiagnosticContext<'a> {
     pub(super) expected_ok_type: &'a Type,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ValidatorReturnKind {
-    Plain,
-    Diagnostic,
-}
-
-pub(super) struct ValidatorMethodContract {
-    pub(super) return_kind: ValidatorReturnKind,
-}
-
 pub(super) fn validator_state_name_from_ident(ident: &Ident) -> Option<String> {
     ident
         .to_string()
@@ -37,11 +31,12 @@ pub(super) fn validator_state_name_from_ident(ident: &Ident) -> Option<String> {
 
 pub(super) fn build_validator_method_contract(
     func: &syn::ImplItemFn,
+    spec: &VariantSpec,
     context: &ValidatorDiagnosticContext<'_>,
 ) -> Result<ValidatorMethodContract, proc_macro2::TokenStream> {
     validate_validator_signature(func, context)?;
     let return_kind = validate_validator_return_contract(func, context.expected_ok_type, context)?;
-    Ok(ValidatorMethodContract { return_kind })
+    Ok(build_semantic_validator_method_contract(func, spec, return_kind))
 }
 
 fn validate_validator_signature(

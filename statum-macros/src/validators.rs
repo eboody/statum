@@ -17,13 +17,14 @@ mod signatures;
 mod type_equivalence;
 
 use contract::{
-    CollectValidatorContext, IntoMachineBuilderContext, build_validator_contract,
-    machine_scoped_item_path, qualify_machine_field_types,
+    IntoMachineBuilderContext, build_validator_contract, machine_scoped_item_path,
+    qualify_machine_field_types,
 };
 use emission::{
-    BatchBuilderContext, batch_builder_implementation, inject_machine_fields,
+    BatchBuilderContext, ValidatorCheckContext, batch_builder_implementation,
+    generate_validator_check, generate_validator_report_check, inject_machine_fields,
 };
-use plan::collect_validator_checks;
+use plan::collect_validator_plan;
 use resolution::{
     resolve_machine_metadata, resolve_state_enum_info, resolve_validator_machine_attr,
     validate_validator_coverage,
@@ -77,6 +78,10 @@ pub fn parse_validators(
         state_enum_info,
         &persisted_type_display,
     );
+    let validator_plan = match collect_validator_plan(&item_impl, &contract) {
+        Ok(plan) => plan,
+        Err(err) => return err.into(),
+    };
     let ValidatorContract {
         resolved_machine,
         state_enum,
@@ -95,24 +100,25 @@ pub fn parse_validators(
         Err(err) => return err.into(),
     };
 
-    let collect_context = CollectValidatorContext {
+    let receiver = quote! { __statum_persisted };
+    let emission_context = ValidatorCheckContext {
         machine_path: &resolved_machine.machine_path,
         machine_module_path: &resolved_machine.machine_module_path,
         machine_generics: resolved_machine.machine_generics(),
         field_names: &resolved_machine.field_names,
-        persisted_type_display: &persisted_type_display,
-        machine_name: &resolved_machine.machine_name,
-        state_enum_name: &resolved_machine.state_enum_name,
+        receiver: &receiver,
     };
 
-    let (validator_checks, validator_report_checks, has_async) = match collect_validator_checks(
-        &item_impl,
-        &state_enum.variants,
-        &collect_context,
-    ) {
-        Ok(result) => result,
-        Err(err) => return err.into(),
-    };
+    let validator_checks = validator_plan
+        .methods
+        .iter()
+        .map(|method| generate_validator_check(&emission_context, method))
+        .collect::<Vec<_>>();
+    let validator_report_checks = validator_plan
+        .methods
+        .iter()
+        .map(|method| generate_validator_report_check(&emission_context, method))
+        .collect::<Vec<_>>();
 
     if item_impl.items.is_empty() {
         let expected_methods = state_enum
@@ -134,7 +140,7 @@ pub fn parse_validators(
 
     let machine_vis = resolved_machine.parsed_machine.vis.clone();
 
-    let async_token = if has_async {
+    let async_token = if validator_plan.has_async {
         quote! { async }
     } else {
         quote! {}

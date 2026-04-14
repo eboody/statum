@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use quote::format_ident;
-use syn::{Generics, Ident, Path, Type};
+use syn::{Generics, Ident, ImplItemFn, Path, Type};
 
 use crate::contracts::{ResolvedMachineRef, StateEnumContract, ValidatorContract};
 use crate::{MachineInfo, VariantInfo};
@@ -14,14 +14,23 @@ pub(super) struct VariantSpec {
     pub(super) expected_ok_type: Type,
 }
 
-pub(super) struct CollectValidatorContext<'a> {
-    pub(super) machine_path: &'a Path,
-    pub(super) machine_module_path: &'a Path,
-    pub(super) machine_generics: &'a Generics,
-    pub(super) field_names: &'a [Ident],
-    pub(super) persisted_type_display: &'a str,
-    pub(super) machine_name: &'a str,
-    pub(super) state_enum_name: &'a str,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ValidatorReturnKind {
+    Plain,
+    Diagnostic,
+}
+
+pub(super) struct ValidatorMethodContract {
+    pub(super) validator_fn: Ident,
+    pub(super) variant_name: String,
+    pub(super) has_state_data: bool,
+    pub(super) return_kind: ValidatorReturnKind,
+    pub(super) is_async: bool,
+}
+
+pub(super) struct ValidatorPlan {
+    pub(super) methods: Vec<ValidatorMethodContract>,
+    pub(super) has_async: bool,
 }
 
 pub(super) struct IntoMachineBuilderContext<'a> {
@@ -64,7 +73,6 @@ pub(super) fn build_validator_contract(
             machine_ident,
             machine_attr.machine_path.clone(),
             machine_module_path,
-            state_enum_info.name.clone(),
             field_names,
             field_types,
         ),
@@ -146,4 +154,18 @@ pub(super) fn build_variant_lookup(
     }
 
     Ok((specs, variant_by_name))
+}
+
+pub(super) fn build_validator_method_contract(
+    func: &ImplItemFn,
+    spec: &VariantSpec,
+    return_kind: ValidatorReturnKind,
+) -> ValidatorMethodContract {
+    ValidatorMethodContract {
+        validator_fn: func.sig.ident.clone(),
+        variant_name: spec.variant_name.clone(),
+        has_state_data: spec.has_state_data,
+        return_kind,
+        is_async: func.sig.asyncness.is_some(),
+    }
 }
