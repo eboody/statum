@@ -27,9 +27,27 @@ can_publish_dry_run() {
 }
 
 version_for_crate() {
-  local pkgid
-  pkgid=$(cargo pkgid -p "$1" 2>/dev/null) || return 1
-  printf '%s\n' "${pkgid##*#}"
+  local manifest="$1/Cargo.toml"
+
+  if awk '
+    /^\[package\]$/ { in_section=1; next }
+    /^\[/ { if (in_section) exit }
+    in_section && /^[[:space:]]*version\.workspace[[:space:]]*=[[:space:]]*true[[:space:]]*$/ { found=1; exit }
+    END { exit found ? 0 : 1 }
+  ' "$manifest"; then
+    awk '
+      /^\[workspace\.package\]$/ { in_section=1; next }
+      /^\[/ { if (in_section) exit }
+      in_section && match($0, /^[[:space:]]*version[[:space:]]*=[[:space:]]*"([^"]+)"/, m) { print m[1]; exit }
+    ' Cargo.toml
+    return
+  fi
+
+  awk '
+    /^\[package\]$/ { in_section=1; next }
+    /^\[/ { if (in_section) exit }
+    in_section && match($0, /^[[:space:]]*version[[:space:]]*=[[:space:]]*"([^"]+)"/, m) { print m[1]; exit }
+  ' "$manifest"
 }
 
 crates_io_version_exists() {

@@ -1,4 +1,6 @@
 use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
@@ -77,25 +79,112 @@ fn ensure_clean_worktree() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn crate_version(crate_name: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let output = Command::new("cargo")
-        .args(["pkgid", "-p", crate_name])
+fn repo_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
         .output()?;
     if !output.status.success() {
-        return Err(format!("Failed to resolve cargo pkgid for {crate_name}").into());
+        return Err("Failed to resolve repository root".into());
     }
 
-    let pkgid = String::from_utf8(output.stdout)?;
-    pkgid.trim()
-        .rsplit_once('#')
-        .map(|(_, version)| version.to_owned())
-        .ok_or_else(|| format!("Version not found in cargo pkgid output for {crate_name}").into())
+    Ok(PathBuf::from(String::from_utf8(output.stdout)?.trim()))
 }
 
-fn verify_versions_match() -> Result<String, Box<dyn std::error::Error>> {
-    let first = crate_version(PUBLISH_ORDER[0])?;
+fn quoted_value(line: &str, key: &str) -> Option<String> {
+    let (lhs, rhs) = line.split_once('=')?;
+    if lhs.trim() != key {
+        return None;
+    }
+
+    let value = rhs.trim().strip_prefix('"')?;
+    let end = value.find('"')?;
+    Some(value[..end].to_owned())
+}
+
+fn bool_value(line: &str, key: &str) -> Option<bool> {
+    let (lhs, rhs) = line.split_once('=')?;
+    if lhs.trim() != key {
+        return None;
+    }
+
+    match rhs.trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn section_has_true_key(
+    manifest: &Path,
+    section: &str,
+    key: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let contents = fs::read_to_string(manifest)?;
+    let mut in_section = false;
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_section = trimmed == format!("[{section}]");
+            continue;
+        }
+
+        if in_section && bool_value(trimmed, key) == Some(true) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn section_string_value(
+    manifest: &Path,
+    section: &str,
+    key: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let contents = fs::read_to_string(manifest)?;
+    let mut in_section = false;
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_section = trimmed == format!("[{section}]");
+            continue;
+        }
+
+        if !in_section || trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if let Some(value) = quoted_value(trimmed, key) {
+            return Ok(Some(value));
+        }
+    }
+
+    Ok(None)
+}
+
+fn workspace_version(repo_root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let manifest = repo_root.join("Cargo.toml");
+    section_string_value(&manifest, "workspace.package", "version")?
+        .ok_or_else(|| "Workspace version not found in Cargo.toml".into())
+}
+
+fn crate_version(repo_root: &Path, crate_name: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let manifest = repo_root.join(crate_name).join("Cargo.toml");
+
+    if section_has_true_key(&manifest, "package", "version.workspace")? {
+        return workspace_version(repo_root);
+    }
+
+    section_string_value(&manifest, "package", "version")?
+        .ok_or_else(|| format!("Version not found in {}", manifest.display()).into())
+}
+
+fn verify_versions_match(repo_root: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let first = crate_version(repo_root, PUBLISH_ORDER[0])?;
     for crate_name in PUBLISH_ORDER.iter().skip(1) {
-        let version = crate_version(crate_name)?;
+        let version = crate_version(repo_root, crate_name)?;
         if version != first {
             return Err(format!(
                 "Version mismatch: {} has {}, expected {}",
@@ -132,7 +221,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ensure_clean_worktree()?;
 
-    let version = verify_versions_match()?;
+    let repo_root = repo_root()?;
+    let version = verify_versions_match(&repo_root)?;
     if let Some(expected_version) = args.get(1) {
         if expected_version != &version {
             return Err(format!(
