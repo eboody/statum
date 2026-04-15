@@ -15,7 +15,7 @@ Most users should depend on `statum` instead of using this crate directly.
 
 ```toml
 [dependencies]
-statum-macros = "0.8.8"
+statum-macros = "0.8.9"
 ```
 
 ## Notes
