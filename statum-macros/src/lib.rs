@@ -77,24 +77,7 @@ pub fn state(attr: TokenStream, item: TokenStream) -> TokenStream {
         Item::Enum(item_enum) => item_enum,
         other => return invalid_state_target_error(&other).into(),
     };
-
-    // Validate the enum before proceeding
-    if let Some(error) = validate_state_enum(&input) {
-        return error.into();
-    }
-
-    let enum_info = match EnumInfo::from_item_enum(&input) {
-        Ok(info) => info,
-        Err(err) => return err.to_compile_error().into(),
-    };
-
-    // Store metadata in `state_enum_map`
-    store_state_enum(&enum_info);
-
-    // Generate structs and implementations dynamically
-    let expanded = generate_state_impls(&enum_info);
-
-    TokenStream::from(expanded)
+    expand_state(input).into()
 }
 
 /// Define a typed machine that carries durable context across states.
@@ -124,23 +107,7 @@ pub fn machine(attr: TokenStream, item: TokenStream) -> TokenStream {
         Item::Struct(item_struct) => item_struct,
         other => return invalid_machine_target_error(&other).into(),
     };
-    let machine_info = match MachineInfo::from_item_struct(&input) {
-        Ok(info) => info,
-        Err(err) => return err.to_compile_error().into(),
-    };
-
-    // Validate the struct before proceeding
-    if let Some(error) = validate_machine_struct(&input, &machine_info) {
-        return error.into();
-    }
-
-    // Store metadata in `machine_map`
-    store_machine_struct(&machine_info);
-
-    // Generate any required structs or implementations dynamically
-    let expanded = generate_machine_impls(&machine_info, &input);
-
-    TokenStream::from(expanded)
+    expand_machine(input).into()
 }
 
 /// Validate and generate legal transitions for one source state.

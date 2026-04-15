@@ -7,6 +7,7 @@ mod validation;
 use crate::source::{module_path_for_line, source_info_for_span};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
+use std::marker::PhantomData;
 use syn::{Fields, Ident, ItemEnum, Path, Type, Visibility};
 
 use crate::{
@@ -20,6 +21,77 @@ pub use registry::{
     store_state_enum,
 };
 pub use validation::{invalid_state_target_error, validate_state_enum};
+
+pub fn expand_state(input: ItemEnum) -> TokenStream {
+    StateExpansionBuilder::<ParsedStatePhase>::parse(input)
+        .and_then(StateExpansionBuilder::<ParsedStatePhase>::validate)
+        .map(StateExpansionBuilder::<ValidatedStatePhase>::register)
+        .map(StateExpansionBuilder::<RegisteredStatePhase>::emit)
+        .unwrap_or_else(|err| err)
+}
+
+struct ParsedStatePhase;
+struct ValidatedStatePhase;
+struct RegisteredStatePhase;
+
+struct StateExpansionBuilder<State> {
+    input: ItemEnum,
+    enum_info: Option<EnumInfo>,
+    _state: PhantomData<State>,
+}
+
+impl StateExpansionBuilder<ParsedStatePhase> {
+    fn parse(input: ItemEnum) -> Result<Self, TokenStream> {
+        let enum_info = EnumInfo::from_item_enum(&input).map_err(|err| err.to_compile_error())?;
+        Ok(Self {
+            input,
+            enum_info: Some(enum_info),
+            _state: PhantomData,
+        })
+    }
+
+    fn validate(self) -> Result<StateExpansionBuilder<ValidatedStatePhase>, TokenStream> {
+        if let Some(error) = validate_state_enum(&self.input) {
+            return Err(error);
+        }
+
+        Ok(StateExpansionBuilder {
+            input: self.input,
+            enum_info: self.enum_info,
+            _state: PhantomData,
+        })
+    }
+}
+
+impl StateExpansionBuilder<ValidatedStatePhase> {
+    fn register(self) -> StateExpansionBuilder<RegisteredStatePhase> {
+        if let Some(enum_info) = self.enum_info.as_ref() {
+            store_state_enum(enum_info);
+        }
+
+        StateExpansionBuilder {
+            input: self.input,
+            enum_info: self.enum_info,
+            _state: PhantomData,
+        }
+    }
+}
+
+impl StateExpansionBuilder<RegisteredStatePhase> {
+    fn emit(self) -> TokenStream {
+        match self.enum_info {
+            Some(enum_info) => generate_state_impls(&enum_info),
+            None => {
+                let message = crate::diagnostics::DiagnosticMessage::new(format!(
+                    "internal Statum error: registered `#[state]` pipeline for `{}` reached emission without enum metadata.",
+                    self.input.ident
+                ))
+                .render();
+                syn::Error::new_spanned(&self.input.ident, message).to_compile_error()
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 #[allow(unused)]
