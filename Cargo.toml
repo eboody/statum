@@ -28,15 +28,15 @@ version = "0.8"
 
 [workspace.dependencies.statum]
 path = "statum"
-version = "0.8.9"
+version = "0.8.10"
 
 [workspace.dependencies.statum-core]
 path = "statum-core"
-version = "0.8.9"
+version = "0.8.10"
 
 [workspace.dependencies.statum-macros]
 path = "statum-macros"
-version = "0.8.9"
+version = "0.8.10"
 
 [workspace.metadata.scripts]
 publish = "cargo script scripts/publish.rs"
@@ -49,4 +49,4 @@ authors = ["Eran Boodnero <eran@eran.codes>"]
 license = "MIT"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.8.9"
+version = "0.8.10"
