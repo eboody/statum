@@ -9,7 +9,7 @@ use super::diagnostics::{
     mismatched_introspect_return_error,
 };
 use super::resolve::{
-    AliasResolutionContext, SupportedWrapper, candidate_alias_resolution_contexts,
+    AliasResolutionContext, SourceAliasResolver, SupportedWrapper,
     collect_machine_and_states_in_context, collect_machine_and_states_strict,
     expand_source_type_alias, extract_first_generic_type_ref, extract_generic_type_refs,
     machine_segment_matching_target, parse_machine_and_state_in_context,
@@ -240,11 +240,8 @@ fn resolve_transition_targets(
         return resolve_transition_targets_strict(ty, target_type);
     }
 
-    let contexts = candidate_alias_resolution_contexts(return_type_span);
-    contexts
-        .iter()
-        .find_map(|context| resolve_transition_targets_in_context(ty, target_type, Some(context)))
-        .or_else(|| resolve_transition_targets_in_context(ty, target_type, None))
+    SourceAliasResolver::new(return_type_span)
+        .find_map(|context| resolve_transition_targets_in_context(ty, target_type, context))
 }
 
 fn resolve_transition_targets_strict(
@@ -295,14 +292,8 @@ fn strict_introspect_return_suggestion(
     target_type: &Type,
 ) -> Option<String> {
     let return_type = func.return_type.as_ref()?;
-    let contexts = candidate_alias_resolution_contexts(func.return_type_span);
-
-    contexts
-        .iter()
-        .find_map(|context| {
-            strict_diagnostic_expanded_return_type(return_type, target_type, Some(context))
-        })
-        .or_else(|| strict_diagnostic_expanded_return_type(return_type, target_type, None))
+    SourceAliasResolver::new(func.return_type_span)
+        .find_map(|context| strict_diagnostic_expanded_return_type(return_type, target_type, context))
         .map(|expanded| compact_display(&expanded))
 }
 
@@ -327,8 +318,9 @@ fn strict_diagnostic_expanded_return_type_inner(
         return Some(ty.clone());
     }
 
-    if let Some((expanded, alias_context, visit_key)) = expand_source_type_alias(ty, context, visited)
+    if let Some(expanded_alias) = expand_source_type_alias(ty, context, visited)
     {
+        let (expanded, alias_context, visit_key) = expanded_alias.into_parts();
         let result =
             strict_diagnostic_expanded_return_type_inner(&expanded, target_type, Some(&alias_context), visited)
                 .or_else(|| {
@@ -462,14 +454,13 @@ fn resolved_machine_branches(func: &TransitionFn, target_type: &Type) -> Vec<Str
     let targets = if uses_strict_resolution {
         collect_machine_and_states_strict(return_type, target_type)
     } else {
-        let contexts = candidate_alias_resolution_contexts(func.return_type_span);
-        contexts
-            .iter()
-            .map(|context| {
-                collect_machine_and_states_in_context(return_type, target_type, Some(context))
+        SourceAliasResolver::new(func.return_type_span)
+            .find_map(|context| {
+                let states =
+                    collect_machine_and_states_in_context(return_type, target_type, context);
+                (!states.is_empty()).then_some(states)
             })
-            .find(|states| !states.is_empty())
-            .unwrap_or_else(|| collect_machine_and_states_in_context(return_type, target_type, None))
+            .unwrap_or_default()
     };
 
     targets

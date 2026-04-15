@@ -2,7 +2,7 @@ mod shape;
 mod strategy;
 
 pub(super) use crate::source::{
-    AliasResolutionContext, candidate_alias_resolution_contexts, expand_source_type_alias,
+    AliasResolutionContext, SourceAliasResolver, expand_source_type_alias,
 };
 pub(super) use shape::{
     SupportedWrapper, extract_first_generic_type_ref, extract_generic_type_refs,

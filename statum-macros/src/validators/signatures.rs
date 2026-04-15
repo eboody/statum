@@ -5,7 +5,7 @@ use syn::spanned::Spanned;
 use syn::{FnArg, GenericArgument, Ident, Pat, PathArguments, ReturnType, Type};
 
 use crate::diagnostics::{DiagnosticMessage, compact_display};
-use crate::source::{candidate_alias_resolution_contexts, expand_source_type_alias};
+use crate::source::{SourceAliasResolver, expand_source_type_alias};
 
 use super::contract::{
     ValidatorMethodContract, ValidatorReturnKind, VariantSpec,
@@ -267,18 +267,10 @@ fn extract_supported_validator_ok_type(
     return_ty: &Type,
     return_ty_span: Span,
 ) -> Option<(Type, ValidatorReturnKind)> {
-    let contexts = candidate_alias_resolution_contexts(Some(return_ty_span));
-    for context in &contexts {
+    SourceAliasResolver::new(Some(return_ty_span)).find_map(|context| {
         let mut visited = HashSet::new();
-        if let Some(info) =
-            extract_supported_validator_ok_type_in_context(return_ty, Some(context), &mut visited)
-        {
-            return Some(info);
-        }
-    }
-
-    let mut visited = HashSet::new();
-    extract_supported_validator_ok_type_in_context(return_ty, None, &mut visited)
+        extract_supported_validator_ok_type_in_context(return_ty, context, &mut visited)
+    })
 }
 
 fn extract_supported_validator_ok_type_in_context(
@@ -286,9 +278,9 @@ fn extract_supported_validator_ok_type_in_context(
     context: Option<&crate::source::AliasResolutionContext>,
     visited: &mut HashSet<String>,
 ) -> Option<(Type, ValidatorReturnKind)> {
-    if let Some((expanded, alias_context, visit_key)) =
-        expand_source_type_alias(return_ty, context, visited)
+    if let Some(expanded_alias) = expand_source_type_alias(return_ty, context, visited)
     {
+        let (expanded, alias_context, visit_key) = expanded_alias.into_parts();
         let expanded_result =
             extract_supported_validator_ok_type_in_context(&expanded, Some(&alias_context), visited);
         visited.remove(&visit_key);

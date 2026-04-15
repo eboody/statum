@@ -24,6 +24,50 @@ pub(crate) struct AliasResolutionContext {
     pub(crate) root_module_path: String,
 }
 
+pub(crate) struct SourceAliasResolver {
+    contexts: Vec<AliasResolutionContext>,
+}
+
+impl SourceAliasResolver {
+    pub(crate) fn new(span: Option<Span>) -> Self {
+        Self {
+            contexts: candidate_alias_resolution_contexts(span),
+        }
+    }
+
+    pub(crate) fn find_map<T>(
+        &self,
+        mut resolve: impl FnMut(Option<&AliasResolutionContext>) -> Option<T>,
+    ) -> Option<T> {
+        for context in &self.contexts {
+            if let Some(result) = resolve(Some(context)) {
+                return Some(result);
+            }
+        }
+
+        resolve(None)
+    }
+}
+
+#[cfg(test)]
+impl SourceAliasResolver {
+    fn from_contexts(contexts: Vec<AliasResolutionContext>) -> Self {
+        Self { contexts }
+    }
+}
+
+pub(crate) struct ExpandedSourceAlias {
+    pub(crate) expanded: Type,
+    pub(crate) context: AliasResolutionContext,
+    visit_key: String,
+}
+
+impl ExpandedSourceAlias {
+    pub(crate) fn into_parts(self) -> (Type, AliasResolutionContext, String) {
+        (self.expanded, self.context, self.visit_key)
+    }
+}
+
 #[derive(Clone)]
 struct ResolvedTypeAlias {
     item: syn::ItemType,
@@ -83,9 +127,7 @@ fn current_alias_resolution_context_for_span(span: Span) -> Option<AliasResoluti
     })
 }
 
-pub(crate) fn candidate_alias_resolution_contexts(
-    span: Option<Span>,
-) -> Vec<AliasResolutionContext> {
+fn candidate_alias_resolution_contexts(span: Option<Span>) -> Vec<AliasResolutionContext> {
     let mut contexts = Vec::new();
 
     if let Some(context) = current_alias_resolution_context() {
@@ -280,7 +322,7 @@ pub(crate) fn expand_source_type_alias(
     ty: &Type,
     context: Option<&AliasResolutionContext>,
     visited: &mut HashSet<String>,
-) -> Option<(Type, AliasResolutionContext, String)> {
+) -> Option<ExpandedSourceAlias> {
     let context = context?;
     let type_path = type_path(ty)?;
     let resolved = resolve_type_alias(&type_path.path, context)?;
@@ -296,5 +338,64 @@ pub(crate) fn expand_source_type_alias(
     if expanded.is_none() {
         visited.remove(&visit_key);
     }
-    expanded.map(|expanded| (expanded, resolved.context, visit_key))
+    expanded.map(|expanded| ExpandedSourceAlias {
+        expanded,
+        context: resolved.context,
+        visit_key,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AliasResolutionContext, SourceAliasResolver};
+    use std::path::PathBuf;
+
+    fn context(file_path: &str, module_path: &str) -> AliasResolutionContext {
+        AliasResolutionContext {
+            file_path: file_path.to_owned(),
+            module_path: module_path.to_owned(),
+            module_root: PathBuf::from("/tmp/statum-alias-test"),
+            root_module_path: "crate".to_owned(),
+        }
+    }
+
+    #[test]
+    fn resolver_tries_candidate_contexts_before_fallback() {
+        let resolver = SourceAliasResolver::from_contexts(vec![
+            context("src/lib.rs", "crate::auth"),
+            context("src/lib.rs", "crate::admin"),
+        ]);
+        let mut seen = Vec::new();
+
+        let result = resolver.find_map(|context| {
+            seen.push(context.map(|context| context.module_path.clone()));
+            context
+                .filter(|context| context.module_path == "crate::admin")
+                .map(|context| context.module_path.clone())
+        });
+
+        assert_eq!(result.as_deref(), Some("crate::admin"));
+        assert_eq!(
+            seen,
+            vec![
+                Some("crate::auth".to_owned()),
+                Some("crate::admin".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn resolver_falls_back_to_none_context_after_candidates() {
+        let resolver =
+            SourceAliasResolver::from_contexts(vec![context("src/lib.rs", "crate::auth")]);
+        let mut seen = Vec::new();
+
+        let result = resolver.find_map(|context| {
+            seen.push(context.map(|context| context.module_path.clone()));
+            context.is_none().then_some("fallback".to_owned())
+        });
+
+        assert_eq!(result.as_deref(), Some("fallback"));
+        assert_eq!(seen, vec![Some("crate::auth".to_owned()), None]);
+    }
 }

@@ -80,9 +80,9 @@ fn parse_primary_machine_and_state_inner(
     }
 
     if allow_source_aliases
-        && let Some((expanded, alias_context, visit_key)) =
-            expand_source_type_alias(ty, context, visited)
+        && let Some(expanded_alias) = expand_source_type_alias(ty, context, visited)
     {
+        let (expanded, alias_context, visit_key) = expanded_alias.into_parts();
         let result = parse_primary_machine_and_state_inner(
             &expanded,
             target_type,
@@ -185,9 +185,9 @@ fn collect_machine_targets_inner(
     }
 
     if allow_source_aliases
-        && let Some((expanded, alias_context, visit_key)) =
-            expand_source_type_alias(ty, context, visited)
+        && let Some(expanded_alias) = expand_source_type_alias(ty, context, visited)
     {
+        let (expanded, alias_context, visit_key) = expanded_alias.into_parts();
         collect_machine_targets_inner(
             &expanded,
             target_type,
