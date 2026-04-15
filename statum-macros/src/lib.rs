@@ -231,12 +231,13 @@ pub fn transition(
         }
     };
 
-    if let Some(err) = validate_transition_functions(&tr_impl, machine_info) {
-        return err.into();
-    }
+    let transition_contracts = match validate_transition_functions(&tr_impl, machine_info) {
+        Ok(contracts) => contracts,
+        Err(err) => return err.into(),
+    };
 
     // -- Step 3: Generate new code
-    let expanded = generate_transition_impl(&input, &tr_impl, machine_info);
+    let expanded = generate_transition_impl(&input, &tr_impl, machine_info, &transition_contracts);
 
     // Combine expanded code with the original `impl` if needed
     // or simply return the expanded code

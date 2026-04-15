@@ -4,7 +4,7 @@ use quote::format_ident;
 use syn::{Generics, Ident, ImplItemFn, Path, Type};
 
 use crate::contracts::{ResolvedMachineRef, StateEnumContract, ValidatorContract};
-use crate::{MachineInfo, VariantInfo};
+use crate::VariantInfo;
 
 use super::resolution::ValidatorMachineAttr;
 
@@ -48,7 +48,6 @@ pub(super) struct IntoMachineBuilderContext<'a> {
 
 pub(super) fn build_validator_contract(
     machine_attr: &ValidatorMachineAttr,
-    machine_info: MachineInfo,
     parsed_machine: crate::machine::ParsedMachineInfo,
     parsed_fields: &[(Ident, Type)],
     state_enum_info: crate::EnumInfo,
@@ -68,7 +67,7 @@ pub(super) fn build_validator_contract(
 
     ValidatorContract {
         resolved_machine: ResolvedMachineRef::new(
-            machine_info,
+            machine_attr.machine_name.clone(),
             parsed_machine,
             machine_ident,
             machine_attr.machine_path.clone(),

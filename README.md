@@ -21,9 +21,10 @@ impossible to represent in ordinary code. In that sense it is similar to
 `Option` or `Result`: they make absence or failure explicit in the type system
 instead of leaving it implicit.
 
-Statum applies that same idea to workflow and protocol state. You describe
-lifecycle phases with `#[state]`, durable context with `#[machine]`, legal
-moves with `#[transition]`, and typed rehydration from existing data with
+Statum applies that same idea when a value's phase should change what methods
+are legally available on that value. Durable workflows and protocols are one
+strong fit. Staged validation, resolution, and build surfaces are another.
+Today's API packages that with `#[state]`, `#[machine]`, `#[transition]`, and
 `#[validators]`.
 
 It is opinionated on purpose: explicit transitions, state-specific data, and compile-time method gating. If that is the shape of your problem, the API stays small and the safety payoff is high.
@@ -91,7 +92,7 @@ Example: [statum-examples/src/toy_demos/example_01_setup.rs](statum-examples/src
 The syntax example above is small. The point is not the syntax. The point is
 that legal and illegal states stop looking the same in your API.
 
-The workflow shape becomes part of the type system instead of hiding in status
+The phase shape becomes part of the type system instead of hiding in status
 enums, optional fields, and comments:
 
 - `LightSwitch<Off>` and `LightSwitch<On>` are different types.
@@ -126,9 +127,16 @@ That avoids the common `missing fields marker and state_data` error.
 
 ## Mental Model
 
+Use Statum when pressing `.` before and after a phase change should show a
+meaningfully different method surface.
+
+Workflow machines are one important case. So are smaller staged surfaces where
+validation, resolution, or readiness should unlock a new set of legal
+operations. The current macro surface is machine-shaped:
+
 ```text
-#[state]      -> lifecycle phases
-#[machine]    -> durable machine context
+#[state]      -> named phases
+#[machine]    -> shared context carried across phases
 #[transition] -> legal edges between phases
 #[validators] -> typed rehydration from stored data
 ```
@@ -345,13 +353,16 @@ Use Statum when:
 
 - You care about representational correctness and want invalid, undesirable, or
   not-yet-validated states out of the core API.
-- Workflow order is stable and meaningful.
+- A value's phase should change what callers are allowed to do with it.
+- Workflow order, validation order, or resolution order is stable and meaningful.
 - Invalid transitions are expensive.
 - Available methods should change by phase.
 - Some data is only valid in specific states.
 
-Do not use Statum when:
+Skip Statum when:
 
+- The staging is private implementation detail inside one function or module.
+- The legal method surface barely changes across phases.
 - The workflow is highly ad hoc or user-authored.
 - The workflow is dominated by large runtime branching or dynamic graph edits.
 - States are still changing faster than the API around them.

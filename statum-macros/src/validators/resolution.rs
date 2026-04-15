@@ -1,7 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
-use std::collections::HashSet;
-use syn::{Ident, ItemImpl, Path, PathArguments};
+use syn::{Ident, Path, PathArguments};
 
 use crate::diagnostics::{DiagnosticMessage, compile_error_at, compact_display};
 use crate::source::{
@@ -14,10 +13,8 @@ use crate::{
     EnumInfo, LoadedMachineLookupFailure, LoadedStateLookupFailure, MachineInfo, MachinePath,
     StateModulePath, format_loaded_machine_candidates, format_loaded_state_candidates,
     lookup_loaded_machine_in_module, lookup_loaded_state_enum, lookup_loaded_state_enum_by_name,
-    lookup_unique_loaded_machine_by_name, to_snake_case,
+    lookup_unique_loaded_machine_by_name,
 };
-
-use super::signatures::validator_state_name_from_ident;
 
 pub(super) struct ValidatorMachineAttr {
     pub(super) machine_path: Path,
@@ -63,86 +60,6 @@ pub(super) fn resolve_validator_machine_attr(
         attr_display,
         path_kind,
     })
-}
-
-pub(super) fn validate_validator_coverage(
-    item: &ItemImpl,
-    state_enum: &EnumInfo,
-    persisted_type_display: &str,
-    machine_attr_display: &str,
-    machine_name: &str,
-) -> Result<(), proc_macro2::TokenStream> {
-    if item.items.is_empty() {
-        return Ok(());
-    }
-
-    let valid_state_names = state_enum
-        .variants
-        .iter()
-        .map(|variant| to_snake_case(&variant.name))
-        .collect::<HashSet<_>>();
-    let existing = item
-        .items
-        .iter()
-        .filter_map(|item| {
-            if let syn::ImplItem::Fn(func) = item {
-                validator_state_name_from_ident(&func.sig.ident)
-            } else {
-                None
-            }
-        })
-        .collect::<HashSet<_>>();
-    let unknown = existing
-        .iter()
-        .filter(|name| !valid_state_names.contains(*name))
-        .map(|name| format!("is_{name}"))
-        .collect::<Vec<_>>();
-
-    if !unknown.is_empty() {
-        let unknown_list = unknown.join(", ");
-        let state_enum_name = &state_enum.name;
-        let valid_list = state_enum
-            .variants
-            .iter()
-            .map(|variant| format!("is_{}", to_snake_case(&variant.name)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let message = DiagnosticMessage::new(format!(
-            "`#[validators({machine_attr_display})]` on `impl {persisted_type_display}` defines methods that do not match any variant in `{state_enum_name}`."
-        ))
-        .found(format!("unknown validator methods: `{unknown_list}`"))
-        .expected(format!("one `is_{{state}}` method per `{machine_name}` state: `{valid_list}`"))
-        .fix("rename or remove methods that do not correspond to a `#[state]` variant.".to_string());
-        return Err(compile_error_at(proc_macro2::Span::call_site(), &message));
-    }
-
-    let mut missing = Vec::new();
-    for variant in &state_enum.variants {
-        let variant_name = to_snake_case(&variant.name);
-        if !existing.contains(&variant_name) {
-            missing.push(variant_name);
-        }
-    }
-
-    if !missing.is_empty() {
-        let missing_list = missing
-            .iter()
-            .map(|name| format!("is_{name}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let state_enum_name = &state_enum.name;
-        let message = DiagnosticMessage::new(format!(
-            "`#[validators({machine_attr_display})]` on `impl {persisted_type_display}` is missing validator methods for `{state_enum_name}`."
-        ))
-        .found(format!("missing validator methods: `{missing_list}`"))
-        .expected(format!(
-            "one `is_{{state}}` method per `{state_enum_name}` variant"
-        ))
-        .fix("add one validator per state variant in snake_case, for example `fn is_draft(&self) -> Result<(), _>`.".to_string());
-        return Err(compile_error_at(proc_macro2::Span::call_site(), &message));
-    }
-
-    Ok(())
 }
 
 pub(super) fn resolve_machine_metadata(

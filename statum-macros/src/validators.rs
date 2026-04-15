@@ -27,7 +27,6 @@ use emission::{
 use plan::collect_validator_plan;
 use resolution::{
     resolve_machine_metadata, resolve_state_enum_info, resolve_validator_machine_attr,
-    validate_validator_coverage,
 };
 
 pub fn parse_validators(
@@ -72,7 +71,6 @@ pub fn parse_validators(
 
     let contract = build_validator_contract(
         &machine_attr,
-        machine_metadata.clone(),
         parsed_machine,
         &parsed_fields,
         state_enum_info,
@@ -88,17 +86,6 @@ pub fn parse_validators(
         persisted_type_display,
         machine_attr_display,
     } = contract;
-
-    let validator_coverage = match validate_validator_coverage(
-        &item_impl,
-        &state_enum.enum_info,
-        &persisted_type_display,
-        &machine_attr_display,
-        &resolved_machine.machine_name,
-    ) {
-        Ok(()) => quote! {},
-        Err(err) => return err.into(),
-    };
 
     let receiver = quote! { __statum_persisted };
     let emission_context = ValidatorCheckContext {
@@ -252,7 +239,6 @@ pub fn parse_validators(
     };
 
     let expanded = quote! {
-        #validator_coverage
         #machine_builder_impl
     };
 

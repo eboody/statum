@@ -1,10 +1,30 @@
 # Statum Opportunity Signals
 
-A strong Statum candidate is usually a noun with a stable phase vocabulary and
-operations that should change by phase.
+A strong Statum candidate is not just "has steps." It is a value whose phase
+should change what methods are legally available on that value.
+
+If you pressed `.` before and after a transition, and you would want to see a
+meaningfully different method surface, that is the right starting signal.
+
+Start with typestate as the umbrella idea:
+
+- smaller typestate surface or builder when validation, resolution, or
+  construction order should hide illegal calls
+- workflow machine when the value itself moves through durable runtime phases
 
 ## Strong Signals
 
+- the same struct or value goes through named phases and different phases
+  should expose different methods
+- callers could misuse methods by calling them in the wrong order
+- intermediate states escape a function or module and are interacted with
+  directly
+- the code is already simulating legal next steps with stage structs, enums,
+  helper names, or comments
+- phase-specific data is awkwardly modeled with `Option`, booleans, or
+  defensive checks because it is only valid in some states
+- branching legal paths would read better as distinct typed transitions or
+  wrappers
 - a finite lifecycle already exists in code or product language, such as
   `Draft`, `InReview`, `Published`, `Queued`, `Running`, or `Failed`
 - repeated status checks across handlers, jobs, or services:
@@ -33,6 +53,10 @@ operations that should change by phase.
 
 ## Weak or Negative Signals
 
+- the code is plain linear orchestration, and the intermediate values are
+  private locals rather than a real API surface
+- a wrapper would mostly narrate a story without removing meaningful illegal
+  calls from `.` completion
 - the workflow is user-authored, graph-shaped, or plugin-defined
 - states are still being renamed or reordered constantly
 - the status is mainly for reporting, filtering, or analytics
@@ -45,34 +69,36 @@ operations that should change by phase.
 
 Ask these questions before recommending Statum:
 
-1. Are there finite named phases?
-2. Are illegal transitions expensive or noisy in production?
-3. Should available methods change by phase?
+1. Should the value's legal method surface change by phase?
+2. Would callers misuse methods by calling them in the wrong order today?
+3. Do intermediate states escape and get interacted with directly?
 4. Does some data only exist in specific phases?
-5. Is the lifecycle stable enough to codify now?
-6. Is there a rebuild path from rows or event streams?
-7. Does a parent workflow own a child lifecycle worth modeling separately?
+5. Are there finite named phases?
+6. Is the lifecycle stable enough to codify now?
+7. Is there a rebuild path from rows or event streams?
+8. Does a parent workflow own a child lifecycle worth modeling separately?
 
-Three or more strong "yes" answers usually justify a deeper pass. One or two
-answers usually mean "keep runtime validation for now."
+Four or more strong "yes" answers usually justify a deeper pass. One or two
+answers usually mean "keep runtime validation or plain local staging for now."
 
 ## Map the Candidate to Statum
 
-- staged entity -> `#[machine]`
-- lifecycle phases -> `#[state]`
-- durable shared context -> machine fields
-- phase-only payloads -> state data
-- legal edges -> `#[transition]` impl blocks
-- owned subflow -> nested machine as state data
-- governance or approval flow -> separate machine if it changes legal actions
-- row rebuilds -> `#[validators]`
-- append-only event logs -> `statum::projection` first, then `#[validators]`
+- if the value lives through durable runtime phases -> `#[machine]` +
+  `#[state]` + `#[transition]`
+- if the pressure is staged reconstruction from persisted facts ->
+  `#[validators]`
+- if append-only events are the source of truth -> `statum::projection` first,
+  then `#[validators]`
+- if the only real problem is staged construction with private locals -> leave
+  it alone or use a smaller typestate surface before reaching for a full
+  machine
 
 ## Evidence Agents Should Cite
 
 When an agent recommends Statum, it should point to:
 
 - the current files and symbols that encode the lifecycle
+- why the method surface should differ by phase
 - duplicated guard logic or invalid transition checks
 - the methods that should disappear outside a specific phase
 - the current state-specific data or optional fields

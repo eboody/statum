@@ -4,7 +4,7 @@ use crate::{PresentationAttr, parse_present_attrs, strip_present_attrs};
 use proc_macro2::{Span, TokenStream};
 use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
-use syn::{Block, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, ReturnType, Type};
+use syn::{FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, ReturnType, Type};
 
 #[allow(unused)]
 pub struct TransitionFn {
@@ -17,10 +17,6 @@ pub struct TransitionFn {
     pub return_type_span: Option<Span>,
     pub machine_name: String,
     pub source_state: String,
-    pub generics: Vec<Ident>,
-    pub internals: Block,
-    pub is_async: bool,
-    pub vis: syn::Visibility,
     pub span: proc_macro2::Span,
 }
 
@@ -91,22 +87,6 @@ fn parse_transition_fn(
         ReturnType::Default => None,
     };
 
-    let generics = method
-        .sig
-        .generics
-        .params
-        .iter()
-        .filter_map(|param| {
-            if let syn::GenericParam::Type(type_param) = param {
-                Some(type_param.ident.clone())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    let is_async = method.sig.asyncness.is_some();
-
     Ok(TransitionFn {
         name: method.sig.ident.clone(),
         attrs: method.attrs.clone(),
@@ -118,10 +98,6 @@ fn parse_transition_fn(
         return_type_span,
         machine_name: machine_name.to_owned(),
         source_state: source_state.to_owned(),
-        generics,
-        internals: method.block.clone(),
-        is_async,
-        vis: method.vis.to_owned(),
         span: method.span(),
     })
 }

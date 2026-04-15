@@ -105,11 +105,3 @@ pub fn format_loaded_state_candidates(candidates: &[EnumInfo]) -> String {
 pub fn store_state_enum(enum_info: &EnumInfo) {
     upsert_loaded_state(enum_info);
 }
-
-#[allow(dead_code)]
-pub fn loaded_state_registry_snapshot() -> Vec<EnumInfo> {
-    let Ok(states) = loaded_state_enums().read() else {
-        return Vec::new();
-    };
-    states.clone()
-}

@@ -19,6 +19,7 @@ use self::diagnostics::{
 };
 use self::contract::build_transition_contract;
 use self::parse::TransitionImpl;
+use crate::contracts::TransitionContract;
 use crate::diagnostics::DiagnosticMessage;
 use crate::MachineInfo;
 use proc_macro2::TokenStream;
@@ -27,7 +28,7 @@ use syn::spanned::Spanned;
 pub fn validate_transition_functions(
     tr_impl: &TransitionImpl,
     machine_info: &MachineInfo,
-) -> Option<TokenStream> {
+) -> Result<Vec<TransitionContract>, TokenStream> {
     if tr_impl.functions.is_empty() {
         let message = DiagnosticMessage::new(format!(
             "`#[transition]` impl for `{}<{}>` must contain at least one transition method.",
@@ -41,19 +42,16 @@ pub fn validate_transition_functions(
         ))
         .fix("add at least one method that consumes `self` and returns the next `#[machine]` state.")
         .render();
-        return Some(compile_error_at(tr_impl.target_type.span(), &message));
+        return Err(compile_error_at(tr_impl.target_type.span(), &message));
     }
 
-    let state_enum_info = match machine_info.get_matching_state_enum() {
-        Ok(enum_info) => enum_info,
-        Err(err) => return Some(err),
-    };
+    let state_enum_info = machine_info.get_matching_state_enum()?;
 
     if state_enum_info
         .get_variant_from_name(&tr_impl.source_state)
         .is_none()
     {
-        return Some(invalid_transition_state_error(
+        return Err(invalid_transition_state_error(
             tr_impl.source_state_span,
             &tr_impl.machine_name,
             &tr_impl.source_state,
@@ -62,6 +60,7 @@ pub fn validate_transition_functions(
         ));
     }
 
+    let mut contracts = Vec::with_capacity(tr_impl.functions.len());
     for func in &tr_impl.functions {
         if !func.has_receiver {
             let message = DiagnosticMessage::new(format!(
@@ -74,16 +73,13 @@ pub fn validate_transition_functions(
             .expected(format!("`fn {}(self) -> {}`", func.name, machine_return_signature(&tr_impl.machine_name)))
             .fix("change the method receiver to `self` or `mut self`.".to_string())
             .render();
-            return Some(compile_error_at(func.span, &message));
+            return Err(compile_error_at(func.span, &message));
         }
 
-        let contract = match build_transition_contract(func, &tr_impl.target_type) {
-            Ok(contract) => contract,
-            Err(err) => return Some(err),
-        };
+        let contract = build_transition_contract(func, &tr_impl.target_type)?;
         for return_state in contract.all_next_states() {
             if state_enum_info.get_variant_from_name(return_state).is_none() {
-                return Some(invalid_transition_method_state_error(
+                return Err(invalid_transition_method_state_error(
                     func,
                     &tr_impl.machine_name,
                     return_state,
@@ -91,7 +87,8 @@ pub fn validate_transition_functions(
                 ));
             }
         }
+        contracts.push(contract);
     }
 
-    None
+    Ok(contracts)
 }

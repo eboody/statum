@@ -25,12 +25,8 @@ pub(super) fn build_transition_contract(
 ) -> Result<TransitionContract, TokenStream> {
     let return_contract = validate_transition_return_contract(func, target_type)?;
     Ok(TransitionContract {
-        machine_name: func.machine_name.clone(),
-        source_state_name: func.source_state.clone(),
         primary_next_state: return_contract.primary_next_state,
         next_states: return_contract.next_states,
-        strict_introspection: return_contract.strict_introspection,
-        written_return_type: func.return_type.as_ref().map(compact_display),
     })
 }
 
@@ -149,7 +145,6 @@ pub(super) fn describe_mismatched_introspect_return(
 struct ValidatedTransitionReturnContract {
     primary_next_state: String,
     next_states: Vec<String>,
-    strict_introspection: bool,
 }
 
 fn validate_transition_return_contract(
@@ -192,7 +187,6 @@ fn validate_transition_return_contract(
         return Ok(ValidatedTransitionReturnContract {
             primary_next_state: introspection_targets.primary_next_state,
             next_states: introspection_targets.next_states,
-            strict_introspection: true,
         });
     }
 
@@ -213,7 +207,6 @@ fn validate_transition_return_contract(
     Ok(ValidatedTransitionReturnContract {
         primary_next_state: targets.primary_next_state,
         next_states: targets.next_states,
-        strict_introspection,
     })
 }
 

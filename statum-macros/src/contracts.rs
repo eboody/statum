@@ -4,12 +4,11 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Generics, Ident, Path, Type};
 
-use crate::machine::{MachineInfo, ParsedMachineInfo, extra_type_arguments_tokens};
+use crate::machine::{ParsedMachineInfo, extra_type_arguments_tokens};
 use crate::{EnumInfo, VariantInfo};
 
 #[derive(Clone)]
 pub(crate) struct StateEnumContract {
-    pub(crate) enum_info: EnumInfo,
     pub(crate) name: String,
     pub(crate) variants: Vec<VariantInfo>,
 }
@@ -19,15 +18,12 @@ impl From<EnumInfo> for StateEnumContract {
         Self {
             name: enum_info.name.clone(),
             variants: enum_info.variants.clone(),
-            enum_info,
         }
     }
 }
 
 #[derive(Clone)]
 pub(crate) struct ResolvedMachineRef {
-    #[allow(dead_code)]
-    pub(crate) machine_info: MachineInfo,
     pub(crate) parsed_machine: ParsedMachineInfo,
     pub(crate) machine_ident: Ident,
     pub(crate) machine_name: String,
@@ -41,7 +37,7 @@ pub(crate) struct ResolvedMachineRef {
 impl ResolvedMachineRef {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        machine_info: MachineInfo,
+        machine_name: String,
         parsed_machine: ParsedMachineInfo,
         machine_ident: Ident,
         machine_path: Path,
@@ -53,8 +49,7 @@ impl ResolvedMachineRef {
         let machine_state_ty = quote! { #machine_module_path::SomeState #machine_extra_ty_args };
 
         Self {
-            machine_name: machine_info.name.clone(),
-            machine_info,
+            machine_name,
             parsed_machine,
             machine_ident,
             machine_path,
@@ -70,15 +65,10 @@ impl ResolvedMachineRef {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Clone)]
 pub(crate) struct TransitionContract {
-    pub(crate) machine_name: String,
-    pub(crate) source_state_name: String,
     pub(crate) primary_next_state: String,
     pub(crate) next_states: Vec<String>,
-    pub(crate) strict_introspection: bool,
-    pub(crate) written_return_type: Option<String>,
 }
 
 impl TransitionContract {

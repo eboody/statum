@@ -1,14 +1,34 @@
 # Typestate Builder Design Playbook (Rust + Statum)
 
-If there are particular stages that an abstract entity goes through, and there is meaningful ordering between those stages, you should strongly consider typestate.
+The lead rule is simple: a value is a good typestate candidate when its phase
+should change what methods are legally available on that value.
 
-That sentence is the center of this guide.
+If you pressed `.` before and after a transition, and you would want to see a
+meaningfully different method surface, typestate is probably worth
+considering.
 
-Typestate models states, but its main job here is to encode protocol rules in the API so illegal flows do not type-check. In Rust, that can remove entire bug classes before tests run.
+That is the center of this guide.
+
+Typestate models states, but its main job here is to encode protocol rules in
+the API so illegal flows don't type-check. In Rust, that can remove entire
+bug classes before tests run.
+
+Two common shapes matter here:
+
+- Typestate builder or surface: `Raw -> Validated -> Resolved -> Built`.
+  Construction, validation, or readiness changes the legal method surface.
+- Typestate workflow or machine: the value itself moves through durable
+  operational phases that callers interact with over time.
+
+Workflows are the narrower case. Start with the method-surface question first,
+then decide whether the result wants a smaller staged surface or a durable
+workflow machine.
 
 This playbook is opinionated:
 
-- Default to typestate for stable, protocol-heavy workflows.
+- Default to typestate when the phase boundary should change the legal API
+  surface.
+- Prefer the smallest shape that makes the method story legible.
 - Keep runtime validation for highly dynamic edges.
 - Be explicit about boundaries so complexity stays proportional.
 
@@ -25,11 +45,30 @@ The quality bar for this approach is not only correctness. A good typestate desi
 
 Use this guide when you are asking:
 
-- "Should this domain be a typestate machine?"
+- "Should this domain be a typestate surface at all?"
+- "Is this better as a validated/resolved wrapper, a builder-like surface, or a
+  durable workflow machine?"
 - "How do I design the states cleanly before writing methods?"
 - "How do I map the design into Statum macros without fighting the model?"
+- "When is a plain private function with locals enough?"
 
 The workflow below is intentionally practical. You can run it on a whiteboard first, then implement.
+
+## Step 0: Pick The Typestate Shape
+
+Before you draw states, decide what kind of typestate problem this is.
+
+- Typestate builder or surface:
+  construction, validation, or resolution should unlock new methods and hide
+  earlier ones.
+- Typestate workflow or machine:
+  the value itself lives through durable runtime phases, and callers interact
+  with those phases directly.
+- Plain functions with locals:
+  the intermediate values stay private, the legal surface barely changes, or
+  the staging only exists to make one function easier to read.
+
+Reach for the smallest shape that makes illegal calls disappear from the API.
 
 ## Canonical Running Example
 
@@ -45,11 +84,11 @@ The exact domain is less important than the structure:
 - clear legal transitions,
 - state-specific behavior and data.
 
-## Step 1: Identify the Staged Entity
+## Step 1: Identify the Staged Value
 
 ### What to do
 
-Name the thing that changes phase over time. Use a noun, not a verb.
+Name the thing whose legal surface changes over time. Use a noun, not a verb.
 
 Good examples:
 
@@ -57,16 +96,21 @@ Good examples:
 - `Payment`
 - `Job`
 - `Deployment`
+- `SiteContent`
 
 Then write the sequence as plain language first:
 
 - "A document starts in draft."
 - "Draft can be submitted for review."
 - "Only reviewed documents can be published."
+- "Raw site content can be validated."
+- "Only validated content can resolve links."
 
 ### Why it matters
 
-If you cannot describe the lifecycle in plain language, you are not ready to encode it in types. Typestate mirrors conceptual protocol, not accidental implementation details.
+If you cannot describe the phase changes in plain language, you are not ready
+to encode them in types. Typestate mirrors conceptual protocol, not accidental
+implementation details.
 
 This is primarily a readability and expressiveness checkpoint. If humans cannot explain the lifecycle simply, the type system should not be asked to encode it yet.
 
@@ -82,7 +126,10 @@ Before moving on, force clear yes/no answers:
 2. Is transition legality mostly protocol-driven, not user-authored?
 3. Would an illegal transition be expensive (money, trust, compliance, or recovery time)?
 
-If you answer "no" to two or more, this may be a runtime-validation domain instead of a full typestate domain.
+4. Would the visible method surface change enough that callers should notice?
+
+If you answer "no" to two or more, this may be a runtime-validation domain
+instead of a typestate domain.
 
 ## Step 2: Enumerate States Before Methods
 
@@ -539,12 +586,14 @@ Before implementing, run this compact checklist:
 4. Do methods differ by state in a meaningful way?
 5. Does some data become valid/required only in specific states?
 6. Is this lifecycle stable enough to justify type-level encoding?
+7. Would a plain private function with locals lose important API guarantees
+   because intermediate values escape and get used directly?
 
 Interpretation:
 
-- 5-6 yes: strong typestate candidate.
-- 3-4 yes: likely hybrid.
-- 0-2 yes: runtime model likely better.
+- 6-7 yes: strong typestate candidate.
+- 4-5 yes: likely hybrid.
+- 0-3 yes: runtime model likely better.
 
 Escalation guidance:
 
@@ -590,6 +639,10 @@ Quality acceptance check:
 ### What to do
 
 Use builder-style construction for assembling input/context, and `statum` for enforcing protocol legality.
+
+If the only real pressure is staged construction or validation, a smaller
+typestate surface may be enough. Reach for a full machine when the value keeps
+living through meaningful runtime phases after construction.
 
 Guideline:
 
@@ -720,9 +773,12 @@ Use these to sanity-check your instincts:
    - high correctness and compliance cost, clear legal edges.
 2. Strong fit: content workflow (`Draft -> Review -> Publish`)
    - state-specific behavior and data are obvious.
-3. Hybrid fit: onboarding with feature flags and experimentation
+3. Strong fit: validated or resolved content surface
+   - later phases should expose rendering, persistence, or outbound methods
+     that raw input should not have.
+4. Hybrid fit: onboarding with feature flags and experimentation
    - stable high-level phases, dynamic branch logic.
-4. Weak fit: user-configurable workflow builder
+5. Weak fit: user-configurable workflow builder
    - transition graph defined at runtime by users/plugins.
 
 ## Practical Migration Path

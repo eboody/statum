@@ -1,13 +1,17 @@
 # Start Here
 
-If you are evaluating Statum from the outside, do not read the repo front to
+If you are evaluating Statum from the outside, don't read the repo front to
 back. Use this short path instead.
 
-Keep one question in mind while reading: does this workflow have legal states
-that should be impossible to misrepresent in code?
+Keep one question in mind while reading: does this value's phase need to change
+what methods are legally available on it?
 
 Statum is for cases where invalid, undesirable, or not-yet-validated states
 should not survive as ordinary values in your core API.
+
+That often looks like a durable workflow. It can also be a smaller validated,
+resolved, or build-ready surface where later phases should expose different
+operations than earlier ones.
 
 ## 1. Read The README Quick Start
 
@@ -38,7 +42,7 @@ the next feature only when the workflow needs it:
 
 Then read [case-study-event-log-rebuild.md](case-study-event-log-rebuild.md).
 
-That is the strongest Statum story in this repo:
+That is the strongest durable-workflow story in this repo:
 
 - append-only events
 - projection into row-like snapshots
@@ -69,7 +73,8 @@ Use the focused docs rather than reading everything:
 - [Patterns and guidance](patterns.md)
 - [Migration guide](migration.md) if you are upgrading an older Statum codebase
 - [Typestate builder design playbook](typestate-builder-design-playbook.md) if
-  you are deciding whether a workflow is a good fit
+  you are deciding whether you need a typestate surface at all, and whether it
+  should be a smaller staged surface or a durable workflow machine
 
 ## 6. Use The Agent Kit Only If It Matches Your Workflow
 

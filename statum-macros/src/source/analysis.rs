@@ -25,22 +25,12 @@ pub struct TypeAliasEntry {
     pub line_number: usize,
 }
 
-/// Impl entry extracted from a parsed source file.
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct ImplEntry {
-    pub item: syn::ItemImpl,
-    pub line_number: usize,
-    pub attrs: Vec<String>,
-}
-
-/// Parsed representation of enums, structs, and impls in one source file.
+/// Parsed representation of enums, structs, and type aliases in one source file.
 #[derive(Clone, Default)]
 pub struct FileAnalysis {
     pub enums: Vec<EnumEntry>,
     pub structs: Vec<StructEntry>,
     pub type_aliases: Vec<TypeAliasEntry>,
-    pub impls: Vec<ImplEntry>,
 }
 
 #[derive(Default)]
@@ -48,7 +38,6 @@ struct DeclarationLines {
     enums: VecDeque<usize>,
     structs: VecDeque<usize>,
     type_aliases: VecDeque<usize>,
-    impls: VecDeque<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -111,13 +100,6 @@ fn collect_items(
                     item: item_type,
                 });
             }
-            syn::Item::Impl(item_impl) => {
-                analysis.impls.push(ImplEntry {
-                    attrs: attribute_names(&item_impl.attrs),
-                    line_number: lines.impls.pop_front()?,
-                    item: item_impl,
-                });
-            }
             syn::Item::Mod(item_mod) => {
                 if let Some((_, nested_items)) = item_mod.content {
                     collect_items(nested_items, analysis, lines)?;
@@ -147,7 +129,6 @@ fn scan_declaration_lines(content: &str) -> DeclarationLines {
                     "enum" => lines.enums.push_back(token.line),
                     "struct" => lines.structs.push_back(token.line),
                     "type" => lines.type_aliases.push_back(token.line),
-                    "impl" => lines.impls.push_back(token.line),
                     "mod" => {
                         if matches!(
                             tokens.get(index + 1),
@@ -604,10 +585,8 @@ impl MyMachine<MyState> {
         let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
         assert_eq!(analysis.enums.len(), 1);
         assert_eq!(analysis.structs.len(), 1);
-        assert_eq!(analysis.impls.len(), 1);
         assert_eq!(analysis.enums[0].line_number, 3);
         assert_eq!(analysis.structs[0].line_number, 8);
-        assert_eq!(analysis.impls[0].line_number, 12);
 
         let _ = fs::remove_file(path);
     }
@@ -659,37 +638,8 @@ mod workflow {
         let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
         assert_eq!(analysis.enums.len(), 1);
         assert_eq!(analysis.structs.len(), 1);
-        assert_eq!(analysis.impls.len(), 0);
         assert_eq!(analysis.enums[0].item.ident, "TaskState");
         assert_eq!(analysis.structs[0].item.ident, "TaskMachine");
-
-        let _ = fs::remove_file(path);
-    }
-
-    #[test]
-    fn collects_impl_blocks_from_inline_modules() {
-        let path = write_temp_rust_file(
-            r#"
-mod workflow {
-    #[transition]
-    impl Machine<State> {
-        fn run(self) -> Self {
-            self
-        }
-    }
-}
-"#,
-        );
-
-        let analysis = build_file_analysis(path.to_str().expect("path")).expect("analysis");
-        assert_eq!(analysis.impls.len(), 1);
-        assert!(
-            analysis.impls[0]
-                .attrs
-                .iter()
-                .any(|attr| attr == "transition")
-        );
-        assert_eq!(analysis.impls[0].line_number, 4);
 
         let _ = fs::remove_file(path);
     }
@@ -855,11 +805,6 @@ struct Real<State> {
                 vec![17],
                 "struct lines for {label} delimiter"
             );
-            assert_eq!(
-                lines.impls.into_iter().collect::<Vec<_>>(),
-                vec![19],
-                "impl lines for {label} delimiter"
-            );
         }
     }
 
@@ -897,6 +842,5 @@ mod beta {
 
         assert_eq!(lines.enums.into_iter().collect::<Vec<_>>(), vec![17]);
         assert_eq!(lines.structs.into_iter().collect::<Vec<_>>(), vec![21]);
-        assert_eq!(lines.impls.into_iter().collect::<Vec<_>>(), vec![23]);
     }
 }
