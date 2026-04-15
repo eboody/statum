@@ -1,6 +1,7 @@
 //! `#[validators]` subsystem: resolve target machines, validate signatures, and emit rebuild helpers.
 
 use quote::{ToTokens, format_ident, quote};
+use std::marker::PhantomData;
 use syn::{ImplItem, ItemImpl, Path};
 
 use crate::contracts::ValidatorContract;
@@ -29,26 +30,36 @@ use resolution::{
     resolve_machine_metadata, resolve_state_enum_info, resolve_validator_machine_attr,
 };
 
+use self::contract::ValidatorPlan;
+
 pub fn parse_validators(
     attr: proc_macro::TokenStream,
     item_impl: ItemImpl,
     module_path: &str,
 ) -> proc_macro::TokenStream {
-    ParsedValidatorsExpansion::parse(attr, item_impl, module_path)
-        .and_then(ParsedValidatorsExpansion::resolve)
-        .and_then(ResolvedValidatorsExpansion::plan)
-        .map(PlannedValidatorsExpansion::emit)
+    ValidatorsExpansionBuilder::<ParsedValidatorsPhase>::parse(attr, item_impl, module_path)
+        .and_then(ValidatorsExpansionBuilder::<ParsedValidatorsPhase>::resolve)
+        .and_then(ValidatorsExpansionBuilder::<ResolvedValidatorsPhase>::plan)
+        .map(ValidatorsExpansionBuilder::<PlannedValidatorsPhase>::emit)
         .unwrap_or_else(Into::into)
 }
 
-struct ParsedValidatorsExpansion {
+struct ParsedValidatorsPhase;
+struct ResolvedValidatorsPhase;
+struct PlannedValidatorsPhase;
+
+struct ValidatorsExpansionBuilder<State> {
     item_impl: ItemImpl,
     machine_path: Path,
     persisted_type_display: String,
     module_path: String,
+    modified_methods: Vec<ImplItem>,
+    contract: Option<ValidatorContract>,
+    validator_plan: Option<ValidatorPlan>,
+    _state: PhantomData<State>,
 }
 
-impl ParsedValidatorsExpansion {
+impl ValidatorsExpansionBuilder<ParsedValidatorsPhase> {
     fn parse(
         attr: proc_macro::TokenStream,
         item_impl: ItemImpl,
@@ -61,10 +72,14 @@ impl ParsedValidatorsExpansion {
             machine_path,
             persisted_type_display,
             module_path: module_path.to_string(),
+            modified_methods: Vec::new(),
+            contract: None,
+            validator_plan: None,
+            _state: PhantomData,
         })
     }
 
-    fn resolve(self) -> Result<ResolvedValidatorsExpansion, proc_macro2::TokenStream> {
+    fn resolve(self) -> Result<ValidatorsExpansionBuilder<ResolvedValidatorsPhase>, proc_macro2::TokenStream> {
         let machine_attr = resolve_validator_machine_attr(&self.module_path, &self.machine_path)?;
         let machine_metadata = resolve_machine_metadata(&self.module_path, &machine_attr)?;
         let parsed_machine = machine_metadata.parse()?;
@@ -87,42 +102,46 @@ impl ParsedValidatorsExpansion {
             &self.persisted_type_display,
         );
 
-        Ok(ResolvedValidatorsExpansion {
+        Ok(ValidatorsExpansionBuilder {
             item_impl: self.item_impl,
             machine_path: self.machine_path,
+            persisted_type_display: self.persisted_type_display,
+            module_path: self.module_path,
             modified_methods,
-            contract,
+            contract: Some(contract),
+            validator_plan: None,
+            _state: PhantomData,
         })
     }
 }
 
-struct ResolvedValidatorsExpansion {
-    item_impl: ItemImpl,
-    machine_path: Path,
-    modified_methods: Vec<ImplItem>,
-    contract: ValidatorContract,
-}
-
-impl ResolvedValidatorsExpansion {
-    fn plan(self) -> Result<PlannedValidatorsExpansion, proc_macro2::TokenStream> {
+impl ValidatorsExpansionBuilder<ResolvedValidatorsPhase> {
+    fn plan(self) -> Result<ValidatorsExpansionBuilder<PlannedValidatorsPhase>, proc_macro2::TokenStream> {
+        let contract = self.contract.as_ref().ok_or_else(|| {
+            compile_error_at(
+                proc_macro2::Span::call_site(),
+                &DiagnosticMessage::new(
+                    "internal Statum error: `#[validators]` pipeline reached planning without a resolved validator contract.",
+                ),
+            )
+        })?;
         let has_any_methods = self
             .item_impl
             .items
             .iter()
             .any(|item| matches!(item, syn::ImplItem::Fn(_)));
         if !has_any_methods {
-            let expected_methods = self
-                .contract
+            let expected_methods = contract
                 .state_enum
                 .variants
                 .iter()
                 .map(|variant| format!("is_{}", crate::to_snake_case(&variant.name)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let state_enum_name = self.contract.state_enum.name.clone();
+            let state_enum_name = contract.state_enum.name.clone();
             let message = DiagnosticMessage::new(format!(
                 "`#[validators({})]` on `impl {}` must define at least one validator method.",
-                self.contract.machine_attr_display, self.contract.persisted_type_display,
+                contract.machine_attr_display, contract.persisted_type_display,
             ))
             .expected(format!(
                 "one method per `{state_enum_name}` variant: `{expected_methods}`"
@@ -131,35 +150,54 @@ impl ResolvedValidatorsExpansion {
             return Err(compile_error_at(proc_macro2::Span::call_site(), &message));
         }
 
-        let validator_plan = collect_validator_plan(&self.item_impl, &self.contract)?;
-        Ok(PlannedValidatorsExpansion {
+        let validator_plan = collect_validator_plan(&self.item_impl, contract)?;
+        Ok(ValidatorsExpansionBuilder {
             item_impl: self.item_impl,
             machine_path: self.machine_path,
+            persisted_type_display: self.persisted_type_display,
+            module_path: self.module_path,
             modified_methods: self.modified_methods,
             contract: self.contract,
-            validator_plan,
+            validator_plan: Some(validator_plan),
+            _state: PhantomData,
         })
     }
 }
 
-struct PlannedValidatorsExpansion {
-    item_impl: ItemImpl,
-    machine_path: Path,
-    modified_methods: Vec<ImplItem>,
-    contract: ValidatorContract,
-    validator_plan: contract::ValidatorPlan,
-}
-
-impl PlannedValidatorsExpansion {
+impl ValidatorsExpansionBuilder<PlannedValidatorsPhase> {
     fn emit(self) -> proc_macro::TokenStream {
         let struct_ident = &self.item_impl.self_ty;
         let machine_path = &self.machine_path;
         let modified_methods = &self.modified_methods;
+        let contract = match self.contract {
+            Some(contract) => contract,
+            None => {
+                return compile_error_at(
+                    proc_macro2::Span::call_site(),
+                    &DiagnosticMessage::new(
+                        "internal Statum error: planned `#[validators]` pipeline reached emission without a resolved validator contract.",
+                    ),
+                )
+                .into();
+            }
+        };
+        let validator_plan = match self.validator_plan {
+            Some(validator_plan) => validator_plan,
+            None => {
+                return compile_error_at(
+                    proc_macro2::Span::call_site(),
+                    &DiagnosticMessage::new(
+                        "internal Statum error: planned `#[validators]` pipeline reached emission without a validator plan.",
+                    ),
+                )
+                .into();
+            }
+        };
         let ValidatorContract {
             resolved_machine,
             state_enum,
             ..
-        } = self.contract;
+        } = contract;
 
         let receiver = quote! { __statum_persisted };
         let emission_context = ValidatorCheckContext {
@@ -170,21 +208,19 @@ impl PlannedValidatorsExpansion {
             receiver: &receiver,
         };
 
-        let validator_checks = self
-            .validator_plan
+        let validator_checks = validator_plan
             .methods
             .iter()
             .map(|method| generate_validator_check(&emission_context, method))
             .collect::<Vec<_>>();
-        let validator_report_checks = self
-            .validator_plan
+        let validator_report_checks = validator_plan
             .methods
             .iter()
             .map(|method| generate_validator_report_check(&emission_context, method))
             .collect::<Vec<_>>();
 
         let machine_vis = resolved_machine.parsed_machine.vis.clone();
-        let async_token = if self.validator_plan.has_async {
+        let async_token = if validator_plan.has_async {
             quote! { async }
         } else {
             quote! {}
