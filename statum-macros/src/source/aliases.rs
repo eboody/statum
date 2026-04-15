@@ -1,3 +1,9 @@
+//! Source-backed type-alias expansion for transition and validator resolution.
+//!
+//! This module owns the expensive "read local alias declarations and expand them against the
+//! current source/module context" behavior. Other macro subsystems should call through the
+//! `source` facade instead of reconstructing alias lookup rules themselves.
+
 use proc_macro2::Span;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;

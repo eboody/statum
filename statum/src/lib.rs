@@ -1,7 +1,7 @@
-//! Compile-time verified typestate workflows for Rust.
+//! Compile-time verified typestate surfaces for Rust.
 //!
-//! Statum is for workflow and protocol models where representational
-//! correctness matters. It helps keep invalid, undesirable, or not-yet-
+//! Statum is for values whose phase should change what methods are legally
+//! available on that value. It helps keep invalid, undesirable, or not-yet-
 //! validated states out of ordinary code.
 //! In the same spirit as [`Option`] and [`Result`], it uses the type system to
 //! make absence, failure, and workflow legality explicit instead of leaving
@@ -9,6 +9,13 @@
 //! typed machines, transition helpers, and typed rehydration from stored data.
 //!
 //! # Mental Model
+//!
+//! Use Statum when pressing `.` before and after a phase change should show a
+//! meaningfully different method surface.
+//!
+//! Durable workflows and protocols are one strong fit. Staged validation,
+//! resolution, and build surfaces are another. The current macro surface is
+//! machine-shaped:
 //!
 //! - [`state`](macro@state) defines the legal phases.
 //! - [`machine`](macro@machine) defines the durable context carried across phases.

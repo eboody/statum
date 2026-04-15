@@ -1,4 +1,8 @@
-//! Source observation facade for file, module, and candidate facts used by the macros.
+//! Source observation facade for file, module, candidate, and source-alias facts used by the macros.
+//!
+//! This is the only subsystem that should know how to reconstruct source-backed module context
+//! or expand local type aliases. Semantic resolution layers should depend on this facade rather
+//! than re-deriving those rules themselves.
 
 mod aliases;
 mod analysis;

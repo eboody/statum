@@ -3,6 +3,7 @@ use syn::{GenericParam, Generics, Ident, ImplItem, ImplItemFn, Path, Type};
 
 use crate::machine::{
     builder_generics, extra_generics, extra_type_arguments_tokens, generic_argument_tokens,
+    machine_type_with_state,
 };
 
 use super::contract::{ValidatorMethodContract, ValidatorReturnKind};
@@ -25,6 +26,47 @@ pub(super) struct ValidatorCheckContext<'a> {
     pub(super) machine_generics: &'a Generics,
     pub(super) field_names: &'a [Ident],
     pub(super) receiver: &'a proc_macro2::TokenStream,
+}
+
+pub(super) struct ValidatorBuilderSurfaceContext<'a> {
+    pub(super) machine_ident: &'a Ident,
+    pub(super) machine_path: &'a Path,
+    pub(super) machine_module_path: &'a Path,
+    pub(super) machine_generics: &'a Generics,
+    pub(super) struct_ident: &'a Type,
+    pub(super) state_enum_name: &'a str,
+    pub(super) machine_state_ty: &'a proc_macro2::TokenStream,
+    pub(super) field_names: &'a [Ident],
+    pub(super) field_types: &'a [Type],
+    pub(super) validator_checks: &'a [proc_macro2::TokenStream],
+    pub(super) validator_report_checks: &'a [proc_macro2::TokenStream],
+    pub(super) modified_methods: &'a [ImplItem],
+    pub(super) async_token: &'a proc_macro2::TokenStream,
+    pub(super) machine_vis: &'a syn::Visibility,
+}
+
+struct IntoMachineBuilderContext<'a> {
+    builder_ident: &'a Ident,
+    struct_ident: &'a Type,
+    machine_generics: &'a Generics,
+    machine_state_ty: &'a proc_macro2::TokenStream,
+    field_names: &'a [Ident],
+    field_types: &'a [Type],
+    validator_checks: &'a [proc_macro2::TokenStream],
+    validator_report_checks: &'a [proc_macro2::TokenStream],
+    async_token: &'a proc_macro2::TokenStream,
+    machine_vis: &'a syn::Visibility,
+}
+
+struct SlotSetterContext<'a> {
+    builder_ident: &'a Ident,
+    machine_vis: &'a syn::Visibility,
+    extra_machine_generics: &'a Generics,
+    field_names: &'a [Ident],
+    field_types: &'a [Type],
+    slot_state_idents: &'a [Ident],
+    slot_storage_idents: &'a [Ident],
+    row_lifetime: Option<proc_macro2::TokenStream>,
 }
 
 pub(super) fn generate_validator_check(
@@ -176,6 +218,206 @@ pub(super) fn generate_validator_report_check(
     }
 }
 
+pub(super) fn validator_builder_surface(
+    context: ValidatorBuilderSurfaceContext<'_>,
+) -> proc_macro2::TokenStream {
+    let into_machine_builder_ident =
+        format_ident!("__Statum{}IntoMachine", context.machine_ident);
+    let into_machines_builder_ident =
+        format_ident!("__Statum{}IntoMachines", context.machine_ident);
+    let into_machine_builder_impl = generate_into_machine_builder(IntoMachineBuilderContext {
+        builder_ident: &into_machine_builder_ident,
+        struct_ident: context.struct_ident,
+        machine_generics: context.machine_generics,
+        machine_state_ty: context.machine_state_ty,
+        field_names: context.field_names,
+        field_types: context.field_types,
+        validator_checks: context.validator_checks,
+        validator_report_checks: context.validator_report_checks,
+        async_token: context.async_token,
+        machine_vis: context.machine_vis,
+    });
+    let batch_builder_impl = batch_builder_implementation(BatchBuilderContext {
+        machine_ident: context.machine_ident,
+        machine_module_path: context.machine_module_path,
+        machine_generics: context.machine_generics,
+        struct_ident: context.struct_ident,
+        machine_state_ty: context.machine_state_ty,
+        field_names: context.field_names,
+        field_types: context.field_types,
+        async_token: context.async_token.clone(),
+        machine_vis: context.machine_vis.clone(),
+    });
+    let into_machine_extra_generics = extra_generics(context.machine_generics);
+    let slot_storage_idents = slot_storage_idents(context.field_names.len());
+    let (into_machine_method_generics, _, into_machine_method_where_clause) =
+        into_machine_extra_generics.split_for_impl();
+    let into_machine_slot_defaults = (0..context.field_names.len())
+        .map(|_| quote! { false })
+        .collect::<Vec<_>>();
+    let into_machine_builder_ty_generics = generic_argument_tokens(
+        into_machine_extra_generics.params.iter(),
+        Some(quote! { '_ }),
+        &into_machine_slot_defaults,
+    );
+    let into_machines_builder_ty_generics = generic_argument_tokens(
+        into_machine_extra_generics.params.iter(),
+        None,
+        &into_machine_slot_defaults,
+    );
+    let rebuild_builder_ty_generics = generic_argument_tokens(
+        into_machine_extra_generics.params.iter(),
+        Some(quote! { '__statum_row }),
+        &into_machine_slot_defaults,
+    );
+    let uninitialized_state_ident =
+        format_ident!("Uninitialized{}", context.state_enum_name);
+    let machine_path = context.machine_path;
+    let uninitialized_state_path =
+        machine_scoped_item_path(machine_path, &uninitialized_state_ident);
+    let uninitialized_machine_ty = machine_type_with_state(
+        quote! { #machine_path },
+        context.machine_generics,
+        quote! { #uninitialized_state_path },
+    );
+    let machine_module_path = context.machine_module_path;
+    let struct_ident = context.struct_ident;
+    let machine_vis = context.machine_vis;
+    let modified_methods = context.modified_methods;
+
+    quote! {
+        #[allow(unused_imports)]
+        use #machine_module_path::IntoMachinesExt as _;
+
+        impl #struct_ident {
+            #machine_vis fn into_machine #into_machine_method_generics (&self) -> #into_machine_builder_ident #into_machine_builder_ty_generics #into_machine_method_where_clause {
+                #into_machine_builder_ident {
+                    __statum_item: self,
+                    #(
+                        #slot_storage_idents: core::option::Option::None
+                    ),*
+                }
+            }
+
+            #(#modified_methods)*
+        }
+
+        impl #into_machine_method_generics #uninitialized_machine_ty #into_machine_method_where_clause {
+            #machine_vis fn rebuild<'__statum_row>(
+                item: &'__statum_row #struct_ident,
+            ) -> #into_machine_builder_ident #rebuild_builder_ty_generics {
+                item.into_machine()
+            }
+
+            #machine_vis fn rebuild_many<T>(
+                items: T,
+            ) -> #into_machines_builder_ident #into_machines_builder_ty_generics
+            where
+                T: Into<Vec<#struct_ident>>,
+            {
+                #into_machines_builder_ident {
+                    __statum_items: items.into(),
+                    #(
+                        #slot_storage_idents: core::option::Option::None
+                    ),*
+                }
+            }
+        }
+
+        #into_machine_builder_impl
+        #batch_builder_impl
+    }
+}
+
+fn generate_into_machine_builder(
+    context: IntoMachineBuilderContext<'_>,
+) -> proc_macro2::TokenStream {
+    let builder_ident = context.builder_ident;
+    let struct_ident = context.struct_ident;
+    let machine_generics = context.machine_generics;
+    let machine_state_ty = context.machine_state_ty;
+    let field_names = context.field_names;
+    let field_types = context.field_types;
+    let validator_checks = context.validator_checks;
+    let validator_report_checks = context.validator_report_checks;
+    let validator_report_count = validator_report_checks.len();
+    let async_token = context.async_token;
+    let machine_vis = context.machine_vis;
+    let extra_machine_generics = extra_generics(machine_generics);
+    let slot_storage_idents = slot_storage_idents(field_names.len());
+    let slot_state_idents = slot_state_idents(field_names.len());
+    let builder_defaults =
+        builder_generics(&extra_machine_generics, true, &slot_state_idents, true);
+    let complete_slots = slot_state_idents
+        .iter()
+        .map(|_| quote! { true })
+        .collect::<Vec<_>>();
+    let complete_builder_ty_generics = generic_argument_tokens(
+        extra_machine_generics.params.iter(),
+        Some(quote! { '__statum_row }),
+        &complete_slots,
+    );
+    let complete_builder_impl_generics_decl =
+        builder_generics(&extra_machine_generics, true, &[], false);
+    let (complete_builder_impl_generics, _, complete_builder_where_clause) =
+        complete_builder_impl_generics_decl.split_for_impl();
+
+    let struct_fields = field_storage_tokens(&slot_storage_idents, field_types);
+    let field_bindings = field_binding_tokens(field_names, &slot_storage_idents);
+    let setters = slot_setter_impls(
+        SlotSetterContext {
+            builder_ident,
+            machine_vis,
+            extra_machine_generics: &extra_machine_generics,
+            field_names,
+            field_types,
+            slot_state_idents: &slot_state_idents,
+            slot_storage_idents: &slot_storage_idents,
+            row_lifetime: Some(quote! { '__statum_row }),
+        },
+        |assignments| {
+            quote! {
+                #builder_ident {
+                    __statum_item: self.__statum_item,
+                    #(#assignments),*
+                }
+            }
+        },
+    );
+
+    quote! {
+        #[doc(hidden)]
+        #machine_vis struct #builder_ident #builder_defaults {
+            __statum_item: &'__statum_row #struct_ident,
+            #(#struct_fields),*
+        }
+
+        #(#setters)*
+
+        impl #complete_builder_impl_generics #builder_ident #complete_builder_ty_generics #complete_builder_where_clause {
+            #machine_vis #async_token fn build(self) -> core::result::Result<#machine_state_ty, statum::Error> {
+                let __statum_persisted = self.__statum_item;
+                #(#field_bindings)*
+                #(#validator_checks)*
+
+                Err(statum::Error::InvalidState)
+            }
+
+            #machine_vis #async_token fn build_report(self) -> statum::RebuildReport<#machine_state_ty> {
+                let __statum_persisted = self.__statum_item;
+                let mut __statum_attempts = ::std::vec::Vec::with_capacity(#validator_report_count);
+                #(#field_bindings)*
+                #(#validator_report_checks)*
+
+                statum::RebuildReport {
+                    attempts: __statum_attempts,
+                    result: Err(statum::Error::InvalidState),
+                }
+            }
+        }
+    }
+}
+
 pub(super) fn batch_builder_implementation(
     context: BatchBuilderContext<'_>,
 ) -> proc_macro2::TokenStream {
@@ -238,12 +480,8 @@ pub(super) fn batch_builder_implementation(
             &per_item_builder_chain,
             &async_token,
         );
-    let slot_state_idents = (0..field_names.len())
-        .map(|idx| format_ident!("__STATUM_SLOT_{}_SET", idx))
-        .collect::<Vec<_>>();
-    let slot_storage_idents = (0..field_names.len())
-        .map(|idx| format_ident!("__statum_slot_{}", idx))
-        .collect::<Vec<_>>();
+    let slot_state_idents = slot_state_idents(field_names.len());
+    let slot_storage_idents = slot_storage_idents(field_names.len());
     let builder_defaults = builder_generics(&extra_machine_generics, false, &slot_state_idents, true);
     let initial_builder_slots = slot_state_idents
         .iter()
@@ -290,81 +528,31 @@ pub(super) fn batch_builder_implementation(
             __statum_marker: core::marker::PhantomData,
         }
     };
-    let field_storage = slot_storage_idents.iter().zip(field_types.iter()).map(|(storage_ident, field_type)| {
-        quote! { #storage_ident: core::option::Option<#field_type> }
-    });
+    let field_storage = field_storage_tokens(&slot_storage_idents, field_types);
     let builder_init = slot_storage_idents.iter().map(|storage_ident| {
         quote! { #storage_ident: core::option::Option::None }
     });
-    let field_bindings = field_names
-        .iter()
-        .zip(slot_storage_idents.iter())
-        .map(|(field_name, storage_ident)| {
-            let message = format!("statum internal error: `{field_name}` was not set before build");
+    let field_bindings = field_binding_tokens(field_names, &slot_storage_idents);
+    let setters = slot_setter_impls(
+        SlotSetterContext {
+            builder_ident: &builder_ident,
+            machine_vis: &machine_vis,
+            extra_machine_generics: &extra_machine_generics,
+            field_names,
+            field_types,
+            slot_state_idents: &slot_state_idents,
+            slot_storage_idents: &slot_storage_idents,
+            row_lifetime: None,
+        },
+        |assignments| {
             quote! {
-                let #field_name = self.#storage_ident.expect(#message);
-            }
-        })
-        .collect::<Vec<_>>();
-    let setters = field_names
-        .iter()
-        .zip(field_types.iter())
-        .enumerate()
-        .map(|(slot_idx, (field_name, field_type))| {
-            let available_slot_idents = slot_state_idents
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, ident)| (idx != slot_idx).then_some(ident.clone()))
-                .collect::<Vec<_>>();
-            let setter_impl_generics_decl =
-                builder_generics(&extra_machine_generics, false, &available_slot_idents, false);
-            let (setter_impl_generics, _, setter_where_clause) =
-                setter_impl_generics_decl.split_for_impl();
-            let current_generics = slot_state_idents
-                .iter()
-                .enumerate()
-                .map(|(idx, ident)| {
-                    if idx == slot_idx {
-                        quote! { false }
-                    } else {
-                        quote! { #ident }
-                    }
-                })
-                .collect::<Vec<_>>();
-            let current_ty_generics =
-                generic_argument_tokens(extra_machine_generics.params.iter(), None, &current_generics);
-            let generics = slot_state_idents
-                .iter()
-                .enumerate()
-                .map(|(idx, ident)| {
-                    if idx == slot_idx {
-                        quote! { true }
-                    } else {
-                        quote! { #ident }
-                    }
-                })
-                .collect::<Vec<_>>();
-            let target_generics =
-                generic_argument_tokens(extra_machine_generics.params.iter(), None, &generics);
-            let assignments = slot_storage_idents.iter().enumerate().map(|(idx, storage_ident)| {
-                if idx == slot_idx {
-                    quote! { #storage_ident: core::option::Option::Some(value) }
-                } else {
-                    quote! { #storage_ident: self.#storage_ident }
-                }
-            });
-
-            quote! {
-                impl #setter_impl_generics #builder_ident #current_ty_generics #setter_where_clause {
-                    #machine_vis fn #field_name(self, value: #field_type) -> #builder_ident #target_generics {
-                        #builder_ident {
-                            __statum_items: self.__statum_items,
-                            #(#assignments),*
-                        }
-                    }
+                #builder_ident {
+                    __statum_items: self.__statum_items,
+                    #(#assignments),*
                 }
             }
-        });
+        },
+    );
 
     quote! {
         impl #into_machines_impl_generics #machine_module_path::IntoMachinesExt<#struct_ident #extra_trait_args> for T
@@ -506,6 +694,135 @@ fn generate_per_item_finalization_logic(
             ).await
         }
     }
+}
+
+fn slot_state_idents(field_count: usize) -> Vec<Ident> {
+    (0..field_count)
+        .map(|idx| format_ident!("__STATUM_SLOT_{}_SET", idx))
+        .collect()
+}
+
+fn slot_storage_idents(field_count: usize) -> Vec<Ident> {
+    (0..field_count)
+        .map(|idx| format_ident!("__statum_slot_{}", idx))
+        .collect()
+}
+
+fn field_storage_tokens(
+    slot_storage_idents: &[Ident],
+    field_types: &[Type],
+) -> Vec<proc_macro2::TokenStream> {
+    slot_storage_idents
+        .iter()
+        .zip(field_types.iter())
+        .map(|(storage_ident, field_type)| {
+            quote! { #storage_ident: core::option::Option<#field_type> }
+        })
+        .collect()
+}
+
+fn field_binding_tokens(
+    field_names: &[Ident],
+    slot_storage_idents: &[Ident],
+) -> Vec<proc_macro2::TokenStream> {
+    field_names
+        .iter()
+        .zip(slot_storage_idents.iter())
+        .map(|(field_name, storage_ident)| {
+            let message = format!("statum internal error: `{field_name}` was not set before build");
+            quote! {
+                let #field_name = self.#storage_ident.expect(#message);
+            }
+        })
+        .collect()
+}
+
+fn slot_setter_impls<F>(
+    context: SlotSetterContext<'_>,
+    build_instance: F,
+) -> Vec<proc_macro2::TokenStream>
+where
+    F: Fn(Vec<proc_macro2::TokenStream>) -> proc_macro2::TokenStream,
+{
+    context
+        .field_names
+        .iter()
+        .zip(context.field_types.iter())
+        .enumerate()
+        .map(|(slot_idx, (field_name, field_type))| {
+            let builder_ident = context.builder_ident;
+            let machine_vis = context.machine_vis;
+            let available_slot_idents = context
+                .slot_state_idents
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, ident)| (idx != slot_idx).then_some(ident.clone()))
+                .collect::<Vec<_>>();
+            let setter_impl_generics_decl = builder_generics(
+                context.extra_machine_generics,
+                context.row_lifetime.is_some(),
+                &available_slot_idents,
+                false,
+            );
+            let (setter_impl_generics, _, setter_where_clause) =
+                setter_impl_generics_decl.split_for_impl();
+            let current_generics = context
+                .slot_state_idents
+                .iter()
+                .enumerate()
+                .map(|(idx, ident)| {
+                    if idx == slot_idx {
+                        quote! { false }
+                    } else {
+                        quote! { #ident }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let current_ty_generics = generic_argument_tokens(
+                context.extra_machine_generics.params.iter(),
+                context.row_lifetime.clone(),
+                &current_generics,
+            );
+            let target_generics = context
+                .slot_state_idents
+                .iter()
+                .enumerate()
+                .map(|(idx, ident)| {
+                    if idx == slot_idx {
+                        quote! { true }
+                    } else {
+                        quote! { #ident }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let target_ty_generics = generic_argument_tokens(
+                context.extra_machine_generics.params.iter(),
+                context.row_lifetime.clone(),
+                &target_generics,
+            );
+            let assignments = context
+                .slot_storage_idents
+                .iter()
+                .enumerate()
+                .map(|(idx, storage_ident)| {
+                    if idx == slot_idx {
+                        quote! { #storage_ident: core::option::Option::Some(value) }
+                    } else {
+                        quote! { #storage_ident: self.#storage_ident }
+                    }
+                })
+                .collect::<Vec<_>>();
+            let instance = build_instance(assignments);
+
+            quote! {
+                impl #setter_impl_generics #builder_ident #current_ty_generics #setter_where_clause {
+                    #machine_vis fn #field_name(self, value: #field_type) -> #builder_ident #target_ty_generics {
+                        #instance
+                    }
+                }
+            }
+        })
+        .collect()
 }
 
 fn rebuild_attempt_tokens(

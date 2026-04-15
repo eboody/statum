@@ -1,8 +1,9 @@
 # statum
 
-`statum` is about representational correctness for workflow and protocol state.
-It helps make invalid, undesirable, or not-yet-validated states impossible to
-represent as ordinary values.
+`statum` is about representational correctness when a value's phase should
+change what methods are legally available on that value. It helps make invalid,
+undesirable, or not-yet-validated states impossible to represent as ordinary
+values.
 
 It applies the same idea as `Option` and `Result`: absence or failure becomes
 explicit in the type instead of staying implicit in the program.
@@ -26,6 +27,10 @@ Statum targets stable Rust and currently supports Rust `1.93+`.
 
 ## Mental Model
 
+- Use `statum` when pressing `.` before and after a phase change should show a
+  meaningfully different method surface.
+- Durable workflows and protocols are one strong fit. Staged validation,
+  resolution, and build surfaces are another.
 - `#[state]` defines the legal phases
 - `#[machine]` defines the durable context
 - `#[transition]` defines the legal edges

@@ -170,11 +170,21 @@ fn validate_transition_return_contract(
                 )
             })?;
 
-        let written_targets = observe_transition_targets_strict(written_return_type, target_type);
-        if !written_targets.next_states.is_empty()
-            && (written_targets.primary_next_state.as_deref()
-                != Some(introspection_targets.primary_next_state.as_str())
-                || written_targets.next_states != introspection_targets.next_states)
+        let written_targets = resolve_transition_targets(
+            written_return_type,
+            target_type,
+            false,
+            func.return_type_span,
+        )
+        .ok_or_else(|| {
+            invalid_return_type_error(
+                func,
+                target_type,
+                "even with `#[introspect(return = ...)]`, the written return type must still resolve to the impl target machine path or a supported wrapper around it",
+            )
+        })?;
+        if written_targets.primary_next_state != introspection_targets.primary_next_state
+            || written_targets.next_states != introspection_targets.next_states
         {
             return Err(mismatched_introspect_return_error(
                 introspection,

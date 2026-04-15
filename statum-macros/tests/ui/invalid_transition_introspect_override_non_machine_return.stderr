@@ -1,14 +1,14 @@
 error: Error: transition method `Machine<Draft>::finish` returns an unsupported type.
-       Found: `fn finish(self) -> ::core::result::Result<(), Machine<Done>>`
-       Expected: `fn finish(self) -> ::core::result::Result<Machine<Done>, E>`
+       Found: `fn finish(self) -> ::core::result::Result<(), ()>`
+       Expected: `fn finish(self) -> ::core::result::Result<Machine<NextState>, E>`
        Reason: even with `#[introspect(return = ...)]`, the written return type must still resolve to the impl target machine path or a supported wrapper around it
-       Fix: move `Machine<Done>` into the primary branch, for example with `fn finish(self) -> ::core::result::Result<Machine<Done>, E>`, or return `Machine<Done>` directly if you do not need the wrapper.
+       Fix: move `Machine<NextState>` into the primary branch, for example with `fn finish(self) -> ::core::result::Result<Machine<NextState>, E>`, or return `Machine<NextState>` directly if you do not need the wrapper.
        Primary branch: `()`
        Note: Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.
              Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module.
        Help: add `#[introspect(return = Machine<NextState>)]` with a direct machine path and supported wrapper shape, or rewrite the signature to use that direct type.
              Source-backed alias expansion is diagnostics-only in strict mode.
-  --> tests/ui/invalid_transition_introspect_primary_branch_mismatch.rs:25:24
+  --> tests/ui/invalid_transition_introspect_override_non_machine_return.rs:25:24
    |
-25 |     fn finish(self) -> ::core::result::Result<(), Machine<Done>> {
+25 |     fn finish(self) -> ::core::result::Result<(), ()> {
    |                        ^

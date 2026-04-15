@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use quote::format_ident;
-use syn::{Generics, Ident, ImplItemFn, Path, Type};
+use syn::{Ident, ImplItemFn, Path, Type};
 
 use crate::contracts::{ResolvedMachineRef, StateEnumContract, ValidatorContract};
 use crate::VariantInfo;
@@ -31,19 +31,6 @@ pub(super) struct ValidatorMethodContract {
 pub(super) struct ValidatorPlan {
     pub(super) methods: Vec<ValidatorMethodContract>,
     pub(super) has_async: bool,
-}
-
-pub(super) struct IntoMachineBuilderContext<'a> {
-    pub(super) builder_ident: &'a Ident,
-    pub(super) struct_ident: &'a Type,
-    pub(super) machine_generics: &'a Generics,
-    pub(super) machine_state_ty: &'a proc_macro2::TokenStream,
-    pub(super) field_names: &'a [Ident],
-    pub(super) field_types: &'a [Type],
-    pub(super) validator_checks: &'a [proc_macro2::TokenStream],
-    pub(super) validator_report_checks: &'a [proc_macro2::TokenStream],
-    pub(super) async_token: &'a proc_macro2::TokenStream,
-    pub(super) machine_vis: &'a syn::Visibility,
 }
 
 pub(super) fn build_validator_contract(
