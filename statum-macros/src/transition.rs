@@ -21,14 +21,133 @@ use self::contract::build_transition_contract;
 use self::parse::TransitionImpl;
 use crate::contracts::TransitionContract;
 use crate::diagnostics::DiagnosticMessage;
-use crate::MachineInfo;
+use crate::{
+    LoadedMachineLookupFailure, MachineInfo, MachinePath, lookup_loaded_machine_in_module,
+    lookup_unique_loaded_machine_by_name, resolved_current_module_path,
+};
 use proc_macro2::TokenStream;
 use syn::spanned::Spanned;
+use syn::ItemImpl;
+
+pub(crate) struct ValidatedTransitionMethod {
+    pub(crate) function: parse::TransitionFn,
+    pub(crate) contract: TransitionContract,
+}
+
+pub fn expand_transition(input: ItemImpl) -> TokenStream {
+    ParsedTransitionExpansion::parse(input)
+        .and_then(ParsedTransitionExpansion::resolve_machine)
+        .and_then(ResolvedTransitionExpansion::validate)
+        .map(ValidatedTransitionExpansion::emit)
+        .unwrap_or_else(|err| err)
+}
+
+struct ParsedTransitionExpansion {
+    input: ItemImpl,
+    tr_impl: TransitionImpl,
+    module_path: String,
+}
+
+impl ParsedTransitionExpansion {
+    fn parse(input: ItemImpl) -> Result<Self, TokenStream> {
+        let tr_impl = parse_transition_impl(&input)?;
+        let module_path = resolved_current_module_path(tr_impl.machine_span, "#[transition]")?;
+        Ok(Self {
+            input,
+            tr_impl,
+            module_path,
+        })
+    }
+
+    fn resolve_machine(self) -> Result<ResolvedTransitionExpansion, TokenStream> {
+        let machine_path: MachinePath = self.module_path.clone().into();
+        let machine_info = match lookup_loaded_machine_in_module(&machine_path, &self.tr_impl.machine_name)
+        {
+            Ok(info) => info,
+            Err(LoadedMachineLookupFailure::Ambiguous(candidates)) => {
+                return Err(
+                    ambiguous_transition_machine_error(
+                        &self.tr_impl.machine_name,
+                        &self.module_path,
+                        &candidates,
+                        self.tr_impl.machine_span,
+                    ),
+                );
+            }
+            Err(LoadedMachineLookupFailure::NotFound) => {
+                match lookup_unique_loaded_machine_by_name(&self.tr_impl.machine_name) {
+                    Ok(info) => info,
+                    Err(LoadedMachineLookupFailure::Ambiguous(candidates)) => {
+                        return Err(
+                            ambiguous_transition_machine_fallback_error(
+                                &self.tr_impl.machine_name,
+                                &self.module_path,
+                                &candidates,
+                                self.tr_impl.machine_span,
+                            ),
+                        );
+                    }
+                    Err(LoadedMachineLookupFailure::NotFound) => {
+                        return Err(
+                            missing_transition_machine_error(
+                                &self.tr_impl.machine_name,
+                                &self.module_path,
+                                self.tr_impl.machine_span,
+                            ),
+                        );
+                    }
+                }
+            }
+        };
+
+        Ok(ResolvedTransitionExpansion {
+            input: self.input,
+            tr_impl: self.tr_impl,
+            machine_info,
+        })
+    }
+}
+
+struct ResolvedTransitionExpansion {
+    input: ItemImpl,
+    tr_impl: TransitionImpl,
+    machine_info: MachineInfo,
+}
+
+impl ResolvedTransitionExpansion {
+    fn validate(self) -> Result<ValidatedTransitionExpansion, TokenStream> {
+        let validated_methods = validate_transition_functions(&self.tr_impl, &self.machine_info)?;
+        Ok(ValidatedTransitionExpansion {
+            input: self.input,
+            tr_impl: self.tr_impl,
+            machine_info: self.machine_info,
+            validated_methods,
+        })
+    }
+}
+
+struct ValidatedTransitionExpansion {
+    input: ItemImpl,
+    tr_impl: TransitionImpl,
+    machine_info: MachineInfo,
+    validated_methods: Vec<ValidatedTransitionMethod>,
+}
+
+impl ValidatedTransitionExpansion {
+    fn emit(self) -> TokenStream {
+        generate_transition_impl(
+            &self.input,
+            &self.tr_impl,
+            &self.machine_info,
+            &self.validated_methods,
+        )
+    }
+}
 
 pub fn validate_transition_functions(
     tr_impl: &TransitionImpl,
     machine_info: &MachineInfo,
-) -> Result<Vec<TransitionContract>, TokenStream> {
+) -> Result<Vec<ValidatedTransitionMethod>, TokenStream> {
     if tr_impl.functions.is_empty() {
         let message = DiagnosticMessage::new(format!(
             "`#[transition]` impl for `{}<{}>` must contain at least one transition method.",
@@ -60,7 +179,7 @@ pub fn validate_transition_functions(
         ));
     }
 
-    let mut contracts = Vec::with_capacity(tr_impl.functions.len());
+    let mut validated_methods = Vec::with_capacity(tr_impl.functions.len());
     for func in &tr_impl.functions {
         if !func.has_receiver {
             let message = DiagnosticMessage::new(format!(
@@ -87,8 +206,11 @@ pub fn validate_transition_functions(
                 ));
             }
         }
-        contracts.push(contract);
+        validated_methods.push(ValidatedTransitionMethod {
+            function: func.clone(),
+            contract,
+        });
     }
 
-    Ok(contracts)
+    Ok(validated_methods)
 }

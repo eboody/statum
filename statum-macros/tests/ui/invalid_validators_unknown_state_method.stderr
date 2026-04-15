@@ -1,5 +1,7 @@
-error: Error: `#[validators(TaskMachine)]` on `impl DbRow` defines methods that do not match any variant in `TaskState`: is_archived.
-       Valid validator methods for `TaskMachine` are: is_draft, is_done.
+error: Error: `#[validators(TaskMachine)]` on `impl DbRow` defines methods that do not match any variant in `TaskState`.
+       Found: unknown validator methods: `is_archived`
+       Expected: one `is_{state}` method per `TaskMachine` state: `is_draft, is_done`
+       Fix: rename or remove methods that do not correspond to a `#[state]` variant.
   --> tests/ui/invalid_validators_unknown_state_method.rs:29:1
    |
 29 | #[validators(TaskMachine)]

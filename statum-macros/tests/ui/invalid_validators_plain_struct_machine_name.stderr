@@ -1,10 +1,12 @@
 error: Error: `#[validators(TaskMachine)]` could not resolve a matching `#[machine]` in module `invalid_validators_plain_struct_machine_name`.
+       Found: `#[validators(TaskMachine)]`
+       Expected: `#[validators(TaskMachine)]`
        Fix: point `#[validators(...)]` at the Statum machine type declared in that module and declare that `#[machine]` item before this validators impl.
-       Statum only resolves `#[machine]` items that have already expanded before this `#[validators]` impl.
-       A struct named `TaskMachine` exists on line 19, but it is not annotated with `#[machine]`.
-       No same-named `#[machine]` items were found in other modules of this file.
-       No `#[machine]` items were found in this module.
-       Correct shape: `#[validators(TaskMachine)] impl PersistedRow { ... }`.
+       Reason: Statum only resolves `#[machine]` items that have already expanded before this `#[validators]` impl.
+       Note: A struct named `TaskMachine` exists on line 19, but it is not annotated with `#[machine]`.
+       Candidates: No same-named `#[machine]` items were found in other modules of this file.
+       Candidates: No `#[machine]` items were found in this module.
+       Help: Correct shape: `#[validators(TaskMachine)] impl PersistedRow { ... }`.
   --> tests/ui/invalid_validators_plain_struct_machine_name.rs:28:1
    |
 28 | #[validators(TaskMachine)]

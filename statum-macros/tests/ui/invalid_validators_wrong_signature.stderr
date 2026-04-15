@@ -1,8 +1,9 @@
 error: Error: validator `is_draft` for `impl DbRow` rebuilding `TaskMachine` state `TaskState::Draft` must declare only `&self`.
-       Found parameters: `(& self, extra : u8)`.
-       Validator methods do not accept explicit machine-field parameters.
-       Machine `TaskMachine` injects these fields by bare name inside validator bodies: `name`. Remove explicit parameters and use those bindings directly.
-       Correct shapes: `fn is_draft(&self) -> Result<(), _>` or `fn is_draft(&self) -> Validation<()>`.
+       Found: `fn is_draft(& self, extra: u8)`
+       Expected: `fn is_draft(&self) -> Result<(), _>` or `fn is_draft(&self) -> Validation<()>`
+       Reason: validator methods do not accept explicit machine-field parameters.
+       Note: Machine `TaskMachine` injects these fields by bare name inside validator bodies: `name`. Remove explicit parameters and use those bindings directly.
+       Fix: remove explicit parameters and read injected machine fields by bare name inside the validator body.
   --> tests/ui/invalid_validators_wrong_signature.rs:30:24
    |
 30 |     fn is_draft(&self, extra: u8) -> Result<(), statum_core::Error> {

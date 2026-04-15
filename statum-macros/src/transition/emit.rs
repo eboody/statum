@@ -2,7 +2,7 @@ use super::diagnostics::{
     compile_error_at, invalid_transition_method_state_error, invalid_transition_state_error,
 };
 use super::parse::{TransitionFn, TransitionImpl, strip_present_attrs_from_transition_impl};
-use crate::contracts::TransitionContract;
+use super::ValidatedTransitionMethod;
 use crate::machine::{
     to_shouty_snake_identifier, transition_presentation_slice_ident, transition_slice_ident,
     transition_support_module_ident,
@@ -18,15 +18,15 @@ pub fn generate_transition_impl(
     input: &ItemImpl,
     tr_impl: &TransitionImpl,
     target_machine_info: &MachineInfo,
-    contracts: &[TransitionContract],
+    validated_methods: &[ValidatedTransitionMethod],
 ) -> TokenStream {
     let target_type = &tr_impl.target_type;
-    if contracts.len() != tr_impl.functions.len() {
+    if validated_methods.len() != tr_impl.functions.len() {
         return compile_error_at(
             target_type.span(),
             &format!(
                 "internal Statum error: resolved {} transition contract(s) for {} parsed method(s) in `#[transition]` impl for `{}`. This indicates contract generation drifted from transition emission.",
-                contracts.len(),
+                validated_methods.len(),
                 tr_impl.functions.len(),
                 tr_impl.machine_name,
             ),
@@ -73,7 +73,9 @@ pub fn generate_transition_impl(
 
     let mut emitted_states = HashSet::new();
     let mut transition_impls = Vec::new();
-    for (function, contract) in tr_impl.functions.iter().zip(contracts.iter()) {
+    for validated in validated_methods {
+        let function = &validated.function;
+        let contract = &validated.contract;
 
         for return_state in &contract.next_states {
             if !emitted_states.insert(return_state.clone()) {
@@ -178,12 +180,9 @@ pub fn generate_transition_impl(
             });
         }
     }
-    let transition_registrations = tr_impl
-        .functions
-        .iter()
-        .zip(contracts.iter())
-        .enumerate()
-        .map(|(idx, (function, contract))| {
+    let transition_registrations = validated_methods.iter().enumerate().map(|(idx, validated)| {
+        let function = &validated.function;
+        let contract = &validated.contract;
         let return_states = &contract.next_states;
         let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
         let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
@@ -231,12 +230,13 @@ pub fn generate_transition_impl(
             }
         }
     });
-    let transition_presentation_registrations = tr_impl
-        .functions
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, function)| {
-            let presentation = function.presentation.as_ref()?;
+    let transition_presentation_registrations =
+        validated_methods
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, validated)| {
+                let function = &validated.function;
+                let presentation = function.presentation.as_ref()?;
             let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
             let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
             let registration_ident =

@@ -1,11 +1,13 @@
 error: Error: `#[validators(WorkflowMachine)]` could not resolve a matching `#[machine]` in module `invalid_validators_declared_before_machine`.
+       Found: `#[validators(WorkflowMachine)]`
+       Expected: `#[validators(WorkflowMachine)]`
        Fix: point `#[validators(...)]` at the Statum machine type declared in that module and declare that `#[machine]` item before this validators impl.
-       Statum only resolves `#[machine]` items that have already expanded before this `#[validators]` impl.
-       Source scan found `#[machine]` item `WorkflowMachine` later in this module on line 34. If that item is active for this build, move it above this `#[validators]` impl because Statum resolves these relationships in expansion order.
-       No plain struct with that name was found in this module either.
-       No same-named `#[machine]` items were found in other modules of this file.
-       Available `#[machine]` items in this module: `WorkflowMachine` in `invalid_validators_declared_before_machine` (line 34).
-       Correct shape: `#[validators(WorkflowMachine)] impl PersistedRow { ... }`.
+       Reason: Statum only resolves `#[machine]` items that have already expanded before this `#[validators]` impl.
+       Note: Source scan found `#[machine]` item `WorkflowMachine` later in this module on line 34. If that item is active for this build, move it above this `#[validators]` impl because Statum resolves these relationships in expansion order.
+       Note: No plain struct with that name was found in this module either.
+       Candidates: No same-named `#[machine]` items were found in other modules of this file.
+       Candidates: Available `#[machine]` items in this module: `WorkflowMachine` in `invalid_validators_declared_before_machine` (line 34).
+       Help: Correct shape: `#[validators(WorkflowMachine)] impl PersistedRow { ... }`.
   --> tests/ui/invalid_validators_declared_before_machine.rs:22:1
    |
 22 | #[validators(WorkflowMachine)]

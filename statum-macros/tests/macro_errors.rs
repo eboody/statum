@@ -85,6 +85,7 @@ fn test_invalid_validators_usage() {
     t.compile_fail("tests/ui/invalid_validators_wrong_signature.rs");
     t.compile_fail("tests/ui/invalid_validators_wrong_receiver.rs");
     t.compile_fail("tests/ui/invalid_validators_no_methods.rs");
+    t.compile_fail("tests/ui/invalid_validators_no_methods_non_fn_items.rs");
     t.compile_fail("tests/ui/invalid_validators_unknown_state_method.rs");
     t.compile_fail("tests/ui/invalid_validators_unknown_machine.rs");
     t.compile_fail("tests/ui/invalid_validators_relative_path_alias.rs");

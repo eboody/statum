@@ -1,5 +1,7 @@
-error: Error: `#[validators(TaskMachine)]` on `impl DbRow` is missing validator methods for `TaskState`: is_done.
-       Fix: add one validator per state variant (snake_case), e.g. `fn is_draft(&self) -> Result<()>`.
+error: Error: `#[validators(TaskMachine)]` on `impl DbRow` is missing validator methods for `TaskState`.
+       Found: missing validator methods: `is_done`
+       Expected: one `is_{state}` method per `TaskState` variant
+       Fix: add one validator per state variant in snake_case, for example `fn is_draft(&self) -> Result<(), _>`.
   --> tests/ui/invalid_validators_missing_variant.rs:29:1
    |
 29 | #[validators(TaskMachine)]

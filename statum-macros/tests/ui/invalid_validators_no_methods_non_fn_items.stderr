@@ -1,15 +1,15 @@
 error: Error: `#[validators(TaskMachine)]` on `impl DbRow` must define at least one validator method.
        Expected: one method per `TaskState` variant: `is_draft`
        Fix: add validator methods like `fn is_draft(&self) -> Result<(), _>`.
-  --> tests/ui/invalid_validators_no_methods.rs:28:1
+  --> tests/ui/invalid_validators_no_methods_non_fn_items.rs:27:1
    |
-28 | #[validators(TaskMachine)]
+27 | #[validators(TaskMachine)]
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this error originates in the attribute macro `validators` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0601]: `main` function not found in crate `$CRATE`
-  --> tests/ui/invalid_validators_no_methods.rs:29:14
+  --> tests/ui/invalid_validators_no_methods_non_fn_items.rs:30:2
    |
-29 | impl DbRow {}
-   |              ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_no_methods.rs`
+30 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_validators_no_methods_non_fn_items.rs`

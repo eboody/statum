@@ -6,6 +6,7 @@ use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
 use syn::{FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, ReturnType, Type};
 
+#[derive(Clone)]
 #[allow(unused)]
 pub struct TransitionFn {
     pub name: Ident,

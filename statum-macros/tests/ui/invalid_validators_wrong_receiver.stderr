@@ -1,6 +1,8 @@
 error: Error: validator `is_draft` for `impl DbRow` rebuilding `TaskMachine` state `TaskState::Draft` must take `&self`, not `self`.
-       Machine `TaskMachine` injects these fields by bare name inside validator bodies: `name`. Remove explicit parameters and use those bindings directly.
-       Correct shapes: `fn is_draft(&self) -> Result<(), _>` or `fn is_draft(&self) -> Validation<()>`.
+       Found: `fn is_draft(self)`
+       Expected: `fn is_draft(&self) -> Result<(), _>` or `fn is_draft(&self) -> Validation<()>`
+       Note: Machine `TaskMachine` injects these fields by bare name inside validator bodies: `name`. Remove explicit parameters and use those bindings directly.
+       Fix: change the receiver to `&self`.
   --> tests/ui/invalid_validators_wrong_receiver.rs:30:17
    |
 30 |     fn is_draft(self) -> Result<(), statum_core::Error> {
