@@ -55,6 +55,31 @@ struct IntoMachineBuilderContext<'a> {
     machine_vis: &'a syn::Visibility,
 }
 
+enum BatchFieldSource<'a> {
+    SharedAcrossItems {
+        field_builder_chain: &'a proc_macro2::TokenStream,
+    },
+    PerItemByFn {
+        field_builder_chain: &'a proc_macro2::TokenStream,
+    },
+}
+
+enum BatchAsyncMode {
+    Sync,
+    Async,
+}
+
+enum BatchFinalizationOperation {
+    Build,
+    BuildReport,
+}
+
+struct BatchFinalizationPlan<'a> {
+    operation: BatchFinalizationOperation,
+    async_mode: BatchAsyncMode,
+    field_source: BatchFieldSource<'a>,
+}
+
 pub(crate) fn validator_builder_surface(
     context: ValidatorBuilderSurfaceContext<'_>,
 ) -> proc_macro2::TokenStream {
@@ -295,26 +320,50 @@ pub(crate) fn batch_builder_implementation(
         quote! { .await }
     };
 
-    let implementation = generate_finalization_logic(
-        &format_ident!("build"),
-        &field_builder_chain,
-        &async_token,
-    );
-    let report_implementation = generate_finalization_logic(
-        &format_ident!("build_report"),
-        &field_builder_chain,
-        &async_token,
-    );
-    let per_item_implementation = generate_per_item_finalization_logic(
-        &format_ident!("build"),
-        &per_item_builder_chain,
-        &async_token,
-    );
-    let per_item_report_implementation = generate_per_item_finalization_logic(
-        &format_ident!("build_report"),
-        &per_item_builder_chain,
-        &async_token,
-    );
+    let implementation = generate_batch_finalization(BatchFinalizationPlan {
+        operation: BatchFinalizationOperation::Build,
+        async_mode: if async_token.is_empty() {
+            BatchAsyncMode::Sync
+        } else {
+            BatchAsyncMode::Async
+        },
+        field_source: BatchFieldSource::SharedAcrossItems {
+            field_builder_chain: &field_builder_chain,
+        },
+    });
+    let report_implementation = generate_batch_finalization(BatchFinalizationPlan {
+        operation: BatchFinalizationOperation::BuildReport,
+        async_mode: if async_token.is_empty() {
+            BatchAsyncMode::Sync
+        } else {
+            BatchAsyncMode::Async
+        },
+        field_source: BatchFieldSource::SharedAcrossItems {
+            field_builder_chain: &field_builder_chain,
+        },
+    });
+    let per_item_implementation = generate_batch_finalization(BatchFinalizationPlan {
+        operation: BatchFinalizationOperation::Build,
+        async_mode: if async_token.is_empty() {
+            BatchAsyncMode::Sync
+        } else {
+            BatchAsyncMode::Async
+        },
+        field_source: BatchFieldSource::PerItemByFn {
+            field_builder_chain: &per_item_builder_chain,
+        },
+    });
+    let per_item_report_implementation = generate_batch_finalization(BatchFinalizationPlan {
+        operation: BatchFinalizationOperation::BuildReport,
+        async_mode: if async_token.is_empty() {
+            BatchAsyncMode::Sync
+        } else {
+            BatchAsyncMode::Async
+        },
+        field_source: BatchFieldSource::PerItemByFn {
+            field_builder_chain: &per_item_builder_chain,
+        },
+    });
     let slot_state_idents = slot_state_idents(field_names.len());
     let slot_storage_idents = slot_storage_idents(field_names.len());
     let builder_defaults =
@@ -477,64 +526,68 @@ pub(crate) fn batch_builder_implementation(
     }
 }
 
-fn generate_finalization_logic(
-    builder_method: &Ident,
-    field_builder_chain: &proc_macro2::TokenStream,
-    async_token: &proc_macro2::TokenStream,
-) -> proc_macro2::TokenStream {
-    if async_token.is_empty() {
-        quote! {
-            __statum_items
-                .into_iter()
-                .map(|__statum_item| {
-                    __statum_item.into_machine()
-                        #field_builder_chain
-                        .#builder_method()
-                })
-                .collect()
-        }
-    } else {
-        quote! {
-            statum::__private::futures::future::join_all(
-                __statum_items.iter().map(|__statum_item| {
-                    __statum_item.into_machine()
-                        #field_builder_chain
-                        .#builder_method()
-                })
-            ).await
-        }
-    }
-}
+fn generate_batch_finalization(plan: BatchFinalizationPlan<'_>) -> proc_macro2::TokenStream {
+    let builder_method = match plan.operation {
+        BatchFinalizationOperation::Build => format_ident!("build"),
+        BatchFinalizationOperation::BuildReport => format_ident!("build_report"),
+    };
 
-fn generate_per_item_finalization_logic(
-    builder_method: &Ident,
-    field_builder_chain: &proc_macro2::TokenStream,
-    async_token: &proc_macro2::TokenStream,
-) -> proc_macro2::TokenStream {
-    if async_token.is_empty() {
-        quote! {
-            let __statum_field_fn = self.__statum_fields_fn;
-            self.__statum_items
-                .into_iter()
-                .map(|__statum_item| {
-                    let __statum_fields = __statum_field_fn(&__statum_item);
-                    __statum_item.into_machine()
-                        #field_builder_chain
-                        .#builder_method()
-                })
-                .collect()
+    match (plan.async_mode, plan.field_source) {
+        (
+            BatchAsyncMode::Sync,
+            BatchFieldSource::SharedAcrossItems { field_builder_chain },
+        ) => {
+            quote! {
+                __statum_items
+                    .into_iter()
+                    .map(|__statum_item| {
+                        __statum_item.into_machine()
+                            #field_builder_chain
+                            .#builder_method()
+                    })
+                    .collect()
+            }
         }
-    } else {
-        quote! {
-            let __statum_field_fn = &self.__statum_fields_fn;
-            statum::__private::futures::future::join_all(
-                self.__statum_items.iter().map(|__statum_item| {
-                    let __statum_fields = __statum_field_fn(__statum_item);
-                    __statum_item.into_machine()
-                        #field_builder_chain
-                        .#builder_method()
-                })
-            ).await
+        (
+            BatchAsyncMode::Async,
+            BatchFieldSource::SharedAcrossItems { field_builder_chain },
+        ) => {
+            quote! {
+                statum::__private::futures::future::join_all(
+                    __statum_items.iter().map(|__statum_item| {
+                        __statum_item.into_machine()
+                            #field_builder_chain
+                            .#builder_method()
+                    })
+                ).await
+            }
+        }
+        (BatchAsyncMode::Sync, BatchFieldSource::PerItemByFn { field_builder_chain }) => {
+            quote! {
+                let __statum_field_fn = self.__statum_fields_fn;
+                self.__statum_items
+                    .into_iter()
+                    .map(|__statum_item| {
+                        let __statum_fields = __statum_field_fn(&__statum_item);
+                        __statum_item.into_machine()
+                            #field_builder_chain
+                            .#builder_method()
+                    })
+                    .collect()
+            }
+        }
+        (BatchAsyncMode::Async, BatchFieldSource::PerItemByFn { field_builder_chain }) => {
+            quote! {
+                let __statum_field_fn = &self.__statum_fields_fn;
+                statum::__private::futures::future::join_all(
+                    self.__statum_items.iter().map(|__statum_item| {
+                        let __statum_fields = __statum_field_fn(__statum_item);
+                        __statum_item.into_machine()
+                            #field_builder_chain
+                            .#builder_method()
+                    })
+                ).await
+            }
         }
     }
 }
