@@ -5,3 +5,4 @@ Cargo.lock
 # Local scratch space
 .codex
 .tmp-tests/
+.gitnexus

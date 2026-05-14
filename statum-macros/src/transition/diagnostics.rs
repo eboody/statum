@@ -2,7 +2,9 @@ use super::parse::{TransitionFn, TransitionIntrospectAttr};
 use super::contract::{
     describe_invalid_return_type, describe_mismatched_introspect_return,
 };
-use crate::source::{current_source_info, format_candidates};
+use crate::source::{
+    SourceModuleQuery, current_source_info, format_candidates,
+};
 use crate::{EnumInfo, MachineInfo, format_loaded_machine_candidates};
 use crate::diagnostics::{DiagnosticMessage, compact_display};
 use proc_macro2::{Span, TokenStream};
@@ -13,8 +15,9 @@ pub fn missing_transition_machine_error(
     module_path: &str,
     span: Span,
 ) -> TokenStream {
+    let source_query = SourceModuleQuery::current(module_path);
     let current_line = current_source_info().map(|(_, line)| line).unwrap_or_default();
-    let available = available_machine_candidates_in_module(module_path);
+    let available = source_query.machine_candidates();
     let suggested_machine_name = available
         .first()
         .map(|candidate| candidate.name.as_str())
@@ -38,7 +41,7 @@ pub fn missing_transition_machine_error(
         })
         .map(|line| format!("{line}\n"))
         .unwrap_or_default();
-    let elsewhere_line = same_named_machine_candidates_elsewhere(machine_name, module_path)
+    let elsewhere_line = source_query.same_named_machine_candidates_elsewhere(machine_name)
         .map(|candidates| {
             format!(
                 "Same-named `#[machine]` items elsewhere in this file: {}.",
@@ -48,7 +51,7 @@ pub fn missing_transition_machine_error(
         .unwrap_or_else(|| {
             "No same-named `#[machine]` items were found in other modules of this file.".to_string()
         });
-    let missing_attr_line = plain_struct_line_in_module(module_path, machine_name).map(|line| {
+    let missing_attr_line = source_query.plain_machine_struct_line(machine_name).map(|line| {
         format!(
             "A struct named `{machine_name}` exists on line {line}, but it is not annotated with `#[machine]`."
         )
@@ -234,42 +237,4 @@ pub(super) fn compile_error_at(span: Span, message: &str) -> TokenStream {
     quote::quote_spanned! { span =>
         compile_error!(#message);
     }
-}
-
-fn available_machine_candidates_in_module(module_path: &str) -> Vec<crate::source::ItemCandidate> {
-    let Some((file_path, _)) = current_source_info() else {
-        return Vec::new();
-    };
-    crate::source::candidates_in_module(
-        &file_path,
-        module_path,
-        crate::source::ItemKind::Struct,
-        Some("machine"),
-    )
-}
-
-fn plain_struct_line_in_module(module_path: &str, struct_name: &str) -> Option<usize> {
-    let (file_path, _) = current_source_info()?;
-    crate::source::plain_item_line_in_module(
-        &file_path,
-        module_path,
-        crate::source::ItemKind::Struct,
-        struct_name,
-        Some("machine"),
-    )
-}
-
-fn same_named_machine_candidates_elsewhere(
-    machine_name: &str,
-    module_path: &str,
-) -> Option<Vec<crate::source::ItemCandidate>> {
-    let (file_path, _) = current_source_info()?;
-    let candidates = crate::source::same_named_candidates_elsewhere(
-        &file_path,
-        module_path,
-        crate::source::ItemKind::Struct,
-        machine_name,
-        Some("machine"),
-    );
-    (!candidates.is_empty()).then_some(candidates)
 }

@@ -1,25 +1,24 @@
 use proc_macro2::TokenStream;
-use syn::Type;
+use std::collections::HashSet;
+use syn::{GenericArgument, PathArguments, Type};
 
 use crate::contracts::TransitionContract;
 use crate::diagnostics::compact_display;
 
-use super::diagnostics::{
+use super::super::diagnostics::{
     invalid_introspect_return_error, invalid_return_type_error,
     mismatched_introspect_return_error,
 };
-use super::resolve::{
+use super::super::parse::TransitionFn;
+use super::super::resolve::{
     AliasResolutionContext, SourceAliasResolver, SupportedWrapper,
     collect_machine_and_states_in_context, collect_machine_and_states_strict,
     expand_source_type_alias, extract_first_generic_type_ref, extract_generic_type_refs,
     machine_segment_matching_target, parse_machine_and_state_in_context,
     parse_primary_machine_and_state_strict, supported_wrapper, type_path,
 };
-use super::parse::{TransitionFn, TransitionIntrospectAttr};
-use std::collections::HashSet;
-use syn::{GenericArgument, PathArguments};
 
-pub(super) fn build_transition_contract(
+pub(crate) fn build_transition_contract(
     func: &TransitionFn,
     target_type: &syn::Type,
 ) -> Result<TransitionContract, TokenStream> {
@@ -30,120 +29,71 @@ pub(super) fn build_transition_contract(
     })
 }
 
-pub(super) struct InvalidReturnTypeFacts {
-    pub(super) written_return_type: String,
-    pub(super) expected_signature: String,
-    pub(super) fix: String,
+pub(super) struct ObservedReturnShape {
     pub(super) primary_branch: Option<String>,
-    pub(super) observed_machine_branches: Vec<String>,
-    pub(super) strict_help: Option<String>,
+    pub(super) secondary_machine_branches: Vec<String>,
+    pub(super) wrapper: Option<SupportedWrapper>,
+    pub(super) canonical_state: Option<String>,
 }
 
-pub(super) fn describe_invalid_return_type(
-    func: &TransitionFn,
-    target_type: &Type,
-) -> InvalidReturnTypeFacts {
-    let written_return_type = func
-        .return_type
-        .as_ref()
-        .map(compact_display)
-        .unwrap_or_else(|| "<none>".to_string());
-    let uses_strict_resolution =
-        crate::strict_introspection_enabled() || func.introspection.is_some();
-    let observed = observed_return_shape(func, target_type);
-    let expected_signature = observed
-        .as_ref()
-        .map(|shape| shape.canonical_wrapped_signature(&func.name, &func.machine_name))
-        .unwrap_or_else(|| format!("`fn {}(self) -> {}<NextState>`", func.name, func.machine_name));
-    let fix = observed
-        .as_ref()
-        .map(|shape| shape.fix_message(&func.name, &func.machine_name))
-        .unwrap_or_else(|| {
-            format!(
-                "return `{}<NextState>` directly, or wrap that same machine path in a supported `Option`, `Result`, or `statum::Branch` shape.",
-                func.machine_name
-            )
-        });
-    let strict_help = if uses_strict_resolution {
-        Some(
-            strict_introspect_return_suggestion(func, target_type)
-                .map(|expanded| {
-                    format!(
-                        "add `#[introspect(return = {expanded})]` to this method, or rewrite the signature to use that direct type.\nSource-backed alias expansion is diagnostics-only in strict mode."
-                    )
-                })
-                .unwrap_or_else(|| {
-                    "add `#[introspect(return = Machine<NextState>)]` with a direct machine path and supported wrapper shape, or rewrite the signature to use that direct type.\nSource-backed alias expansion is diagnostics-only in strict mode.".to_string()
-                }),
-        )
-    } else {
-        None
-    };
-
-    InvalidReturnTypeFacts {
-        written_return_type,
-        expected_signature,
-        fix,
-        primary_branch: observed.as_ref().and_then(|shape| shape.primary_branch.clone()),
-        observed_machine_branches: observed
-            .map(|shape| shape.secondary_machine_branches)
-            .unwrap_or_default(),
-        strict_help,
+impl ObservedReturnShape {
+    pub(super) fn canonical_machine_target(&self, machine_name: &str) -> String {
+        match self.canonical_state.as_deref() {
+            Some(state) => format!("{machine_name}<{state}>"),
+            None => format!("{machine_name}<NextState>"),
+        }
     }
-}
 
-pub(super) struct IntrospectReturnMismatchFacts {
-    pub(super) expected: String,
-    pub(super) fix: String,
-    pub(super) written_primary_branch: Option<String>,
-    pub(super) annotated_primary_branch: Option<String>,
-    pub(super) observed_machine_branches: Vec<String>,
-}
+    pub(super) fn canonical_annotation(&self, machine_name: &str) -> String {
+        let machine_target = self.canonical_machine_target(machine_name);
+        match self.wrapper {
+            Some(SupportedWrapper::Option) => {
+                format!("::core::option::Option<{machine_target}>")
+            }
+            Some(SupportedWrapper::Result) => {
+                format!("::core::result::Result<{machine_target}, E>")
+            }
+            Some(SupportedWrapper::Branch) => {
+                format!("::statum::Branch<{machine_target}, OtherBranch>")
+            }
+            None => machine_target,
+        }
+    }
 
-pub(super) fn describe_mismatched_introspect_return(
-    introspection: &TransitionIntrospectAttr,
-    func: &TransitionFn,
-    actual_return_type: &Type,
-    target_type: &Type,
-) -> IntrospectReturnMismatchFacts {
-    let actual_return = compact_display(actual_return_type);
-    let observed = observed_return_shape(func, target_type);
-    let annotation_primary_branch = primary_branch_display(&introspection.return_type);
-    let expected = observed
-        .as_ref()
-        .map(|shape| {
-            format!(
-                "`#[introspect(return = {})]` and {}",
-                shape.canonical_annotation(&func.machine_name),
-                shape.canonical_wrapped_signature(&func.name, &func.machine_name)
-            )
-        })
-        .unwrap_or_else(|| format!("an annotation describing the same legal targets as `{actual_return}`"));
-    let fix = observed
-        .as_ref()
-        .map(|shape| {
-            format!(
-                "make the written primary branch `{}` so it matches `#[introspect(return = {})]`, or rewrite the method to {}.",
-                shape.canonical_machine_target(&func.machine_name),
-                shape.canonical_annotation(&func.machine_name),
-                shape.canonical_wrapped_signature(&func.name, &func.machine_name)
-            )
-        })
-        .unwrap_or_else(|| "either remove the annotation or make it match the written signature.".to_string());
+    pub(super) fn canonical_wrapped_signature(
+        &self,
+        func_name: &syn::Ident,
+        machine_name: &str,
+    ) -> String {
+        format!("`fn {func_name}(self) -> {}`", self.canonical_annotation(machine_name))
+    }
 
-    IntrospectReturnMismatchFacts {
-        expected,
-        fix,
-        written_primary_branch: observed.as_ref().and_then(|shape| shape.primary_branch.clone()),
-        annotated_primary_branch: annotation_primary_branch,
-        observed_machine_branches: observed
-            .map(|shape| shape.secondary_machine_branches)
-            .unwrap_or_default(),
+    pub(super) fn fix_message(&self, func_name: &syn::Ident, machine_name: &str) -> String {
+        let machine_target = self.canonical_machine_target(machine_name);
+        match self.wrapper {
+            Some(SupportedWrapper::Option)
+            | Some(SupportedWrapper::Result)
+            | Some(SupportedWrapper::Branch) => format!(
+                "move `{machine_target}` into the primary branch, for example with {}, or return `{machine_target}` directly if you do not need the wrapper.",
+                self.canonical_wrapped_signature(func_name, machine_name)
+            ),
+            None => format!("return `{machine_target}` directly."),
+        }
     }
 }
 
 struct ValidatedTransitionReturnContract {
     primary_next_state: String,
+    next_states: Vec<String>,
+}
+
+struct ResolvedTransitionTargets {
+    primary_next_state: String,
+    next_states: Vec<String>,
+}
+
+struct ObservedTransitionTargets {
+    primary_next_state: Option<String>,
     next_states: Vec<String>,
 }
 
@@ -220,16 +170,6 @@ fn validate_transition_return_contract(
     })
 }
 
-struct ResolvedTransitionTargets {
-    primary_next_state: String,
-    next_states: Vec<String>,
-}
-
-struct ObservedTransitionTargets {
-    primary_next_state: Option<String>,
-    next_states: Vec<String>,
-}
-
 fn resolve_transition_targets(
     ty: &Type,
     target_type: &Type,
@@ -260,7 +200,7 @@ fn resolve_transition_targets_strict(
 fn resolve_transition_targets_in_context(
     ty: &Type,
     target_type: &Type,
-    context: Option<&super::resolve::AliasResolutionContext>,
+    context: Option<&super::super::resolve::AliasResolutionContext>,
 ) -> Option<ResolvedTransitionTargets> {
     let (_, primary_next_state) = parse_machine_and_state_in_context(ty, target_type, context)?;
     let next_states = collect_machine_and_states_in_context(ty, target_type, context)
@@ -273,10 +213,7 @@ fn resolve_transition_targets_in_context(
     })
 }
 
-fn observe_transition_targets_strict(
-    ty: &Type,
-    target_type: &Type,
-) -> ObservedTransitionTargets {
+fn observe_transition_targets_strict(ty: &Type, target_type: &Type) -> ObservedTransitionTargets {
     ObservedTransitionTargets {
         primary_next_state: parse_primary_machine_and_state_strict(ty, target_type)
             .map(|(_, state)| state),
@@ -287,7 +224,7 @@ fn observe_transition_targets_strict(
     }
 }
 
-fn strict_introspect_return_suggestion(
+pub(super) fn strict_introspect_return_suggestion(
     func: &TransitionFn,
     target_type: &Type,
 ) -> Option<String> {
@@ -318,16 +255,19 @@ fn strict_diagnostic_expanded_return_type_inner(
         return Some(ty.clone());
     }
 
-    if let Some(expanded_alias) = expand_source_type_alias(ty, context, visited)
-    {
+    if let Some(expanded_alias) = expand_source_type_alias(ty, context, visited) {
         let (expanded, alias_context, visit_key) = expanded_alias.into_parts();
-        let result =
-            strict_diagnostic_expanded_return_type_inner(&expanded, target_type, Some(&alias_context), visited)
-                .or_else(|| {
-                    parse_primary_machine_and_state_strict(&expanded, target_type)
-                        .is_some()
-                        .then_some(expanded.clone())
-                });
+        let result = strict_diagnostic_expanded_return_type_inner(
+            &expanded,
+            target_type,
+            Some(&alias_context),
+            visited,
+        )
+        .or_else(|| {
+            parse_primary_machine_and_state_strict(&expanded, target_type)
+                .is_some()
+                .then_some(expanded.clone())
+        });
         visited.remove(&visit_key);
         return result;
     }
@@ -371,56 +311,7 @@ fn strict_diagnostic_expanded_return_type_inner(
     }
 }
 
-struct ObservedReturnShape {
-    primary_branch: Option<String>,
-    secondary_machine_branches: Vec<String>,
-    wrapper: Option<SupportedWrapper>,
-    canonical_state: Option<String>,
-}
-
-impl ObservedReturnShape {
-    fn canonical_machine_target(&self, machine_name: &str) -> String {
-        match self.canonical_state.as_deref() {
-            Some(state) => format!("{machine_name}<{state}>"),
-            None => format!("{machine_name}<NextState>"),
-        }
-    }
-
-    fn canonical_annotation(&self, machine_name: &str) -> String {
-        let machine_target = self.canonical_machine_target(machine_name);
-        match self.wrapper {
-            Some(SupportedWrapper::Option) => {
-                format!("::core::option::Option<{machine_target}>")
-            }
-            Some(SupportedWrapper::Result) => {
-                format!("::core::result::Result<{machine_target}, E>")
-            }
-            Some(SupportedWrapper::Branch) => {
-                format!("::statum::Branch<{machine_target}, OtherBranch>")
-            }
-            None => machine_target,
-        }
-    }
-
-    fn canonical_wrapped_signature(&self, func_name: &syn::Ident, machine_name: &str) -> String {
-        format!("`fn {func_name}(self) -> {}`", self.canonical_annotation(machine_name))
-    }
-
-    fn fix_message(&self, func_name: &syn::Ident, machine_name: &str) -> String {
-        let machine_target = self.canonical_machine_target(machine_name);
-        match self.wrapper {
-            Some(SupportedWrapper::Option)
-            | Some(SupportedWrapper::Result)
-            | Some(SupportedWrapper::Branch) => format!(
-                "move `{machine_target}` into the primary branch, for example with {}, or return `{machine_target}` directly if you do not need the wrapper.",
-                self.canonical_wrapped_signature(func_name, machine_name)
-            ),
-            None => format!("return `{machine_target}` directly."),
-        }
-    }
-}
-
-fn observed_return_shape(func: &TransitionFn, target_type: &Type) -> Option<ObservedReturnShape> {
+pub(super) fn observed_return_shape(func: &TransitionFn, target_type: &Type) -> Option<ObservedReturnShape> {
     let return_type = func.return_type.as_ref()?;
     let wrapper = raw_wrapper_kind(return_type);
     let primary_branch = primary_branch_display(return_type);
@@ -449,15 +340,13 @@ fn resolved_machine_branches(func: &TransitionFn, target_type: &Type) -> Vec<Str
     let Some(return_type) = func.return_type.as_ref() else {
         return Vec::new();
     };
-    let uses_strict_resolution =
-        crate::strict_introspection_enabled() || func.introspection.is_some();
+    let uses_strict_resolution = crate::strict_introspection_enabled() || func.introspection.is_some();
     let targets = if uses_strict_resolution {
         collect_machine_and_states_strict(return_type, target_type)
     } else {
         SourceAliasResolver::new(func.return_type_span)
             .find_map(|context| {
-                let states =
-                    collect_machine_and_states_in_context(return_type, target_type, context);
+                let states = collect_machine_and_states_in_context(return_type, target_type, context);
                 (!states.is_empty()).then_some(states)
             })
             .unwrap_or_default()
@@ -474,7 +363,7 @@ fn raw_wrapper_kind(ty: &Type) -> Option<SupportedWrapper> {
     supported_wrapper(&type_path.path)
 }
 
-fn primary_branch_display(ty: &Type) -> Option<String> {
+pub(super) fn primary_branch_display(ty: &Type) -> Option<String> {
     let type_path = type_path(ty)?;
     let segment = type_path.path.segments.last()?;
     match supported_wrapper(&type_path.path) {

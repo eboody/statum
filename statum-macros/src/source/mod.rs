@@ -8,10 +8,12 @@ mod aliases;
 mod analysis;
 mod cache;
 mod callsite;
+mod diagnostics_query;
 mod module_path;
 mod parser;
 mod pathing;
 mod query;
+mod scan;
 mod syntax;
 
 pub(crate) use aliases::{AliasResolutionContext, SourceAliasResolver, expand_source_type_alias};
@@ -19,6 +21,7 @@ pub(crate) use callsite::{
     current_module_path_opt, current_source_info, module_path_for_line, module_path_for_span,
     source_info_for_span,
 };
+pub(crate) use diagnostics_query::SourceModuleQuery;
 pub(crate) use pathing::{
     module_path_from_file_with_root, module_path_to_file, module_root_from_file,
 };

@@ -5,11 +5,16 @@ members = [
     "statum-macros",
     "statum-examples",
 ]
+exclude = [
+    "benchmarks/compile/plain-fixture",
+    "benchmarks/compile/statum-fixture",
+]
 resolver = "2"
 
 [workspace.dependencies]
 axum = "0.8"
 clap = "4.5"
+criterion = "0.5"
 futures = "0.3"
 linkme = "0.3"
 moddef = "0.2.6"
@@ -39,6 +44,8 @@ path = "statum-macros"
 version = "0.8.10"
 
 [workspace.metadata.scripts]
+benchmark-compile = "bash scripts/benchmark_compile.sh"
+benchmark-runtime = "cargo bench -p statum --bench runtime"
 publish = "cargo script scripts/publish.rs"
 publish-dry-run = "bash scripts/check_publish_dry_run.sh"
 version-bump = "cargo script scripts/update_version.rs -- 1.0.0"

@@ -1,0 +1,165 @@
+use quote::{format_ident, quote};
+use syn::{Generics, Ident, Path};
+
+use super::shared::{
+    failed_rebuild_attempt_with_rejection_tokens, machine_builder_path_tokens,
+    machine_state_variant_path_tokens, rebuild_attempt_tokens,
+};
+use crate::validators::contract::{ValidatorMethodContract, ValidatorReturnKind};
+
+pub(crate) struct ValidatorCheckContext<'a> {
+    pub(crate) machine_path: &'a Path,
+    pub(crate) machine_module_path: &'a Path,
+    pub(crate) machine_generics: &'a Generics,
+    pub(crate) field_names: &'a [Ident],
+    pub(crate) receiver: &'a proc_macro2::TokenStream,
+}
+
+pub(crate) fn generate_validator_check(
+    context: &ValidatorCheckContext<'_>,
+    method: &ValidatorMethodContract,
+) -> proc_macro2::TokenStream {
+    let machine_path = context.machine_path;
+    let machine_module_path = context.machine_module_path;
+    let machine_generics = context.machine_generics;
+    let field_names = context.field_names;
+    let receiver = context.receiver;
+    let variant_ident = format_ident!("{}", method.variant_name);
+    let validator_fn_ident = &method.validator_fn;
+    let await_token = if method.is_async {
+        quote! { .await }
+    } else {
+        quote! {}
+    };
+    let field_builder_chain = quote! { #(.#field_names(#field_names))* };
+    let machine_builder_path =
+        machine_builder_path_tokens(machine_path, machine_generics, &variant_ident);
+    let machine_state_variant_path =
+        machine_state_variant_path_tokens(machine_module_path, machine_generics, &variant_ident);
+
+    if method.has_state_data {
+        let builder_call = quote! {
+            #machine_builder_path::builder()
+                #field_builder_chain
+                .state_data(__statum_state_data)
+                .build()
+        };
+        quote! {
+            if let Ok(__statum_state_data) = #receiver.#validator_fn_ident(#(&#field_names),*)#await_token {
+                return Ok(#machine_state_variant_path(
+                    #builder_call
+                ));
+            }
+        }
+    } else {
+        let builder_call = quote! {
+            #machine_builder_path::builder()
+                #field_builder_chain
+                .build()
+        };
+        quote! {
+            if #receiver.#validator_fn_ident(#(&#field_names),*)#await_token.is_ok() {
+                return Ok(#machine_state_variant_path(
+                    #builder_call
+                ));
+            }
+        }
+    }
+}
+
+pub(crate) fn generate_validator_report_check(
+    context: &ValidatorCheckContext<'_>,
+    method: &ValidatorMethodContract,
+) -> proc_macro2::TokenStream {
+    let machine_path = context.machine_path;
+    let machine_module_path = context.machine_module_path;
+    let machine_generics = context.machine_generics;
+    let field_names = context.field_names;
+    let receiver = context.receiver;
+    let variant_ident = format_ident!("{}", method.variant_name);
+    let validator_fn_ident = &method.validator_fn;
+    let await_token = if method.is_async {
+        quote! { .await }
+    } else {
+        quote! {}
+    };
+    let field_builder_chain = quote! { #(.#field_names(#field_names))* };
+    let matched_attempt = rebuild_attempt_tokens(validator_fn_ident, &variant_ident, true);
+    let failed_attempt = rebuild_attempt_tokens(validator_fn_ident, &variant_ident, false);
+    let failed_attempt_with_rejection = failed_rebuild_attempt_with_rejection_tokens(
+        validator_fn_ident,
+        &variant_ident,
+    );
+    let machine_builder_path =
+        machine_builder_path_tokens(machine_path, machine_generics, &variant_ident);
+    let machine_state_variant_path =
+        machine_state_variant_path_tokens(machine_module_path, machine_generics, &variant_ident);
+
+    if method.has_state_data {
+        let builder_call = quote! {
+            #machine_builder_path::builder()
+                #field_builder_chain
+                .state_data(__statum_state_data)
+                .build()
+        };
+        match method.return_kind {
+            ValidatorReturnKind::Plain => quote! {
+                match #receiver.#validator_fn_ident(#(&#field_names),*)#await_token {
+                    Ok(__statum_state_data) => {
+                        __statum_attempts.push(#matched_attempt);
+                        return statum::RebuildReport {
+                            attempts: __statum_attempts,
+                            result: Ok(#machine_state_variant_path(#builder_call)),
+                        };
+                    }
+                    Err(_) => __statum_attempts.push(#failed_attempt),
+                }
+            },
+            ValidatorReturnKind::Diagnostic => quote! {
+                match #receiver.#validator_fn_ident(#(&#field_names),*)#await_token {
+                    Ok(__statum_state_data) => {
+                        __statum_attempts.push(#matched_attempt);
+                        return statum::RebuildReport {
+                            attempts: __statum_attempts,
+                            result: Ok(#machine_state_variant_path(#builder_call)),
+                        };
+                    }
+                    Err(__statum_rejection) => __statum_attempts.push(#failed_attempt_with_rejection),
+                }
+            },
+        }
+    } else {
+        let builder_call = quote! {
+            #machine_builder_path::builder()
+                #field_builder_chain
+                .build()
+        };
+        match method.return_kind {
+            ValidatorReturnKind::Plain => quote! {
+                if #receiver.#validator_fn_ident(#(&#field_names),*)#await_token.is_ok() {
+                    __statum_attempts.push(#matched_attempt);
+                    return statum::RebuildReport {
+                        attempts: __statum_attempts,
+                        result: Ok(#machine_state_variant_path(#builder_call)),
+                    };
+                }
+
+                __statum_attempts.push(#failed_attempt);
+            },
+            ValidatorReturnKind::Diagnostic => quote! {
+                match #receiver.#validator_fn_ident(#(&#field_names),*)#await_token {
+                    Ok(()) => {
+                        __statum_attempts.push(#matched_attempt);
+                        return statum::RebuildReport {
+                            attempts: __statum_attempts,
+                            result: Ok(#machine_state_variant_path(#builder_call)),
+                        };
+                    }
+                    Err(__statum_rejection) => {
+                        __statum_attempts.push(#failed_attempt_with_rejection);
+                    }
+                }
+            },
+        }
+    }
+}

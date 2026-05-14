@@ -1,8 +1,9 @@
 use crate::diagnostics::{DiagnosticMessage, compact_text, compile_error_at};
 use crate::source::{
-    ItemKind, candidates_in_module, current_source_info, module_path_for_line,
-    same_named_candidates_elsewhere, source_info_for_span,
+    SourceModuleQuery, module_path_for_line, source_info_for_span,
 };
+#[cfg(test)]
+use crate::source::current_source_info;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, ToTokens};
 use syn::{Generics, Ident, ItemStruct, Type, Visibility};
@@ -281,6 +282,10 @@ fn missing_state_enum_error(
     }
 
     let expected = machine_info.state_generic_name.as_deref();
+    let source_query = SourceModuleQuery::anchored_at(
+        machine_info.file_path.as_deref(),
+        machine_info.module_path.as_ref(),
+    );
     let expected_line = expected
         .map(|name| format!("Expected a `#[state]` enum named `{name}` in module `{}`.", machine_info.module_path))
         .unwrap_or_else(|| {
@@ -289,10 +294,7 @@ fn missing_state_enum_error(
                 machine_info.name
             )
         });
-    let available = available_state_candidates_in_module(
-        machine_info.file_path.as_deref(),
-        machine_info.module_path.as_ref(),
-    );
+    let available = source_query.state_candidates();
     let available_line = if available.is_empty() {
         "No `#[state]` enums were found in that module.".to_string()
     } else {
@@ -318,13 +320,7 @@ fn missing_state_enum_error(
         .map(|line| format!("{line}\n"))
         .unwrap_or_default();
     let elsewhere_line = expected
-        .and_then(|name| {
-            same_named_state_candidates_elsewhere(
-                machine_info.file_path.as_deref(),
-                name,
-                machine_info.module_path.as_ref(),
-            )
-        })
+        .and_then(|name| source_query.same_named_state_candidates_elsewhere(name))
         .map(|candidates| {
             format!(
                 "Same-named `#[state]` enums elsewhere in this file: {}.",
@@ -333,7 +329,7 @@ fn missing_state_enum_error(
         })
         .unwrap_or_else(|| "No same-named `#[state]` enums were found in other modules of this file.".to_string());
     let missing_attr_line = expected.and_then(|name| {
-        plain_enum_line_in_module(machine_info.file_path.as_deref(), machine_info.module_path.as_ref(), name).map(|line| {
+        source_query.plain_state_enum_line(name).map(|line| {
             format!("An enum named `{name}` exists on line {line}, but it is not annotated with `#[state]`.")
         })
     });
@@ -375,54 +371,6 @@ fn missing_state_enum_error(
     .candidates(elsewhere_line)
     .candidates(available_line);
     compile_error_at(Span::call_site(), &message)
-}
-
-fn available_state_candidates_in_module(
-    file_path: Option<&str>,
-    module_path: &str,
-) -> Vec<crate::source::ItemCandidate> {
-    let Some(file_path) = file_path
-        .map(str::to_owned)
-        .or_else(|| current_source_info().map(|(path, _)| path))
-    else {
-        return Vec::new();
-    };
-    candidates_in_module(&file_path, module_path, ItemKind::Enum, Some("state"))
-}
-
-fn plain_enum_line_in_module(
-    file_path: Option<&str>,
-    module_path: &str,
-    enum_name: &str,
-) -> Option<usize> {
-    let file_path = file_path
-        .map(str::to_owned)
-        .or_else(|| current_source_info().map(|(path, _)| path))?;
-    crate::source::plain_item_line_in_module(
-        &file_path,
-        module_path,
-        ItemKind::Enum,
-        enum_name,
-        Some("state"),
-    )
-}
-
-fn same_named_state_candidates_elsewhere(
-    file_path: Option<&str>,
-    enum_name: &str,
-    module_path: &str,
-) -> Option<Vec<crate::source::ItemCandidate>> {
-    let file_path = file_path
-        .map(str::to_owned)
-        .or_else(|| current_source_info().map(|(path, _)| path))?;
-    let candidates = same_named_candidates_elsewhere(
-        &file_path,
-        module_path,
-        ItemKind::Enum,
-        enum_name,
-        Some("state"),
-    );
-    (!candidates.is_empty()).then_some(candidates)
 }
 
 #[cfg(test)]

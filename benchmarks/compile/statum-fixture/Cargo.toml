@@ -1,0 +1,10 @@
+[package]
+name = "statum-compile-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+statum = { path = "../../../statum" }
+
+[workspace]
