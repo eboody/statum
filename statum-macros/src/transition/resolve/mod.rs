@@ -1,3 +1,4 @@
+mod machine_context;
 mod shape;
 mod strategy;
 
@@ -8,6 +9,7 @@ pub(super) use shape::{
     SupportedWrapper, extract_first_generic_type_ref, extract_generic_type_refs,
     extract_impl_machine_and_state, machine_segment_matching_target, supported_wrapper, type_path,
 };
+pub(super) use machine_context::missing_transition_machine_context;
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(super) use strategy::{
     collect_machine_and_states, collect_machine_and_states_in_context,
