@@ -39,6 +39,10 @@ where
         S: Copy + Eq,
         T: Copy + Eq,
     {
+        if self.machine != graph.machine {
+            return None;
+        }
+
         let descriptor = graph.transition(self.transition)?;
         if descriptor.from == self.from && descriptor.to.contains(&self.chosen) {
             Some(descriptor)

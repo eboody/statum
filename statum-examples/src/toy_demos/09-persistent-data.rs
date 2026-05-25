@@ -62,7 +62,7 @@ async fn pretend_validation_call(_client: &str) -> Result<bool, statum::Error> {
     Ok(true)
 }
 
-pub async fn run() {
+pub async fn run() -> Result<(), statum::Error> {
     let article = Article {
         status: Status::Draft,
     };
@@ -70,11 +70,8 @@ pub async fn run() {
     let my_client = "my_client".to_string();
 
     // machine::SomeState is the generated sum type for all possible typed machine states.
-    let machine_state: machine::SomeState = Machine::rebuild(&article)
-        .client(my_client)
-        .build()
-        .await
-        .unwrap();
+    let machine_state: machine::SomeState =
+        Machine::rebuild(&article).client(my_client).build().await?;
 
     // Match once to recover the concrete typed machine.
     match machine_state {
@@ -86,4 +83,5 @@ pub async fn run() {
     // Output:
     // Machines client in is_draft validator method: my_client
     // do thing with Machine<Draft>
+    Ok(())
 }

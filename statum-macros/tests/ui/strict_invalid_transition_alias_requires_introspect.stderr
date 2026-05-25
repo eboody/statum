@@ -1,11 +1,11 @@
 error: Error: transition method `WorkflowMachine<Draft>::submit` returns an unsupported type.
        Found: `fn submit(self) -> Next`
        Expected: `fn submit(self) -> WorkflowMachine<NextState>`
-       Reason: expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape
+       Reason: expected the impl target machine path directly, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape; aliases require an explicit `#[introspect(return = ...)]` annotation in strict mode
        Fix: return `WorkflowMachine<NextState>` directly.
        Primary branch: `Next`
-       Note: Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.
-             Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module.
+       Note: Supported strict introspection shapes are direct machine paths and supported `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>` wrappers around direct machine paths.
+             Source-backed aliases may be expanded only to suggest an explicit `#[introspect(return = ...)]`; they are not accepted as authoritative transition contracts in strict mode. Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are rejected.
        Help: add `#[introspect(return = ::core::result::Result<WorkflowMachine<Review>, WorkflowMachine <
              Rejected>>)]` to this method, or rewrite the signature to use that direct type.
              Source-backed alias expansion is diagnostics-only in strict mode.

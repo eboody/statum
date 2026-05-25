@@ -10,6 +10,10 @@ Public surface:
 - `StateMarker`, `UnitState`, `DataState`
 - `CanTransitionTo`, `CanTransitionWith`, `CanTransitionMap`
 - `statum_core::projection`
+- root-level introspection and presentation descriptors such as
+  `MachineGraph`, `MachineDescriptor`, `StateDescriptor`,
+  `TransitionDescriptor`, `RecordedTransition`, and the inventory/presentation
+  helpers used by generated machine metadata
 
 ## Install
 

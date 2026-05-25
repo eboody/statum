@@ -1,11 +1,11 @@
 error: Error: transition method `Machine<Draft>::finish` returns an unsupported type.
        Found: `fn finish(self) -> ::core::result::Result<(), Machine<Done>>`
        Expected: `fn finish(self) -> ::core::result::Result<Machine<Done>, E>`
-       Reason: expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape
+       Reason: expected the impl target machine path directly, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape; aliases require an explicit `#[introspect(return = ...)]` annotation in strict mode
        Fix: move `Machine<Done>` into the primary branch, for example with `fn finish(self) -> ::core::result::Result<Machine<Done>, E>`, or return `Machine<Done>` directly if you do not need the wrapper.
        Primary branch: `()`
-       Note: Supported wrappers are `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>`, plus ordinary source-declared type aliases that expand to those shapes.
-             Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are still rejected because transition introspection only follows source-backed type aliases it can resolve in-module.
+       Note: Supported strict introspection shapes are direct machine paths and supported `::core::option::Option<...>`, `::core::result::Result<..., E>`, and `::statum::Branch<..., ...>` wrappers around direct machine paths.
+             Source-backed aliases may be expanded only to suggest an explicit `#[introspect(return = ...)]`; they are not accepted as authoritative transition contracts in strict mode. Imported aliases, macro-generated aliases, include-generated aliases, ambiguous aliases, and foreign machine paths are rejected.
        Help: add `#[introspect(return = Machine<NextState>)]` with a direct machine path and supported wrapper shape, or rewrite the signature to use that direct type.
              Source-backed alias expansion is diagnostics-only in strict mode.
   --> tests/ui/strict_invalid_transition_result_machine_in_error_branch.rs:24:24

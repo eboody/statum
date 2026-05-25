@@ -53,8 +53,8 @@ impl Article {
     }
 }
 
-pub async fn run() {
-    let articles: Vec<Article> = pretend_db_call().await.unwrap();
+pub async fn run() -> Result<(), statum::Error> {
+    let articles: Vec<Article> = pretend_db_call().await?;
 
     // The builder is async because one validator is async.
     let machine_states = Machine::rebuild_many(articles)
@@ -86,6 +86,7 @@ pub async fn run() {
     //_machine is Machine<Published>
     //_machine is Machine<Draft>
     //_machine is Machine<InReview>
+    Ok(())
 }
 
 async fn pretend_db_call() -> Result<Vec<Article>, statum::Error> {

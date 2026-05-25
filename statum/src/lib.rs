@@ -271,6 +271,11 @@
 //!   [`transition`](macro@transition).
 //! - For stored rows and database rebuilds, read [`validators`](macro@validators).
 //! - For append-only event logs, use [`projection`] before validator rebuilds.
+//! - Machine introspection, presentation, and runtime recording types are
+//!   intentionally re-exported at the crate root (`MachineGraph`,
+//!   `RecordedTransition`, `MachinePresentation`, and related descriptors) so
+//!   applications can inspect generated transition metadata without depending on
+//!   `statum-core` directly.
 //! - The repository README and `docs/` directory contain longer guides and
 //!   showcase applications.
 

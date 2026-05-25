@@ -37,7 +37,7 @@ impl ArticleRow {
     }
 }
 
-pub fn run() {
+pub fn run() -> Result<(), statum::Error> {
     let rows = vec![
         ArticleRow {
             tenant: "acme".to_owned(),
@@ -58,14 +58,14 @@ pub fn run() {
         })
         .build();
 
-    let machines: Vec<machine::SomeState> = machines.into_iter().map(Result::unwrap).collect();
+    let machines: Vec<machine::SomeState> = machines.into_iter().collect::<Result<_, _>>()?;
 
     match &machines[0] {
         machine::SomeState::Draft(machine) => {
             assert_eq!(machine.tenant.as_str(), "acme");
             assert_eq!(machine.priority, 1);
         }
-        _ => panic!("expected draft article"),
+        _ => return Err(statum::Error::InvalidState),
     }
 
     match &machines[1] {
@@ -73,6 +73,8 @@ pub fn run() {
             assert_eq!(machine.tenant.as_str(), "globex");
             assert_eq!(machine.priority, 3);
         }
-        _ => panic!("expected published article"),
+        _ => return Err(statum::Error::InvalidState),
     }
+
+    Ok(())
 }
