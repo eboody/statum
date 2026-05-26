@@ -26,7 +26,6 @@ pub mod __private {
         MachinePresentation, MachinePresentationDescriptor, RebuildAttempt, RebuildReport,
         StatePresentation, TransitionPresentation, TransitionPresentationInventory,
     };
-    pub use futures;
     pub use linkme;
 
     #[derive(Debug)]

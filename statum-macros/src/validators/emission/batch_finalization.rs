@@ -54,13 +54,16 @@ pub(super) fn generate_batch_finalization(
             BatchFieldSource::SharedAcrossItems { field_builder_chain },
         ) => {
             quote! {
-                statum::__private::futures::future::join_all(
-                    __statum_items.iter().map(|__statum_item| {
+                let mut __statum_results = Vec::with_capacity(__statum_items.len());
+                for __statum_item in __statum_items.iter() {
+                    __statum_results.push(
                         __statum_item.into_machine()
                             #field_builder_chain
                             .#builder_method()
-                    })
-                ).await
+                            .await,
+                    );
+                }
+                __statum_results
             }
         }
         (BatchAsyncMode::Sync, BatchFieldSource::PerItemByFn { field_builder_chain }) => {
@@ -80,14 +83,17 @@ pub(super) fn generate_batch_finalization(
         (BatchAsyncMode::Async, BatchFieldSource::PerItemByFn { field_builder_chain }) => {
             quote! {
                 let __statum_field_fn = &self.__statum_fields_fn;
-                statum::__private::futures::future::join_all(
-                    self.__statum_items.iter().map(|__statum_item| {
-                        let __statum_fields = __statum_field_fn(__statum_item);
+                let mut __statum_results = Vec::with_capacity(self.__statum_items.len());
+                for __statum_item in self.__statum_items.iter() {
+                    let __statum_fields = __statum_field_fn(__statum_item);
+                    __statum_results.push(
                         __statum_item.into_machine()
                             #field_builder_chain
                             .#builder_method()
-                    })
-                ).await
+                            .await,
+                    );
+                }
+                __statum_results
             }
         }
     }
