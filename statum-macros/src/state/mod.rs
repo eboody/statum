@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 use syn::{Fields, Ident, ItemEnum, Path, Type, Visibility};
 
 use crate::{
-    ModulePath, SourceFingerprint, crate_root_for_file, extract_derives, parse_present_attrs,
+    ModulePath, SourceFingerprint, crate_root_for_file, extract_derives, parse_present_attrs_for,
     source_file_fingerprint, PresentationAttr,
 };
 
@@ -363,7 +363,11 @@ impl EnumInfo {
             .filter_map(extract_derives)
             .flatten()
             .collect();
-        let presentation = parse_present_attrs(&item.attrs)?;
+        let enum_presentation_context = format!("state enum `{}`", item.ident);
+        let presentation = parse_present_attrs_for(
+            &item.attrs,
+            Some(enum_presentation_context.as_str()),
+        )?;
 
         let mut variants = Vec::new();
         for variant in &item.variants {
@@ -393,7 +397,11 @@ impl EnumInfo {
                         .collect(),
                 },
             };
-            let presentation = parse_present_attrs(&variant.attrs)?;
+            let variant_presentation_context = format!("state `{}::{}`", item.ident, variant.ident);
+            let presentation = parse_present_attrs_for(
+                &variant.attrs,
+                Some(variant_presentation_context.as_str()),
+            )?;
 
             variants.push(VariantInfo {
                 name,

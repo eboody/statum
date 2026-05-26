@@ -1,4 +1,4 @@
-error: Error: unknown `#[present(...)]` key `title`.
+error: Error: unknown `#[present(...)]` key `title` on transition `Flow<Draft>::submit`.
        Found: `title = "Submit"`
        Expected: `label = "..."`, `description = "..."`, or `metadata = Expr`
        Fix: replace that key or remove it.
