@@ -1,0 +1,26 @@
+error[E0433]: cannot find `StateId` in `flow`
+  --> tests/ui/invalid_default_introspection_surface.rs:31:24
+   |
+31 |     let _state = flow::StateId::Draft;
+   |                        ^^^^^^^ could not find `StateId` in `flow`
+   |
+help: a type alias with a similar name exists
+   |
+31 -     let _state = flow::StateId::Draft;
+31 +     let _state = flow::State::Draft;
+   |
+
+error[E0425]: cannot find value `GRAPH` in module `flow`
+  --> tests/ui/invalid_default_introspection_surface.rs:30:24
+   |
+30 |     let _graph = flow::GRAPH;
+   |                        ^^^^^ not found in `flow`
+
+error[E0599]: no associated item named `SUBMIT` found for struct `Flow<FlowState>` in the current scope
+  --> tests/ui/invalid_default_introspection_surface.rs:32:38
+   |
+19 | #[machine]
+   | ---------- associated item `SUBMIT` not found for this struct
+...
+32 |     let _transition = Flow::<Draft>::SUBMIT;
+   |                                      ^^^^^^ associated item not found in `Flow<Draft>`

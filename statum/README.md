@@ -13,7 +13,7 @@ This crate re-exports:
 - attribute macros: `#[state]`, `#[machine]`, `#[transition]`, `#[validators]`
 - runtime types: `statum::Error`, `statum::Result<T>`
 - advanced traits: `StateMarker`, `UnitState`, `DataState`, `CanTransition*`
-- typed introspection and runtime-join surfaces: `MachineIntrospection`, `MachineGraph`, `MachineTransitionRecorder`, `MachinePresentation`
+- optional typed introspection and runtime-join surfaces behind the `introspection` feature: `MachineIntrospection`, `MachineGraph`, `MachineTransitionRecorder`, `MachinePresentation`
 - projection helpers: `statum::projection`
 
 ## Install
@@ -71,10 +71,14 @@ impl Light<On> {
 
 ## Docs
 
-- Machine introspection is useful when the machine definition should also drive
+- Enable the `introspection` feature when the machine definition should also drive
   CLI explainers, graph exports, generated docs, branch-strip views, or runtime
-  replay/debug tooling. Statum exposes exact transition sites instead of a
-  coarse machine-wide state list.
+  replay/debug tooling. That feature emits the generated `StateId`,
+  `TransitionId`, `GRAPH`, `PRESENTATION`, and `linkme` inventory surface; the
+  default feature set keeps those out of generated machines. Its observation
+  point is the macro-validated semantic model: locally readable state/machine
+  items plus transition signatures and explicit `#[introspect(return = ...)]`
+  overrides.
 - API docs: <https://docs.rs/statum>
 - Repository README: <https://github.com/eboody/statum/blob/main/README.md>
 - Validators guide: <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>
