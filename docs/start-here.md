@@ -75,6 +75,10 @@ Use the focused docs rather than reading everything:
 - [Typestate builder design playbook](typestate-builder-design-playbook.md) if
   you are deciding whether you need a typestate surface at all, and whether it
   should be a smaller staged surface or a durable workflow machine
+- [Builder UX positioning](builder-ux-positioning.md) if you are comparing
+  Statum's generated builders with ordinary Rust builder crates
+- [World-class quality roadmap](world-class-roadmap.md) if you want the current
+  quality bar for diagnostics, builder UX, compile-time reporting, and examples
 
 ## 6. Use The Agent Kit Only If It Matches Your Workflow
 

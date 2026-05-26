@@ -647,7 +647,10 @@ living through meaningful runtime phases after construction.
 Guideline:
 
 - Builder: data assembly and defaults.
-- Typestate (statum): ordered lifecycle and legal transitions.
+- Typestate (Statum): ordered lifecycle and legal transitions.
+
+See [builder-ux-positioning.md](builder-ux-positioning.md) for the project-level
+line between Statum-owned builder UX and ordinary builder-crate ergonomics.
 
 ```rust
 let command = PostMessageCommand::builder()

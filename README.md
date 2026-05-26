@@ -13,7 +13,7 @@
 
 # Statum
 
-Statum is about correctness. More specifically, it is about representational
+Statum is a typestate workflow framework. It is about representational
 correctness: how accurately your code models the thing you are trying to model.
 
 The goal is to make invalid, undesirable, or not-yet-validated states
@@ -23,7 +23,11 @@ instead of leaving it implicit.
 
 Statum applies that same idea when a value's phase should change what methods
 are legally available on that value. Durable workflows and protocols are one
-strong fit. Staged validation, resolution, and build surfaces are another.
+strong fit. Staged validation, resolution, and build surfaces are another. The
+unusual part is typed rehydration: persisted rows, event projections, and other
+dynamic facts stay raw until `#[validators]` proves they are one legal machine
+state.
+
 Today's API packages that with `#[state]`, `#[machine]`, `#[transition]`, and
 `#[validators]`.
 
@@ -437,6 +441,10 @@ of the conservative templates in this repo.
 - Typed rehydration and validators: [docs/persistence-and-validators.md](docs/persistence-and-validators.md)
 - Patterns and advanced usage: [docs/patterns.md](docs/patterns.md)
 - Typestate builder design playbook: [docs/typestate-builder-design-playbook.md](docs/typestate-builder-design-playbook.md)
+- Builder UX positioning: [docs/builder-ux-positioning.md](docs/builder-ux-positioning.md)
+- Diagnostics quality audit: [docs/diagnostics-quality-audit.md](docs/diagnostics-quality-audit.md)
+- Compile-time benchmark reporting: [docs/compile-time-benchmark-reporting.md](docs/compile-time-benchmark-reporting.md)
+- World-class quality roadmap: [docs/world-class-roadmap.md](docs/world-class-roadmap.md)
 - API docs: [docs.rs/statum](https://docs.rs/statum)
 
 ## Stability

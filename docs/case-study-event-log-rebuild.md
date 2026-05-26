@@ -65,6 +65,22 @@ them.
 
 ## What Gets Better
 
+### Why not just a status enum?
+
+A status enum is still useful at the persistence boundary. The projection row in
+this example effectively has one. The problem is letting that row become the
+domain object everywhere else.
+
+With only a status enum, downstream code can still carry combinations like
+`status = Shipped` with no tracking number, or call the wrong operation after a
+branch forgets to check status. The compiler sees one row type with optional
+fields.
+
+Statum keeps that dynamic shape at the edge. After validators run, downstream
+code sees a concrete typed machine state. The legal method surface and
+state-specific data now match the workflow phase that was proven from the
+events.
+
 ### 1. Illegal transitions stop being ordinary method calls
 
 The example only defines legal edges:
