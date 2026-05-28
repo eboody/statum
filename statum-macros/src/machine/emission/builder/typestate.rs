@@ -33,6 +33,7 @@ pub(in crate::machine::emission) fn typestate_builder_tokens(
     let slot_state_idents = (0..slot_types.len())
         .map(|idx| format_ident!("__STATUM_SLOT_{}_SET", idx))
         .collect::<Vec<_>>();
+    let already_set_ident = format_ident!("__Statum{}AlreadySet", variant_builder_ident);
     let struct_fields = slot_storage_idents
         .iter()
         .zip(slot_types.iter())
@@ -103,6 +104,19 @@ pub(in crate::machine::emission) fn typestate_builder_tokens(
             .collect::<Vec<_>>();
         let current_ty_generics =
             generic_argument_tokens(extra_generics.params.iter(), None, &current_generics);
+        let already_set_generics = slot_state_idents
+            .iter()
+            .enumerate()
+            .map(|(idx, ident)| {
+                if idx == slot_idx {
+                    quote! { true }
+                } else {
+                    quote! { #ident }
+                }
+            })
+            .collect::<Vec<_>>();
+        let already_set_ty_generics =
+            generic_argument_tokens(extra_generics.params.iter(), None, &already_set_generics);
         let target_generics = if slot_state_idents.is_empty() {
             extra_ty_args.clone()
         } else {
@@ -134,6 +148,12 @@ pub(in crate::machine::emission) fn typestate_builder_tokens(
                     }
                 }
             }
+
+            impl #setter_impl_generics #variant_builder_ident #already_set_ty_generics #setter_where_clause {
+                #builder_vis fn #setter_ident(self, _value: #already_set_ident) -> Self {
+                    self
+                }
+            }
         }
     });
 
@@ -141,6 +161,9 @@ pub(in crate::machine::emission) fn typestate_builder_tokens(
         #builder_vis struct #variant_builder_ident #builder_defaults {
             #(#struct_fields),*
         }
+
+        #[doc(hidden)]
+        #builder_vis enum #already_set_ident {}
 
         impl #extra_impl_generics #machine_state_ty #extra_where_clause {
             #builder_vis fn builder() -> #variant_builder_ident #initial_builder_ty_generics {
