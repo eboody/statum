@@ -28,7 +28,6 @@ pub mod __private {
         MachinePresentation, MachinePresentationDescriptor, RebuildAttempt, RebuildReport,
         StatePresentation, TransitionPresentation, TransitionPresentationInventory,
     };
-    pub use futures;
     #[cfg(feature = "introspection")]
     pub use linkme;
 

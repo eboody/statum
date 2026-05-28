@@ -1,5 +1,4 @@
 [dependencies]
-futures.workspace = true
 
 [dependencies.linkme]
 optional = true
