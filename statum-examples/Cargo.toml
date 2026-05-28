@@ -22,6 +22,10 @@ features = [
 [dependencies.statum]
 workspace = true
 
+[features]
+default = []
+introspection = ["statum/introspection"]
+
 [dependencies.tokio]
 workspace = true
 features = ["full"]

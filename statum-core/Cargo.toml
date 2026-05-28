@@ -1,6 +1,13 @@
 [dependencies]
 futures.workspace = true
-linkme.workspace = true
+
+[dependencies.linkme]
+optional = true
+workspace = true
+
+[features]
+default = []
+introspection = ["dep:linkme"]
 
 [package]
 authors.workspace = true

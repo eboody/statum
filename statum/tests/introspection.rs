@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![cfg(feature = "introspection")]
 
 use statum::{
     machine, state, transition, MachineIntrospection, MachinePresentation,

@@ -11,8 +11,14 @@ fn test_invalid_state_usage() {
     t.compile_fail("tests/ui/invalid_state_with_generics.rs");
     t.compile_fail("tests/ui/invalid_presentation_duplicate_key.rs");
     t.compile_fail("tests/ui/invalid_presentation_missing_parens.rs");
-    t.compile_fail("tests/ui/invalid_presentation_metadata_without_types.rs");
     t.compile_fail("tests/ui/invalid_presentation_unknown_key.rs");
+}
+
+#[cfg(feature = "introspection")]
+#[test]
+fn test_invalid_introspection_presentation_usage() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/invalid_presentation_metadata_without_types.rs");
 }
 
 #[test]
@@ -76,6 +82,13 @@ fn test_invalid_transition_usage() {
     t.compile_fail("tests/ui/invalid_legacy_transition_helper_trait.rs");
 }
 
+#[cfg(all(not(feature = "strict-introspection"), not(feature = "introspection")))]
+#[test]
+fn test_default_introspection_surface_is_absent() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/invalid_default_introspection_surface.rs");
+}
+
 #[cfg(not(feature = "strict-introspection"))]
 #[test]
 fn test_invalid_validators_usage() {
@@ -108,8 +121,6 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_state_unit_only.rs");
     t.pass("tests/ui/valid_state_with_data.rs");
     t.pass("tests/ui/valid_state_named_fields.rs");
-    t.pass("tests/ui/valid_machine_borrowed_data.rs");
-    t.pass("tests/ui/valid_machine_extra_generics.rs");
     t.pass("tests/ui/valid_machine_no_fields.rs");
     t.pass("tests/ui/valid_machine_state_surface.rs");
     t.pass("tests/ui/valid_validators_sync.rs");
@@ -126,13 +137,10 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_transition_self_qualified_machine.rs");
     t.pass("tests/ui/valid_transition_crate_aliases.rs");
     t.pass("tests/ui/strict_valid_transition_introspect_return.rs");
-    t.pass("tests/ui/valid_transition_branch.rs");
     t.pass("tests/ui/valid_into_machines_by.rs");
     t.pass("tests/ui/valid_transition_map.rs");
-    t.pass("tests/ui/valid_machine_introspection.rs");
-    t.pass("tests/ui/valid_machine_introspection_cfg_dedup.rs");
-    t.pass("tests/ui/valid_presentation_sugar.rs");
-    t.pass("tests/ui/valid_presentation_typed_metadata.rs");
+    #[cfg(not(feature = "introspection"))]
+    t.pass("tests/ui/valid_default_typestate_without_introspection_surface.rs");
     t.pass("tests/ui/valid_visibility_and_reconstruction.rs");
     t.pass("tests/ui/valid_multiple_machines_same_module.rs");
     t.pass("tests/ui/valid_machine_field_aliases.rs");
@@ -146,6 +154,19 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_builder_usage.rs");
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
+}
+
+#[cfg(all(not(feature = "strict-introspection"), feature = "introspection"))]
+#[test]
+fn test_valid_introspection_macro_usage() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/valid_machine_borrowed_data.rs");
+    t.pass("tests/ui/valid_machine_extra_generics.rs");
+    t.pass("tests/ui/valid_transition_branch.rs");
+    t.pass("tests/ui/valid_machine_introspection.rs");
+    t.pass("tests/ui/valid_machine_introspection_cfg_dedup.rs");
+    t.pass("tests/ui/valid_presentation_sugar.rs");
+    t.pass("tests/ui/valid_presentation_typed_metadata.rs");
     t.pass("tests/ui/workspace_member/crates/app/src/lib.rs");
 }
 

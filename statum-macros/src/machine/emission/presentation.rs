@@ -122,6 +122,10 @@ fn generate_machine_module_introspection(
     machine_info: &MachineInfo,
     parsed_state: &ParsedEnumInfo,
 ) -> Result<TokenStream, TokenStream> {
+    if !cfg!(feature = "introspection") {
+        return Ok(quote! {});
+    }
+
     let presentation_types = resolve_presentation_types(machine_info)?;
     let transition_slice_ident = transition_slice_ident(
         &machine_info.name,
@@ -444,6 +448,10 @@ pub(super) fn generate_machine_introspection_impls(
     parsed_state: &ParsedEnumInfo,
     machine_ident: &Ident,
 ) -> TokenStream {
+    if !cfg!(feature = "introspection") {
+        return quote! {};
+    }
+
     let module_ident = machine_state_module_ident(machine_info);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let extra_generics = extra_generics(generics);
