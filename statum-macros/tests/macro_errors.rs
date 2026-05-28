@@ -157,8 +157,6 @@ fn test_valid_macro_usage() {
 #[test]
 fn test_valid_introspection_macro_usage() {
     let t = trybuild::TestCases::new();
-    t.pass("tests/ui/valid_machine_borrowed_data.rs");
-    t.pass("tests/ui/valid_machine_extra_generics.rs");
     t.pass("tests/ui/valid_transition_branch.rs");
     t.pass("tests/ui/valid_machine_introspection.rs");
     t.pass("tests/ui/valid_machine_introspection_cfg_dedup.rs");
@@ -172,12 +170,22 @@ fn test_valid_introspection_macro_usage() {
 fn test_rebuild_batch_feature_usage() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/invalid_rebuild_many_builder_duplicate_field.rs");
-    t.pass("tests/ui/valid_machine_borrowed_data.rs");
-    t.pass("tests/ui/valid_machine_extra_generics.rs");
     t.pass("tests/ui/valid_validators_async.rs");
     t.pass("tests/ui/valid_into_machines_by.rs");
     t.pass("tests/ui/valid_machine_field_aliases_batch.rs");
     t.pass("tests/ui/valid_helper_trait_visibility.rs");
+}
+
+#[cfg(all(
+    feature = "introspection",
+    feature = "rebuild-batch",
+    not(feature = "strict-introspection")
+))]
+#[test]
+fn test_introspection_rebuild_batch_feature_usage() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/valid_machine_borrowed_data.rs");
+    t.pass("tests/ui/valid_machine_extra_generics.rs");
 }
 
 #[cfg(all(feature = "rebuild-reports", not(feature = "strict-introspection")))]
