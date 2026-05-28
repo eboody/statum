@@ -1,16 +1,14 @@
-error[E0599]: no method named `name` found for struct `WorkflowMachineDraftBuilder<true>` in the current scope
-  --> tests/ui/invalid_machine_builder_duplicate_field.rs:26:10
+error[E0308]: mismatched types
+  --> tests/ui/invalid_machine_builder_duplicate_field.rs:26:15
    |
-18 |   #[machine]
-   |   ---------- method `name` not found for this struct
-...
-24 |       let _ = WorkflowMachine::<Draft>::builder()
-   |  _____________-
-25 | |         .name("first".to_owned())
-26 | |         .name("second".to_owned())
-   | |         -^^^^ method not found in `WorkflowMachineDraftBuilder<true>`
-   | |_________|
+26 |         .name("second".to_owned())
+   |          ---- ^^^^^^^^^^^^^^^^^^^ expected `__StatumWorkflowMachineDraftBuilderAlreadySet`, found `String`
+   |          |
+   |          arguments to this method are incorrect
    |
+note: method defined here
+  --> tests/ui/invalid_machine_builder_duplicate_field.rs:18:1
    |
-   = note: the method was found for
-           - `WorkflowMachineDraftBuilder`
+18 | #[machine]
+   | ^^^^^^^^^^
+   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,4 +1,4 @@
-error: Error: duplicate `#[present(...)]` key `label`.
+error: Error: duplicate `#[present(...)]` key `label` on machine `Flow`.
        Found: `label = "Again"`
        Expected: one `label` presentation field entry
        Fix: specify `label` at most once inside `#[present(...)]`.

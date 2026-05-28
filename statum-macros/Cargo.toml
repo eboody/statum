@@ -21,11 +21,15 @@ futures.workspace = true
 trybuild.workspace = true
 
 [dev-dependencies.statum-core]
+features = ["introspection"]
 workspace = true
 
 [features]
 default = []
-strict-introspection = []
+introspection = []
+rebuild-batch = []
+rebuild-reports = []
+strict-introspection = ["introspection"]
 
 [lib]
 proc-macro = true

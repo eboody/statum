@@ -64,16 +64,10 @@ impl DbRow {
 fn main() {
     let row = DbRow { status: "draft" };
     let machine = row.into_machine().name("todo".to_string()).build().unwrap();
-    let batch = vec![DbRow { status: "done" }]
-        .into_machines()
-        .name("todo".to_string())
-        .build();
 
     match machine {
         task_machine::SomeState::Draft(_machine) => {}
         task_machine::SomeState::InProgress(_machine) => {}
         task_machine::SomeState::Done(_machine) => {}
     }
-
-    let _ = batch;
 }

@@ -12,7 +12,7 @@ use crate::{
     EnumInfo, LoadedStateLookupFailure, ModulePath, SourceFingerprint, StateModulePath,
     crate_root_for_file, extract_derives, format_loaded_state_candidates,
     lookup_loaded_state_enum, lookup_loaded_state_enum_by_name, source_file_fingerprint,
-    parse_present_attrs, parse_presentation_types_attr, PresentationAttr,
+    parse_present_attrs_for, parse_presentation_types_attr, PresentationAttr,
     PresentationTypesAttr,
 };
 use super::extra_type_arguments_tokens;
@@ -99,7 +99,10 @@ impl MachineInfo {
                     .filter_map(extract_derives)
                     .flatten()
                     .collect(),
-                presentation: parse_present_attrs(&item.attrs)?,
+                presentation: parse_present_attrs_for(
+                    &item.attrs,
+                    Some(format!("machine `{}`", item.ident).as_str()),
+                )?,
                 presentation_types: parse_presentation_types_attr(&item.attrs)?,
                 module_path: "crate".into(),
                 line_number,
@@ -122,7 +125,10 @@ impl MachineInfo {
                         .filter_map(extract_derives)
                         .flatten()
                         .collect(),
-                    presentation: parse_present_attrs(&item.attrs)?,
+                    presentation: parse_present_attrs_for(
+                    &item.attrs,
+                    Some(format!("machine `{}`", item.ident).as_str()),
+                )?,
                     presentation_types: parse_presentation_types_attr(&item.attrs)?,
                     module_path: "crate".into(),
                     line_number,
@@ -156,7 +162,10 @@ impl MachineInfo {
                 .filter_map(extract_derives)
                 .flatten()
                 .collect(),
-            presentation: parse_present_attrs(&item.attrs)?,
+            presentation: parse_present_attrs_for(
+                    &item.attrs,
+                    Some(format!("machine `{}`", item.ident).as_str()),
+                )?,
             presentation_types: parse_presentation_types_attr(&item.attrs)?,
             module_path,
             line_number,
@@ -177,7 +186,11 @@ impl MachineInfo {
 
         let line_number = item.ident.span().start().line;
         let file_path = current_source_info().map(|(file_path, _)| file_path);
-        let presentation = parse_present_attrs(&item.attrs).ok()?;
+        let presentation = parse_present_attrs_for(
+            &item.attrs,
+            Some(format!("machine `{}`", item.ident).as_str()),
+        )
+        .ok()?;
         let presentation_types = parse_presentation_types_attr(&item.attrs).ok()?;
         Some(Self {
             name: item.ident.to_string(),

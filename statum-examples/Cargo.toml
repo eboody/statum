@@ -21,6 +21,11 @@ features = [
 
 [dependencies.statum]
 workspace = true
+features = ["rebuild-batch", "rebuild-reports"]
+
+[features]
+default = []
+introspection = ["statum/introspection"]
 
 [dependencies.tokio]
 workspace = true

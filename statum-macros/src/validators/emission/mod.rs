@@ -1,6 +1,8 @@
+mod batch_finalization;
 mod builders;
 mod checks;
 mod inject;
+mod into_machine;
 mod shared;
 
 pub(crate) use builders::{ValidatorBuilderSurfaceContext, validator_builder_surface};

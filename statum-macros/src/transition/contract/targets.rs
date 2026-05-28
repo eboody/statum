@@ -150,19 +150,18 @@ fn validate_transition_return_contract(
         });
     }
 
+    let reason = if strict_introspection {
+        "expected the impl target machine path directly, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape; aliases require an explicit `#[introspect(return = ...)]` annotation in strict mode"
+    } else {
+        "expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape"
+    };
     let targets = resolve_transition_targets(
         written_return_type,
         target_type,
         strict_introspection,
         func.return_type_span,
     )
-    .ok_or_else(|| {
-        invalid_return_type_error(
-            func,
-            target_type,
-            "expected the impl target machine path directly, a source-backed type alias that expands to it, or that same machine path wrapped in a supported `Option`, `Result`, or `Branch` shape",
-        )
-    })?;
+    .ok_or_else(|| invalid_return_type_error(func, target_type, reason))?;
 
     Ok(ValidatedTransitionReturnContract {
         primary_next_state: targets.primary_next_state,

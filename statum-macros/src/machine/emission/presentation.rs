@@ -122,6 +122,10 @@ fn generate_machine_module_introspection(
     machine_info: &MachineInfo,
     parsed_state: &ParsedEnumInfo,
 ) -> Result<TokenStream, TokenStream> {
+    if !cfg!(feature = "introspection") {
+        return Ok(quote! {});
+    }
+
     let presentation_types = resolve_presentation_types(machine_info)?;
     let transition_slice_ident = transition_slice_ident(
         &machine_info.name,
@@ -163,10 +167,21 @@ fn generate_machine_module_introspection(
             let variant_ident = format_ident!("{}", variant.name);
             let label = optional_lit_str_tokens(presentation.label.as_deref());
             let description = optional_lit_str_tokens(presentation.description.as_deref());
+            let state_enum_name = machine_info
+                .state_generic_name
+                .as_deref()
+                .unwrap_or("<state>");
+            let subject = format!("state `{state_enum_name}::{}`", variant.name);
+            let metadata_display = presentation
+                .metadata
+                .as_ref()
+                .map(|metadata| format!("`#[present(metadata = {metadata})]`"));
             let metadata = presentation_metadata_tokens(
                 Some(presentation),
                 "state",
-                &variant.name,
+                subject.as_str(),
+                metadata_display.as_deref(),
+                &machine_info.name,
                 presentation_types.state.as_ref(),
                 true,
             )?;
@@ -298,6 +313,12 @@ fn machine_presentation_tokens(
     let metadata = presentation_metadata_tokens(
         Some(presentation),
         "machine",
+        format!("machine `{machine_name}`").as_str(),
+        presentation
+            .metadata
+            .as_ref()
+            .map(|metadata| format!("`#[present(metadata = {metadata})]`"))
+            .as_deref(),
         machine_name,
         metadata_ty,
         true,
@@ -371,6 +392,8 @@ fn presentation_metadata_tokens(
     presentation: Option<&PresentationAttr>,
     category: &str,
     subject: &str,
+    metadata_display: Option<&str>,
+    machine_name: &str,
     metadata_ty: Option<&syn::Type>,
     require_when_present: bool,
 ) -> Result<TokenStream, TokenStream> {
@@ -388,7 +411,9 @@ fn presentation_metadata_tokens(
             syn::Error::new(
                 Span::call_site(),
                 format!(
-                    "Error: `{subject}` uses `#[present(metadata = ...)]`, but no `#[presentation_types({category} = ...)]` was declared on its machine.\nFix: add `#[presentation_types({category} = {})]` to the `#[machine]` struct or remove the metadata expression.",
+                    "Error: {subject} uses `#[present(metadata = ...)]`, but machine `{machine_name}` did not declare `#[presentation_types({category} = ...)]`.\nFound: {}\nExpected: `#[presentation_types({category} = {})]` on machine `{machine_name}`\nFix: add `#[presentation_types({category} = {})]` to the `#[machine]` struct or remove the metadata expression.",
+                    metadata_display.unwrap_or("`#[present(metadata = ...)]`"),
+                    presentation_type_hint(category),
                     presentation_type_hint(category),
                 ),
             )
@@ -398,7 +423,7 @@ fn presentation_metadata_tokens(
             syn::Error::new(
                 Span::call_site(),
                 format!(
-                    "Error: `{subject}` uses `#[present(...)]`, and its machine declared `#[presentation_types({category} = ...)]`.\nFix: add `metadata = ...` to that `#[present(...)]` attribute so the generated typed presentation surface has a value for every annotated {category}."
+                    "Error: {subject} uses `#[present(...)]`, and machine `{machine_name}` declared `#[presentation_types({category} = ...)]`.\nFix: add `metadata = ...` to that `#[present(...)]` attribute so the generated typed presentation surface has a value for every annotated {category}."
                 ),
             )
             .to_compile_error(),
@@ -423,6 +448,10 @@ pub(super) fn generate_machine_introspection_impls(
     parsed_state: &ParsedEnumInfo,
     machine_ident: &Ident,
 ) -> TokenStream {
+    if !cfg!(feature = "introspection") {
+        return quote! {};
+    }
+
     let module_ident = machine_state_module_ident(machine_info);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let extra_generics = extra_generics(generics);

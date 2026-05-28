@@ -1,6 +1,11 @@
 use quote::{format_ident, quote};
 use syn::{Generics, Ident, ImplItem, Path, Type};
 
+use super::batch_finalization::{
+    generate_batch_finalization, BatchAsyncMode, BatchFieldSource,
+    BatchFinalizationOperation, BatchFinalizationPlan,
+};
+use super::into_machine::{generate_into_machine_builder, IntoMachineBuilderContext};
 use super::shared::{
     field_binding_tokens, field_storage_tokens, generic_usage_marker_tokens,
     machine_scoped_item_path, merged_where_clause_tokens,
@@ -42,44 +47,6 @@ pub(crate) struct ValidatorBuilderSurfaceContext<'a> {
     pub(crate) machine_vis: &'a syn::Visibility,
 }
 
-struct IntoMachineBuilderContext<'a> {
-    builder_ident: &'a Ident,
-    struct_ident: &'a Type,
-    machine_generics: &'a Generics,
-    machine_state_ty: &'a proc_macro2::TokenStream,
-    field_names: &'a [Ident],
-    field_types: &'a [Type],
-    validator_checks: &'a [proc_macro2::TokenStream],
-    validator_report_checks: &'a [proc_macro2::TokenStream],
-    async_token: &'a proc_macro2::TokenStream,
-    machine_vis: &'a syn::Visibility,
-}
-
-enum BatchFieldSource<'a> {
-    SharedAcrossItems {
-        field_builder_chain: &'a proc_macro2::TokenStream,
-    },
-    PerItemByFn {
-        field_builder_chain: &'a proc_macro2::TokenStream,
-    },
-}
-
-enum BatchAsyncMode {
-    Sync,
-    Async,
-}
-
-enum BatchFinalizationOperation {
-    Build,
-    BuildReport,
-}
-
-struct BatchFinalizationPlan<'a> {
-    operation: BatchFinalizationOperation,
-    async_mode: BatchAsyncMode,
-    field_source: BatchFieldSource<'a>,
-}
-
 pub(crate) fn validator_builder_surface(
     context: ValidatorBuilderSurfaceContext<'_>,
 ) -> proc_macro2::TokenStream {
@@ -99,17 +66,21 @@ pub(crate) fn validator_builder_surface(
         async_token: context.async_token,
         machine_vis: context.machine_vis,
     });
-    let batch_builder_impl = batch_builder_implementation(BatchBuilderContext {
-        machine_ident: context.machine_ident,
-        machine_module_path: context.machine_module_path,
-        machine_generics: context.machine_generics,
-        struct_ident: context.struct_ident,
-        machine_state_ty: context.machine_state_ty,
-        field_names: context.field_names,
-        field_types: context.field_types,
-        async_token: context.async_token.clone(),
-        machine_vis: context.machine_vis.clone(),
-    });
+    let batch_builder_impl = if cfg!(feature = "rebuild-batch") {
+        batch_builder_implementation(BatchBuilderContext {
+            machine_ident: context.machine_ident,
+            machine_module_path: context.machine_module_path,
+            machine_generics: context.machine_generics,
+            struct_ident: context.struct_ident,
+            machine_state_ty: context.machine_state_ty,
+            field_names: context.field_names,
+            field_types: context.field_types,
+            async_token: context.async_token.clone(),
+            machine_vis: context.machine_vis.clone(),
+        })
+    } else {
+        quote! {}
+    };
     let into_machine_extra_generics = extra_generics(context.machine_generics);
     let slot_storage_idents = slot_storage_idents(context.field_names.len());
     let (into_machine_method_generics, _, into_machine_method_where_clause) =
@@ -146,10 +117,39 @@ pub(crate) fn validator_builder_surface(
     let struct_ident = context.struct_ident;
     let machine_vis = context.machine_vis;
     let modified_methods = context.modified_methods;
+    let rebuild_many_method = quote! {
+        #machine_vis fn rebuild_many<T>(
+            items: T,
+        ) -> #into_machines_builder_ident #into_machines_builder_ty_generics
+        where
+            T: Into<Vec<#struct_ident>>,
+        {
+            #into_machines_builder_ident {
+                __statum_items: items.into(),
+                #(
+                    #slot_storage_idents: core::option::Option::None
+                ),*
+            }
+        }
+    };
+    let into_machines_ext_import = if cfg!(feature = "rebuild-batch") {
+        quote! {
+            #[allow(unused_imports)]
+            use #machine_module_path::IntoMachinesExt as _;
+        }
+    } else {
+        quote! {}
+    };
+    let rebuild_many_impl = if cfg!(feature = "rebuild-batch") {
+        quote! {
+            #rebuild_many_method
+        }
+    } else {
+        quote! {}
+    };
 
     quote! {
-        #[allow(unused_imports)]
-        use #machine_module_path::IntoMachinesExt as _;
+        #into_machines_ext_import
 
         impl #struct_ident {
             #machine_vis fn into_machine #into_machine_method_generics (&self) -> #into_machine_builder_ident #into_machine_builder_ty_generics #into_machine_method_where_clause {
@@ -171,112 +171,11 @@ pub(crate) fn validator_builder_surface(
                 item.into_machine()
             }
 
-            #machine_vis fn rebuild_many<T>(
-                items: T,
-            ) -> #into_machines_builder_ident #into_machines_builder_ty_generics
-            where
-                T: Into<Vec<#struct_ident>>,
-            {
-                #into_machines_builder_ident {
-                    __statum_items: items.into(),
-                    #(
-                        #slot_storage_idents: core::option::Option::None
-                    ),*
-                }
-            }
+            #rebuild_many_impl
         }
 
         #into_machine_builder_impl
         #batch_builder_impl
-    }
-}
-
-fn generate_into_machine_builder(
-    context: IntoMachineBuilderContext<'_>,
-) -> proc_macro2::TokenStream {
-    let builder_ident = context.builder_ident;
-    let struct_ident = context.struct_ident;
-    let machine_generics = context.machine_generics;
-    let machine_state_ty = context.machine_state_ty;
-    let field_names = context.field_names;
-    let field_types = context.field_types;
-    let validator_checks = context.validator_checks;
-    let validator_report_checks = context.validator_report_checks;
-    let validator_report_count = validator_report_checks.len();
-    let async_token = context.async_token;
-    let machine_vis = context.machine_vis;
-    let extra_machine_generics = extra_generics(machine_generics);
-    let slot_storage_idents = slot_storage_idents(field_names.len());
-    let slot_state_idents = slot_state_idents(field_names.len());
-    let builder_defaults =
-        builder_generics(&extra_machine_generics, true, &slot_state_idents, true);
-    let complete_slots = slot_state_idents
-        .iter()
-        .map(|_| quote! { true })
-        .collect::<Vec<_>>();
-    let complete_builder_ty_generics = generic_argument_tokens(
-        extra_machine_generics.params.iter(),
-        Some(quote! { '__statum_row }),
-        &complete_slots,
-    );
-    let complete_builder_impl_generics_decl =
-        builder_generics(&extra_machine_generics, true, &[], false);
-    let (complete_builder_impl_generics, _, complete_builder_where_clause) =
-        complete_builder_impl_generics_decl.split_for_impl();
-
-    let struct_fields = field_storage_tokens(&slot_storage_idents, field_types);
-    let field_bindings = field_binding_tokens(field_names, &slot_storage_idents);
-    let setters = slot_setter_impls(
-        SlotSetterContext {
-            builder_ident,
-            machine_vis,
-            extra_machine_generics: &extra_machine_generics,
-            field_names,
-            field_types,
-            slot_state_idents: &slot_state_idents,
-            slot_storage_idents: &slot_storage_idents,
-            row_lifetime: Some(quote! { '__statum_row }),
-        },
-        |assignments| {
-            quote! {
-                #builder_ident {
-                    __statum_item: self.__statum_item,
-                    #(#assignments),*
-                }
-            }
-        },
-    );
-
-    quote! {
-        #[doc(hidden)]
-        #machine_vis struct #builder_ident #builder_defaults {
-            __statum_item: &'__statum_row #struct_ident,
-            #(#struct_fields),*
-        }
-
-        #(#setters)*
-
-        impl #complete_builder_impl_generics #builder_ident #complete_builder_ty_generics #complete_builder_where_clause {
-            #machine_vis #async_token fn build(self) -> core::result::Result<#machine_state_ty, statum::Error> {
-                let __statum_persisted = self.__statum_item;
-                #(#field_bindings)*
-                #(#validator_checks)*
-
-                Err(statum::Error::InvalidState)
-            }
-
-            #machine_vis #async_token fn build_report(self) -> statum::RebuildReport<#machine_state_ty> {
-                let __statum_persisted = self.__statum_item;
-                let mut __statum_attempts = ::std::vec::Vec::with_capacity(#validator_report_count);
-                #(#field_bindings)*
-                #(#validator_report_checks)*
-
-                statum::RebuildReport {
-                    attempts: __statum_attempts,
-                    result: Err(statum::Error::InvalidState),
-                }
-            }
-        }
     }
 }
 
@@ -331,17 +230,21 @@ pub(crate) fn batch_builder_implementation(
             field_builder_chain: &field_builder_chain,
         },
     });
-    let report_implementation = generate_batch_finalization(BatchFinalizationPlan {
-        operation: BatchFinalizationOperation::BuildReport,
-        async_mode: if async_token.is_empty() {
-            BatchAsyncMode::Sync
-        } else {
-            BatchAsyncMode::Async
-        },
-        field_source: BatchFieldSource::SharedAcrossItems {
-            field_builder_chain: &field_builder_chain,
-        },
-    });
+    let report_implementation = if cfg!(feature = "rebuild-reports") {
+        generate_batch_finalization(BatchFinalizationPlan {
+            operation: BatchFinalizationOperation::BuildReport,
+            async_mode: if async_token.is_empty() {
+                BatchAsyncMode::Sync
+            } else {
+                BatchAsyncMode::Async
+            },
+            field_source: BatchFieldSource::SharedAcrossItems {
+                field_builder_chain: &field_builder_chain,
+            },
+        })
+    } else {
+        quote! {}
+    };
     let per_item_implementation = generate_batch_finalization(BatchFinalizationPlan {
         operation: BatchFinalizationOperation::Build,
         async_mode: if async_token.is_empty() {
@@ -353,17 +256,21 @@ pub(crate) fn batch_builder_implementation(
             field_builder_chain: &per_item_builder_chain,
         },
     });
-    let per_item_report_implementation = generate_batch_finalization(BatchFinalizationPlan {
-        operation: BatchFinalizationOperation::BuildReport,
-        async_mode: if async_token.is_empty() {
-            BatchAsyncMode::Sync
-        } else {
-            BatchAsyncMode::Async
-        },
-        field_source: BatchFieldSource::PerItemByFn {
-            field_builder_chain: &per_item_builder_chain,
-        },
-    });
+    let per_item_report_implementation = if cfg!(feature = "rebuild-reports") {
+        generate_batch_finalization(BatchFinalizationPlan {
+            operation: BatchFinalizationOperation::BuildReport,
+            async_mode: if async_token.is_empty() {
+                BatchAsyncMode::Sync
+            } else {
+                BatchAsyncMode::Async
+            },
+            field_source: BatchFieldSource::PerItemByFn {
+                field_builder_chain: &per_item_builder_chain,
+            },
+        })
+    } else {
+        quote! {}
+    };
     let slot_state_idents = slot_state_idents(field_names.len());
     let slot_storage_idents = slot_storage_idents(field_names.len());
     let builder_defaults =
@@ -425,6 +332,32 @@ pub(crate) fn batch_builder_implementation(
         quote! { #storage_ident: core::option::Option::None }
     });
     let field_bindings = field_binding_tokens(field_names, &slot_storage_idents);
+    let shared_report_methods = if cfg!(feature = "rebuild-reports") {
+        quote! {
+            #[inline(always)]
+            #machine_vis #async_token fn build_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
+                let __statum_items = self.__statum_items;
+                #(#field_bindings)*
+                #report_implementation
+            }
+        }
+    } else {
+        quote! {}
+    };
+    let per_item_report_methods = if cfg!(feature = "rebuild-reports") {
+        quote! {
+            #[inline(always)]
+            #machine_vis #async_token fn build_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
+                self.__private_finalize_reports()#await_token
+            }
+
+            #async_token fn __private_finalize_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
+                #per_item_report_implementation
+            }
+        }
+    } else {
+        quote! {}
+    };
     let setters = slot_setter_impls(
         SlotSetterContext {
             builder_ident: &builder_ident,
@@ -487,12 +420,7 @@ pub(crate) fn batch_builder_implementation(
                 #implementation
             }
 
-            #[inline(always)]
-            #machine_vis #async_token fn build_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
-                let __statum_items = self.__statum_items;
-                #(#field_bindings)*
-                #report_implementation
-            }
+            #shared_report_methods
         }
 
         #[doc(hidden)]
@@ -510,84 +438,11 @@ pub(crate) fn batch_builder_implementation(
                 self.__private_finalize()#await_token
             }
 
-            #[inline(always)]
-            #machine_vis #async_token fn build_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
-                self.__private_finalize_reports()#await_token
-            }
-
             #async_token fn __private_finalize(self) -> Vec<core::result::Result<#machine_state_ty, statum::Error>> {
                 #per_item_implementation
             }
 
-            #async_token fn __private_finalize_reports(self) -> Vec<statum::RebuildReport<#machine_state_ty>> {
-                #per_item_report_implementation
-            }
-        }
-    }
-}
-
-fn generate_batch_finalization(plan: BatchFinalizationPlan<'_>) -> proc_macro2::TokenStream {
-    let builder_method = match plan.operation {
-        BatchFinalizationOperation::Build => format_ident!("build"),
-        BatchFinalizationOperation::BuildReport => format_ident!("build_report"),
-    };
-
-    match (plan.async_mode, plan.field_source) {
-        (
-            BatchAsyncMode::Sync,
-            BatchFieldSource::SharedAcrossItems { field_builder_chain },
-        ) => {
-            quote! {
-                __statum_items
-                    .into_iter()
-                    .map(|__statum_item| {
-                        __statum_item.into_machine()
-                            #field_builder_chain
-                            .#builder_method()
-                    })
-                    .collect()
-            }
-        }
-        (
-            BatchAsyncMode::Async,
-            BatchFieldSource::SharedAcrossItems { field_builder_chain },
-        ) => {
-            quote! {
-                statum::__private::futures::future::join_all(
-                    __statum_items.iter().map(|__statum_item| {
-                        __statum_item.into_machine()
-                            #field_builder_chain
-                            .#builder_method()
-                    })
-                ).await
-            }
-        }
-        (BatchAsyncMode::Sync, BatchFieldSource::PerItemByFn { field_builder_chain }) => {
-            quote! {
-                let __statum_field_fn = self.__statum_fields_fn;
-                self.__statum_items
-                    .into_iter()
-                    .map(|__statum_item| {
-                        let __statum_fields = __statum_field_fn(&__statum_item);
-                        __statum_item.into_machine()
-                            #field_builder_chain
-                            .#builder_method()
-                    })
-                    .collect()
-            }
-        }
-        (BatchAsyncMode::Async, BatchFieldSource::PerItemByFn { field_builder_chain }) => {
-            quote! {
-                let __statum_field_fn = &self.__statum_fields_fn;
-                statum::__private::futures::future::join_all(
-                    self.__statum_items.iter().map(|__statum_item| {
-                        let __statum_fields = __statum_field_fn(__statum_item);
-                        __statum_item.into_machine()
-                            #field_builder_chain
-                            .#builder_method()
-                    })
-                ).await
-            }
+            #per_item_report_methods
         }
     }
 }

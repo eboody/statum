@@ -1,4 +1,4 @@
-error: Error: `#[present(...)]` requires parentheses.
+error: Error: `#[present(...)]` on state `WorkflowState::Draft` requires parentheses.
        Found: `#[present]`
        Expected: `#[present(label = "...", description = "...")]`
        Fix: write `#[present(...)]` with key/value pairs inside the parentheses.

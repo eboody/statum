@@ -13,7 +13,7 @@
 
 # Statum
 
-Statum is about correctness. More specifically, it is about representational
+Statum is a typestate workflow framework. It is about representational
 correctness: how accurately your code models the thing you are trying to model.
 
 The goal is to make invalid, undesirable, or not-yet-validated states
@@ -23,7 +23,11 @@ instead of leaving it implicit.
 
 Statum applies that same idea when a value's phase should change what methods
 are legally available on that value. Durable workflows and protocols are one
-strong fit. Staged validation, resolution, and build surfaces are another.
+strong fit. Staged validation, resolution, and build surfaces are another. The
+unusual part is typed rehydration: persisted rows, event projections, and other
+dynamic facts stay raw until `#[validators]` proves they are one legal machine
+state.
+
 Today's API packages that with `#[state]`, `#[machine]`, `#[transition]`, and
 `#[validators]`.
 
@@ -288,21 +292,24 @@ fn main() -> statum::Result<()> {
 }
 ```
 
-`row.into_machine()` and `.into_machines()` still work. `TaskMachine::rebuild(...)`
-and `TaskMachine::rebuild_many(...)` are the type-first entry points.
+`TaskMachine::rebuild(...)` is the core type-first entry point for one row.
+`row.into_machine()` remains supported as a fallback. Collection rebuild helpers
+(`.into_machines()`, `.into_machines_by(...)`, and
+`TaskMachine::rebuild_many(...)`) are available with the `rebuild-batch` Cargo
+feature.
 
 Key details:
 
 - Validator methods run against your persisted type and return either `statum::Result<T>` for simple yes/no membership or `statum::Validation<T>` when a failed match should carry a stable reason key and optional message into rebuild reports.
 - Machine fields are available by name inside validator methods through generated bindings, so `client` and `name` are usable without boilerplate parameter plumbing. Persisted-row fields still live on `self`.
 - Unit states return `statum::Result<()>` or `statum::Validation<()>`; data-bearing states return `statum::Result<StateData>` or `statum::Validation<StateData>`.
-- `.build_report()` and `.build_reports()` keep the same rebuild semantics as `.build()`, but they also record validator attempts in order. Diagnostic validators populate `RebuildAttempt.reason_key` and `RebuildAttempt.message`.
+- With the `rebuild-reports` Cargo feature, `.build_report()` keeps the same rebuild semantics as `.build()`, but also records validator attempts in order. Collection reports through `.build_reports()` additionally require `rebuild-batch`. Diagnostic validators populate `RebuildAttempt.reason_key` and `RebuildAttempt.message`.
 - `.build()` returns the generated wrapper enum, which you can match as `task_machine::SomeState`.
   `task_machine::State` is kept as an alias so older code still compiles.
 - If any validator is `async`, the generated builder becomes `async`.
-- Use `.into_machines_by(|row| task_machine::Fields { ... })` when batch reconstruction needs different machine fields per row.
+- With `rebuild-batch`, use `.into_machines_by(|row| task_machine::Fields { ... })` when batch reconstruction needs different machine fields per row.
 - For append-only event logs, project events into validator rows first. `statum::projection::reduce_one` and `reduce_grouped` are the small helper layer for that.
-- If no validator matches, `.build()` and `.build_report().into_result()` both return `statum::Error::InvalidState`.
+- If no validator matches, `.build()` and `build_report().into_result()` both return `statum::Error::InvalidState`.
 
 Examples: [statum-examples/src/toy_demos/09-persistent-data.rs](statum-examples/src/toy_demos/09-persistent-data.rs), [statum-examples/src/toy_demos/10-persistent-data-vecs.rs](statum-examples/src/toy_demos/10-persistent-data-vecs.rs), [statum-examples/src/toy_demos/14-batch-machine-fields.rs](statum-examples/src/toy_demos/14-batch-machine-fields.rs), [statum-examples/src/showcases/sqlite_event_log_rebuild.rs](statum-examples/src/showcases/sqlite_event_log_rebuild.rs)
 
@@ -342,9 +349,12 @@ More detail: [docs/persistence-and-validators.md](docs/persistence-and-validator
   data-bearing states.
 - Prefer `Machine::rebuild(&row)` for single-item reconstruction.
 - `row.into_machine()` remains supported as the fallback entrypoint.
-- For collections that share machine fields, call `.into_machines()`.
-- `Machine::rebuild_many(rows)` is the matching type-first batch entrypoint.
-- For collections where machine fields vary per item, call `.into_machines_by(|row| machine::Fields { ... })`.
+- Enable `rebuild-batch` for collection helpers.
+- With `rebuild-batch`, call `.into_machines()` for collections that share machine fields.
+- With `rebuild-batch`, `Machine::rebuild_many(rows)` is the matching type-first batch entrypoint.
+- With `rebuild-batch`, call `.into_machines_by(|row| machine::Fields { ... })` when machine fields vary per item.
+- Enable `rebuild-reports` for single-row `build_report()`.
+- Enable both `rebuild-batch` and `rebuild-reports` for collection `build_reports()`.
 - From other modules, import `machine::IntoMachinesExt as _` first.
 
 ## When To Use Statum
@@ -437,6 +447,10 @@ of the conservative templates in this repo.
 - Typed rehydration and validators: [docs/persistence-and-validators.md](docs/persistence-and-validators.md)
 - Patterns and advanced usage: [docs/patterns.md](docs/patterns.md)
 - Typestate builder design playbook: [docs/typestate-builder-design-playbook.md](docs/typestate-builder-design-playbook.md)
+- Builder UX positioning: [docs/builder-ux-positioning.md](docs/builder-ux-positioning.md)
+- Diagnostics quality audit: [docs/diagnostics-quality-audit.md](docs/diagnostics-quality-audit.md)
+- Compile-time benchmark reporting: [docs/compile-time-benchmark-reporting.md](docs/compile-time-benchmark-reporting.md)
+- World-class quality roadmap: [docs/world-class-roadmap.md](docs/world-class-roadmap.md)
 - API docs: [docs.rs/statum](https://docs.rs/statum)
 
 ## Stability

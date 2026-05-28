@@ -31,14 +31,17 @@ impl PresentationTypesAttr {
     }
 }
 
-pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<PresentationAttr>> {
+pub fn parse_present_attrs_for(
+    attrs: &[Attribute],
+    owner_context: Option<&str>,
+) -> syn::Result<Option<PresentationAttr>> {
     let mut presentation = PresentationAttr::default();
     let mut found = false;
 
     for attr in attrs.iter().filter(|attr| attr.path().is_ident("present")) {
         found = true;
         if !matches!(attr.meta, syn::Meta::List(_)) {
-            let message = DiagnosticMessage::new("`#[present(...)]` requires parentheses.")
+            let message = DiagnosticMessage::new(format!("`#[present(...)]`{} requires parentheses.", owner_suffix(owner_context)))
                 .found(format!("`#[{}]`", compact_display(&attr.meta)))
                 .expected("`#[present(label = \"...\", description = \"...\")]`")
                 .fix("write `#[present(...)]` with key/value pairs inside the parentheses.".to_string());
@@ -48,7 +51,7 @@ pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<Presentati
             let path = meta.path.clone();
             let Some(ident) = path.get_ident() else {
                 let message = DiagnosticMessage::new(
-                    "`#[present(...)]` keys must be simple identifiers.",
+                    format!("`#[present(...)]`{} keys must be simple identifiers.", owner_suffix(owner_context)),
                 )
                 .found(format!("`{}`", compact_display(&path)))
                 .expected("`label = \"...\"`, `description = \"...\"`, or `metadata = Expr`")
@@ -68,6 +71,7 @@ pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<Presentati
                         lit.value(),
                         format!("\"{}\"", lit.value()),
                         "present",
+                        owner_context,
                     )?;
                 }
                 "description" => {
@@ -78,6 +82,7 @@ pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<Presentati
                         lit.value(),
                         format!("\"{}\"", lit.value()),
                         "present",
+                        owner_context,
                     )?;
                 }
                 "metadata" => {
@@ -87,11 +92,13 @@ pub fn parse_present_attrs(attrs: &[Attribute]) -> syn::Result<Option<Presentati
                         expr.to_token_stream().to_string(),
                         compact_display(&expr),
                         "present",
+                        owner_context,
                     )?;
                 }
                 _ => {
                     let message = DiagnosticMessage::new(format!(
-                        "unknown `#[present(...)]` key `{ident}`."
+                        "unknown `#[present(...)]` key `{ident}`{}.",
+                        owner_suffix(owner_context),
                     ))
                     .found(format!("`{ident} = {}`", compact_display(&expr)))
                     .expected("`label = \"...\"`, `description = \"...\"`, or `metadata = Expr`")
@@ -156,6 +163,7 @@ pub fn parse_presentation_types_attr(
                         ty_string.clone(),
                         ty_string,
                         "presentation_types",
+                        None,
                     )?;
                 }
                 "state" => {
@@ -165,6 +173,7 @@ pub fn parse_presentation_types_attr(
                         ty_string.clone(),
                         ty_string,
                         "presentation_types",
+                        None,
                     )?;
                 }
                 "transition" => {
@@ -174,6 +183,7 @@ pub fn parse_presentation_types_attr(
                         ty_string.clone(),
                         ty_string,
                         "presentation_types",
+                        None,
                     )?;
                 }
                 _ => {
@@ -207,6 +217,13 @@ pub fn strip_present_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
         .collect()
 }
 
+
+fn owner_suffix(owner_context: Option<&str>) -> String {
+    owner_context
+        .map(|context| format!(" on {context}"))
+        .unwrap_or_default()
+}
+
 fn expect_string_literal(
     expr: &Expr,
     ident: &syn::Ident,
@@ -234,6 +251,7 @@ fn assign_unique_string_slot(
     stored_value: String,
     found_display: String,
     attr_name: &str,
+    owner_context: Option<&str>,
 ) -> Result<(), syn::Error> {
     if slot.is_some() {
         let field_label = match attr_name {
@@ -241,7 +259,8 @@ fn assign_unique_string_slot(
             _ => format!("{attr_name} field"),
         };
         let message = DiagnosticMessage::new(format!(
-            "duplicate `#[{attr_name}(...)]` key `{ident}`."
+            "duplicate `#[{attr_name}(...)]` key `{ident}`{}.",
+            owner_suffix(owner_context),
         ))
         .found(format!("`{ident} = {found_display}`"))
         .expected(format!("one `{ident}` {field_label} entry"))

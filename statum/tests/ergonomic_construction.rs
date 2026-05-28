@@ -104,19 +104,22 @@ fn builder_first_machine_keeps_rebuild_helpers() {
         _ => panic!("expected ready state"),
     }
 
-    let rebuilt_many = Article::rebuild_many(vec![
-        ArticleRow { state: "draft" },
-        ArticleRow { state: "review" },
-    ])
-    .id(7)
-    .build();
-    assert_eq!(rebuilt_many.len(), 2);
-    assert!(matches!(
-        rebuilt_many[0].as_ref().unwrap(),
-        article::SomeState::Draft(machine) if machine.id == 7
-    ));
-    assert!(matches!(
-        rebuilt_many[1].as_ref().unwrap(),
-        article::SomeState::Review(machine) if machine.state_data == "persisted-reviewer"
-    ));
+    #[cfg(feature = "rebuild-batch")]
+    {
+        let rebuilt_many = Article::rebuild_many(vec![
+            ArticleRow { state: "draft" },
+            ArticleRow { state: "review" },
+        ])
+        .id(7)
+        .build();
+        assert_eq!(rebuilt_many.len(), 2);
+        assert!(matches!(
+            rebuilt_many[0].as_ref().unwrap(),
+            article::SomeState::Draft(machine) if machine.id == 7
+        ));
+        assert!(matches!(
+            rebuilt_many[1].as_ref().unwrap(),
+            article::SomeState::Review(machine) if machine.state_data == "persisted-reviewer"
+        ));
+    }
 }

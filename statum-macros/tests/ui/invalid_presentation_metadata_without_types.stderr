@@ -1,4 +1,6 @@
-error: Error: `Draft` uses `#[present(metadata = ...)]`, but no `#[presentation_types(state = ...)]` was declared on its machine.
+error: Error: state `FlowState::Draft` uses `#[present(metadata = ...)]`, but machine `Flow` did not declare `#[presentation_types(state = ...)]`.
+       Found: `#[present(metadata = FlowStateMeta :: Draft)]`
+       Expected: `#[presentation_types(state = StateMeta)]` on machine `Flow`
        Fix: add `#[presentation_types(state = StateMeta)]` to the `#[machine]` struct or remove the metadata expression.
   --> tests/ui/invalid_presentation_metadata_without_types.rs:24:1
    |

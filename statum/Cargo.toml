@@ -6,7 +6,10 @@ workspace = true
 
 [features]
 default = []
-strict-introspection = ["statum-macros/strict-introspection"]
+introspection = ["statum-core/introspection", "statum-macros/introspection"]
+rebuild-batch = ["statum-macros/rebuild-batch"]
+rebuild-reports = ["statum-macros/rebuild-reports"]
+strict-introspection = ["introspection", "statum-macros/strict-introspection"]
 
 [dev-dependencies.tokio]
 workspace = true

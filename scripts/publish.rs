@@ -63,6 +63,36 @@ fn run(mut cmd: Command, context: &str) -> Result<(), Box<dyn std::error::Error>
     Err(format!("{context} failed").into())
 }
 
+fn command_exists(program: &str) -> bool {
+    Command::new(program)
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn run_if_available(
+    program: &str,
+    args: &[&str],
+    context: &str,
+    cwd: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !command_exists(program) {
+        println!("Skipping {context}: `{program}` is not installed.");
+        return Ok(());
+    }
+
+    run(
+        {
+            let mut cmd = Command::new(program);
+            cmd.args(args);
+            cmd.current_dir(cwd);
+            cmd
+        },
+        context,
+    )
+}
+
 fn ensure_clean_worktree() -> Result<(), Box<dyn std::error::Error>> {
     let output = Command::new("git")
         .args(["status", "--porcelain"])
@@ -241,6 +271,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             let mut cmd = Command::new("cargo");
             cmd.args(["fmt", "--all", "--check"]);
+            cmd.current_dir(&repo_root);
             cmd
         },
         "cargo fmt --check",
@@ -257,6 +288,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "-D",
                 "warnings",
             ]);
+            cmd.current_dir(&repo_root);
             cmd
         },
         "cargo clippy",
@@ -265,9 +297,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             let mut cmd = Command::new("cargo");
             cmd.args(["test", "--workspace", "--all-features"]);
+            cmd.current_dir(&repo_root);
             cmd
         },
         "cargo test",
+    )?;
+    run(
+        {
+            let mut cmd = Command::new("bash");
+            cmd.args(["scripts/check_readme_links.sh"]);
+            cmd.current_dir(&repo_root);
+            cmd
+        },
+        "README link check",
+    )?;
+    run(
+        {
+            let mut cmd = Command::new("bash");
+            cmd.args(["scripts/check_workspace_hygiene.sh"]);
+            cmd.current_dir(&repo_root);
+            cmd
+        },
+        "workspace hygiene check",
+    )?;
+    run(
+        {
+            let mut cmd = Command::new("cargo");
+            cmd.args(["modum", "check", "--root", ".", "--mode", "warn"]);
+            cmd.current_dir(&repo_root);
+            cmd
+        },
+        "cargo modum check",
+    )?;
+    run_if_available("cargo-audit", &["audit"], "cargo audit", &repo_root)?;
+    run_if_available("cargo-deny", &["check"], "cargo deny check", &repo_root)?;
+    run(
+        {
+            let mut cmd = Command::new("cargo");
+            cmd.env("RUSTDOCFLAGS", "-D warnings");
+            cmd.args(["doc", "--workspace", "--all-features", "--no-deps"]);
+            cmd.current_dir(&repo_root);
+            cmd
+        },
+        "cargo doc",
     )?;
 
     println!("\nRunning publish readiness checks in dependency order...");
@@ -278,6 +350,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 {
                     let mut cmd = Command::new("cargo");
                     cmd.args(["publish", "-p", crate_name, "--dry-run", "--allow-dirty"]);
+                    cmd.current_dir(&repo_root);
                     cmd
                 },
                 &format!("cargo publish --dry-run for {crate_name}"),
@@ -288,6 +361,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 {
                     let mut cmd = Command::new("cargo");
                     cmd.args(["package", "-p", crate_name, "--allow-dirty", "--list"]);
+                    cmd.current_dir(&repo_root);
                     cmd
                 },
                 &format!("cargo package --list for {crate_name}"),
@@ -303,6 +377,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let mut cmd = Command::new("cargo");
                 cmd.args(["publish", "-p", crate_name]);
+                cmd.current_dir(&repo_root);
                 cmd
             },
             &format!("cargo publish for {crate_name}"),

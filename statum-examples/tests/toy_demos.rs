@@ -41,13 +41,13 @@ fn example_08_transition_with_data() {
 }
 
 #[tokio::test]
-async fn example_09_persistent_data() {
-    toy_demos::example_09_persistent_data::run().await;
+async fn example_09_persistent_data() -> Result<(), statum::Error> {
+    toy_demos::example_09_persistent_data::run().await
 }
 
 #[tokio::test]
-async fn example_10_persistent_data_vecs() {
-    toy_demos::example_10_persistent_data_vecs::run().await;
+async fn example_10_persistent_data_vecs() -> Result<(), statum::Error> {
+    toy_demos::example_10_persistent_data_vecs::run().await
 }
 
 #[test]
@@ -66,8 +66,8 @@ fn example_13_review_flow() {
 }
 
 #[test]
-fn example_14_batch_machine_fields() {
-    toy_demos::example_14_batch_machine_fields::run();
+fn example_14_batch_machine_fields() -> Result<(), statum::Error> {
+    toy_demos::example_14_batch_machine_fields::run()
 }
 
 #[test]
@@ -75,7 +75,8 @@ fn example_15_transition_map() {
     toy_demos::example_15_transition_map::run();
 }
 
+#[cfg(feature = "introspection")]
 #[test]
-fn example_16_machine_introspection() {
-    toy_demos::example_16_machine_introspection::run();
+fn example_16_machine_introspection() -> Result<(), statum::Error> {
+    toy_demos::example_16_machine_introspection::run()
 }

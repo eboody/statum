@@ -1,6 +1,6 @@
 use super::resolve::extract_impl_machine_and_state;
 use crate::diagnostics::{DiagnosticMessage, compact_display, compile_error_at};
-use crate::{PresentationAttr, parse_present_attrs, strip_present_attrs};
+use crate::{PresentationAttr, parse_present_attrs_for, strip_present_attrs};
 use proc_macro2::{Span, TokenStream};
 use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
@@ -88,10 +88,16 @@ fn parse_transition_fn(
         ReturnType::Default => None,
     };
 
+    let presentation_context = format!(
+        "transition `{machine_name}<{source_state}>::{}`",
+        method.sig.ident,
+    );
+
     Ok(TransitionFn {
         name: method.sig.ident.clone(),
         attrs: method.attrs.clone(),
-        presentation: parse_present_attrs(&method.attrs).map_err(|err| err.to_compile_error())?,
+        presentation: parse_present_attrs_for(&method.attrs, Some(presentation_context.as_str()))
+            .map_err(|err| err.to_compile_error())?,
         introspection: parse_transition_introspect_attrs(&method.attrs)
             .map_err(|err| err.to_compile_error())?,
         has_receiver,

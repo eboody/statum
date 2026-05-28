@@ -309,6 +309,23 @@ mod tests {
     }
 
     #[test]
+    fn runtime_transition_recording_rejects_matching_transition_from_different_machine() {
+        let event = RecordedTransition::new(
+            MachineDescriptor {
+                module_path: "other_workflow",
+                rust_type_path: "other_workflow::Machine",
+            },
+            StateId::Draft,
+            SUBMIT_FROM_DRAFT,
+            StateId::Review,
+        );
+
+        assert_eq!(event.transition_in(Workflow::<DraftMarker>::GRAPH), None);
+        assert_eq!(event.source_state_in(Workflow::<DraftMarker>::GRAPH), None);
+        assert_eq!(event.chosen_state_in(Workflow::<DraftMarker>::GRAPH), None);
+    }
+
+    #[test]
     fn presentation_queries_join_with_runtime_transitions() {
         let event = Workflow::<DraftMarker>::try_record_transition_to::<Workflow<ReviewMarker>>(
             SUBMIT_FROM_DRAFT,
