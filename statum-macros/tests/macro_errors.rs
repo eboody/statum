@@ -107,7 +107,10 @@ fn test_invalid_validators_usage() {
     t.compile_fail("tests/ui/invalid_validators_parameter_name_collision.rs");
     t.compile_fail("tests/ui/invalid_validators_declared_before_machine.rs");
     t.compile_fail("tests/ui/invalid_rebuild_builder_duplicate_field.rs");
-    t.compile_fail("tests/ui/invalid_rebuild_many_builder_duplicate_field.rs");
+    #[cfg(not(feature = "rebuild-batch"))]
+    t.compile_fail("tests/ui/invalid_validators_default_batch_disabled.rs");
+    #[cfg(not(feature = "rebuild-reports"))]
+    t.compile_fail("tests/ui/invalid_validators_default_reports_disabled.rs");
     t.compile_fail("tests/ui/invalid_legacy_superstate.rs");
     t.compile_fail("tests/ui/invalid_legacy_machine_builder.rs");
     t.compile_fail("tests/ui/invalid_legacy_machines_builder.rs");
@@ -126,10 +129,7 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_validators_sync.rs");
     t.pass("tests/ui/valid_validators_result_aliases.rs");
     t.pass("tests/ui/valid_validators_source_aliases.rs");
-    t.pass("tests/ui/valid_validators_diagnostic_returns.rs");
     t.pass("tests/ui/valid_validators_generic_payload.rs");
-    t.pass("tests/ui/valid_validators_async.rs");
-    t.pass("tests/ui/valid_validators_hygienic_locals.rs");
     t.pass("tests/ui/valid_matrix.rs");
     t.pass("tests/ui/valid_same_names_different_modules.rs");
     t.pass("tests/ui/valid_transition_nested_wrappers.rs");
@@ -137,14 +137,12 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/valid_transition_self_qualified_machine.rs");
     t.pass("tests/ui/valid_transition_crate_aliases.rs");
     t.pass("tests/ui/strict_valid_transition_introspect_return.rs");
-    t.pass("tests/ui/valid_into_machines_by.rs");
     t.pass("tests/ui/valid_transition_map.rs");
     #[cfg(not(feature = "introspection"))]
     t.pass("tests/ui/valid_default_typestate_without_introspection_surface.rs");
     t.pass("tests/ui/valid_visibility_and_reconstruction.rs");
     t.pass("tests/ui/valid_multiple_machines_same_module.rs");
     t.pass("tests/ui/valid_machine_field_aliases.rs");
-    t.pass("tests/ui/valid_machine_field_aliases_batch.rs");
     t.pass("tests/ui/valid_machine_field_aliases_local_validators.rs");
     t.pass("tests/ui/valid_machine_field_module_paths.rs");
     t.pass("tests/ui/valid_machine_field_aliases_renamed_import.rs");
@@ -152,7 +150,6 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/strict_valid_validators_explicit_machine_path.rs");
     t.pass("tests/ui/valid_cfg_hidden_duplicate_state_machine.rs");
     t.pass("tests/ui/valid_builder_usage.rs");
-    t.pass("tests/ui/valid_helper_trait_visibility.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
 }
 
@@ -168,6 +165,37 @@ fn test_valid_introspection_macro_usage() {
     t.pass("tests/ui/valid_presentation_sugar.rs");
     t.pass("tests/ui/valid_presentation_typed_metadata.rs");
     t.pass("tests/ui/workspace_member/crates/app/src/lib.rs");
+}
+
+#[cfg(all(feature = "rebuild-batch", not(feature = "strict-introspection")))]
+#[test]
+fn test_rebuild_batch_feature_usage() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/invalid_rebuild_many_builder_duplicate_field.rs");
+    t.pass("tests/ui/valid_machine_borrowed_data.rs");
+    t.pass("tests/ui/valid_machine_extra_generics.rs");
+    t.pass("tests/ui/valid_validators_async.rs");
+    t.pass("tests/ui/valid_into_machines_by.rs");
+    t.pass("tests/ui/valid_machine_field_aliases_batch.rs");
+    t.pass("tests/ui/valid_helper_trait_visibility.rs");
+}
+
+#[cfg(all(feature = "rebuild-reports", not(feature = "strict-introspection")))]
+#[test]
+fn test_rebuild_reports_feature_usage() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/valid_validators_diagnostic_returns.rs");
+}
+
+#[cfg(all(
+    feature = "rebuild-batch",
+    feature = "rebuild-reports",
+    not(feature = "strict-introspection")
+))]
+#[test]
+fn test_rebuild_batch_report_feature_usage() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/valid_validators_hygienic_locals.rs");
 }
 
 #[cfg(feature = "strict-introspection")]

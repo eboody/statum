@@ -258,6 +258,7 @@ mod async_diagnostic_reports {
     }
 }
 
+#[cfg(feature = "rebuild-reports")]
 #[test]
 fn build_report_records_attempts_for_single_sync_match() {
     let row = sync_reports::SyncRow {
@@ -293,6 +294,7 @@ fn build_report_records_attempts_for_single_sync_match() {
     }
 }
 
+#[cfg(feature = "rebuild-reports")]
 #[test]
 fn build_report_records_failed_attempts_for_single_sync_miss() {
     let row = sync_reports::SyncRow {
@@ -314,6 +316,7 @@ fn build_report_records_failed_attempts_for_single_sync_miss() {
     assert!(matches!(report.into_result(), Err(Error::InvalidState)));
 }
 
+#[cfg(all(feature = "rebuild-batch", feature = "rebuild-reports"))]
 #[test]
 fn build_reports_preserves_sync_batch_order() {
     use sync_reports::sync_report_machine::IntoMachinesExt as _;
@@ -344,6 +347,7 @@ fn build_reports_preserves_sync_batch_order() {
     assert!(reports[1].attempts.last().unwrap().matched);
 }
 
+#[cfg(all(feature = "rebuild-batch", feature = "rebuild-reports"))]
 #[test]
 fn build_reports_by_preserves_per_item_fields() {
     use sync_reports::sync_report_machine::IntoMachinesExt as _;
@@ -381,6 +385,7 @@ fn build_reports_by_preserves_per_item_fields() {
     }
 }
 
+#[cfg(feature = "rebuild-reports")]
 #[tokio::test]
 async fn build_report_supports_async_validators() {
     let row = async_reports::AsyncRow { status: "running" };
@@ -410,6 +415,7 @@ async fn build_report_supports_async_validators() {
     }
 }
 
+#[cfg(feature = "rebuild-reports")]
 #[test]
 fn build_report_captures_diagnostic_reasons_for_sync_miss() {
     let row = diagnostic_reports::DiagnosticRow {
@@ -441,6 +447,7 @@ fn build_report_captures_diagnostic_reasons_for_sync_miss() {
     assert!(matches!(report.into_result(), Err(Error::InvalidState)));
 }
 
+#[cfg(feature = "rebuild-reports")]
 #[test]
 fn build_report_preserves_first_match_with_mixed_validator_styles() {
     let row = diagnostic_reports::DiagnosticRow {
@@ -477,6 +484,7 @@ fn build_report_preserves_first_match_with_mixed_validator_styles() {
     }
 }
 
+#[cfg(all(feature = "rebuild-batch", feature = "rebuild-reports"))]
 #[test]
 fn build_reports_preserve_per_item_diagnostic_reasons() {
     use diagnostic_reports::diagnostic_report_machine::IntoMachinesExt as _;
@@ -516,6 +524,7 @@ fn build_reports_preserve_per_item_diagnostic_reasons() {
     );
 }
 
+#[cfg(feature = "rebuild-reports")]
 #[tokio::test]
 async fn build_report_captures_diagnostic_reasons_for_async_validators() {
     let row = async_diagnostic_reports::AsyncDiagnosticRow { status: "missing" };

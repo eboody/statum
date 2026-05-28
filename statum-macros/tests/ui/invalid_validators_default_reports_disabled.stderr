@@ -1,0 +1,13 @@
+error[E0599]: no method named `build_report` found for struct `__StatumTaskMachineIntoMachine<'__statum_row, __STATUM_SLOT_0_SET>` in the current scope
+  --> tests/ui/invalid_validators_default_reports_disabled.rs:53:10
+   |
+28 |   #[validators(TaskMachine)]
+   |   -------------------------- method `build_report` not found for this struct
+...
+51 |       let _ = TaskMachine::rebuild(&row)
+   |  _____________-
+52 | |         .name("todo".to_owned())
+53 | |         .build_report();
+   | |         -^^^^^^^^^^^^ method not found in `__StatumTaskMachineIntoMachine<'_, true>`
+   | |_________|
+   |

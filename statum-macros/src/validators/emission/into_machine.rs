@@ -75,6 +75,23 @@ pub(super) fn generate_into_machine_builder(
             }
         },
     );
+    let report_methods = if cfg!(feature = "rebuild-reports") {
+        quote! {
+            #machine_vis #async_token fn build_report(self) -> statum::RebuildReport<#machine_state_ty> {
+                let __statum_persisted = self.__statum_item;
+                let mut __statum_attempts = ::std::vec::Vec::with_capacity(#validator_report_count);
+                #(#field_bindings)*
+                #(#validator_report_checks)*
+
+                statum::RebuildReport {
+                    attempts: __statum_attempts,
+                    result: Err(statum::Error::InvalidState),
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     quote! {
         #[doc(hidden)]
@@ -94,17 +111,7 @@ pub(super) fn generate_into_machine_builder(
                 Err(statum::Error::InvalidState)
             }
 
-            #machine_vis #async_token fn build_report(self) -> statum::RebuildReport<#machine_state_ty> {
-                let __statum_persisted = self.__statum_item;
-                let mut __statum_attempts = ::std::vec::Vec::with_capacity(#validator_report_count);
-                #(#field_bindings)*
-                #(#validator_report_checks)*
-
-                statum::RebuildReport {
-                    attempts: __statum_attempts,
-                    result: Err(statum::Error::InvalidState),
-                }
-            }
+            #report_methods
         }
     }
 }

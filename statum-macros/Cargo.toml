@@ -27,6 +27,8 @@ workspace = true
 [features]
 default = []
 introspection = []
+rebuild-batch = []
+rebuild-reports = []
 strict-introspection = ["introspection"]
 
 [lib]
