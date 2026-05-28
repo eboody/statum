@@ -180,100 +180,112 @@ pub fn generate_transition_impl(
             });
         }
     }
-    let transition_registrations = validated_methods.iter().enumerate().map(|(idx, validated)| {
-        let function = &validated.function;
-        let contract = &validated.contract;
-        let return_states = &contract.next_states;
-        let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
-        let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
-        let targets_ident = format_ident!("__STATUM_TRANSITION_TARGETS_{}", unique_suffix);
-        let registration_ident = format_ident!("__STATUM_TRANSITION_SITE_{}", unique_suffix);
-        let id_const_ident = format_ident!(
-            "{}",
-            to_shouty_snake_identifier(&function.name.to_string())
-        );
-        let method_name = LitStr::new(&function.name.to_string(), function.name.span());
-        let source_state_ident = format_ident!("{}", tr_impl.source_state);
-        let target_state_idents = return_states.iter().map(|state| {
-            let state_ident = format_ident!("{}", state);
-            quote! { #machine_module_ident::StateId::#state_ident }
-        });
-        let target_state_count = return_states.len();
-        let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
+    let transition_registrations = if cfg!(feature = "introspection") {
+        validated_methods
+            .iter()
+            .enumerate()
+            .map(|(idx, validated)| {
+                let function = &validated.function;
+                let contract = &validated.contract;
+                let return_states = &contract.next_states;
+                let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
+                let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
+                let targets_ident = format_ident!("__STATUM_TRANSITION_TARGETS_{}", unique_suffix);
+                let registration_ident = format_ident!("__STATUM_TRANSITION_SITE_{}", unique_suffix);
+                let id_const_ident = format_ident!(
+                    "{}",
+                    to_shouty_snake_identifier(&function.name.to_string())
+                );
+                let method_name = LitStr::new(&function.name.to_string(), function.name.span());
+                let source_state_ident = format_ident!("{}", tr_impl.source_state);
+                let target_state_idents = return_states.iter().map(|state| {
+                    let state_ident = format_ident!("{}", state);
+                    quote! { #machine_module_ident::StateId::#state_ident }
+                });
+                let target_state_count = return_states.len();
+                let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
 
-        quote! {
-            #(#cfg_attrs)*
-            static #targets_ident: [#machine_module_ident::StateId; #target_state_count] = [
-                #(#target_state_idents),*
-            ];
+                quote! {
+                    #(#cfg_attrs)*
+                    static #targets_ident: [#machine_module_ident::StateId; #target_state_count] = [
+                        #(#target_state_idents),*
+                    ];
 
-            #(#cfg_attrs)*
-            static #token_ident: statum::__private::TransitionToken =
-                statum::__private::TransitionToken::new();
+                    #(#cfg_attrs)*
+                    static #token_ident: statum::__private::TransitionToken =
+                        statum::__private::TransitionToken::new();
 
-            #(#cfg_attrs)*
-            #[statum::__private::linkme::distributed_slice(#machine_module_ident::#transition_slice_ident)]
-            #[linkme(crate = statum::__private::linkme)]
-            static #registration_ident:
-                statum::TransitionDescriptor<#machine_module_ident::StateId, #machine_module_ident::TransitionId> =
-                statum::TransitionDescriptor {
-                    id: #machine_module_ident::TransitionId::from_token(&#token_ident),
-                    method_name: #method_name,
-                    from: #machine_module_ident::StateId::#source_state_ident,
-                    to: &#targets_ident,
-                };
+                    #(#cfg_attrs)*
+                    #[statum::__private::linkme::distributed_slice(#machine_module_ident::#transition_slice_ident)]
+                    #[linkme(crate = statum::__private::linkme)]
+                    static #registration_ident:
+                        statum::TransitionDescriptor<#machine_module_ident::StateId, #machine_module_ident::TransitionId> =
+                        statum::TransitionDescriptor {
+                            id: #machine_module_ident::TransitionId::from_token(&#token_ident),
+                            method_name: #method_name,
+                            from: #machine_module_ident::StateId::#source_state_ident,
+                            to: &#targets_ident,
+                        };
 
-            #(#cfg_attrs)*
-            impl #impl_generics #target_type #where_clause {
-                pub const #id_const_ident: #machine_module_ident::TransitionId =
-                    #machine_module_ident::TransitionId::from_token(&#token_ident);
-            }
-        }
-    });
-    let transition_presentation_registrations =
+                    #(#cfg_attrs)*
+                    impl #impl_generics #target_type #where_clause {
+                        pub const #id_const_ident: #machine_module_ident::TransitionId =
+                            #machine_module_ident::TransitionId::from_token(&#token_ident);
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let transition_presentation_registrations = if cfg!(feature = "introspection") {
         validated_methods
             .iter()
             .enumerate()
             .filter_map(|(idx, validated)| {
                 let function = &validated.function;
                 let presentation = function.presentation.as_ref()?;
-            let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
-            let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
-            let registration_ident =
-                format_ident!("__STATUM_TRANSITION_PRESENTATION_{}", unique_suffix);
-            let label =
-                optional_lit_str_tokens(presentation.label.as_deref(), function.name.span());
-            let description =
-                optional_lit_str_tokens(presentation.description.as_deref(), function.name.span());
-            let transition_meta_ty = match transition_presentation_type_tokens(target_machine_info) {
-                Ok(tokens) => tokens,
-                Err(err) => return Some(err),
-            };
-            let metadata = match transition_presentation_metadata_tokens(
-                presentation,
-                function,
-                &target_machine_info.name,
-                target_machine_info,
-            ) {
-                Ok(tokens) => tokens,
-                Err(err) => return Some(err),
-            };
-            let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
+                let unique_suffix = transition_site_unique_suffix(tr_impl, function, idx);
+                let token_ident = format_ident!("__STATUM_TRANSITION_TOKEN_{}", unique_suffix);
+                let registration_ident =
+                    format_ident!("__STATUM_TRANSITION_PRESENTATION_{}", unique_suffix);
+                let label =
+                    optional_lit_str_tokens(presentation.label.as_deref(), function.name.span());
+                let description =
+                    optional_lit_str_tokens(presentation.description.as_deref(), function.name.span());
+                let transition_meta_ty = match transition_presentation_type_tokens(target_machine_info) {
+                    Ok(tokens) => tokens,
+                    Err(err) => return Some(err),
+                };
+                let metadata = match transition_presentation_metadata_tokens(
+                    presentation,
+                    function,
+                    &target_machine_info.name,
+                    target_machine_info,
+                ) {
+                    Ok(tokens) => tokens,
+                    Err(err) => return Some(err),
+                };
+                let cfg_attrs = propagated_cfg_attrs(&tr_impl.attrs, &function.attrs);
 
-            Some(quote! {
-                #(#cfg_attrs)*
-                #[statum::__private::linkme::distributed_slice(#machine_module_ident::#transition_presentation_slice_ident)]
-                #[linkme(crate = statum::__private::linkme)]
-                static #registration_ident:
-                    statum::__private::TransitionPresentation<#machine_module_ident::TransitionId, #transition_meta_ty> =
-                    statum::__private::TransitionPresentation {
-                        id: #machine_module_ident::TransitionId::from_token(&#token_ident),
-                        label: #label,
-                        description: #description,
-                        metadata: #metadata,
-                    };
+                Some(quote! {
+                    #(#cfg_attrs)*
+                    #[statum::__private::linkme::distributed_slice(#machine_module_ident::#transition_presentation_slice_ident)]
+                    #[linkme(crate = statum::__private::linkme)]
+                    static #registration_ident:
+                        statum::__private::TransitionPresentation<#machine_module_ident::TransitionId, #transition_meta_ty> =
+                        statum::__private::TransitionPresentation {
+                            id: #machine_module_ident::TransitionId::from_token(&#token_ident),
+                            label: #label,
+                            description: #description,
+                            metadata: #metadata,
+                        };
+                })
             })
-        });
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let sanitized_input = strip_present_attrs_from_transition_impl(input);
 
     quote! {

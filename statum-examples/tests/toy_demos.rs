@@ -75,6 +75,7 @@ fn example_15_transition_map() {
     toy_demos::example_15_transition_map::run();
 }
 
+#[cfg(feature = "introspection")]
 #[test]
 fn example_16_machine_introspection() -> Result<(), statum::Error> {
     toy_demos::example_16_machine_introspection::run()

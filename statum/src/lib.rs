@@ -168,7 +168,8 @@
 //!
 //! # Machine Introspection
 //!
-//! Statum can also expose the static machine structure as typed metadata.
+//! With the `introspection` feature enabled, Statum can also expose the static
+//! machine structure as typed metadata.
 //! This is useful when the same machine definition should drive:
 //!
 //! - CLI explainers
@@ -177,14 +178,22 @@
 //! - exact transition assertions in tests
 //! - runtime replay or debug tooling
 //!
-//! With the `strict-introspection` feature enabled, the graph is exact at the
-//! transition-site level. A consumer can ask for the legal targets of one
-//! specific method on one specific source state and treat that metadata as the
-//! authoritative static graph surface.
+//! The default feature set does not emit the generated `StateId`,
+//! `TransitionId`, `GRAPH`, `PRESENTATION`, or `linkme` inventory surface.
+//! Enable `introspection` for that generated metadata surface. Enable
+//! `strict-introspection` when you also want stricter transition return-shape
+//! rejection; `strict-introspection` implies `introspection`.
 //!
-//! Strict introspection is derived from locally readable `#[transition]`
-//! method signatures plus any explicit `#[introspect(return = ...)]` escape
-//! hatches. Supported return shapes are direct machine returns plus canonical
+//! With `strict-introspection`, the graph is exact at the transition-site
+//! level for the supported observation point. A consumer can ask for the legal
+//! targets of one specific method on one specific source state and treat that
+//! metadata as the authoritative static graph surface for macro-validated
+//! inputs.
+//!
+//! The observation point is the macro-validated semantic model: locally readable
+//! `#[state]` and `#[machine]` items, locally readable `#[transition]` method
+//! signatures, plus any explicit `#[introspect(return = ...)]` escape hatches.
+//! Supported return shapes are direct machine returns plus canonical
 //! wrapper paths around machine types:
 //! `::core::option::Option<Machine<NextState>>`,
 //! `::core::result::Result<Machine<NextState>, E>`, and
@@ -202,9 +211,9 @@
 //! `machine::PRESENTATION` constant from `#[present(...)]` attributes. Add
 //! `#[presentation_types(...)]` on the machine when those attributes should
 //! carry typed `metadata = ...` payloads instead of just labels and
-//! descriptions.
+//! descriptions. The example below requires the `introspection` feature.
 //!
-//! ```rust
+//! ```rust,ignore
 //! use statum::{
 //!     machine, state, transition, MachineIntrospection, MachineTransitionRecorder,
 //! };
@@ -271,11 +280,11 @@
 //!   [`transition`](macro@transition).
 //! - For stored rows and database rebuilds, read [`validators`](macro@validators).
 //! - For append-only event logs, use [`projection`] before validator rebuilds.
-//! - Machine introspection, presentation, and runtime recording types are
-//!   intentionally re-exported at the crate root (`MachineGraph`,
-//!   `RecordedTransition`, `MachinePresentation`, and related descriptors) so
-//!   applications can inspect generated transition metadata without depending on
-//!   `statum-core` directly.
+//! - With the `introspection` feature enabled, machine introspection,
+//!   presentation, and runtime recording types are re-exported at the crate root
+//!   (`MachineGraph`, `RecordedTransition`, `MachinePresentation`, and related
+//!   descriptors) so applications can inspect generated transition metadata
+//!   without depending on `statum-core` directly.
 //! - The repository README and `docs/` directory contain longer guides and
 //!   showcase applications.
 
@@ -289,12 +298,16 @@ pub use statum_core::__private;
 pub use statum_core::projection;
 #[doc(inline)]
 pub use statum_core::{
-    Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error,
+    Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, RebuildAttempt,
+    RebuildReport, Rejection, Result, StateMarker, UnitState, Validation,
+};
+#[cfg(feature = "introspection")]
+#[doc(inline)]
+pub use statum_core::{
     MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder, RebuildAttempt,
-    RebuildReport, RecordedTransition, Rejection, Result, StateDescriptor, StateMarker,
-    StatePresentation, TransitionDescriptor, TransitionInventory, TransitionPresentation,
-    TransitionPresentationInventory, UnitState, Validation,
+    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
+    RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
+    TransitionInventory, TransitionPresentation, TransitionPresentationInventory,
 };
 
 /// Define the legal lifecycle phases for a machine.

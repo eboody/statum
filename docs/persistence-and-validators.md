@@ -167,8 +167,9 @@ rejection, reconstruction still fails with `InvalidState`.
 
 ## Rebuild Reports
 
-Use `.build_report()` for one row or `.build_reports()` for collections when
-you want the rebuild result plus the evaluation trace that produced it.
+Enable the `rebuild-reports` Cargo feature to use `.build_report()` for one row
+when you want the rebuild result plus the evaluation trace that produced it.
+Collection `.build_reports()` also requires `rebuild-batch`.
 
 - `RebuildAttempt.matched` tells you which validator, if any, selected the state.
 - `RebuildAttempt.reason_key` and `RebuildAttempt.message` are populated only
@@ -195,6 +196,9 @@ This is useful when typed rehydration requires a network call or a database fetc
 Example: [../statum-examples/src/toy_demos/09-persistent-data.rs](../statum-examples/src/toy_demos/09-persistent-data.rs)
 
 ## Batch Reconstruction
+
+Enable the `rebuild-batch` Cargo feature before using collection rebuild
+helpers.
 
 For collections in the same module as the `#[validators]` impl, `TaskMachine::rebuild_many(rows)` is the type-first batch entrypoint and `.into_machines()` is the fallback:
 
