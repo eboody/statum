@@ -42,7 +42,8 @@ A reader should understand these boundaries quickly:
 Acceptance checks:
 
 - README names typed rehydration as a first-class differentiator.
-- Start-here path points evaluators to the flagship persistence case study.
+- Start-here path points evaluators to the document-approval flagship and the
+  event-log persistence companion.
 - Builder docs say what Statum intentionally does not compete with.
 
 ### 2. Diagnostics
@@ -94,15 +95,18 @@ Acceptance checks:
 - Any strict-introspection benchmark claim states exactly which fixture and
   command produced it.
 
-### 5. Flagship case study
+### 5. Flagship workflow and persistence companion
 
-The event-log case study should be the main proof that Statum solves more than
-simple construction.
+The document-approval workflow should be the main proof that Statum solves more
+than simple construction. The event-log case study should remain the persistence
+companion for projection-heavy systems.
 
 Acceptance checks:
 
-- The case study shows the three boundaries: event log, projection row, typed
-  machine.
+- The flagship shows state-specific data, legal transitions, typed
+  rehydration, and graph output.
+- The event-log companion shows the three boundaries: event log, projection row,
+  typed machine.
 - It explains what bugs remain runtime concerns and what bugs the type system
   removes.
 - It includes a short "why not just an enum?" section.
@@ -117,4 +121,5 @@ Acceptance checks:
 3. Add a builder UX positioning document so feature requests can be classified
    as Statum-owned vs. ordinary-builder-owned.
 4. Add compile benchmark reporting docs before making performance claims.
-5. Strengthen the event-log case study with explicit comparison to status enums.
+5. Keep the document-approval flagship and event-log companion aligned with the
+   README positioning.

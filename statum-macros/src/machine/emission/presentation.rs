@@ -54,8 +54,7 @@ pub(super) fn generate_machine_state_surface(
         }
     });
     let module_ident = machine_state_module_ident(machine_info);
-    let introspection_surface =
-        generate_machine_module_introspection(machine_info, parsed_state)?;
+    let introspection_surface = generate_machine_module_introspection(machine_info, parsed_state)?;
     let extra_params = extra_generics.params.iter();
     let extra_where_clause = extra_generics.where_clause.clone();
     let into_machines_trait = if extra_generics.params.is_empty() {
@@ -162,39 +161,46 @@ fn generate_machine_module_introspection(
     let state_presentations = parsed_state
         .variants
         .iter()
-        .filter_map(|variant| variant.presentation.as_ref().map(|presentation| (variant, presentation)))
-        .map(|(variant, presentation)| -> Result<TokenStream, TokenStream> {
-            let variant_ident = format_ident!("{}", variant.name);
-            let label = optional_lit_str_tokens(presentation.label.as_deref());
-            let description = optional_lit_str_tokens(presentation.description.as_deref());
-            let state_enum_name = machine_info
-                .state_generic_name
-                .as_deref()
-                .unwrap_or("<state>");
-            let subject = format!("state `{state_enum_name}::{}`", variant.name);
-            let metadata_display = presentation
-                .metadata
+        .filter_map(|variant| {
+            variant
+                .presentation
                 .as_ref()
-                .map(|metadata| format!("`#[present(metadata = {metadata})]`"));
-            let metadata = presentation_metadata_tokens(
-                Some(presentation),
-                "state",
-                subject.as_str(),
-                metadata_display.as_deref(),
-                &machine_info.name,
-                presentation_types.state.as_ref(),
-                true,
-            )?;
-
-            Ok(quote! {
-                statum::__private::StatePresentation {
-                    id: StateId::#variant_ident,
-                    label: #label,
-                    description: #description,
-                    metadata: #metadata,
-                }
-            })
+                .map(|presentation| (variant, presentation))
         })
+        .map(
+            |(variant, presentation)| -> Result<TokenStream, TokenStream> {
+                let variant_ident = format_ident!("{}", variant.name);
+                let label = optional_lit_str_tokens(presentation.label.as_deref());
+                let description = optional_lit_str_tokens(presentation.description.as_deref());
+                let state_enum_name = machine_info
+                    .state_generic_name
+                    .as_deref()
+                    .unwrap_or("<state>");
+                let subject = format!("state `{state_enum_name}::{}`", variant.name);
+                let metadata_display = presentation
+                    .metadata
+                    .as_ref()
+                    .map(|metadata| format!("`#[present(metadata = {metadata})]`"));
+                let metadata = presentation_metadata_tokens(
+                    Some(presentation),
+                    "state",
+                    subject.as_str(),
+                    metadata_display.as_deref(),
+                    &machine_info.name,
+                    presentation_types.state.as_ref(),
+                    true,
+                )?;
+
+                Ok(quote! {
+                    statum::__private::StatePresentation {
+                        id: StateId::#variant_ident,
+                        label: #label,
+                        description: #description,
+                        metadata: #metadata,
+                    }
+                })
+            },
+        )
         .collect::<Result<Vec<_>, _>>()?;
     let state_presentation_count = state_presentations.len();
     let machine_presentation = machine_presentation_tokens(

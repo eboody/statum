@@ -1,14 +1,14 @@
 use proc_macro2::TokenStream;
 use std::marker::PhantomData;
-use syn::spanned::Spanned;
 use syn::ItemImpl;
+use syn::spanned::Spanned;
 
 use super::diagnostics::{
     ambiguous_transition_machine_error, ambiguous_transition_machine_fallback_error,
     compile_error_at, missing_transition_machine_error,
 };
 use super::emit::generate_transition_impl;
-use super::parse::{parse_transition_impl, TransitionImpl};
+use super::parse::{TransitionImpl, parse_transition_impl};
 use super::resolve::missing_transition_machine_context;
 use super::validation::validate_transition_functions;
 use crate::{
@@ -51,51 +51,47 @@ impl TransitionExpansionBuilder<ParsedTransitionPhase> {
         })
     }
 
-    fn resolve_machine(self) -> Result<TransitionExpansionBuilder<ResolvedTransitionPhase>, TokenStream> {
+    fn resolve_machine(
+        self,
+    ) -> Result<TransitionExpansionBuilder<ResolvedTransitionPhase>, TokenStream> {
         let machine_path: MachinePath = self.module_path.clone().into();
-        let machine_info = match lookup_loaded_machine_in_module(&machine_path, &self.tr_impl.machine_name)
-        {
-            Ok(info) => info,
-            Err(LoadedMachineLookupFailure::Ambiguous(candidates)) => {
-                return Err(
-                    ambiguous_transition_machine_error(
+        let machine_info =
+            match lookup_loaded_machine_in_module(&machine_path, &self.tr_impl.machine_name) {
+                Ok(info) => info,
+                Err(LoadedMachineLookupFailure::Ambiguous(candidates)) => {
+                    return Err(ambiguous_transition_machine_error(
                         &self.tr_impl.machine_name,
                         &self.module_path,
                         &candidates,
                         self.tr_impl.machine_span,
-                    ),
-                );
-            }
-            Err(LoadedMachineLookupFailure::NotFound) => {
-                match lookup_unique_loaded_machine_by_name(&self.tr_impl.machine_name) {
-                    Ok(info) => info,
-                    Err(LoadedMachineLookupFailure::Ambiguous(candidates)) => {
-                        return Err(
-                            ambiguous_transition_machine_fallback_error(
+                    ));
+                }
+                Err(LoadedMachineLookupFailure::NotFound) => {
+                    match lookup_unique_loaded_machine_by_name(&self.tr_impl.machine_name) {
+                        Ok(info) => info,
+                        Err(LoadedMachineLookupFailure::Ambiguous(candidates)) => {
+                            return Err(ambiguous_transition_machine_fallback_error(
                                 &self.tr_impl.machine_name,
                                 &self.module_path,
                                 &candidates,
                                 self.tr_impl.machine_span,
-                            ),
-                        );
-                    }
-                    Err(LoadedMachineLookupFailure::NotFound) => {
-                        let context = missing_transition_machine_context(
-                            &self.tr_impl.machine_name,
-                            &self.module_path,
-                        );
-                        return Err(
-                            missing_transition_machine_error(
+                            ));
+                        }
+                        Err(LoadedMachineLookupFailure::NotFound) => {
+                            let context = missing_transition_machine_context(
+                                &self.tr_impl.machine_name,
+                                &self.module_path,
+                            );
+                            return Err(missing_transition_machine_error(
                                 &self.tr_impl.machine_name,
                                 &self.module_path,
                                 &context,
                                 self.tr_impl.machine_span,
-                            ),
-                        );
+                            ));
+                        }
                     }
                 }
-            }
-        };
+            };
 
         Ok(TransitionExpansionBuilder {
             input: self.input,

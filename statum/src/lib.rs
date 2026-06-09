@@ -296,18 +296,25 @@ mod crate_readme_doctests {}
 pub use statum_core::__private;
 #[doc(inline)]
 pub use statum_core::projection;
+#[cfg(feature = "introspection")]
+#[doc(inline)]
+pub use statum_core::testing;
 #[doc(inline)]
 pub use statum_core::{
-    Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error, RebuildAttempt,
-    RebuildReport, Rejection, Result, StateMarker, UnitState, Validation,
+    Branch, CanTransitionMap, CanTransitionTo, CanTransitionWith, DataState, Error,
+    RebuildAmbiguity, RebuildAttempt, RebuildInput, RebuildReport, Rejection, Result, StateMarker,
+    UnitState, Validation,
 };
 #[cfg(feature = "introspection")]
 #[doc(inline)]
 pub use statum_core::{
-    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
-    RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
+    GraphAuthorityLevel, GraphLintCode, GraphLintFinding, MachineDescriptor, MachineGraph,
+    MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
+    MachineTransitionRecorder, RecordedTransition, StableFieldMetadata, StableGraphMetadata,
+    StableGraphMetadataVersion, StableMachineMetadata, StableStateMetadata,
+    StableTransitionMetadata, StateDescriptor, StatePresentation, TransitionDescriptor,
     TransitionInventory, TransitionPresentation, TransitionPresentationInventory,
+    TransitionTelemetryLabels, UnsupportedGraphMetadataCase,
 };
 
 /// Define the legal lifecycle phases for a machine.

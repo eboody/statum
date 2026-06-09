@@ -6,13 +6,13 @@ mod validation;
 
 use crate::source::{module_path_for_line, source_info_for_span};
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use std::marker::PhantomData;
 use syn::{Fields, Ident, ItemEnum, Path, Type, Visibility};
 
 use crate::{
-    ModulePath, SourceFingerprint, crate_root_for_file, extract_derives, parse_present_attrs_for,
-    source_file_fingerprint, PresentationAttr,
+    ModulePath, PresentationAttr, SourceFingerprint, crate_root_for_file, extract_derives,
+    parse_present_attrs_for, source_file_fingerprint,
 };
 
 pub use emission::generate_state_impls;
@@ -127,7 +127,9 @@ pub struct VariantInfo {
 #[derive(Clone)]
 pub enum VariantShape {
     Unit,
-    Tuple { data_type: String },
+    Tuple {
+        data_type: String,
+    },
     Named {
         data_struct_name: String,
         fields: Vec<NamedFieldInfo>,
@@ -244,7 +246,9 @@ pub(crate) struct ParsedVariantInfo {
 
 pub(crate) enum ParsedVariantShape {
     Unit,
-    Tuple { data_type: Box<Type> },
+    Tuple {
+        data_type: Box<Type>,
+    },
     Named {
         data_struct_ident: Ident,
         fields: Vec<ParsedNamedFieldInfo>,
@@ -306,7 +310,12 @@ impl EnumInfo {
     pub fn from_item_enum(item: &ItemEnum) -> syn::Result<Self> {
         let line_number = item.ident.span().start().line;
         let Some((file_path, line_number)) = source_info_for_span(item.ident.span()) else {
-            return Self::from_item_enum_with_module_and_file(item, "crate".into(), None, line_number);
+            return Self::from_item_enum_with_module_and_file(
+                item,
+                "crate".into(),
+                None,
+                line_number,
+            );
         };
         let Some(module_path) = module_path_for_line(&file_path, line_number) else {
             if crate::machine::is_rust_analyzer() {
@@ -364,10 +373,8 @@ impl EnumInfo {
             .flatten()
             .collect();
         let enum_presentation_context = format!("state enum `{}`", item.ident);
-        let presentation = parse_present_attrs_for(
-            &item.attrs,
-            Some(enum_presentation_context.as_str()),
-        )?;
+        let presentation =
+            parse_present_attrs_for(&item.attrs, Some(enum_presentation_context.as_str()))?;
 
         let mut variants = Vec::new();
         for variant in &item.variants {

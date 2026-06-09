@@ -6,8 +6,7 @@ use crate::contracts::TransitionContract;
 use crate::diagnostics::compact_display;
 
 use super::super::diagnostics::{
-    invalid_introspect_return_error, invalid_return_type_error,
-    mismatched_introspect_return_error,
+    invalid_introspect_return_error, invalid_return_type_error, mismatched_introspect_return_error,
 };
 use super::super::parse::TransitionFn;
 use super::super::resolve::{
@@ -65,7 +64,10 @@ impl ObservedReturnShape {
         func_name: &syn::Ident,
         machine_name: &str,
     ) -> String {
-        format!("`fn {func_name}(self) -> {}`", self.canonical_annotation(machine_name))
+        format!(
+            "`fn {func_name}(self) -> {}`",
+            self.canonical_annotation(machine_name)
+        )
     }
 
     pub(super) fn fix_message(&self, func_name: &syn::Ident, machine_name: &str) -> String {
@@ -109,7 +111,8 @@ fn validate_transition_return_contract(
         ));
     };
 
-    let strict_introspection = crate::strict_introspection_enabled() || func.introspection.is_some();
+    let strict_introspection =
+        crate::strict_introspection_enabled() || func.introspection.is_some();
     if let Some(introspection) = func.introspection.as_ref() {
         let introspection_targets = resolve_transition_targets_strict(&introspection.return_type, target_type)
             .ok_or_else(|| {
@@ -229,7 +232,9 @@ pub(super) fn strict_introspect_return_suggestion(
 ) -> Option<String> {
     let return_type = func.return_type.as_ref()?;
     SourceAliasResolver::new(func.return_type_span)
-        .find_map(|context| strict_diagnostic_expanded_return_type(return_type, target_type, context))
+        .find_map(|context| {
+            strict_diagnostic_expanded_return_type(return_type, target_type, context)
+        })
         .map(|expanded| compact_display(&expanded))
 }
 
@@ -310,7 +315,10 @@ fn strict_diagnostic_expanded_return_type_inner(
     }
 }
 
-pub(super) fn observed_return_shape(func: &TransitionFn, target_type: &Type) -> Option<ObservedReturnShape> {
+pub(super) fn observed_return_shape(
+    func: &TransitionFn,
+    target_type: &Type,
+) -> Option<ObservedReturnShape> {
     let return_type = func.return_type.as_ref()?;
     let wrapper = raw_wrapper_kind(return_type);
     let primary_branch = primary_branch_display(return_type);
@@ -339,13 +347,15 @@ fn resolved_machine_branches(func: &TransitionFn, target_type: &Type) -> Vec<Str
     let Some(return_type) = func.return_type.as_ref() else {
         return Vec::new();
     };
-    let uses_strict_resolution = crate::strict_introspection_enabled() || func.introspection.is_some();
+    let uses_strict_resolution =
+        crate::strict_introspection_enabled() || func.introspection.is_some();
     let targets = if uses_strict_resolution {
         collect_machine_and_states_strict(return_type, target_type)
     } else {
         SourceAliasResolver::new(func.return_type_span)
             .find_map(|context| {
-                let states = collect_machine_and_states_in_context(return_type, target_type, context);
+                let states =
+                    collect_machine_and_states_in_context(return_type, target_type, context);
                 (!states.is_empty()).then_some(states)
             })
             .unwrap_or_default()

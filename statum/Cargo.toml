@@ -13,7 +13,7 @@ strict-introspection = ["introspection", "statum-macros/strict-introspection"]
 
 [dev-dependencies.tokio]
 workspace = true
-features = ["full"]
+features = ["macros", "rt"]
 
 [dev-dependencies.criterion]
 workspace = true

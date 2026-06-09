@@ -1,0 +1,101 @@
+name: Statum graph diff
+
+on:
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - "docs/graph-snapshots/**"
+      - "cargo-statum/**"
+      - "scripts/comment_graph_diff_pr.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  axum-sqlite-review-diff:
+    name: Generate axum-sqlite-review graph diff
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      has_baseline: ${{ steps.baseline.outputs.has_baseline }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate current Statum graph snapshot
+        run: |
+          mkdir -p target/statum-graph/current
+          cargo run -q -p cargo-statum -- graph \
+            --machine axum-sqlite-review \
+            --format json > target/statum-graph/current/axum-sqlite-review.graph.json
+          jq -n \
+            --slurpfile graph target/statum-graph/current/axum-sqlite-review.graph.json \
+            '{
+              snapshot_version: "v1",
+              package: "statum-examples",
+              machine_key: "showcases::axum_sqlite_review::DocumentMachine",
+              feature_set: { cargo_features: [], target: "x86_64-unknown-linux-gnu" },
+              generated_by: { tool: "cargo-statum", command: "cargo statum graph --machine axum-sqlite-review --format json" },
+              graph: $graph[0]
+            }' > target/statum-graph/current/axum-sqlite-review.snapshot.json
+
+      - name: Detect baseline snapshot
+        id: baseline
+        run: |
+          if [[ -f docs/graph-snapshots/statum-examples/axum-sqlite-review/default.json ]]; then
+            echo "has_baseline=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_baseline=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render graph diff artifacts
+        if: ${{ steps.baseline.outputs.has_baseline == 'true' }}
+        run: |
+          cargo run -q -p cargo-statum -- graph diff \
+            --baseline docs/graph-snapshots/statum-examples/axum-sqlite-review/default.json \
+            --current target/statum-graph/current/axum-sqlite-review.snapshot.json \
+            --format json > target/statum-graph/diff.json
+          cargo run -q -p cargo-statum -- graph diff \
+            --baseline docs/graph-snapshots/statum-examples/axum-sqlite-review/default.json \
+            --current target/statum-graph/current/axum-sqlite-review.snapshot.json \
+            --format markdown > target/statum-graph/diff.md
+          {
+            echo '<!-- statum-graph-diff -->'
+            cat target/statum-graph/diff.md
+            echo
+            echo 'CI artifact: `statum-graph/diff.json`'
+          } > target/statum-graph/pr-comment.md
+
+      - name: Upload graph diff artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: statum-graph
+          path: target/statum-graph/
+
+  axum-sqlite-review-comment:
+    name: Comment axum-sqlite-review graph diff
+    needs: axum-sqlite-review-diff
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.axum-sqlite-review-diff.outputs.has_baseline == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: statum-graph
+          path: target/statum-graph
+
+      - name: Comment graph diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR_NUMBER" --repo "$GH_REPO" --body-file target/statum-graph/pr-comment.md

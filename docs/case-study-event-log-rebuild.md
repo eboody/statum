@@ -1,10 +1,10 @@
 # Case Study: Event Logs To Typed Machines
 
-This is the strongest Statum example in the repo because it shows the part that
-is hard to fake with normal status enums: rebuilding a workflow from
-append-only events without dropping back to ad hoc runtime branching.
+This is the persistence companion to the document-approval flagship. It shows
+the part that is hard to fake with normal status enums: rebuilding a workflow
+from append-only events without dropping back to ad hoc runtime branching.
 
-It is also the clearest representational-correctness story in the repo: raw
+It reinforces the same representational-correctness story as the flagship: raw
 projected facts do not become ordinary workflow values until they can be proven
 to match one legal state.
 

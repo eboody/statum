@@ -11,6 +11,11 @@ It provides:
 
 Most users should depend on `statum` instead of using this crate directly.
 
+`strict-introspection` is an optional feature. The public `statum` crate forwards
+its `strict-introspection` feature to this crate, where unsupported graph return
+shapes are rejected unless the transition provides an explicit
+`#[introspect(return = ...)]` annotation.
+
 ## Install
 
 ```toml

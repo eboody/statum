@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use quote::format_ident;
 use syn::{Ident, ImplItemFn, Path, Type};
 
-use crate::contracts::{ResolvedMachineRef, StateEnumContract, ValidatorContract};
 use crate::VariantInfo;
+use crate::contracts::{ResolvedMachineRef, StateEnumContract, ValidatorContract};
 
 use super::resolution::ValidatorMachineAttr;
 
@@ -24,6 +24,7 @@ pub(super) struct ValidatorMethodContract {
     pub(super) validator_fn: Ident,
     pub(super) variant_name: String,
     pub(super) has_state_data: bool,
+    pub(super) ok_type: Type,
     pub(super) return_kind: ValidatorReturnKind,
     pub(super) is_async: bool,
 }
@@ -151,6 +152,7 @@ pub(super) fn build_validator_method_contract(
         validator_fn: func.sig.ident.clone(),
         variant_name: spec.variant_name.clone(),
         has_state_data: spec.has_state_data,
+        ok_type: spec.expected_ok_type.clone(),
         return_kind,
         is_async: func.sig.asyncness.is_some(),
     }

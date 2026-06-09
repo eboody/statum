@@ -102,7 +102,9 @@ pub(crate) fn resolve_machine_metadata(
     })
 }
 
-pub(crate) fn resolve_state_enum_info(machine_metadata: &MachineInfo) -> Result<EnumInfo, TokenStream> {
+pub(crate) fn resolve_state_enum_info(
+    machine_metadata: &MachineInfo,
+) -> Result<EnumInfo, TokenStream> {
     let module_path = machine_metadata.module_path.as_ref();
     let source_query = SourceModuleQuery::current(module_path);
     let state_path_key: StateModulePath = module_path.into();

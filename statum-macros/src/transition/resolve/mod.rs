@@ -5,17 +5,16 @@ mod strategy;
 pub(super) use crate::source::{
     AliasResolutionContext, SourceAliasResolver, expand_source_type_alias,
 };
+pub(super) use machine_context::missing_transition_machine_context;
 pub(super) use shape::{
     SupportedWrapper, extract_first_generic_type_ref, extract_generic_type_refs,
     extract_impl_machine_and_state, machine_segment_matching_target, supported_wrapper, type_path,
 };
-pub(super) use machine_context::missing_transition_machine_context;
 #[cfg_attr(not(test), allow(unused_imports))]
 pub(super) use strategy::{
     collect_machine_and_states, collect_machine_and_states_in_context,
-    collect_machine_and_states_strict, parse_machine_and_state,
-    parse_machine_and_state_in_context, parse_primary_machine_and_state,
-    parse_primary_machine_and_state_strict,
+    collect_machine_and_states_strict, parse_machine_and_state, parse_machine_and_state_in_context,
+    parse_primary_machine_and_state, parse_primary_machine_and_state_strict,
 };
 
 #[cfg(test)]
@@ -156,9 +155,8 @@ mod tests {
     #[test]
     fn parser_accepts_std_wrapper_paths() {
         let target = parse_type("Machine<Draft>");
-        let ty = parse_type(
-            "::std::option::Option<::std::result::Result<Machine<Accepted>, Error>>",
-        );
+        let ty =
+            parse_type("::std::option::Option<::std::result::Result<Machine<Accepted>, Error>>");
 
         assert_eq!(
             parse_primary_machine_and_state(&ty, &target),

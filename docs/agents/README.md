@@ -28,6 +28,8 @@ dynamic.
 4. Ask the agent to cite the candidate entity, proposed state enum, legal
    transitions, and why Statum is stronger than plain runtime validation in
    that spot.
+5. Before changing a workflow, protocol, or agent-facing instruction, run the
+   [agent maintainer checklist](maintainer-checklist.md).
 
 ## Pick the Right Asset
 

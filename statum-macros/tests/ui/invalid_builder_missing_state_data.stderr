@@ -1,0 +1,16 @@
+error[E0599]: no method named `build` found for struct `WorkflowMachineDraftBuilder<__StatumWorkflowMachineDraftBuilderMissingSlot0StateData, __StatumWorkflowMachineDraftBuilderSetSlot1Name>` in the current scope
+  --> tests/ui/invalid_builder_missing_state_data.rs:30:10
+   |
+22 |   #[machine]
+   |   ---------- method `build` not found for this struct
+...
+28 |       let _ = WorkflowMachine::<Draft>::builder()
+   |  _____________-
+29 | |         .name("draft".to_owned())
+30 | |         .build();
+   | |         -^^^^^ method not found in `WorkflowMachineDraftBuilder<__StatumWorkflowMachineDraftBuilderMissingSlot0StateData, __StatumWorkflowMachineDraftBuilderSetSlot1Name>`
+   | |_________|
+   |
+   |
+   = note: the method was found for
+           - `WorkflowMachineDraftBuilder<__StatumWorkflowMachineDraftBuilderSetSlot0StateData, __StatumWorkflowMachineDraftBuilderSetSlot1Name>`

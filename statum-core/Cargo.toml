@@ -4,9 +4,17 @@
 optional = true
 workspace = true
 
+[dependencies.serde]
+features = ["derive"]
+optional = true
+workspace = true
+
 [features]
 default = []
-introspection = ["dep:linkme"]
+introspection = ["dep:linkme", "dep:serde"]
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [package]
 authors.workspace = true
@@ -15,13 +23,7 @@ description = "Core types for representing legal workflow and protocol states ex
 documentation = "https://docs.rs/statum-core"
 edition = "2021"
 include = ["/src/**", "/README.md", "/LICENSE"]
-keywords = [
-    "typestate",
-    "correctness",
-    "workflow",
-    "protocol",
-    "state-machine",
-]
+keywords = ["typestate", "correctness", "workflow", "protocol", "state-machine"]
 license.workspace = true
 name = "statum-core"
 readme = "README.md"
@@ -30,17 +32,4 @@ rust-version.workspace = true
 version.workspace = true
 
 [package.metadata.modum]
-weak_modules = [
-    "storage",
-    "transport",
-    "infra",
-    "common",
-    "misc",
-    "helpers",
-    "helper",
-    "types",
-    "util",
-    "utils",
-    "projection",
-    "can",
-]
+weak_modules = ["storage", "transport", "infra", "common", "misc", "helpers", "helper", "types", "util", "utils", "projection", "can"]

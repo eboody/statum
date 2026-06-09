@@ -25,12 +25,18 @@ pub(crate) fn describe_invalid_return_type(
         .as_ref()
         .map(compact_display)
         .unwrap_or_else(|| "<none>".to_string());
-    let uses_strict_resolution = crate::strict_introspection_enabled() || func.introspection.is_some();
+    let uses_strict_resolution =
+        crate::strict_introspection_enabled() || func.introspection.is_some();
     let observed = observed_return_shape(func, target_type);
     let expected_signature = observed
         .as_ref()
         .map(|shape| shape.canonical_wrapped_signature(&func.name, &func.machine_name))
-        .unwrap_or_else(|| format!("`fn {}(self) -> {}<NextState>`", func.name, func.machine_name));
+        .unwrap_or_else(|| {
+            format!(
+                "`fn {}(self) -> {}<NextState>`",
+                func.name, func.machine_name
+            )
+        });
     let fix = observed
         .as_ref()
         .map(|shape| shape.fix_message(&func.name, &func.machine_name))
@@ -60,7 +66,9 @@ pub(crate) fn describe_invalid_return_type(
         written_return_type,
         expected_signature,
         fix,
-        primary_branch: observed.as_ref().and_then(|shape| shape.primary_branch.clone()),
+        primary_branch: observed
+            .as_ref()
+            .and_then(|shape| shape.primary_branch.clone()),
         observed_machine_branches: observed
             .map(|shape| shape.secondary_machine_branches)
             .unwrap_or_default(),
@@ -94,7 +102,9 @@ pub(crate) fn describe_mismatched_introspect_return(
                 shape.canonical_wrapped_signature(&func.name, &func.machine_name)
             )
         })
-        .unwrap_or_else(|| format!("an annotation describing the same legal targets as `{actual_return}`"));
+        .unwrap_or_else(|| {
+            format!("an annotation describing the same legal targets as `{actual_return}`")
+        });
     let fix = observed
         .as_ref()
         .map(|shape| {
@@ -110,7 +120,9 @@ pub(crate) fn describe_mismatched_introspect_return(
     IntrospectReturnMismatchFacts {
         expected,
         fix,
-        written_primary_branch: observed.as_ref().and_then(|shape| shape.primary_branch.clone()),
+        written_primary_branch: observed
+            .as_ref()
+            .and_then(|shape| shape.primary_branch.clone()),
         annotated_primary_branch: annotation_primary_branch,
         observed_machine_branches: observed
             .map(|shape| shape.secondary_machine_branches)

@@ -16,6 +16,31 @@ where
     S: Copy + Eq + 'static,
     T: Copy + Eq + 'static,
 {
+    /// Returns the stable low-cardinality machine label for tracing and metrics.
+    ///
+    /// This label is the generated Rust type path for the machine family. It is
+    /// independent of any telemetry stack and intentionally does not include
+    /// runtime values.
+    pub fn machine_label(&self) -> &'static str {
+        self.machine.rust_type_path
+    }
+
+    /// Returns the stable low-cardinality state label for tracing and metrics.
+    ///
+    /// This label is the generated Rust state marker/variant name. Unknown ids
+    /// return `None` instead of inventing a placeholder label.
+    pub fn state_label(&self, id: S) -> Option<&'static str> {
+        self.state(id).map(|state| state.rust_name)
+    }
+
+    /// Returns the stable low-cardinality transition label for tracing and metrics.
+    ///
+    /// This label is the generated Rust transition method name. Unknown ids
+    /// return `None` instead of inventing a placeholder label.
+    pub fn transition_label(&self, id: T) -> Option<&'static str> {
+        self.transition(id).map(|transition| transition.method_name)
+    }
+
     /// Finds a state descriptor by id.
     pub fn state(&self, id: S) -> Option<&StateDescriptor<S>> {
         self.states.iter().find(|state| state.id == id)

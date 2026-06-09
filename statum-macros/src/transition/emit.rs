@@ -1,8 +1,8 @@
+use super::ValidatedTransitionMethod;
 use super::diagnostics::{
     compile_error_at, invalid_transition_method_state_error, invalid_transition_state_error,
 };
 use super::parse::{TransitionFn, TransitionImpl, strip_present_attrs_from_transition_impl};
-use super::ValidatedTransitionMethod;
 use crate::machine::{
     to_shouty_snake_identifier, transition_presentation_slice_ident, transition_slice_ident,
     transition_support_module_ident,

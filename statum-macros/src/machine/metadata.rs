@@ -1,21 +1,18 @@
 use crate::diagnostics::{DiagnosticMessage, compact_text, compile_error_at};
-use crate::source::{
-    SourceModuleQuery, module_path_for_line, source_info_for_span,
-};
 #[cfg(test)]
 use crate::source::current_source_info;
+use crate::source::{SourceModuleQuery, module_path_for_line, source_info_for_span};
 use proc_macro2::{Span, TokenStream};
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
 use syn::{Generics, Ident, ItemStruct, Type, Visibility};
 
-use crate::{
-    EnumInfo, LoadedStateLookupFailure, ModulePath, SourceFingerprint, StateModulePath,
-    crate_root_for_file, extract_derives, format_loaded_state_candidates,
-    lookup_loaded_state_enum, lookup_loaded_state_enum_by_name, source_file_fingerprint,
-    parse_present_attrs_for, parse_presentation_types_attr, PresentationAttr,
-    PresentationTypesAttr,
-};
 use super::extra_type_arguments_tokens;
+use crate::{
+    EnumInfo, LoadedStateLookupFailure, ModulePath, PresentationAttr, PresentationTypesAttr,
+    SourceFingerprint, StateModulePath, crate_root_for_file, extract_derives,
+    format_loaded_state_candidates, lookup_loaded_state_enum, lookup_loaded_state_enum_by_name,
+    parse_present_attrs_for, parse_presentation_types_attr, source_file_fingerprint,
+};
 
 pub type MachinePath = ModulePath;
 
@@ -50,7 +47,8 @@ impl MachineInfo {
             syn::parse_str::<Generics>(&self.generics).map_err(|err| err.to_compile_error())?;
         let mut derives = Vec::with_capacity(self.derives.len());
         for derive in &self.derives {
-            derives.push(syn::parse_str::<syn::Path>(derive).map_err(|err| err.to_compile_error())?);
+            derives
+                .push(syn::parse_str::<syn::Path>(derive).map_err(|err| err.to_compile_error())?);
         }
 
         let mut fields = Vec::with_capacity(self.fields.len());
@@ -126,9 +124,9 @@ impl MachineInfo {
                         .flatten()
                         .collect(),
                     presentation: parse_present_attrs_for(
-                    &item.attrs,
-                    Some(format!("machine `{}`", item.ident).as_str()),
-                )?,
+                        &item.attrs,
+                        Some(format!("machine `{}`", item.ident).as_str()),
+                    )?,
                     presentation_types: parse_presentation_types_attr(&item.attrs)?,
                     module_path: "crate".into(),
                     line_number,
@@ -163,9 +161,9 @@ impl MachineInfo {
                 .flatten()
                 .collect(),
             presentation: parse_present_attrs_for(
-                    &item.attrs,
-                    Some(format!("machine `{}`", item.ident).as_str()),
-                )?,
+                &item.attrs,
+                Some(format!("machine `{}`", item.ident).as_str()),
+            )?,
             presentation_types: parse_presentation_types_attr(&item.attrs)?,
             module_path,
             line_number,
@@ -179,7 +177,10 @@ impl MachineInfo {
     }
 
     #[cfg(test)]
-    pub fn from_item_struct_with_module(item: &ItemStruct, module_path: &MachinePath) -> Option<Self> {
+    pub fn from_item_struct_with_module(
+        item: &ItemStruct,
+        module_path: &MachinePath,
+    ) -> Option<Self> {
         if item.generics.params.is_empty() {
             return None;
         }
@@ -208,12 +209,8 @@ impl MachineInfo {
             line_number,
             generics: item.generics.to_token_stream().to_string(),
             state_generic_name: extract_state_generic_name(&item.generics),
-            crate_root: file_path
-                .as_deref()
-                .and_then(crate_root_for_file),
-            file_fingerprint: file_path
-                .as_deref()
-                .and_then(source_file_fingerprint),
+            crate_root: file_path.as_deref().and_then(crate_root_for_file),
+            file_fingerprint: file_path.as_deref().and_then(source_file_fingerprint),
             file_path,
         })
     }
@@ -300,7 +297,12 @@ fn missing_state_enum_error(
         machine_info.module_path.as_ref(),
     );
     let expected_line = expected
-        .map(|name| format!("Expected a `#[state]` enum named `{name}` in module `{}`.", machine_info.module_path))
+        .map(|name| {
+            format!(
+                "Expected a `#[state]` enum named `{name}` in module `{}`.",
+                machine_info.module_path
+            )
+        })
         .unwrap_or_else(|| {
             format!(
                 "Could not infer the expected `#[state]` enum name from machine `{}`.",
@@ -340,7 +342,9 @@ fn missing_state_enum_error(
                 crate::source::format_candidates(&candidates)
             )
         })
-        .unwrap_or_else(|| "No same-named `#[state]` enums were found in other modules of this file.".to_string());
+        .unwrap_or_else(|| {
+            "No same-named `#[state]` enums were found in other modules of this file.".to_string()
+        });
     let missing_attr_line = expected.and_then(|name| {
         source_query.plain_state_enum_line(name).map(|line| {
             format!("An enum named `{name}` exists on line {line}, but it is not annotated with `#[state]`.")
@@ -404,13 +408,19 @@ mod tests {
         };
 
         let module_path: MachinePath = crate::ModulePath("crate::workflow".into());
-        let info =
-            MachineInfo::from_item_struct_with_module(&item, &module_path).expect("machine metadata");
+        let info = MachineInfo::from_item_struct_with_module(&item, &module_path)
+            .expect("machine metadata");
         let parsed = info.parse().expect("parsed machine metadata");
 
         assert_eq!(info.state_generic_name.as_deref(), Some("TaskState"));
-        assert_eq!(info.fields[0].field_type, "__statum_task_machine_client_field_type");
-        assert_eq!(parsed.generics.to_token_stream().to_string(), "< TaskState >");
+        assert_eq!(
+            info.fields[0].field_type,
+            "__statum_task_machine_client_field_type"
+        );
+        assert_eq!(
+            parsed.generics.to_token_stream().to_string(),
+            "< TaskState >"
+        );
         assert_eq!(parsed.derives.len(), 1);
         assert_eq!(parsed.fields.len(), 2);
         assert_eq!(parsed.fields[0].ident.to_string(), "client");

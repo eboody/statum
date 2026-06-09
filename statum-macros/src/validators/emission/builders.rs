@@ -2,16 +2,15 @@ use quote::{format_ident, quote};
 use syn::{Generics, Ident, ImplItem, Path, Type};
 
 use super::batch_finalization::{
-    generate_batch_finalization, BatchAsyncMode, BatchFieldSource,
-    BatchFinalizationOperation, BatchFinalizationPlan,
+    BatchAsyncMode, BatchFieldSource, BatchFinalizationOperation, BatchFinalizationPlan,
+    generate_batch_finalization,
 };
-use super::into_machine::{generate_into_machine_builder, IntoMachineBuilderContext};
+use super::into_machine::{IntoMachineBuilderContext, generate_into_machine_builder};
 use super::shared::{
-    field_binding_tokens, field_storage_tokens, generic_usage_marker_tokens,
-    machine_scoped_item_path, merged_where_clause_tokens,
-    prefixed_generics_argument_tokens, prefixed_generics_declaration_tokens,
-    slot_setter_impls, slot_state_idents, slot_storage_idents,
-    trait_extra_generic_argument_tokens, SlotSetterContext,
+    SlotSetterContext, field_binding_tokens, field_storage_tokens, generic_usage_marker_tokens,
+    machine_scoped_item_path, merged_where_clause_tokens, prefixed_generics_argument_tokens,
+    prefixed_generics_declaration_tokens, slot_setter_impls, slot_state_idents,
+    slot_storage_idents, trait_extra_generic_argument_tokens,
 };
 use crate::machine::{
     builder_generics, extra_generics, extra_type_arguments_tokens, generic_argument_tokens,
@@ -32,6 +31,7 @@ pub(crate) struct BatchBuilderContext<'a> {
 
 pub(crate) struct ValidatorBuilderSurfaceContext<'a> {
     pub(crate) machine_ident: &'a Ident,
+    pub(crate) candidate_states: &'a [proc_macro2::TokenStream],
     pub(crate) machine_path: &'a Path,
     pub(crate) machine_module_path: &'a Path,
     pub(crate) machine_generics: &'a Generics,
@@ -42,6 +42,9 @@ pub(crate) struct ValidatorBuilderSurfaceContext<'a> {
     pub(crate) field_types: &'a [Type],
     pub(crate) validator_checks: &'a [proc_macro2::TokenStream],
     pub(crate) validator_report_checks: &'a [proc_macro2::TokenStream],
+    pub(crate) validator_explain_checks: &'a [proc_macro2::TokenStream],
+    pub(crate) validator_explain_storages: &'a [proc_macro2::TokenStream],
+    pub(crate) validator_explain_finalizers: &'a [proc_macro2::TokenStream],
     pub(crate) modified_methods: &'a [ImplItem],
     pub(crate) async_token: &'a proc_macro2::TokenStream,
     pub(crate) machine_vis: &'a syn::Visibility,
@@ -50,11 +53,12 @@ pub(crate) struct ValidatorBuilderSurfaceContext<'a> {
 pub(crate) fn validator_builder_surface(
     context: ValidatorBuilderSurfaceContext<'_>,
 ) -> proc_macro2::TokenStream {
-    let into_machine_builder_ident =
-        format_ident!("__Statum{}IntoMachine", context.machine_ident);
+    let into_machine_builder_ident = format_ident!("__Statum{}IntoMachine", context.machine_ident);
     let into_machines_builder_ident =
         format_ident!("__Statum{}IntoMachines", context.machine_ident);
     let into_machine_builder_impl = generate_into_machine_builder(IntoMachineBuilderContext {
+        machine_ident: context.machine_ident,
+        candidate_states: context.candidate_states,
         builder_ident: &into_machine_builder_ident,
         struct_ident: context.struct_ident,
         machine_generics: context.machine_generics,
@@ -63,6 +67,9 @@ pub(crate) fn validator_builder_surface(
         field_types: context.field_types,
         validator_checks: context.validator_checks,
         validator_report_checks: context.validator_report_checks,
+        validator_explain_checks: context.validator_explain_checks,
+        validator_explain_storages: context.validator_explain_storages,
+        validator_explain_finalizers: context.validator_explain_finalizers,
         async_token: context.async_token,
         machine_vis: context.machine_vis,
     });
@@ -103,8 +110,7 @@ pub(crate) fn validator_builder_surface(
         Some(quote! { '__statum_row }),
         &into_machine_slot_defaults,
     );
-    let uninitialized_state_ident =
-        format_ident!("Uninitialized{}", context.state_enum_name);
+    let uninitialized_state_ident = format_ident!("Uninitialized{}", context.state_enum_name);
     let machine_path = context.machine_path;
     let uninitialized_state_path =
         machine_scoped_item_path(machine_path, &uninitialized_state_ident);

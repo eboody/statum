@@ -2,6 +2,7 @@ mod graph;
 mod inventory;
 mod presentation;
 mod recording;
+mod stable_metadata;
 mod traits;
 
 pub use graph::{MachineDescriptor, MachineGraph, StateDescriptor, TransitionDescriptor};
@@ -9,7 +10,12 @@ pub use inventory::{TransitionInventory, TransitionPresentationInventory};
 pub use presentation::{
     MachinePresentation, MachinePresentationDescriptor, StatePresentation, TransitionPresentation,
 };
-pub use recording::{MachineTransitionRecorder, RecordedTransition};
+pub use recording::{MachineTransitionRecorder, RecordedTransition, TransitionTelemetryLabels};
+pub use stable_metadata::{
+    GraphAuthorityLevel, GraphLintCode, GraphLintFinding, StableFieldMetadata, StableGraphMetadata,
+    StableGraphMetadataVersion, StableMachineMetadata, StableStateMetadata,
+    StableTransitionMetadata, UnsupportedGraphMetadataCase,
+};
 pub use traits::{MachineIntrospection, MachineStateIdentity};
 
 #[cfg(test)]
@@ -291,6 +297,35 @@ mod tests {
                 has_data: false,
             })
         );
+    }
+
+    #[test]
+    fn telemetry_label_helpers_expose_stable_low_cardinality_parts() {
+        let graph = Workflow::<DraftMarker>::GRAPH;
+        assert_eq!(graph.machine_label(), "workflow::Machine");
+        assert_eq!(graph.state_label(StateId::Review), Some("Review"));
+        assert_eq!(graph.transition_label(SUBMIT_FROM_DRAFT), Some("submit"));
+
+        let event = Workflow::<DraftMarker>::try_record_transition_to::<Workflow<ReviewMarker>>(
+            SUBMIT_FROM_DRAFT,
+        )
+        .expect("valid runtime transition");
+        let labels = event
+            .telemetry_labels_in(graph)
+            .expect("runtime event should join to graph labels");
+
+        assert_eq!(labels.machine, "workflow::Machine");
+        assert_eq!(labels.from_state, "Draft");
+        assert_eq!(labels.transition, "submit");
+        assert_eq!(labels.chosen_state, "Review");
+
+        let illegal_event = RecordedTransition::new(
+            graph.machine,
+            StateId::Draft,
+            SUBMIT_FROM_DRAFT,
+            StateId::Published,
+        );
+        assert_eq!(illegal_event.telemetry_labels_in(graph), None);
     }
 
     #[test]

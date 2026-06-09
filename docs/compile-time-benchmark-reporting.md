@@ -13,7 +13,7 @@ Use them to compare a plain Rust shape against the equivalent Statum shape.
 ## Run The Benchmark
 
 ```bash
-bash scripts/benchmark_compile.sh --iterations 5 --mode both
+bash scripts/benchmark_compile.sh --iterations 5 --mode both --report docs/compile-time-benchmark-baseline.md
 ```
 
 Modes:
@@ -21,16 +21,19 @@ Modes:
 - `cold`: removes the fixture target directory before each measured run.
 - `warm`: primes the fixture once, then measures repeated checks.
 - `both`: runs cold and warm measurements.
+- `--report <path>`: writes a Markdown report with live machine/toolchain context,
+  raw runs, averages, and Statum/plain ratios.
 
-The script prints per-run milliseconds and averages for both fixtures. Compute the
-ratio from the printed averages: `statum_avg / plain_avg` for the same mode.
+The script prints per-run milliseconds and averages for both fixtures. When using
+`--report`, it also computes the ratio from the averages: `statum_avg / plain_avg`
+for each mode.
 
 ## Report Format
 
 When publishing benchmark numbers, include:
 
 ```text
-Command: bash scripts/benchmark_compile.sh --iterations 5 --mode both
+Command: bash scripts/benchmark_compile.sh --iterations 5 --mode both --report docs/compile-time-benchmark-baseline.md
 Machine: <CPU / OS / Rust toolchain if known>
 Fixture: benchmarks/compile/{plain,statum}-fixture
 Date: <date>

@@ -96,8 +96,12 @@ fn path_arguments_equivalent(left: &PathArguments, right: &PathArguments) -> boo
 fn generic_argument_equivalent(left: &GenericArgument, right: &GenericArgument) -> bool {
     match (left, right) {
         (GenericArgument::Lifetime(left), GenericArgument::Lifetime(right)) => left == right,
-        (GenericArgument::Type(left), GenericArgument::Type(right)) => types_equivalent(left, right),
-        (GenericArgument::Const(left), GenericArgument::Const(right)) => expr_equivalent(left, right),
+        (GenericArgument::Type(left), GenericArgument::Type(right)) => {
+            types_equivalent(left, right)
+        }
+        (GenericArgument::Const(left), GenericArgument::Const(right)) => {
+            expr_equivalent(left, right)
+        }
         (GenericArgument::AssocType(left), GenericArgument::AssocType(right)) => {
             left.ident == right.ident
                 && optional_angle_generics_equivalent(&left.generics, &right.generics)
@@ -116,7 +120,9 @@ fn generic_argument_equivalent(left: &GenericArgument, right: &GenericArgument) 
                     .bounds
                     .iter()
                     .zip(right.bounds.iter())
-                    .all(|(left_bound, right_bound)| token_text(left_bound) == token_text(right_bound))
+                    .all(|(left_bound, right_bound)| {
+                        token_text(left_bound) == token_text(right_bound)
+                    })
         }
         _ => false,
     }

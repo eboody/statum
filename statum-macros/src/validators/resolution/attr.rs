@@ -37,11 +37,8 @@ pub(crate) fn resolve_validator_machine_attr(
     let machine_name = machine_ident.to_string();
     let attr_display = path_display(machine_path);
     let path_kind = validator_machine_path_kind(machine_path);
-    let machine_module_path = resolve_validator_machine_module_path(
-        current_module_path,
-        machine_path,
-        &machine_name,
-    )?;
+    let machine_module_path =
+        resolve_validator_machine_module_path(current_module_path, machine_path, &machine_name)?;
 
     Ok(ValidatorMachineAttr {
         machine_path: machine_path.clone(),
@@ -115,10 +112,8 @@ fn resolve_validator_machine_module_path(
     }
 
     let first = module_segments[0].as_str();
-    let relative_is_ambiguous = !module_segments.is_empty()
-        && first != "crate"
-        && first != "self"
-        && first != "super";
+    let relative_is_ambiguous =
+        !module_segments.is_empty() && first != "crate" && first != "self" && first != "super";
     if crate::strict_introspection_enabled() && relative_is_ambiguous {
         let suggestion = preferred_machine_attr_suggestion(
             current_module_path,

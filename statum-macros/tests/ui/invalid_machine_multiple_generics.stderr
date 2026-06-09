@@ -1,8 +1,0 @@
-error: Error: machine `Workflow` declares unsupported generics `< WorkflowState, Context >`.
-       Statum requires exactly one generic, and it must name the `#[state]` enum `WorkflowState`.
-       Found first generic `WorkflowState` and additional generics `Context`.
-       Fix: rewrite this as `struct Workflow<WorkflowState> { ... }` and move other generic data into fields or payload types.
-  --> tests/ui/invalid_machine_multiple_generics.rs:20:16
-   |
-20 | struct Workflow<WorkflowState, Context> {
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^

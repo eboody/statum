@@ -83,8 +83,10 @@ fn path_segments_match_target_machine<'a>(
     }
 
     let last_index = candidate_segments.len().saturating_sub(1);
-    for (index, (candidate_segment, target_segment)) in
-        candidate_segments.iter().zip(target_segments.iter()).enumerate()
+    for (index, (candidate_segment, target_segment)) in candidate_segments
+        .iter()
+        .zip(target_segments.iter())
+        .enumerate()
     {
         if candidate_segment.ident != target_segment.ident {
             return false;
@@ -158,16 +160,13 @@ pub(crate) fn supported_wrapper(path: &syn::Path) -> Option<SupportedWrapper> {
 fn matches_absolute_type_path(path: &syn::Path, expected: &[&str]) -> bool {
     path.leading_colon.is_some()
         && path.segments.len() == expected.len()
-        && path
-            .segments
-            .iter()
-            .zip(expected.iter())
-            .enumerate()
-            .all(|(index, (segment, expected_ident))| {
+        && path.segments.iter().zip(expected.iter()).enumerate().all(
+            |(index, (segment, expected_ident))| {
                 segment.ident == *expected_ident
                     && (index + 1 == expected.len()
                         || matches!(segment.arguments, PathArguments::None))
-            })
+            },
+        )
 }
 
 pub(crate) fn extract_machine_state_from_segment(

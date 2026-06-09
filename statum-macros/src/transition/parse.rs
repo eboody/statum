@@ -27,8 +27,7 @@ pub struct TransitionIntrospectAttr {
     pub span: Span,
 }
 
-impl TransitionFn {
-}
+impl TransitionFn {}
 
 pub struct TransitionImpl {
     pub target_type: Type,
@@ -128,7 +127,10 @@ fn parse_transition_introspect_attrs(
     let mut found = false;
     let mut attr_span = None;
 
-    for attr in attrs.iter().filter(|attr| attr.path().is_ident("introspect")) {
+    for attr in attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("introspect"))
+    {
         found = true;
         attr_span = Some(attr.span());
         if !matches!(attr.meta, syn::Meta::List(_)) {
@@ -167,24 +169,22 @@ fn parse_transition_introspect_meta(
 ) -> syn::Result<()> {
     let path = meta.path.clone();
     let Some(ident) = path.get_ident() else {
-        let message = DiagnosticMessage::new(
-            "`#[introspect(...)]` keys must be simple identifiers.",
-        )
-        .found(format!("`{}`", compact_display(&path)))
-        .expected("`return = WorkflowMachine<NextState>`")
-        .fix("write `#[introspect(return = ...)]`.".to_string());
+        let message =
+            DiagnosticMessage::new("`#[introspect(...)]` keys must be simple identifiers.")
+                .found(format!("`{}`", compact_display(&path)))
+                .expected("`return = WorkflowMachine<NextState>`")
+                .fix("write `#[introspect(return = ...)]`.".to_string());
         return Err(syn::Error::new_spanned(&path, message.render()));
     };
 
     match ident.to_string().as_str() {
         "return" => {
             if return_type.is_some() {
-                let message = DiagnosticMessage::new(
-                    "duplicate `#[introspect(...)]` key `return`.",
-                )
-                .found("`return = ...`")
-                .expected("one `return = ...` entry")
-                .fix("specify `return = ...` at most once per method.");
+                let message =
+                    DiagnosticMessage::new("duplicate `#[introspect(...)]` key `return`.")
+                        .found("`return = ...`")
+                        .expected("one `return = ...` entry")
+                        .fix("specify `return = ...` at most once per method.");
                 return Err(syn::Error::new_spanned(ident, message.render()));
             }
 
@@ -193,21 +193,19 @@ fn parse_transition_introspect_meta(
             Ok(())
         }
         _ => {
-            let message = DiagnosticMessage::new(format!(
-                "unknown `#[introspect(...)]` key `{ident}`."
-            ))
-            .found(format!("`{ident} = ...`"))
-            .expected("`return = WorkflowMachine<NextState>`")
-            .fix("use the `return` key or remove the extra entry.".to_string());
+            let message =
+                DiagnosticMessage::new(format!("unknown `#[introspect(...)]` key `{ident}`."))
+                    .found(format!("`{ident} = ...`"))
+                    .expected("`return = WorkflowMachine<NextState>`")
+                    .fix("use the `return` key or remove the extra entry.".to_string());
             Err(syn::Error::new_spanned(ident, message.render()))
         }
     }
 }
 
-pub(super) fn strip_transition_introspect_attrs(
-    attrs: &[syn::Attribute],
-) -> Vec<syn::Attribute> {
-    attrs.iter()
+pub(super) fn strip_transition_introspect_attrs(attrs: &[syn::Attribute]) -> Vec<syn::Attribute> {
+    attrs
+        .iter()
         .filter(|attr| !attr.path().is_ident("introspect"))
         .cloned()
         .collect()

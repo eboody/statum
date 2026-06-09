@@ -6,7 +6,9 @@ pub(in crate::transition) fn missing_transition_machine_context(
     module_path: &str,
 ) -> MissingTransitionMachineContext {
     let source_query = SourceModuleQuery::current(module_path);
-    let current_line = current_source_info().map(|(_, line)| line).unwrap_or_default();
+    let current_line = current_source_info()
+        .map(|(_, line)| line)
+        .unwrap_or_default();
     let available = source_query.machine_candidates();
     let suggested_machine_name = available
         .first()

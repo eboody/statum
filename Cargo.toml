@@ -4,6 +4,7 @@ members = [
     "statum-core",
     "statum-macros",
     "statum-examples",
+    "cargo-statum",
 ]
 exclude = [
     "benchmarks/compile/plain-fixture",
@@ -15,9 +16,8 @@ resolver = "2"
 axum = "0.8"
 clap = "4.5"
 criterion = "0.5"
-futures = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 linkme = "0.3"
-moddef = "0.2.6"
 proc-macro2 = "1.0"
 quote = "1.0"
 serde = "1"

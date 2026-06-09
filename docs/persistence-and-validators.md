@@ -29,6 +29,12 @@ actually represents `Draft`, `InReview`, `Published`, or nothing legal at all.
 
 ## Pick The Right Entry Point
 
+For the public vocabulary around `project`, `rebuild`, `rehydrate`, `recover`,
+`explain`, and unchecked escape hatches, see
+[rehydration-vocabulary.md](rehydration-vocabulary.md). For the grep-able audit
+catalog of current and reserved escape hatches, see
+[escape-hatches.md](escape-hatches.md).
+
 Use:
 
 - `TaskMachine::rebuild(&row)` when rebuilding one persisted value
@@ -165,17 +171,95 @@ rejection aliases are not syntax-recognized for report details today.
 If every validator returns `Err(statum::Error::InvalidState)` or a diagnostic
 rejection, reconstruction still fails with `InvalidState`.
 
-## Rebuild Reports
+## Rebuild Reports and Explain Mode
 
 Enable the `rebuild-reports` Cargo feature to use `.build_report()` for one row
-when you want the rebuild result plus the evaluation trace that produced it.
+when you want the rebuild result plus the evaluation trace that produced it,
+while preserving `.build()` semantics. These report builders stop at the first
+accepted candidate and mark `RebuildReport.ambiguity` as `NotChecked`.
 Collection `.build_reports()` also requires `rebuild-batch`.
 
-- `RebuildAttempt.matched` tells you which validator, if any, selected the state.
+Use `.explain()` on a single-row builder when you are debugging persisted data
+and need every candidate state evaluated even after one candidate accepts. The
+returned `RebuildReport` is non-throwing: invalid rows return
+`Err(statum::Error::InvalidState)` in `report.result`, while
+`report.attempts` keeps the per-candidate accepted/rejected evidence.
+
+- `RebuildAttempt.matched` tells you which validators accepted the row.
 - `RebuildAttempt.reason_key` and `RebuildAttempt.message` are populated only
   for diagnostic validators.
+- `.explain()` sets `RebuildReport.ambiguity` to `Unambiguous` when zero or one
+  candidates accepted, or `Ambiguous { matched_states }` when more than one
+  candidate accepted.
 - `.into_result()` keeps the normal rebuild result surface, so callers can opt
   into reports without changing success-path handling.
+
+For example, an admin repair tool can inspect every candidate for a bad row:
+
+```rust
+let report = TaskMachine::rebuild(&row)
+    .client("acme".to_owned())
+    .name("spec".to_owned())
+    .explain();
+
+for attempt in &report.attempts {
+    eprintln!(
+        "candidate={} accepted={} reason={:?}",
+        attempt.target_state,
+        attempt.matched,
+        attempt.reason_key,
+    );
+}
+```
+
+## Persisted-Row Test Fixtures
+
+Use `statum::testing::rehydrate::row_fixture` when a test fixture is a row that
+should rebuild into a named state, or when a bad row should fail with specific
+report evidence. The helper observes the `RebuildReport` you pass in; it does
+not rerun validators or claim the database is complete.
+
+```rust
+use statum::testing::rehydrate::row_fixture;
+
+#[test]
+fn persisted_row_rebuilds_into_review_state() {
+    let row = DbRow {
+        status: Status::InReview,
+    };
+
+    let report = TaskMachine::rebuild(&row)
+        .client("acme".to_owned())
+        .name("spec".to_owned())
+        .build_report();
+
+    row_fixture(report)
+        .rebuilds_as("InReview")
+        .matched_by("is_in_review");
+}
+
+#[test]
+fn persisted_row_failure_reports_missing_reviewer() {
+    let row = DbRow {
+        status: Status::InReview,
+    };
+
+    let report = TaskMachine::rebuild(&row)
+        .client("acme".to_owned())
+        .name("spec".to_owned())
+        .explain();
+
+    row_fixture(report)
+        .fails()
+        .candidate_states(["Draft", "InReview", "Published"])
+        .unambiguous()
+        .rejected_by("is_in_review", "missing_reviewer");
+}
+```
+
+Use `snapshot_fixture(report)` for serialized document snapshots and
+`event_fixture(report)` for event-log projection reports when the same report
+assertions make the fixture intent clearer.
 
 ## Async Validators
 
@@ -238,7 +322,14 @@ let machines = rows
 This returns a collection of per-item results, which lets you decide whether to fail fast, collect only valid machines, or report partial errors.
 
 In other words, batch rebuilds preserve per-item failure information instead of
-forcing one all-or-nothing result shape.
+forcing one all-or-nothing result shape. The ordering contract is index-based:
+output slot `i` corresponds to input slot `i`, including async validators and
+`.into_machines_by(...)` per-row fields. Use `.build_reports()` when you need a
+lossless vector of per-row successes/failures plus validator evidence, then build
+any aggregate counts from that vector.
+
+For the batch helper contract, partial-failure policies, and an aggregate summary
+API sketch, see [batch-rehydration-design.md](batch-rehydration-design.md).
 
 Examples: [../statum-examples/src/toy_demos/10-persistent-data-vecs.rs](../statum-examples/src/toy_demos/10-persistent-data-vecs.rs), [../statum-examples/src/toy_demos/14-batch-machine-fields.rs](../statum-examples/src/toy_demos/14-batch-machine-fields.rs)
 
@@ -260,6 +351,34 @@ let machines = projections
 `ProjectionReducer` gives you a typed fold, `reduce_one(...)` handles a single stream, and `reduce_grouped(...)` handles interleaved streams keyed by something like `order_id` while preserving first-seen key order.
 
 Example: [../statum-examples/src/showcases/sqlite_event_log_rebuild.rs](../statum-examples/src/showcases/sqlite_event_log_rebuild.rs)
+
+## Integration Boundaries: SQLx, Serde, and Axum
+
+Statum does not replace your storage, JSON, or HTTP stack. Keep those tools at
+the edge and make typed rehydration the handoff into workflow code.
+
+- SQLx owns fetching and updating rows. In
+  [axum_sqlite_review.rs](../statum-examples/src/showcases/axum_sqlite_review.rs),
+  `fetch_document_row(...)` returns a plain `DocumentRow`; `load_document_state(...)`
+  is the boundary that rebuilds that row into `document_machine::SomeState`.
+- Axum owns routing and request/response serialization. Handlers validate input,
+  fetch the row, rebuild the typed state, call only legal transition methods, and
+  then persist the resulting machine data before returning JSON.
+- Serde owns snapshots crossing a JSON boundary. In
+  [serde_json_snapshot.rs](../statum-examples/src/showcases/serde_json_snapshot.rs),
+  the store deserializes a `CartSnapshot`, rebuilds a typed cart machine, applies
+  `checkout(...)` only when the snapshot is `Open`, then serializes the updated
+  snapshot back to storage.
+
+The pattern is the same across integrations:
+
+```text
+row / JSON / request edge -> rebuild typed machine -> legal transition -> persist / return
+```
+
+That boundary is deliberately explicit. Invalid persisted facts stay as edge
+data and become an error; they do not enter ordinary workflow code as a typed
+machine.
 
 ## Failure Model
 

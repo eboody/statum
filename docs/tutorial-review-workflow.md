@@ -15,6 +15,7 @@ By the end you will have the core shape behind
 - state-specific data
 - typed rehydration from stored rows
 - one match at the service boundary
+- graph output from the generated machine metadata
 
 If you want the runnable examples alongside this doc, keep these files open:
 
@@ -407,7 +408,60 @@ This is the service-shaped payoff:
 That is the core Statum story. The type system does not replace your workflow.
 It makes the legal workflow explicit and executable.
 
-## 8. How The Rest Of The Feature Set Fits
+## 8. Export The Same Workflow As Graph Data
+
+The same document machine can also feed tooling. The graph is emitted from the
+macro-generated introspection metadata for the `Document` transition sites, so
+this is not a second hand-written transition table.
+
+```rust
+use statum::MachineIntrospection;
+
+fn workflow_graph_edges() -> Vec<String> {
+    let graph = <Document<Draft> as MachineIntrospection>::GRAPH;
+
+    let mut edges = graph
+        .transitions
+        .iter()
+        .flat_map(|transition| {
+            let from = graph
+                .state(transition.from)
+                .map(|state| state.rust_name)
+                .unwrap_or("<unknown>");
+
+            transition.to.iter().map(move |target| {
+                let to = graph
+                    .state(*target)
+                    .map(|state| state.rust_name)
+                    .unwrap_or("<unknown>");
+
+                format!("{from} --{}--> {to}", transition.method_name)
+            })
+        })
+        .collect::<Vec<_>>();
+    edges.sort();
+    edges
+}
+```
+
+For the document-approval machine, the output is:
+
+```text
+Draft --submit--> InReview
+InReview --approve--> Published
+```
+
+That gives docs generators, CLIs, and tests the same legal-edge information the
+typed API uses.
+
+Authority note: this graph observes Statum's macro-generated transition
+metadata. In strict-introspection mode, transition targets are taken from
+directly supported transition signatures or explicit `#[introspect(return =
+...)]` annotations; unsupported shapes are rejected instead of being guessed.
+Relaxed mode keeps the same API but permits a few source-backed ergonomic cases,
+so reserve exact-authority claims for strict mode.
+
+## 9. How The Rest Of The Feature Set Fits
 
 Once this progression clicks, the other features are easier to place:
 

@@ -15,12 +15,12 @@ mod resolution;
 mod signatures;
 mod type_equivalence;
 
-use contract::{
-    build_validator_contract, qualify_machine_field_types,
-};
+use contract::{build_validator_contract, qualify_machine_field_types};
 use emission::{
     ValidatorBuilderSurfaceContext, ValidatorCheckContext, generate_validator_check,
-    generate_validator_report_check, inject_machine_fields, validator_builder_surface,
+    generate_validator_explain_check, generate_validator_explain_finalizer,
+    generate_validator_explain_storage, generate_validator_report_check, inject_machine_fields,
+    validator_builder_surface,
 };
 use plan::collect_validator_plan;
 use resolution::{
@@ -76,7 +76,9 @@ impl ValidatorsExpansionBuilder<ParsedValidatorsPhase> {
         })
     }
 
-    fn resolve(self) -> Result<ValidatorsExpansionBuilder<ResolvedValidatorsPhase>, proc_macro2::TokenStream> {
+    fn resolve(
+        self,
+    ) -> Result<ValidatorsExpansionBuilder<ResolvedValidatorsPhase>, proc_macro2::TokenStream> {
         let machine_attr = resolve_validator_machine_attr(&self.module_path, &self.machine_path)?;
         let machine_metadata = resolve_machine_metadata(&self.module_path, &machine_attr)?;
         let parsed_machine = machine_metadata.parse()?;
@@ -113,7 +115,9 @@ impl ValidatorsExpansionBuilder<ParsedValidatorsPhase> {
 }
 
 impl ValidatorsExpansionBuilder<ResolvedValidatorsPhase> {
-    fn plan(self) -> Result<ValidatorsExpansionBuilder<PlannedValidatorsPhase>, proc_macro2::TokenStream> {
+    fn plan(
+        self,
+    ) -> Result<ValidatorsExpansionBuilder<PlannedValidatorsPhase>, proc_macro2::TokenStream> {
         let contract = self.contract.as_ref().ok_or_else(|| {
             compile_error_at(
                 proc_macro2::Span::call_site(),
@@ -196,8 +200,20 @@ impl ValidatorsExpansionBuilder<PlannedValidatorsPhase> {
             ..
         } = contract;
 
+        let candidate_states = validator_plan
+            .methods
+            .iter()
+            .map(|method| {
+                let variant_name = &method.variant_name;
+                quote! { #variant_name }
+            })
+            .collect::<Vec<_>>();
+
         let receiver = quote! { __statum_persisted };
         let emission_context = ValidatorCheckContext {
+            machine_ident: &resolved_machine.machine_ident,
+            struct_ident,
+            candidate_states: &candidate_states,
             machine_path: &resolved_machine.machine_path,
             machine_module_path: &resolved_machine.machine_module_path,
             machine_generics: resolved_machine.machine_generics(),
@@ -215,6 +231,21 @@ impl ValidatorsExpansionBuilder<PlannedValidatorsPhase> {
             .iter()
             .map(|method| generate_validator_report_check(&emission_context, method))
             .collect::<Vec<_>>();
+        let validator_explain_checks = validator_plan
+            .methods
+            .iter()
+            .map(|method| generate_validator_explain_check(&emission_context, method))
+            .collect::<Vec<_>>();
+        let validator_explain_storages = validator_plan
+            .methods
+            .iter()
+            .map(generate_validator_explain_storage)
+            .collect::<Vec<_>>();
+        let validator_explain_finalizers = validator_plan
+            .methods
+            .iter()
+            .map(|method| generate_validator_explain_finalizer(&emission_context, method))
+            .collect::<Vec<_>>();
 
         let machine_vis = resolved_machine.parsed_machine.vis.clone();
         let async_token = if validator_plan.has_async {
@@ -225,6 +256,7 @@ impl ValidatorsExpansionBuilder<PlannedValidatorsPhase> {
 
         validator_builder_surface(ValidatorBuilderSurfaceContext {
             machine_ident: &resolved_machine.machine_ident,
+            candidate_states: &candidate_states,
             machine_path,
             machine_module_path: &resolved_machine.machine_module_path,
             machine_generics: resolved_machine.machine_generics(),
@@ -235,6 +267,9 @@ impl ValidatorsExpansionBuilder<PlannedValidatorsPhase> {
             field_types: &resolved_machine.field_types,
             validator_checks: &validator_checks,
             validator_report_checks: &validator_report_checks,
+            validator_explain_checks: &validator_explain_checks,
+            validator_explain_storages: &validator_explain_storages,
+            validator_explain_finalizers: &validator_explain_finalizers,
             modified_methods,
             async_token: &async_token,
             machine_vis: &machine_vis,

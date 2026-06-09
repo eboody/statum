@@ -15,23 +15,19 @@ pub(super) fn parse_generics(
     let has_extra_generics = generics.params.len() > 1;
 
     let Some(first_param) = generics.params.first_mut() else {
-        return Err(
-            syn::Error::new(
-                Span::call_site(),
-                "Machine struct must have a state generic as its first type parameter.",
-            )
-            .to_compile_error(),
-        );
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "Machine struct must have a state generic as its first type parameter.",
+        )
+        .to_compile_error());
     };
 
     let GenericParam::Type(first_type) = first_param else {
-        return Err(
-            syn::Error::new(
-                Span::call_site(),
-                "Machine state generic must be a type parameter.",
-            )
-            .to_compile_error(),
-        );
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "Machine state generic must be a type parameter.",
+        )
+        .to_compile_error());
     };
 
     let state_trait_ident = state_enum.get_trait_name();
@@ -43,7 +39,9 @@ pub(super) fn parse_generics(
         )
     });
     if !has_state_trait_bound {
-        first_type.bounds.push(syn::parse_quote!(#state_trait_ident));
+        first_type
+            .bounds
+            .push(syn::parse_quote!(#state_trait_ident));
     }
 
     if !has_extra_generics {
@@ -57,26 +55,22 @@ pub(super) fn parse_generics(
 
 pub(super) fn extract_state_generic_ident(generics: &Generics) -> Result<Ident, TokenStream> {
     let Some(first_param) = generics.params.first() else {
-        return Err(
-            syn::Error::new(
-                Span::call_site(),
-                "Machine struct must have a state generic as its first type parameter.",
-            )
-            .to_compile_error(),
-        );
+        return Err(syn::Error::new(
+            Span::call_site(),
+            "Machine struct must have a state generic as its first type parameter.",
+        )
+        .to_compile_error());
     };
 
     if let GenericParam::Type(first_type) = first_param {
         return Ok(first_type.ident.clone());
     }
 
-    Err(
-        syn::Error::new(
-            Span::call_site(),
-            "Machine state generic must be a type parameter.",
-        )
-        .to_compile_error(),
+    Err(syn::Error::new(
+        Span::call_site(),
+        "Machine state generic must be a type parameter.",
     )
+    .to_compile_error())
 }
 
 pub(super) fn transition_support(
@@ -179,7 +173,10 @@ pub(super) fn transition_support(
     }
 }
 
-pub(super) fn generate_field_type_aliases(machine_info: &MachineInfo, item: &ItemStruct) -> TokenStream {
+pub(super) fn generate_field_type_aliases(
+    machine_info: &MachineInfo,
+    item: &ItemStruct,
+) -> TokenStream {
     let alias_vis = &item.vis;
     let extra_generics = extra_generics(&item.generics);
     let helper_trait_ident = format_ident!(
@@ -213,8 +210,10 @@ pub(super) fn generate_field_type_aliases(machine_info: &MachineInfo, item: &Ite
     };
     let aliases = item.fields.iter().filter_map(|field| {
         let field_ident = field.ident.as_ref()?;
-        let alias_ident =
-            format_ident!("{}", field_type_alias_name(&machine_info.name, &field_ident.to_string()));
+        let alias_ident = format_ident!(
+            "{}",
+            field_type_alias_name(&machine_info.name, &field_ident.to_string())
+        );
         let field_ty = &field.ty;
         let alias_tokens = if extra_generics.params.is_empty() {
             quote! { #field_ty }
@@ -265,10 +264,7 @@ fn generic_usage_marker_tokens(generics: &Generics) -> TokenStream {
 }
 
 pub(crate) fn transition_support_module_ident(machine_info: &MachineInfo) -> Ident {
-    format_ident!(
-        "__statum_{}_transition",
-        to_snake_case(&machine_info.name)
-    )
+    format_ident!("__statum_{}_transition", to_snake_case(&machine_info.name))
 }
 
 pub(super) fn generate_struct_definition(
@@ -298,7 +294,8 @@ pub(super) fn generate_struct_definition(
 
     let vis = parsed_machine.vis.clone();
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-    let next_machine_ty = machine_type_with_state(quote! { #machine_ident }, generics, quote! { N });
+    let next_machine_ty =
+        machine_type_with_state(quote! { #machine_ident }, generics, quote! { N });
     let extra_generics = extra_generics(generics);
     let extra_ty_args = extra_generics
         .params

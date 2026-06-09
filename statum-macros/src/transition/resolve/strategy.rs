@@ -95,8 +95,8 @@ fn parse_primary_machine_and_state_inner(
     }
 
     match supported_wrapper(&type_path.path)? {
-        SupportedWrapper::Option => extract_first_generic_type_ref(&segment.arguments).and_then(
-            |inner| {
+        SupportedWrapper::Option => {
+            extract_first_generic_type_ref(&segment.arguments).and_then(|inner| {
                 parse_primary_machine_and_state_inner(
                     inner,
                     target_type,
@@ -104,8 +104,8 @@ fn parse_primary_machine_and_state_inner(
                     allow_source_aliases,
                     visited,
                 )
-            },
-        ),
+            })
+        }
         SupportedWrapper::Result | SupportedWrapper::Branch => {
             extract_first_generic_type_ref(&segment.arguments).and_then(|inner| {
                 parse_primary_machine_and_state_inner(
@@ -121,10 +121,7 @@ fn parse_primary_machine_and_state_inner(
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn collect_machine_and_states(
-    ty: &Type,
-    target_type: &Type,
-) -> Vec<(String, String)> {
+pub(crate) fn collect_machine_and_states(ty: &Type, target_type: &Type) -> Vec<(String, String)> {
     collect_machine_and_states_with_alias_policy(ty, target_type, None, true)
 }
 

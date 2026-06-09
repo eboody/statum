@@ -41,18 +41,24 @@ pub fn parse_present_attrs_for(
     for attr in attrs.iter().filter(|attr| attr.path().is_ident("present")) {
         found = true;
         if !matches!(attr.meta, syn::Meta::List(_)) {
-            let message = DiagnosticMessage::new(format!("`#[present(...)]`{} requires parentheses.", owner_suffix(owner_context)))
-                .found(format!("`#[{}]`", compact_display(&attr.meta)))
-                .expected("`#[present(label = \"...\", description = \"...\")]`")
-                .fix("write `#[present(...)]` with key/value pairs inside the parentheses.".to_string());
+            let message = DiagnosticMessage::new(format!(
+                "`#[present(...)]`{} requires parentheses.",
+                owner_suffix(owner_context)
+            ))
+            .found(format!("`#[{}]`", compact_display(&attr.meta)))
+            .expected("`#[present(label = \"...\", description = \"...\")]`")
+            .fix(
+                "write `#[present(...)]` with key/value pairs inside the parentheses.".to_string(),
+            );
             return Err(error_spanned(attr, &message));
         }
         attr.parse_nested_meta(|meta| {
             let path = meta.path.clone();
             let Some(ident) = path.get_ident() else {
-                let message = DiagnosticMessage::new(
-                    format!("`#[present(...)]`{} keys must be simple identifiers.", owner_suffix(owner_context)),
-                )
+                let message = DiagnosticMessage::new(format!(
+                    "`#[present(...)]`{} keys must be simple identifiers.",
+                    owner_suffix(owner_context)
+                ))
                 .found(format!("`{}`", compact_display(&path)))
                 .expected("`label = \"...\"`, `description = \"...\"`, or `metadata = Expr`")
                 .fix("write `#[present(label = \"...\", description = \"...\")]`.");
@@ -211,12 +217,12 @@ pub fn parse_presentation_types_attr(
 }
 
 pub fn strip_present_attrs(attrs: &[Attribute]) -> Vec<Attribute> {
-    attrs.iter()
+    attrs
+        .iter()
         .filter(|attr| !attr.path().is_ident("present"))
         .cloned()
         .collect()
 }
-
 
 fn owner_suffix(owner_context: Option<&str>) -> String {
     owner_context
@@ -275,7 +281,5 @@ fn assign_unique_string_slot(
 }
 
 fn parse_optional_type(value: Option<&str>) -> syn::Result<Option<Type>> {
-    value
-        .map(syn::parse_str::<Type>)
-        .transpose()
+    value.map(syn::parse_str::<Type>).transpose()
 }

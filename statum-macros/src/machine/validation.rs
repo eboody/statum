@@ -3,11 +3,12 @@ use syn::{Item, ItemStruct};
 
 use crate::diagnostics::{DiagnosticMessage, compact_display, item_signature};
 use crate::{
-    ItemTarget, StateModulePath, VariantShape, lookup_loaded_state_enum, lookup_loaded_state_enum_by_name,
+    ItemTarget, StateModulePath, VariantShape, lookup_loaded_state_enum,
+    lookup_loaded_state_enum_by_name,
 };
 
-use super::metadata::is_rust_analyzer;
 use super::MachineInfo;
+use super::metadata::is_rust_analyzer;
 
 pub fn invalid_machine_target_error(item: &Item) -> TokenStream {
     let target = ItemTarget::from(item);
@@ -26,7 +27,10 @@ pub fn invalid_machine_target_error(item: &Item) -> TokenStream {
     syn::Error::new(target.span(), message.render()).to_compile_error()
 }
 
-pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) -> Option<TokenStream> {
+pub fn validate_machine_struct(
+    item: &ItemStruct,
+    machine_info: &MachineInfo,
+) -> Option<TokenStream> {
     let machine_name = machine_info.name.clone();
 
     for field in &item.fields {
@@ -145,9 +149,10 @@ pub fn validate_machine_struct(item: &ItemStruct, machine_info: &MachineInfo) ->
         let Some(field_ident) = field.ident.as_ref() else {
             continue;
         };
-        let Some(conflict) =
-            reserved_builder_machine_field_conflict(field_ident.to_string().as_str(), has_data_bearing_state)
-        else {
+        let Some(conflict) = reserved_builder_machine_field_conflict(
+            field_ident.to_string().as_str(),
+            has_data_bearing_state,
+        ) else {
             continue;
         };
         let message = DiagnosticMessage::new(format!(

@@ -11,6 +11,11 @@ The builder UX goal is narrower:
 That keeps builder work tied to Statum's typestate guarantees instead of turning
 the project into a broad derive-builder competitor.
 
+For practical generated builder usage, including required fields,
+`state_data`, visibility, generics, rebuild builders, and known limitations, see
+[generated-builder-reference.md](generated-builder-reference.md). This document
+keeps the product boundary and feature triage rules in one place.
+
 ## What Statum-Owned Builders Do
 
 ### Initial machine builders
@@ -30,6 +35,32 @@ They should optimize for:
 - collision checks against generated helper names,
 - predictable state-data construction for data-bearing states,
 - rust-analyzer-friendly fallback behavior when necessary.
+
+#### Reading duplicate-setter errors
+
+Initial machine builders are typestate builders. Each required input starts in a
+hidden `MissingSlotN<Field>` state; calling its setter moves that slot to
+`SetSlotN<Field>`. The setter only exists while its slot is still missing.
+
+So an error like this usually means the field was already supplied:
+
+```text
+no method named `name` found for struct
+`DocumentMachineDraftBuilder<__StatumDocumentMachineDraftBuilderSetSlot0Name>`
+```
+
+Actionable fix path:
+
+1. Search the builder chain for an earlier `.name(...)` call.
+2. Keep one setter call for each machine field and at most one `.state_data(...)`
+   call for data-bearing states.
+3. If two inputs need to be merged, merge them before the builder call instead
+   of calling the same setter twice.
+
+The generated `SetSlotN<Field>` marker is deliberately field-named so the
+compiler error points back to the already-supplied input. Treat `SlotN` as an
+implementation detail; the useful part is the trailing field label such as
+`Name` or `StateData`.
 
 ### Rebuild builders
 

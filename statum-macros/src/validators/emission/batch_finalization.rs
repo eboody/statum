@@ -36,7 +36,9 @@ pub(super) fn generate_batch_finalization(
     match (plan.async_mode, plan.field_source) {
         (
             BatchAsyncMode::Sync,
-            BatchFieldSource::SharedAcrossItems { field_builder_chain },
+            BatchFieldSource::SharedAcrossItems {
+                field_builder_chain,
+            },
         ) => {
             quote! {
                 __statum_items
@@ -51,7 +53,9 @@ pub(super) fn generate_batch_finalization(
         }
         (
             BatchAsyncMode::Async,
-            BatchFieldSource::SharedAcrossItems { field_builder_chain },
+            BatchFieldSource::SharedAcrossItems {
+                field_builder_chain,
+            },
         ) => {
             quote! {
                 let mut __statum_results = Vec::with_capacity(__statum_items.len());
@@ -66,7 +70,12 @@ pub(super) fn generate_batch_finalization(
                 __statum_results
             }
         }
-        (BatchAsyncMode::Sync, BatchFieldSource::PerItemByFn { field_builder_chain }) => {
+        (
+            BatchAsyncMode::Sync,
+            BatchFieldSource::PerItemByFn {
+                field_builder_chain,
+            },
+        ) => {
             quote! {
                 let __statum_field_fn = self.__statum_fields_fn;
                 self.__statum_items
@@ -80,7 +89,12 @@ pub(super) fn generate_batch_finalization(
                     .collect()
             }
         }
-        (BatchAsyncMode::Async, BatchFieldSource::PerItemByFn { field_builder_chain }) => {
+        (
+            BatchAsyncMode::Async,
+            BatchFieldSource::PerItemByFn {
+                field_builder_chain,
+            },
+        ) => {
             quote! {
                 let __statum_field_fn = &self.__statum_fields_fn;
                 let mut __statum_results = Vec::with_capacity(self.__statum_items.len());

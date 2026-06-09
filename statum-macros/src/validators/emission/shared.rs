@@ -181,7 +181,13 @@ pub(crate) fn machine_builder_path_tokens(
 ) -> proc_macro2::TokenStream {
     let state_marker_path = machine_scoped_item_path(machine_path, variant_ident);
     let mut args = vec![quote! { #state_marker_path }];
-    args.extend(machine_generics.params.iter().skip(1).map(generic_argument_token));
+    args.extend(
+        machine_generics
+            .params
+            .iter()
+            .skip(1)
+            .map(generic_argument_token),
+    );
     quote! { #machine_path::<#(#args),*> }
 }
 

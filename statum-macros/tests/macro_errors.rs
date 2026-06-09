@@ -37,6 +37,10 @@ fn test_invalid_machine_usage() {
     t.compile_fail("tests/ui/invalid_machine_builder_reserved_field_name.rs");
     t.compile_fail("tests/ui/invalid_machine_builder_duplicate_field.rs");
     t.compile_fail("tests/ui/invalid_machine_builder_duplicate_state_data.rs");
+    t.compile_fail("tests/ui/invalid_builder_missing_machine_field.rs");
+    t.compile_fail("tests/ui/invalid_builder_missing_state_data.rs");
+    t.compile_fail("tests/ui/invalid_builder_missing_machine_field.rs");
+    t.compile_fail("tests/ui/invalid_builder_missing_state_data.rs");
 }
 
 #[test]
@@ -150,6 +154,7 @@ fn test_valid_macro_usage() {
     t.pass("tests/ui/strict_valid_validators_explicit_machine_path.rs");
     t.pass("tests/ui/valid_cfg_hidden_duplicate_state_machine.rs");
     t.pass("tests/ui/valid_builder_usage.rs");
+    t.pass("tests/ui/valid_builder_raw_identifier_and_colliding_field_names.rs");
     t.pass("tests/ui/valid_advanced_traits.rs");
 }
 
@@ -160,8 +165,10 @@ fn test_valid_introspection_macro_usage() {
     t.pass("tests/ui/valid_transition_branch.rs");
     t.pass("tests/ui/valid_machine_introspection.rs");
     t.pass("tests/ui/valid_machine_introspection_cfg_dedup.rs");
+    t.pass("tests/ui/valid_machine_introspection_cfg_state_and_transition_pruning.rs");
     t.pass("tests/ui/valid_presentation_sugar.rs");
     t.pass("tests/ui/valid_presentation_typed_metadata.rs");
+    t.pass("tests/ui/valid_machine_introspection_cfg_state_and_transition_pruning.rs");
     t.pass("tests/ui/workspace_member/crates/app/src/lib.rs");
 }
 

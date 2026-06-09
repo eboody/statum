@@ -23,13 +23,7 @@ pub(crate) fn machine_type_with_state(
     state_ty: TokenStream,
 ) -> TokenStream {
     let mut args = vec![state_ty];
-    args.extend(
-        generics
-            .params
-            .iter()
-            .skip(1)
-            .map(generic_argument_token),
-    );
+    args.extend(generics.params.iter().skip(1).map(generic_argument_token));
 
     quote! { #machine_ty<#(#args),*> }
 }
@@ -46,14 +40,18 @@ pub(crate) fn builder_generics(
         generics.params.push(syn::parse_quote!('__statum_row));
     }
 
-    generics.params.extend(extra_generics.params.iter().cloned());
-    generics.params.extend(slot_state_idents.iter().map(|slot_ident| {
-        if default_slots {
-            syn::GenericParam::Const(syn::parse_quote!(const #slot_ident: bool = false))
-        } else {
-            syn::GenericParam::Const(syn::parse_quote!(const #slot_ident: bool))
-        }
-    }));
+    generics
+        .params
+        .extend(extra_generics.params.iter().cloned());
+    generics
+        .params
+        .extend(slot_state_idents.iter().map(|slot_ident| {
+            if default_slots {
+                syn::GenericParam::Const(syn::parse_quote!(const #slot_ident: bool = false))
+            } else {
+                syn::GenericParam::Const(syn::parse_quote!(const #slot_ident: bool))
+            }
+        }));
 
     if !generics.params.is_empty() {
         generics.lt_token = Some(Default::default());

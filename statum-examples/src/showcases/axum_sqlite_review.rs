@@ -6,7 +6,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool, sqlite};
-use statum::{machine, state, transition, validators};
+use statum::{
+    MachineIntrospection, MachineTransitionRecorder, StableGraphMetadata,
+    TransitionTelemetryLabels, machine, state, transition, validators,
+};
 
 const STATUS_DRAFT: &str = "draft";
 const STATUS_IN_REVIEW: &str = "in_review";
@@ -191,6 +194,77 @@ fn router(pool: SqlitePool) -> Router {
         .with_state(AppState { pool })
 }
 
+pub fn workflow_graph_edges() -> Vec<String> {
+    let graph = <DocumentMachine<Draft> as MachineIntrospection>::GRAPH;
+
+    let mut edges = graph
+        .transitions
+        .iter()
+        .flat_map(|transition| {
+            let from = graph
+                .state(transition.from)
+                .map(|state| state.rust_name)
+                .unwrap_or("<unknown>");
+
+            transition.to.iter().map(move |target| {
+                let to = graph
+                    .state(*target)
+                    .map(|state| state.rust_name)
+                    .unwrap_or("<unknown>");
+
+                format!("{from} --{}--> {to}", transition.method_name)
+            })
+        })
+        .collect::<Vec<_>>();
+    edges.sort();
+    edges
+}
+
+pub fn workflow_stable_graph_metadata() -> StableGraphMetadata {
+    let graph = <DocumentMachine<Draft> as MachineIntrospection>::GRAPH;
+    StableGraphMetadata::from_graph(graph)
+}
+
+pub fn workflow_mermaid_diagram() -> String {
+    workflow_stable_graph_metadata().to_mermaid_state_diagram()
+}
+
+pub fn workflow_dot_graph() -> String {
+    workflow_stable_graph_metadata().to_dot_graph()
+}
+
+/// Demonstrates recording transition span labels without depending on a telemetry crate.
+///
+/// Applications can pass these low-cardinality labels to `tracing`, OpenTelemetry,
+/// metrics, logs, or another stack. Statum only returns stable strings derived
+/// from generated machine metadata.
+pub fn example_transition_span_labels() -> Vec<String> {
+    let graph = <DocumentMachine<Draft> as MachineIntrospection>::GRAPH;
+    let events = [
+        <DocumentMachine<Draft> as MachineTransitionRecorder>::try_record_transition_to::<
+            DocumentMachine<InReview>,
+        >(DocumentMachine::<Draft>::SUBMIT)
+        .expect("submit transition should be statically known"),
+        <DocumentMachine<InReview> as MachineTransitionRecorder>::try_record_transition_to::<
+            DocumentMachine<Published>,
+        >(DocumentMachine::<InReview>::APPROVE)
+        .expect("approve transition should be statically known"),
+    ];
+
+    events
+        .iter()
+        .filter_map(|event| event.telemetry_labels_in(graph))
+        .map(render_span_record)
+        .collect()
+}
+
+fn render_span_record(labels: TransitionTelemetryLabels) -> String {
+    format!(
+        "span statum.transition machine={} from={} transition={} chosen={}",
+        labels.machine, labels.from_state, labels.transition, labels.chosen_state
+    )
+}
+
 async fn build_pool() -> Result<SqlitePool, sqlx::Error> {
     sqlite::SqlitePoolOptions::new()
         .max_connections(1)
@@ -318,14 +392,17 @@ async fn load_document_state(
     id: i64,
 ) -> Result<document_machine::SomeState, AppError> {
     let row = fetch_document_row(pool, id).await?;
-
-    row.clone()
-        .into_machine()
-        .id(row.id)
-        .title(row.title)
-        .body(row.body)
-        .build()
+    rebuild_document_row(&row)
+        .into_result()
         .map_err(|_| AppError::CorruptState)
+}
+
+fn rebuild_document_row(row: &DocumentRow) -> statum::RebuildReport<document_machine::SomeState> {
+    DocumentMachine::rebuild(row)
+        .id(row.id)
+        .title(row.title.clone())
+        .body(row.body.clone())
+        .build_report()
 }
 
 async fn persist_in_review(
@@ -374,36 +451,69 @@ async fn persist_published(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use statum::testing::graph;
+
+    #[test]
+    fn canonical_graph_assertions_cover_allowed_and_forbidden_transitions() {
+        let graph = <DocumentMachine<Draft> as MachineIntrospection>::GRAPH;
+
+        graph::assert_transition(graph)
+            .from(document_machine::StateId::Draft)
+            .method("submit")
+            .to(document_machine::StateId::InReview);
+        graph::assert_transition(graph)
+            .from(document_machine::StateId::InReview)
+            .method("approve")
+            .to(document_machine::StateId::Published);
+        graph::assert_targets(graph)
+            .from(document_machine::StateId::Draft)
+            .method("submit")
+            .exactly([document_machine::StateId::InReview]);
+        graph::assert_no_transition(graph)
+            .from(document_machine::StateId::Draft)
+            .method("approve");
+    }
 
     #[tokio::test]
-    async fn row_rehydrates_into_draft_machine_state() {
+    async fn persisted_row_rebuilds_into_state_discriminated_result() {
         let pool = build_pool().await.unwrap();
         init_schema(&pool).await.unwrap();
 
         let result = sqlx::query(
             r#"
             INSERT INTO documents (title, body, status, reviewer)
-            VALUES (?, ?, ?, NULL)
+            VALUES (?, ?, ?, ?)
             "#,
         )
         .bind("RFC")
-        .bind("draft body")
-        .bind(STATUS_DRAFT)
+        .bind("ready for review")
+        .bind(STATUS_IN_REVIEW)
+        .bind("Ada")
         .execute(&pool)
         .await
         .unwrap();
 
-        let state = load_document_state(&pool, result.last_insert_rowid())
+        let row = fetch_document_row(&pool, result.last_insert_rowid())
             .await
             .unwrap();
+        let report = rebuild_document_row(&row);
 
-        match state {
-            document_machine::SomeState::Draft(machine) => {
+        assert_eq!(report.matched_attempt().unwrap().validator, "is_in_review");
+        assert!(
+            report
+                .attempts
+                .iter()
+                .any(|attempt| { attempt.validator == "is_draft" && !attempt.matched })
+        );
+
+        match report.into_result().unwrap() {
+            document_machine::SomeState::InReview(machine) => {
                 assert_eq!(machine.id, 1);
                 assert_eq!(machine.title.as_str(), "RFC");
-                assert_eq!(machine.body.as_str(), "draft body");
+                assert_eq!(machine.body.as_str(), "ready for review");
+                assert_eq!(machine.state_data.reviewer.as_str(), "Ada");
             }
-            _ => panic!("expected a draft machine"),
+            _ => panic!("expected an in-review machine"),
         }
     }
 }

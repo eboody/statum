@@ -29,7 +29,13 @@ introspection = ["statum/introspection"]
 
 [dependencies.tokio]
 workspace = true
-features = ["full"]
+features = [
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "sync",
+    "time",
+]
 
 [dependencies.tower]
 workspace = true

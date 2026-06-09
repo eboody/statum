@@ -59,7 +59,10 @@ fn loaded_machine_is_current(machine: &MachineInfo, current_crate_root: Option<&
         return false;
     }
 
-    match (machine.file_path.as_deref(), machine.file_fingerprint.as_ref()) {
+    match (
+        machine.file_path.as_deref(),
+        machine.file_fingerprint.as_ref(),
+    ) {
         (Some(file_path), Some(fingerprint)) => {
             source_file_fingerprint(file_path).as_ref() == Some(fingerprint)
         }

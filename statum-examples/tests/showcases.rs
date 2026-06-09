@@ -4,7 +4,8 @@ use axum::{
 };
 use serde_json::{Value, json};
 use statum_examples::showcases::{
-    axum_sqlite_review, sqlite_event_log_rebuild, tokio_sqlite_job_runner, tokio_websocket_session,
+    axum_sqlite_review, serde_json_snapshot, sqlite_event_log_rebuild, tokio_sqlite_job_runner,
+    tokio_websocket_session,
 };
 use std::{
     fs,
@@ -127,6 +128,108 @@ async fn axum_sqlite_review_rejects_invalid_input() {
     .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(read_json(response).await["error"], "reviewer is required");
+}
+
+#[test]
+fn axum_sqlite_review_exports_workflow_graph_edges() {
+    assert_eq!(
+        axum_sqlite_review::workflow_graph_edges(),
+        vec![
+            "Draft --submit--> InReview".to_owned(),
+            "InReview --approve--> Published".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn axum_sqlite_review_records_transition_span_labels_without_telemetry_dependency() {
+    assert_eq!(
+        axum_sqlite_review::example_transition_span_labels(),
+        vec![
+            "span statum.transition machine=showcases::axum_sqlite_review::DocumentMachine from=Draft transition=submit chosen=InReview".to_owned(),
+            "span statum.transition machine=showcases::axum_sqlite_review::DocumentMachine from=InReview transition=approve chosen=Published".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn axum_sqlite_review_exports_mermaid_diagram_from_introspection_metadata() {
+    assert_eq!(
+        axum_sqlite_review::workflow_mermaid_diagram(),
+        concat!(
+            "stateDiagram-v2\n",
+            "    %% machine: showcases::axum_sqlite_review::DocumentMachine\n",
+            "    state \"Draft\" as s0\n",
+            "    state \"InReview\" as s1\n",
+            "    state \"Published\" as s2\n",
+            "    s1 --> s2: approve\n",
+            "    s0 --> s1: submit\n",
+        )
+    );
+}
+
+#[test]
+fn axum_sqlite_review_exports_dot_graph_from_introspection_metadata() {
+    assert_eq!(
+        axum_sqlite_review::workflow_dot_graph(),
+        concat!(
+            "digraph statum_workflow {\n",
+            "    graph [label=\"showcases::axum_sqlite_review::DocumentMachine\", labelloc=\"t\"];\n",
+            "    node [shape=\"box\"];\n",
+            "    s0 [label=\"Draft\"];\n",
+            "    s1 [label=\"InReview\"];\n",
+            "    s2 [label=\"Published\"];\n",
+            "    s1 -> s2 [label=\"approve\"];\n",
+            "    s0 -> s1 [label=\"submit\"];\n",
+            "}\n",
+        )
+    );
+}
+
+#[test]
+fn serde_json_snapshot_checkout_rehydrates_transitions_and_persists() {
+    let mut store = serde_json_snapshot::JsonSnapshotStore::default();
+    let created = store
+        .create_cart(
+            "ada",
+            vec!["compiler book".to_owned(), "debugger".to_owned()],
+        )
+        .unwrap();
+
+    assert_eq!(created.status, "open");
+    assert_eq!(created.receipt_id, None);
+
+    let checked_out = store.checkout(created.cart_id, "receipt-001").unwrap();
+    assert_eq!(checked_out.status, "checked_out");
+    assert_eq!(checked_out.receipt_id.as_deref(), Some("receipt-001"));
+
+    let persisted = store.fetch_snapshot(created.cart_id).unwrap();
+    assert_eq!(persisted.status, "checked_out");
+    assert_eq!(persisted.receipt_id.as_deref(), Some("receipt-001"));
+
+    match store.load_cart_state(created.cart_id).unwrap() {
+        serde_json_snapshot::cart_machine::SomeState::CheckedOut(machine) => {
+            assert_eq!(machine.owner.as_str(), "ada");
+            assert_eq!(machine.state_data.items, vec!["compiler book", "debugger"]);
+            assert_eq!(machine.state_data.receipt_id.as_str(), "receipt-001");
+        }
+        _ => panic!("expected checked-out cart"),
+    }
+}
+
+#[test]
+fn serde_json_snapshot_rejects_illegal_checkout_from_checked_out_snapshot() {
+    let mut store = serde_json_snapshot::JsonSnapshotStore::default();
+    let created = store
+        .create_cart("grace", vec!["notebook".to_owned()])
+        .unwrap();
+    store.checkout(created.cart_id, "receipt-001").unwrap();
+
+    let error = store.checkout(created.cart_id, "receipt-002").unwrap_err();
+    assert_eq!(error.to_string(), "checkout requires an open cart");
+
+    let persisted = store.fetch_snapshot(created.cart_id).unwrap();
+    assert_eq!(persisted.receipt_id.as_deref(), Some("receipt-001"));
 }
 
 #[tokio::test]

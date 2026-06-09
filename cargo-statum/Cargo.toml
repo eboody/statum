@@ -1,0 +1,22 @@
+[dependencies]
+serde_json.workspace = true
+statum-core.workspace = true
+statum-examples = { path = "../statum-examples" }
+
+[dependencies.serde]
+workspace = true
+features = ["derive"]
+
+[dependencies.clap]
+workspace = true
+features = ["derive"]
+
+[package]
+authors.workspace = true
+edition = "2024"
+license.workspace = true
+name = "cargo-statum"
+publish = false
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true

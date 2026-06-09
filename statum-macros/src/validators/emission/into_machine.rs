@@ -2,12 +2,14 @@ use quote::quote;
 use syn::{Generics, Ident, Type};
 
 use super::shared::{
-    field_binding_tokens, field_storage_tokens, slot_setter_impls, slot_state_idents,
-    slot_storage_idents, SlotSetterContext,
+    SlotSetterContext, field_binding_tokens, field_storage_tokens, slot_setter_impls,
+    slot_state_idents, slot_storage_idents,
 };
 use crate::machine::{builder_generics, extra_generics, generic_argument_tokens};
 
 pub(super) struct IntoMachineBuilderContext<'a> {
+    pub(super) machine_ident: &'a Ident,
+    pub(super) candidate_states: &'a [proc_macro2::TokenStream],
     pub(super) builder_ident: &'a Ident,
     pub(super) struct_ident: &'a Type,
     pub(super) machine_generics: &'a Generics,
@@ -16,6 +18,9 @@ pub(super) struct IntoMachineBuilderContext<'a> {
     pub(super) field_types: &'a [Type],
     pub(super) validator_checks: &'a [proc_macro2::TokenStream],
     pub(super) validator_report_checks: &'a [proc_macro2::TokenStream],
+    pub(super) validator_explain_checks: &'a [proc_macro2::TokenStream],
+    pub(super) validator_explain_storages: &'a [proc_macro2::TokenStream],
+    pub(super) validator_explain_finalizers: &'a [proc_macro2::TokenStream],
     pub(super) async_token: &'a proc_macro2::TokenStream,
     pub(super) machine_vis: &'a syn::Visibility,
 }
@@ -23,6 +28,8 @@ pub(super) struct IntoMachineBuilderContext<'a> {
 pub(super) fn generate_into_machine_builder(
     context: IntoMachineBuilderContext<'_>,
 ) -> proc_macro2::TokenStream {
+    let machine_ident = context.machine_ident;
+    let candidate_states = context.candidate_states;
     let builder_ident = context.builder_ident;
     let struct_ident = context.struct_ident;
     let machine_generics = context.machine_generics;
@@ -31,6 +38,9 @@ pub(super) fn generate_into_machine_builder(
     let field_types = context.field_types;
     let validator_checks = context.validator_checks;
     let validator_report_checks = context.validator_report_checks;
+    let validator_explain_checks = context.validator_explain_checks;
+    let validator_explain_storages = context.validator_explain_storages;
+    let validator_explain_finalizers = context.validator_explain_finalizers;
     let validator_report_count = validator_report_checks.len();
     let async_token = context.async_token;
     let machine_vis = context.machine_vis;
@@ -83,10 +93,50 @@ pub(super) fn generate_into_machine_builder(
                 #(#field_bindings)*
                 #(#validator_report_checks)*
 
-                statum::RebuildReport {
-                    attempts: __statum_attempts,
-                    result: Err(statum::Error::InvalidState),
-                }
+                statum::RebuildReport::new(
+                    stringify!(#machine_ident),
+                    statum::__private::RebuildInput {
+                        type_name: core::any::type_name::<#struct_ident>(),
+                        identifier: core::option::Option::None,
+                    },
+                    ::std::vec![#(#candidate_states),*],
+                    statum::__private::RebuildAmbiguity::NotChecked,
+                    __statum_attempts,
+                    Err(statum::Error::InvalidState),
+                )
+            }
+
+            #machine_vis #async_token fn explain(self) -> statum::RebuildReport<#machine_state_ty> {
+                let __statum_persisted = self.__statum_item;
+                let mut __statum_attempts = ::std::vec::Vec::with_capacity(#validator_report_count);
+                let mut __statum_matched_states = ::std::vec::Vec::new();
+                #(#field_bindings)*
+                #(#validator_explain_storages)*
+                #(#validator_explain_checks)*
+
+                let __statum_result = match __statum_matched_states.as_slice() {
+                    #(#validator_explain_finalizers,)*
+                    _ => Err(statum::Error::InvalidState),
+                };
+                let __statum_ambiguity = if __statum_matched_states.len() > 1 {
+                    statum::__private::RebuildAmbiguity::Ambiguous {
+                        matched_states: __statum_matched_states,
+                    }
+                } else {
+                    statum::__private::RebuildAmbiguity::Unambiguous
+                };
+
+                statum::RebuildReport::new(
+                    stringify!(#machine_ident),
+                    statum::__private::RebuildInput {
+                        type_name: core::any::type_name::<#struct_ident>(),
+                        identifier: core::option::Option::None,
+                    },
+                    ::std::vec![#(#candidate_states),*],
+                    __statum_ambiguity,
+                    __statum_attempts,
+                    __statum_result,
+                )
             }
         }
     } else {
@@ -112,6 +162,7 @@ pub(super) fn generate_into_machine_builder(
             }
 
             #report_methods
+
         }
     }
 }

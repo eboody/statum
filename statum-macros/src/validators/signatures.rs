@@ -36,7 +36,11 @@ pub(super) fn build_validator_method_contract(
 ) -> Result<ValidatorMethodContract, proc_macro2::TokenStream> {
     validate_validator_signature(func, context)?;
     let return_kind = validate_validator_return_contract(func, context.expected_ok_type, context)?;
-    Ok(build_semantic_validator_method_contract(func, spec, return_kind))
+    Ok(build_semantic_validator_method_contract(
+        func,
+        spec,
+        return_kind,
+    ))
 }
 
 fn validate_validator_signature(
@@ -44,8 +48,10 @@ fn validate_validator_signature(
     context: &ValidatorDiagnosticContext<'_>,
 ) -> Result<(), proc_macro2::TokenStream> {
     if func.sig.inputs.len() != 1 {
-        let collision_line = explicit_param_collision_line(&func.sig.inputs, context.machine_fields);
-        let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
+        let collision_line =
+            explicit_param_collision_line(&func.sig.inputs, context.machine_fields);
+        let expected_signature =
+            expected_validator_signature(&func.sig.ident, context.expected_ok_type);
         let message = DiagnosticMessage::new(format!(
             "validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must declare only `&self`.",
             func.sig.ident,
@@ -73,7 +79,8 @@ fn validate_validator_signature(
         FnArg::Receiver(receiver) => {
             if receiver.reference.is_none() || receiver.mutability.is_some() {
                 let receiver_display = receiver.to_token_stream().to_string();
-                let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
+                let expected_signature =
+                    expected_validator_signature(&func.sig.ident, context.expected_ok_type);
                 let message = DiagnosticMessage::new(format!(
                     "validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self`, not `{}`.",
                     func.sig.ident,
@@ -92,7 +99,8 @@ fn validate_validator_signature(
             }
         }
         FnArg::Typed(_) => {
-            let expected_signature = expected_validator_signature(&func.sig.ident, context.expected_ok_type);
+            let expected_signature =
+                expected_validator_signature(&func.sig.ident, context.expected_ok_type);
             let message = DiagnosticMessage::new(format!(
                 "validator `{}` for `impl {}` rebuilding `{}` state `{}::{}` must take `&self` as its receiver.",
                 func.sig.ident,
@@ -140,8 +148,10 @@ fn validate_validator_return_contract(
         return Err(syn::Error::new_spanned(&func.sig.output, message).to_compile_error());
     };
 
-    let (actual_ok_ty, return_kind) =
-        match extract_supported_validator_ok_type(return_ty, return_ty.span()) {
+    let (actual_ok_ty, return_kind) = match extract_supported_validator_ok_type(
+        return_ty,
+        return_ty.span(),
+    ) {
         Some(info) => info,
         None => {
             let expected_ok_display = expected_ok_type.to_token_stream().to_string();
@@ -249,13 +259,25 @@ fn explicit_param_collision_line(
                 .map(|name| format!("`{name}`"))
                 .collect::<Vec<_>>()
                 .join(", "),
-            if collisions.len() == 1 { "collides" } else { "collide" },
-            if collisions.len() == 1 { "binding" } else { "bindings" }
+            if collisions.len() == 1 {
+                "collides"
+            } else {
+                "collide"
+            },
+            if collisions.len() == 1 {
+                "binding"
+            } else {
+                "bindings"
+            }
         ))
     }
 }
 
-fn expected_state_shape(state_enum_name: &str, variant_name: &str, expected_ok_display: &str) -> String {
+fn expected_state_shape(
+    state_enum_name: &str,
+    variant_name: &str,
+    expected_ok_display: &str,
+) -> String {
     if expected_ok_display == "()" {
         format!("`{state_enum_name}::{variant_name}` is a unit state")
     } else {
@@ -278,11 +300,13 @@ fn extract_supported_validator_ok_type_in_context(
     context: Option<&crate::source::AliasResolutionContext>,
     visited: &mut HashSet<String>,
 ) -> Option<(Type, ValidatorReturnKind)> {
-    if let Some(expanded_alias) = expand_source_type_alias(return_ty, context, visited)
-    {
+    if let Some(expanded_alias) = expand_source_type_alias(return_ty, context, visited) {
         let (expanded, alias_context, visit_key) = expanded_alias.into_parts();
-        let expanded_result =
-            extract_supported_validator_ok_type_in_context(&expanded, Some(&alias_context), visited);
+        let expanded_result = extract_supported_validator_ok_type_in_context(
+            &expanded,
+            Some(&alias_context),
+            visited,
+        );
         visited.remove(&visit_key);
         if expanded_result.is_some() {
             return expanded_result;
@@ -366,9 +390,7 @@ fn path_is_supported_validation_wrapper(path: &syn::Path) -> bool {
         || segments.as_slice() == ["statum", "Validation"]
 }
 
-fn path_is_supported_result_wrapper(
-    path: &syn::Path,
-) -> bool {
+fn path_is_supported_result_wrapper(path: &syn::Path) -> bool {
     let segments = path
         .segments
         .iter()

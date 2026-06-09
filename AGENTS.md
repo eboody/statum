@@ -30,16 +30,18 @@ Rust workspace (`resolver = "2"`) with four published-or-internal crates:
 - `Cargo.lock` is gitignored (this repo ships only libraries).
 
 ## Commands
-Run locally the same gates CI runs, in this order:
+Run the local CI-parity closeout gate before closing implementation tasks:
 
 ```
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-bash scripts/check_readme_links.sh
-cargo test --workspace --all-features
-bash scripts/check_workspace_hygiene.sh
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps
+bash scripts/check_ci_parity.sh
 ```
+
+That script runs, in order: `cargo modum check --root . --mode warn`,
+`cargo fmt --all --check`, README/docs link checks, escape-hatch and diagnostics
+coverage audits, any `scripts/check_*diagnostic*.sh` or `scripts/check_*graph*.sh`
+audit scripts, clippy, macro UI tests both without and with
+`strict-introspection`, workspace tests, workspace hygiene, and rustdoc with
+warnings denied.
 
 Focused variants:
 - Macro UI/compile tests only: `cargo test -p statum-macros`.
@@ -80,7 +82,7 @@ Prefer `type(scope): short summary` (history mixes conventional prefixes with in
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **statum** (4179 symbols, 8495 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **statum** (5469 symbols, 9862 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

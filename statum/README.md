@@ -25,6 +25,16 @@ statum = "0.8.10"
 
 Statum targets stable Rust and currently supports Rust `1.93+`.
 
+For the strict graph-metadata authority boundary, enable:
+
+```toml
+[dependencies]
+statum = { version = "0.8.10", features = ["strict-introspection"] }
+```
+
+The repository tracks stable Rust for daily development and checks Rust `1.93.1`
+in CI as the MSRV job.
+
 ## Mental Model
 
 - Use `statum` when pressing `.` before and after a phase change should show a

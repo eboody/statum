@@ -2,6 +2,23 @@ use super::{
     MachineDescriptor, MachineGraph, MachineStateIdentity, StateDescriptor, TransitionDescriptor,
 };
 
+/// Stable low-cardinality labels for one runtime transition event.
+///
+/// These labels are suitable for tracing spans and metric attributes because
+/// they are derived from generated machine metadata, not from per-request or
+/// user-provided values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TransitionTelemetryLabels {
+    /// Stable machine family label.
+    pub machine: &'static str,
+    /// Stable source-state label.
+    pub from_state: &'static str,
+    /// Stable transition-site label.
+    pub transition: &'static str,
+    /// Stable chosen target-state label.
+    pub chosen_state: &'static str,
+}
+
 /// A runtime record of one chosen transition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RecordedTransition<S: 'static, T: 'static> {
@@ -75,6 +92,32 @@ where
     {
         self.transition_in(graph)?;
         graph.state(self.chosen)
+    }
+
+    /// Joins a runtime transition event back to stable telemetry labels.
+    ///
+    /// Returns `None` when the runtime event cannot be validated against `graph`.
+    /// Successful labels are low-cardinality and come only from generated machine
+    /// metadata: machine type path, source state name, transition method name,
+    /// and chosen target state name.
+    pub fn telemetry_labels_in(
+        &self,
+        graph: &MachineGraph<S, T>,
+    ) -> Option<TransitionTelemetryLabels>
+    where
+        S: Copy + Eq,
+        T: Copy + Eq,
+    {
+        let transition = self.transition_in(graph)?;
+        let from_state = graph.state(self.from)?;
+        let chosen_state = graph.state(self.chosen)?;
+
+        Some(TransitionTelemetryLabels {
+            machine: graph.machine_label(),
+            from_state: from_state.rust_name,
+            transition: transition.method_name,
+            chosen_state: chosen_state.rust_name,
+        })
     }
 }
 

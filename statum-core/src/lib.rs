@@ -20,13 +20,16 @@ mod readme_doctests {}
 mod introspection;
 
 pub mod projection;
+#[cfg(feature = "introspection")]
+pub mod testing;
 
 #[doc(hidden)]
 pub mod __private {
     #[cfg(feature = "introspection")]
     pub use crate::{
-        MachinePresentation, MachinePresentationDescriptor, RebuildAttempt, RebuildReport,
-        StatePresentation, TransitionPresentation, TransitionPresentationInventory,
+        MachinePresentation, MachinePresentationDescriptor, RebuildAmbiguity, RebuildAttempt,
+        RebuildInput, RebuildReport, StatePresentation, TransitionPresentation,
+        TransitionPresentationInventory,
     };
     #[cfg(feature = "introspection")]
     pub use linkme;
@@ -54,10 +57,13 @@ pub mod __private {
 
 #[cfg(feature = "introspection")]
 pub use introspection::{
-    MachineDescriptor, MachineGraph, MachineIntrospection, MachinePresentation,
-    MachinePresentationDescriptor, MachineStateIdentity, MachineTransitionRecorder,
-    RecordedTransition, StateDescriptor, StatePresentation, TransitionDescriptor,
+    GraphAuthorityLevel, GraphLintCode, GraphLintFinding, MachineDescriptor, MachineGraph,
+    MachineIntrospection, MachinePresentation, MachinePresentationDescriptor, MachineStateIdentity,
+    MachineTransitionRecorder, RecordedTransition, StableFieldMetadata, StableGraphMetadata,
+    StableGraphMetadataVersion, StableMachineMetadata, StableStateMetadata,
+    StableTransitionMetadata, StateDescriptor, StatePresentation, TransitionDescriptor,
     TransitionInventory, TransitionPresentation, TransitionPresentationInventory,
+    TransitionTelemetryLabels, UnsupportedGraphMetadataCase,
 };
 
 /// A generated state marker type.
@@ -210,7 +216,8 @@ pub struct RebuildAttempt {
     pub validator: &'static str,
     /// Rust state-marker name the validator was checking.
     pub target_state: &'static str,
-    /// Whether this validator matched and produced the rebuilt state.
+    /// Whether this validator accepted the input. In ambiguity-checking reports,
+    /// multiple accepted validators can still leave the final rebuild result invalid.
     pub matched: bool,
     /// Stable machine-readable rejection key, when the validator exposed one.
     pub reason_key: Option<&'static str>,
@@ -218,9 +225,42 @@ pub struct RebuildAttempt {
     pub message: Option<Cow<'static, str>>,
 }
 
+/// Describes the persisted input that a rebuild report evaluated.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RebuildInput {
+    /// Rust type name of the persisted input shape.
+    pub type_name: &'static str,
+    /// Optional stable identifier for the specific persisted input.
+    pub identifier: Option<Cow<'static, str>>,
+}
+
+/// Ambiguity status for a rebuild report.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RebuildAmbiguity {
+    /// The generated rebuild surface stopped at the first match and did not scan
+    /// for additional matching validators.
+    NotChecked,
+    /// All candidates were evaluated and at most one matched.
+    Unambiguous,
+    /// Multiple candidates matched the same persisted input.
+    Ambiguous {
+        /// State candidates whose validators accepted the input.
+        matched_states: Vec<&'static str>,
+    },
+}
+
 /// A typed rehydration result plus the validator attempts that produced it.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct RebuildReport<M> {
+    /// Rust machine type whose validators were evaluated.
+    pub machine: &'static str,
+    /// Persisted input shape and optional stable input identifier.
+    pub input: RebuildInput,
+    /// State candidates considered by the generated rebuild surface.
+    pub candidate_states: Vec<&'static str>,
+    /// Whether this report checked for multiple matching validators.
+    pub ambiguity: RebuildAmbiguity,
     /// Validator attempts in evaluation order.
     pub attempts: Vec<RebuildAttempt>,
     /// Final rebuild result.
@@ -228,6 +268,31 @@ pub struct RebuildReport<M> {
 }
 
 impl<M> RebuildReport<M> {
+    /// Create a structured rebuild report.
+    pub fn new(
+        machine: &'static str,
+        input: RebuildInput,
+        candidate_states: Vec<&'static str>,
+        ambiguity: RebuildAmbiguity,
+        attempts: Vec<RebuildAttempt>,
+        result: Result<M>,
+    ) -> Self {
+        Self {
+            machine,
+            input,
+            candidate_states,
+            ambiguity,
+            attempts,
+            result,
+        }
+    }
+
+    /// Attach a stable persisted-input identifier for logs or admin UIs.
+    pub fn with_input_identifier(mut self, identifier: impl Into<Cow<'static, str>>) -> Self {
+        self.input.identifier = Some(identifier.into());
+        self
+    }
+
     /// Returns the first matching validator attempt, if any.
     pub fn matched_attempt(&self) -> Option<&RebuildAttempt> {
         self.attempts.iter().find(|attempt| attempt.matched)

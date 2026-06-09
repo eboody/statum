@@ -18,19 +18,25 @@ mod readme_doctests {}
 
 mod contracts;
 mod diagnostics;
+mod machine;
+mod presentation;
 mod source;
+mod state;
+mod transition;
+mod validators;
 
-moddef::moddef!(
-    flat (pub) mod {
-    },
-    flat (pub(crate)) mod {
-        presentation,
-        state,
-        machine,
-        transition,
-        validators
-    }
-);
+pub(crate) use machine::{
+    LoadedMachineLookupFailure, MachineInfo, MachinePath, expand_machine,
+    format_loaded_machine_candidates, invalid_machine_target_error,
+    lookup_loaded_machine_in_module, lookup_unique_loaded_machine_by_name,
+};
+pub(crate) use state::{
+    EnumInfo, LoadedStateLookupFailure, StateModulePath, VariantInfo, VariantShape, expand_state,
+    format_loaded_state_candidates, invalid_state_target_error, lookup_loaded_state_enum,
+    lookup_loaded_state_enum_by_name, to_snake_case,
+};
+pub(crate) use transition::expand_transition;
+pub(crate) use validators::parse_validators;
 
 pub(crate) use presentation::{
     PresentationAttr, PresentationTypesAttr, parse_present_attrs_for,
