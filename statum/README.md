@@ -20,31 +20,47 @@ This crate re-exports:
 
 ```toml
 [dependencies]
-statum = "0.8.10"
+statum = "0.9.0"
 ```
 
-Statum targets stable Rust and currently supports Rust `1.93+`.
+Statum targets stable Rust and currently supports Rust `1.93+`. The repository
+pins `rust-toolchain.toml` to Rust `1.96.0` for day-to-day development and
+keeps `rust-version = "1.93"` in Cargo metadata for the supported minimum.
+
+No default features are enabled. Enable `introspection` when you want generated
+machine graphs:
+
+```toml
+[dependencies]
+statum = { version = "0.9.0", features = ["introspection"] }
+```
 
 For the strict graph-metadata authority boundary, enable:
 
 ```toml
 [dependencies]
-statum = { version = "0.8.10", features = ["strict-introspection"] }
+statum = { version = "0.9.0", features = ["strict-introspection"] }
 ```
 
-The repository tracks stable Rust for daily development and checks Rust `1.93.1`
-in CI as the MSRV job.
+Compared with `introspection`, `strict-introspection` only changes the authority
+boundary for generated graph metadata: unsupported return shapes are rejected
+unless the transition provides an explicit `#[introspect(return = ...)]`
+annotation.
+
+The repository checks Rust `1.93.1` in CI as the MSRV job.
 
 ## Mental Model
 
 - Use `statum` when pressing `.` before and after a phase change should show a
   meaningfully different method surface.
 - Durable workflows and protocols are one strong fit. Staged validation,
-  resolution, and build surfaces are another.
+  resolution, and build surfaces are another. Statum is storage-agnostic;
+  database examples are integration patterns, not built-in adapters.
 - `#[state]` defines the legal phases
 - `#[machine]` defines the durable context
 - `#[transition]` defines the legal edges
-- `#[validators]` rebuilds typed machines from stored data
+- `#[validators]` rebuilds typed machines from stored data accepted by your
+  validators
 
 ## Minimal Example
 

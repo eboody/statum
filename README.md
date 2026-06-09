@@ -3,7 +3,7 @@
     <source media="(prefers-color-scheme: dark)" srcset="./docs/static/image/logo-dark.png">
     <img alt="statum logo" src="./docs/static/image/logo.png" width="420">
   </picture>
-  <p>Statum is a typed workflow-protocol framework for Rust: phases, legal transitions, phase-specific data, typed rehydration, and graph introspection.</p>
+  <p>Statum is a typed workflow-protocol framework for Rust: phases, legal transitions, phase-specific data, typed rehydration, and optional graph introspection.</p>
   <p>
     <a href="https://github.com/eboody/statum/actions/workflows/ci.yml"><img src="https://github.com/eboody/statum/actions/workflows/ci.yml/badge.svg?branch=main&event=push" alt="build status" /></a>
     <a href="https://crates.io/crates/statum"><img src="https://img.shields.io/crates/v/statum.svg?logo=rust" alt="crates.io" /></a>
@@ -25,8 +25,8 @@ safe typed state before code is allowed to continue.
 The core promise is representational correctness. A `DocumentMachine<Draft>` can
 be submitted for review, a `DocumentMachine<InReview>` can be approved, and
 reviewer assignment data only exists in the in-review phase. Rows, events, and
-other dynamic inputs stay raw until `#[validators]` proves they match one legal
-machine state.
+other dynamic inputs stay raw until your `#[validators]` accept them as one
+legal machine state.
 
 Today's API packages that with `#[state]`, `#[machine]`, `#[transition]`, and
 `#[validators]`: phases, shared machine context, legal edges, and typed
@@ -60,9 +60,10 @@ For the strongest introspection guarantee, enable strict mode:
 statum = { version = "0.9.0", features = ["strict-introspection"] }
 ```
 
-`strict-introspection` only changes the authority boundary for generated graph
-metadata: unsupported return shapes are rejected unless the transition provides
-an explicit `#[introspect(return = ...)]` annotation.
+Compared with `introspection`, `strict-introspection` only changes the
+authority boundary for generated graph metadata: unsupported return shapes are
+rejected unless the transition provides an explicit
+`#[introspect(return = ...)]` annotation.
 
 To reproduce the main GitHub Actions gate locally, run:
 
@@ -126,8 +127,10 @@ Now the type system carries the protocol rules:
 - `submit()` is only callable on `DocumentMachine<Draft>`.
 - `approve()` is only callable on `DocumentMachine<InReview>`.
 - `ReviewAssignment` only exists while the document is in review.
-- A SQLite row can be rebuilt into `document_machine::SomeState`, then matched
-  before an HTTP handler calls the next legal transition.
+- A persisted row can be rebuilt into `document_machine::SomeState`, then
+  matched before an HTTP handler calls the next legal transition. Statum is
+  storage-agnostic; the SQLite/sqlx examples show one integration pattern, not a
+  built-in adapter.
 - With the `introspection` or `strict-introspection` feature enabled,
   `MachineIntrospection::GRAPH` exposes the generated `Draft --submit-->
   InReview --approve--> Published` graph for docs, tests, and tooling.
@@ -150,7 +153,7 @@ enums, optional fields, and comments:
 
 This is the point of Statum: only legal, understood workflow states become
 first-class values. Raw rows and event projections stay raw until
-`#[validators]` proves they can become typed machines.
+your `#[validators]` accept them as typed machines.
 
 If you add derives, place them below `#[state]` and `#[machine]`:
 
@@ -197,21 +200,24 @@ Roughly, Statum generates:
 - A machine-scoped enum like `document_machine::SomeState` for matching
   reconstructed machines.
   `document_machine::State` remains an alias for compatibility.
-- A machine-scoped `document_machine::Fields` struct for batch rebuilds where
-  each row needs different machine context.
-- A machine-scoped batch rehydration trait like
+- With `rebuild-batch`, a machine-scoped `document_machine::Fields` struct for
+  batch rebuilds where each row needs different machine context.
+- With `rebuild-batch`, a machine-scoped batch rehydration trait like
   `document_machine::IntoMachinesExt`.
 
-This is the whole model. The rest of the crate is about making those four pieces ergonomic.
+This is the core model. The rest of the crate is about making those four pieces
+ergonomic.
 
-> Typed rehydration is the unusual part: if you already have rows, events, or persisted workflow data, `#[validators]` can rebuild them into typed machines. Full example below.
+> Typed rehydration is the unusual part: if you already have rows, events, or
+> persisted workflow data, `#[validators]` can rebuild them into typed machines.
+> Full example below.
 
 If you are evaluating Statum from the outside, start with
 [docs/start-here.md](docs/start-here.md). The canonical workflow is document
 approval: a draft gains an assigned reviewer, can only be approved while it is
-in review, is rebuilt from SQLite rows before HTTP handlers transition it, and
-exports its generated machine graph for tooling. Read the guided walkthrough in
-[docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md), then run
+in review, is rebuilt from persisted rows before HTTP handlers transition it,
+and exports its generated machine graph for tooling. Read the guided walkthrough
+in [docs/tutorial-review-workflow.md](docs/tutorial-review-workflow.md), then run
 the service-shaped example in
 [statum-examples/src/showcases/axum_sqlite_review.rs](statum-examples/src/showcases/axum_sqlite_review.rs).
 
@@ -240,7 +246,8 @@ approximated.
 
 Without `strict-introspection`, Statum still follows some source-backed aliases
 for ergonomics. That default mode is useful metadata, but the exact-authority
-claim belongs to strict mode.
+claim belongs to strict mode. Strict mode is exact for macro-readable transition
+targets, not for runtime guards or the semantic truth of explicit overrides.
 
 Whole-item `#[cfg]` gates are supported, but nested `#[cfg]` or `#[cfg_attr]`
 on `#[state]` variants, variant payload fields, or `#[machine]` fields are
