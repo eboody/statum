@@ -1,20 +1,21 @@
 # statum
 
-`statum` is about representational correctness when a value's phase should
-change what methods are legally available on that value. It helps make invalid,
-undesirable, or not-yet-validated states impossible to represent as ordinary
-values.
+`statum` is the public facade crate for Statum, a typed workflow-protocol
+framework for Rust.
 
-It applies the same idea as `Option` and `Result`: absence or failure becomes
-explicit in the type instead of staying implicit in the program.
+Use it when an entity moves through named phases, only some transitions are
+legal, and phase-specific data should not be visible outside the phase where it
+is valid.
 
 This crate re-exports:
 
-- attribute macros: `#[state]`, `#[machine]`, `#[transition]`, `#[validators]`
-- runtime types: `statum::Error`, `statum::Result<T>`
-- advanced traits: `StateMarker`, `UnitState`, `DataState`, `CanTransition*`
-- optional typed introspection and runtime-join surfaces behind the `introspection` feature: `MachineIntrospection`, `MachineGraph`, `MachineTransitionRecorder`, `MachinePresentation`
-- projection helpers: `statum::projection`
+- `#[state]`, `#[machine]`, `#[transition]`, and `#[validators]` from
+  `statum-macros`.
+- Core typestate, transition, validation, and rehydration types from
+  `statum-core`.
+- Optional graph/presentation surfaces behind the `introspection` feature:
+  `MachineIntrospection`, `MachineGraph`, `MachineTransitionRecorder`,
+  `MachinePresentation`, and related metadata types.
 
 ## Install
 
@@ -24,8 +25,8 @@ statum = "0.9.0"
 ```
 
 Statum targets stable Rust and currently supports Rust `1.93+`. The repository
-pins `rust-toolchain.toml` to Rust `1.96.0` for day-to-day development and
-keeps `rust-version = "1.93"` in Cargo metadata for the supported minimum.
+pins `rust-toolchain.toml` to Rust `1.96.0` for day-to-day development and keeps
+`rust-version = "1.93"` in Cargo metadata for the supported minimum.
 
 No default features are enabled. Enable `introspection` when you want generated
 machine graphs:
@@ -35,32 +36,29 @@ machine graphs:
 statum = { version = "0.9.0", features = ["introspection"] }
 ```
 
-For the strict graph-metadata authority boundary, enable:
+For the strict graph-metadata authority boundary:
 
 ```toml
 [dependencies]
 statum = { version = "0.9.0", features = ["strict-introspection"] }
 ```
 
-Compared with `introspection`, `strict-introspection` only changes the authority
-boundary for generated graph metadata: unsupported return shapes are rejected
-unless the transition provides an explicit `#[introspect(return = ...)]`
-annotation.
-
-The repository checks Rust `1.93.1` in CI as the MSRV job.
+`strict-introspection` only changes graph metadata generation. Unsupported
+transition return shapes are rejected unless the method provides an explicit
+`#[introspect(return = ...)]` annotation.
 
 ## Mental Model
 
-- Use `statum` when pressing `.` before and after a phase change should show a
-  meaningfully different method surface.
-- Durable workflows and protocols are one strong fit. Staged validation,
-  resolution, and build surfaces are another. Statum is storage-agnostic;
-  database examples are integration patterns, not built-in adapters.
-- `#[state]` defines the legal phases
-- `#[machine]` defines the durable context
-- `#[transition]` defines the legal edges
-- `#[validators]` rebuilds typed machines from stored data accepted by your
-  validators
+- `#[state]` defines legal phases.
+- `#[machine]` defines durable context shared across phases.
+- `#[transition]` defines legal edges.
+- `#[validators]` rebuilds typed machines from data accepted by your validators.
+
+Statum is storage-agnostic. Database examples are integration patterns, not
+built-in adapters.
+
+Use Statum when pressing `.` before and after a phase change should show a
+meaningfully different method surface.
 
 ## Minimal Example
 
@@ -68,45 +66,39 @@ The repository checks Rust `1.93.1` in CI as the MSRV job.
 use statum::{machine, state, transition};
 
 #[state]
-enum LightState {
-    Off,
-    On,
+enum DocumentState {
+    Draft,
+    Published,
 }
 
 #[machine]
-struct Light<LightState> {
-    name: String,
+struct DocumentMachine<DocumentState> {
+    id: i64,
+    title: String,
 }
 
 #[transition]
-impl Light<Off> {
-    fn switch_on(self) -> Light<On> {
+impl DocumentMachine<Draft> {
+    fn publish(self) -> DocumentMachine<Published> {
         self.transition()
     }
 }
 
-#[transition]
-impl Light<On> {
-    fn switch_off(self) -> Light<Off> {
-        self.transition()
-    }
-}
-
-# fn main() {}
+fn main() {}
 ```
+
+`publish()` is only available on `DocumentMachine<Draft>`. Once the document is
+published, that transition disappears from the method surface.
 
 ## Docs
 
-- Enable the `introspection` feature when the machine definition should also drive
-  CLI explainers, graph exports, generated docs, branch-strip views, or runtime
-  replay/debug tooling. That feature emits the generated `StateId`,
-  `TransitionId`, `GRAPH`, `PRESENTATION`, and `linkme` inventory surface; the
-  default feature set keeps those out of generated machines. Its observation
-  point is the macro-validated semantic model: locally readable state/machine
-  items plus transition signatures and explicit `#[introspect(return = ...)]`
-  overrides.
-- API docs: <https://docs.rs/statum>
-- Repository README: <https://github.com/eboody/statum/blob/main/README.md>
-- Validators guide: <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>
-- Examples crate: <https://github.com/eboody/statum/tree/main/statum-examples>
-- Repository: <https://github.com/eboody/statum>
+Start with the repository README and the guided workflow docs:
+
+- Overview: <https://github.com/eboody/statum>
+- Start here: <https://github.com/eboody/statum/blob/main/docs/start-here.md>
+- Review workflow tutorial:
+  <https://github.com/eboody/statum/blob/main/docs/tutorial-review-workflow.md>
+- Typed rehydration:
+  <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>
+- Graph introspection:
+  <https://github.com/eboody/statum/blob/main/docs/introspection.md>
