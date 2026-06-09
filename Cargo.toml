@@ -33,15 +33,15 @@ version = "0.8"
 
 [workspace.dependencies.statum]
 path = "statum"
-version = "0.8.10"
+version = "0.9.0"
 
 [workspace.dependencies.statum-core]
 path = "statum-core"
-version = "0.8.10"
+version = "0.9.0"
 
 [workspace.dependencies.statum-macros]
 path = "statum-macros"
-version = "0.8.10"
+version = "0.9.0"
 
 [workspace.metadata.scripts]
 benchmark-compile = "bash scripts/benchmark_compile.sh"
@@ -56,4 +56,4 @@ authors = ["Eran Boodnero <eran@eran.codes>"]
 license = "MIT"
 repository = "https://github.com/eboody/statum"
 rust-version = "1.93"
-version = "0.8.10"
+version = "0.9.0"
