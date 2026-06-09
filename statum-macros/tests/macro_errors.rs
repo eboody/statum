@@ -1,3 +1,26 @@
+fn rustc_is_at_least(major: u32, minor: u32) -> bool {
+    let Ok(output) = std::process::Command::new("rustc")
+        .arg("--version")
+        .output()
+    else {
+        return true;
+    };
+    let version = String::from_utf8_lossy(&output.stdout);
+    let Some(version) = version.split_whitespace().nth(1) else {
+        return true;
+    };
+    let mut parts = version.split('.');
+    let parsed_major = parts
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .unwrap_or(0);
+    let parsed_minor = parts
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .unwrap_or(0);
+    (parsed_major, parsed_minor) >= (major, minor)
+}
+
 #[test]
 fn test_invalid_state_usage() {
     let t = trybuild::TestCases::new();
@@ -37,8 +60,13 @@ fn test_invalid_machine_usage() {
     t.compile_fail("tests/ui/invalid_machine_builder_reserved_field_name.rs");
     t.compile_fail("tests/ui/invalid_machine_builder_duplicate_field.rs");
     t.compile_fail("tests/ui/invalid_machine_builder_duplicate_state_data.rs");
-    t.compile_fail("tests/ui/invalid_builder_missing_machine_field.rs");
-    t.compile_fail("tests/ui/invalid_builder_missing_state_data.rs");
+    // rustc 1.96 changed the secondary method-resolution note formatting for
+    // these builder typestate failures. Keep the current-stable snapshot in the
+    // primary CI job and skip the unstable-note fixtures under older MSRV runs.
+    if rustc_is_at_least(1, 96) {
+        t.compile_fail("tests/ui/invalid_builder_missing_machine_field.rs");
+        t.compile_fail("tests/ui/invalid_builder_missing_state_data.rs");
+    }
 }
 
 #[test]

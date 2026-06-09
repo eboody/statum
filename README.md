@@ -29,31 +29,50 @@ other dynamic inputs stay raw until `#[validators]` proves they match one legal
 machine state.
 
 Today's API packages that with `#[state]`, `#[machine]`, `#[transition]`, and
-`#[validators]`: phases, shared machine context, legal edges, typed
-rehydration, and generated graph metadata from the same workflow definition.
+`#[validators]`: phases, shared machine context, legal edges, and typed
+rehydration. With the `introspection` feature enabled, the same workflow
+definition also emits generated graph metadata.
 
 ## Install
 
-Statum targets stable Rust and currently supports Rust `1.93+`. The repo uses
-`rust-toolchain.toml` for the current stable toolchain and `rust-version =
-"1.93"` in Cargo metadata for the supported minimum.
+Statum targets stable Rust and currently supports Rust `1.93+`. The repo pins
+`rust-toolchain.toml` to Rust `1.96.0` for day-to-day development and keeps
+`rust-version = "1.93"` in Cargo metadata for the supported minimum.
 
 ```toml
 [dependencies]
-statum = "0.8.10"
+statum = "0.9.0"
 ```
 
-No default features are enabled. For the strongest introspection guarantee,
-enable strict mode:
+No default features are enabled, so the basic install provides typestate,
+transitions, and typed rehydration without graph metadata. Enable
+`introspection` when you want generated machine graphs:
 
 ```toml
 [dependencies]
-statum = { version = "0.8.10", features = ["strict-introspection"] }
+statum = { version = "0.9.0", features = ["introspection"] }
+```
+
+For the strongest introspection guarantee, enable strict mode:
+
+```toml
+[dependencies]
+statum = { version = "0.9.0", features = ["strict-introspection"] }
 ```
 
 `strict-introspection` only changes the authority boundary for generated graph
 metadata: unsupported return shapes are rejected unless the transition provides
 an explicit `#[introspect(return = ...)]` annotation.
+
+To reproduce the main GitHub Actions gate locally, run:
+
+```bash
+bash scripts/check_ci_parity.sh
+```
+
+That script runs the README/doc checks, diagnostics coverage, clippy, macro UI
+tests, workspace tests, hygiene checks, and docs build used by the primary CI
+job.
 
 ## 60-Second Lifecycle
 
@@ -109,7 +128,8 @@ Now the type system carries the protocol rules:
 - `ReviewAssignment` only exists while the document is in review.
 - A SQLite row can be rebuilt into `document_machine::SomeState`, then matched
   before an HTTP handler calls the next legal transition.
-- `MachineIntrospection::GRAPH` exposes the generated `Draft --submit-->
+- With the `introspection` or `strict-introspection` feature enabled,
+  `MachineIntrospection::GRAPH` exposes the generated `Draft --submit-->
   InReview --approve--> Published` graph for docs, tests, and tooling.
 
 Example: [statum-examples/src/showcases/axum_sqlite_review.rs](statum-examples/src/showcases/axum_sqlite_review.rs)
@@ -512,8 +532,8 @@ Examples and API references:
 
 ## Stability
 
-- Stable Rust is the day-to-day target via `rust-toolchain.toml`.
+- Stable Rust `1.96.0` is the day-to-day target via `rust-toolchain.toml`.
 - MSRV: Rust `1.93`, declared as workspace `rust-version = "1.93"` and checked
   in CI with Rust `1.93.1`.
 - Edition split: `statum` and `statum-core` use Rust 2021;
-  `statum-macros` and `statum-examples` use Rust 2024.
+  `statum-macros`, `statum-examples`, and `cargo-statum` use Rust 2024.

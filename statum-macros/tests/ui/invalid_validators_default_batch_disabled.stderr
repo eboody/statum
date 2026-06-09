@@ -19,14 +19,14 @@ help: there is a method `into_iter` with a similar name
 53 +         .into_iter()
    |
 
-error[E0599]: no function or associated item named `rebuild_many` found for struct `TaskMachine<TaskState>` in the current scope
+error[E0599]: no associated function or constant named `rebuild_many` found for struct `TaskMachine<TaskState>` in the current scope
   --> tests/ui/invalid_validators_default_batch_disabled.rs:57:52
    |
 19 | #[machine]
-   | ---------- function or associated item `rebuild_many` not found for this struct
+   | ---------- associated function or constant `rebuild_many` not found for this struct
 ...
 57 |     let _ = TaskMachine::<UninitializedTaskState>::rebuild_many(vec![Row { status: "done" }]);
-   |                                                    ^^^^^^^^^^^^ function or associated item not found in `TaskMachine`
+   |                                                    ^^^^^^^^^^^^ associated function or constant not found in `TaskMachine`
    |
 help: there is an associated function `rebuild` with a similar name
    |

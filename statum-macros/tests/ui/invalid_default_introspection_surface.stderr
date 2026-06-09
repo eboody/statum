@@ -16,11 +16,11 @@ error[E0425]: cannot find value `GRAPH` in module `flow`
 30 |     let _graph = flow::GRAPH;
    |                        ^^^^^ not found in `flow`
 
-error[E0599]: no associated item named `SUBMIT` found for struct `Flow<FlowState>` in the current scope
+error[E0599]: no associated function or constant named `SUBMIT` found for struct `Flow<FlowState>` in the current scope
   --> tests/ui/invalid_default_introspection_surface.rs:32:38
    |
 19 | #[machine]
-   | ---------- associated item `SUBMIT` not found for this struct
+   | ---------- associated function or constant `SUBMIT` not found for this struct
 ...
 32 |     let _transition = Flow::<Draft>::SUBMIT;
-   |                                      ^^^^^^ associated item not found in `Flow<Draft>`
+   |                                      ^^^^^^ associated function or constant not found in `Flow<Draft>`

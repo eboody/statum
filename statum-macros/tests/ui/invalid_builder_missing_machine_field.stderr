@@ -12,5 +12,4 @@ error[E0599]: no method named `build` found for struct `WorkflowMachineDraftBuil
    | |_________|
    |
    |
-   = note: the method was found for
-           - `WorkflowMachineDraftBuilder<__StatumWorkflowMachineDraftBuilderSetSlot0StateData, __StatumWorkflowMachineDraftBuilderSetSlot1Name>`
+   = note: the method was found for `WorkflowMachineDraftBuilder<__StatumWorkflowMachineDraftBuilderSetSlot0StateData, __StatumWorkflowMachineDraftBuilderSetSlot1Name>`

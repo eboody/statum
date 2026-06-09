@@ -13,5 +13,4 @@ error[E0599]: no method named `name` found for struct `__StatumWorkflowMachineIn
    | |_________|
    |
    |
-   = note: the method was found for
-           - `__StatumWorkflowMachineIntoMachine<'__statum_row>`
+   = note: the method was found for `__StatumWorkflowMachineIntoMachine<'__statum_row>`
