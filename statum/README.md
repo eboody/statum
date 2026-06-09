@@ -61,6 +61,10 @@ built-in adapters.
 Use Statum when pressing `.` before and after a phase change should show a
 meaningfully different method surface.
 
+Compared with a plain enum, Statum moves legal behavior onto phase-specific
+machine types. If `publish()` only exists on `DocumentMachine<Draft>`, code
+holding a `DocumentMachine<Published>` cannot call it.
+
 ## Minimal Example
 
 ```rust

@@ -43,6 +43,39 @@ Statum provides this through four macros:
 Enable the optional `introspection` feature when you also want generated graph
 metadata for docs, tests, CLIs, or review tooling.
 
+## The Shape of the Idea
+
+Here is the smallest useful mental model:
+
+```rust
+let draft: DocumentMachine<Draft> = DocumentMachine::builder()
+    .id(1)
+    .title("Launch notes".to_owned())
+    .body("...".to_owned())
+    .build();
+
+let review: DocumentMachine<InReview> = draft.submit("ada".to_owned());
+let published: DocumentMachine<Published> = review.approve();
+```
+
+After `submit`, the value is no longer a draft. After `approve`, it is no
+longer in review. Methods and fields follow the type, so callers do not need to
+remember which operations are currently legal.
+
+## Why Not a Plain Enum?
+
+Plain enums are great for many state machines, but they usually keep every
+operation at the same call site. You match, branch, and remember to reject the
+wrong phase at runtime.
+
+Statum moves that boundary into the type system. If `approve()` only exists on
+`DocumentMachine<InReview>`, then code holding `DocumentMachine<Draft>` cannot
+call it. The invalid program is not a failing branch; it is not representable.
+
+Use a plain enum when every state has roughly the same behavior or when the
+state graph is mostly runtime-authored. Use Statum when each phase should expose
+a different API.
+
 ## Install
 
 Statum targets stable Rust and currently supports Rust `1.93+`. The repository
@@ -269,6 +302,22 @@ Skip Statum when:
 
 If you are comparing approaches, read
 [docs/why-not-just-an-enum.md](docs/why-not-just-an-enum.md).
+
+## Macro Boundaries
+
+Statum uses proc macros, but the intended boundary is narrow:
+
+- Macro input is ordinary Rust items: enums, structs, and impl blocks.
+- Generated code is machine-shaped: marker types, builders, transition helpers,
+  typed rehydration builders, and optional metadata constants.
+- Unsupported syntax is rejected with compile-time diagnostics instead of being
+  approximated silently.
+- Strict introspection is opt-in for teams that want graph metadata to stay
+  exact for macro-readable transition targets.
+
+The repository treats those boundaries as part of the public contract: macro
+errors are covered by trybuild fixtures, docs build with warnings denied, and
+CI checks stable, MSRV, macOS, Windows, security, and a nightly canary.
 
 ## Common Gotchas
 
