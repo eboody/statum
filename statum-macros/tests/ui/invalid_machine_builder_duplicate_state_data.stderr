@@ -1,14 +1,17 @@
-error[E0308]: mismatched types
-  --> tests/ui/invalid_machine_builder_duplicate_state_data.rs:28:21
+error[E0599]: no method named `state_data` found for struct `WorkflowMachineDraftBuilder<__StatumWorkflowMachineDraftBuilderSetSlot0StateData>` in the current scope
+  --> tests/ui/invalid_machine_builder_duplicate_state_data.rs:28:10
    |
-28 |         .state_data(DraftData { title: "second" })
-   |          ---------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `__StatumWorkflowMachineDraftBuilderAlreadySet`, found `DraftData`
-   |          |
-   |          arguments to this method are incorrect
+22 |   #[machine]
+   |   ---------- method `state_data` not found for this struct
+...
+26 |       let _ = WorkflowMachine::<Draft>::builder()
+   |  _____________-
+27 | |         .state_data(DraftData { title: "first" })
+28 | |         .state_data(DraftData { title: "second" })
+   | |         -^^^^^^^^^^ method not found in `WorkflowMachineDraftBuilder<__StatumWorkflowMachineDraftBuilderSetSlot0StateData>`
+   | |_________|
    |
-note: method defined here
-  --> tests/ui/invalid_machine_builder_duplicate_state_data.rs:22:1
    |
-22 | #[machine]
-   | ^^^^^^^^^^
-   = note: this error originates in the attribute macro `machine` (in Nightly builds, run with -Z macro-backtrace for more info)
+   = note: the method was found for
+           - `WorkflowMachineDraftBuilder`
+           - `WorkflowMachineDraftBuilder<__StatumWorkflowMachineDraftBuilderAlreadySet>`

@@ -1,4 +1,5 @@
 use statum::{machine, state, transition};
+use std::fmt;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 #[state]
@@ -10,8 +11,26 @@ pub enum SessionState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserId(pub String);
+
+impl fmt::Display for UserId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct ConnectionId(pub u64);
+
+impl fmt::Display for ConnectionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionInfo {
-    pub user_id: String,
+    pub user_id: UserId,
 }
 
 impl TryFrom<&str> for SessionInfo {
@@ -22,7 +41,7 @@ impl TryFrom<&str> for SessionInfo {
             .strip_prefix("token:")
             .filter(|user_id| !user_id.trim().is_empty())
             .map(|user_id| Self {
-                user_id: user_id.to_owned(),
+                user_id: UserId(user_id.to_owned()),
             })
             .ok_or("token must use token:<user>")
     }
@@ -30,12 +49,12 @@ impl TryFrom<&str> for SessionInfo {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Subscription {
-    pub user_id: String,
+    pub user_id: UserId,
     pub topic: String,
 }
 
 impl Subscription {
-    fn new(user_id: String, topic: String) -> Result<Self, &'static str> {
+    fn new(user_id: UserId, topic: String) -> Result<Self, &'static str> {
         if topic.trim().is_empty() {
             return Err("topic is required");
         }
@@ -45,13 +64,23 @@ impl Subscription {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CloseReason {
-    pub reason: String,
+pub enum CloseReason {
+    ClientRequested(String),
+    InvalidFrame(&'static str),
+}
+
+impl fmt::Display for CloseReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ClientRequested(reason) => f.write_str(reason),
+            Self::InvalidFrame(reason) => f.write_str(reason),
+        }
+    }
 }
 
 #[machine]
 pub struct SessionMachine<SessionState> {
-    pub connection_id: u64,
+    pub connection_id: ConnectionId,
     pub peer_label: String,
 }
 
@@ -61,8 +90,8 @@ impl SessionMachine<Connected> {
         self.transition_with(session)
     }
 
-    fn close(self, reason: String) -> SessionMachine<Closed> {
-        self.transition_with(CloseReason { reason })
+    fn close(self, reason: CloseReason) -> SessionMachine<Closed> {
+        self.transition_with(reason)
     }
 }
 
@@ -72,15 +101,15 @@ impl SessionMachine<Authenticated> {
         self.transition_with(subscription)
     }
 
-    fn close(self, reason: String) -> SessionMachine<Closed> {
-        self.transition_with(CloseReason { reason })
+    fn close(self, reason: CloseReason) -> SessionMachine<Closed> {
+        self.transition_with(reason)
     }
 }
 
 #[transition]
 impl SessionMachine<Subscribed> {
-    fn close(self, reason: String) -> SessionMachine<Closed> {
-        self.transition_with(CloseReason { reason })
+    fn close(self, reason: CloseReason) -> SessionMachine<Closed> {
+        self.transition_with(reason)
     }
 }
 
@@ -116,17 +145,17 @@ pub enum ClientFrame {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServerFrame {
     Hello {
-        connection_id: u64,
+        connection_id: ConnectionId,
         peer_label: String,
     },
     Authenticated {
-        user_id: String,
+        user_id: UserId,
     },
     Subscribed {
         topic: String,
     },
     Delivered {
-        user_id: String,
+        user_id: UserId,
         topic: String,
         body: String,
     },
@@ -134,7 +163,7 @@ pub enum ServerFrame {
         message: String,
     },
     Bye {
-        reason: String,
+        reason: CloseReason,
     },
 }
 
@@ -199,7 +228,7 @@ impl SessionHandle {
     }
 }
 
-pub fn spawn_session(connection_id: u64, peer_label: impl Into<String>) -> SessionHandle {
+pub fn spawn_session(connection_id: ConnectionId, peer_label: impl Into<String>) -> SessionHandle {
     let (client_tx, client_rx) = mpsc::channel(8);
     let (server_tx, server_rx) = mpsc::channel(8);
     let peer_label = peer_label.into();
@@ -219,7 +248,7 @@ pub fn spawn_session(connection_id: u64, peer_label: impl Into<String>) -> Sessi
 }
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut session = spawn_session(7, "127.0.0.1:4000");
+    let mut session = spawn_session(ConnectionId(7), "127.0.0.1:4000");
 
     if let Some(frame) = session.recv().await {
         println!("{frame:?}");
@@ -267,7 +296,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run_session(
-    connection_id: u64,
+    connection_id: ConnectionId,
     peer_label: String,
     mut client_rx: mpsc::Receiver<ClientFrame>,
     server_tx: mpsc::Sender<ServerFrame>,
@@ -324,8 +353,15 @@ async fn run_session(
                         session_machine::SomeState::Connected(machine)
                     }
                     ClientFrame::Close { reason } => {
-                        let _closed = machine.close(reason.clone());
-                        send_server(&server_tx, ServerFrame::Bye { reason }).await?;
+                        let close_reason = CloseReason::ClientRequested(reason);
+                        let _closed = machine.close(close_reason.clone());
+                        send_server(
+                            &server_tx,
+                            ServerFrame::Bye {
+                                reason: close_reason,
+                            },
+                        )
+                        .await?;
                         return Ok(());
                     }
                 }
@@ -363,8 +399,15 @@ async fn run_session(
                         session_machine::SomeState::Authenticated(machine)
                     }
                     ClientFrame::Close { reason } => {
-                        let _closed = machine.close(reason.clone());
-                        send_server(&server_tx, ServerFrame::Bye { reason }).await?;
+                        let close_reason = CloseReason::ClientRequested(reason);
+                        let _closed = machine.close(close_reason.clone());
+                        send_server(
+                            &server_tx,
+                            ServerFrame::Bye {
+                                reason: close_reason,
+                            },
+                        )
+                        .await?;
                         return Ok(());
                     }
                 }
@@ -395,8 +438,15 @@ async fn run_session(
                         }
                     },
                     ClientFrame::Close { reason } => {
-                        let _closed = machine.close(reason.clone());
-                        send_server(&server_tx, ServerFrame::Bye { reason }).await?;
+                        let close_reason = CloseReason::ClientRequested(reason);
+                        let _closed = machine.close(close_reason.clone());
+                        send_server(
+                            &server_tx,
+                            ServerFrame::Bye {
+                                reason: close_reason,
+                            },
+                        )
+                        .await?;
                         return Ok(());
                     }
                 }

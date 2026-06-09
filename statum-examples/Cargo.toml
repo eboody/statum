@@ -24,7 +24,9 @@ workspace = true
 features = ["rebuild-batch", "rebuild-reports"]
 
 [features]
-default = []
+# The showcase crate intentionally defaults to introspection: several public examples
+# render generated transition constants, graph metadata, and rebuild reports.
+default = ["introspection"]
 introspection = ["statum/introspection"]
 
 [dependencies.tokio]

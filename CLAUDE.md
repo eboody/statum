@@ -1,3 +1,18 @@
+<!-- semantic-code-doctrine:start -->
+# Semantic Code Doctrine
+
+When working in this repository, also follow Eran's Semantic Code Doctrine.
+
+Repo-local references:
+
+- `docs/development/semantic-code-doctrine.md`
+- `docs/development/semantic-code-review-checklist.md`
+- `docs/development/semantic-code-task-prompt.md`
+
+Short rule: preserve semantic fidelity. Model Statum's states, transitions, validators, diagnostics, feature surfaces, errors, examples, and generated APIs so the code shape tells the truth. Encode meaningful invariants as semantic enums or enum-centered concepts, refactor builders/typestate/newtypes/errors around those invariants, quarantine boundary ugliness, make meaningful conversions explicit, and write tests that assert semantic contracts rather than incidental implementation trivia.
+
+<!-- semantic-code-doctrine:end -->
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 

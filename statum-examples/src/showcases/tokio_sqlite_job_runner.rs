@@ -1,5 +1,6 @@
 use sqlx::{FromRow, SqlitePool, sqlite};
 use statum::{machine, state, transition, validators};
+use std::fmt;
 
 pub const RETRY_DELAY_MS: i64 = 1_000;
 
@@ -18,15 +19,63 @@ pub enum JobState {
     Failed(FailureInfo),
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct JobId(pub i64);
+
+impl fmt::Display for JobId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeaseToken(pub String);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JobFailure {
+    TemporaryUpstreamTimeout,
+    PermanentAttemptFailure { attempt: i64 },
+    ExhaustedAttempts { job_type: String, max_attempts: i64 },
+    UnsupportedPayload { job_type: String, payload: String },
+    Stored(String),
+}
+
+impl fmt::Display for JobFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TemporaryUpstreamTimeout => formatter.write_str("temporary upstream timeout"),
+            Self::PermanentAttemptFailure { attempt } => {
+                write!(formatter, "attempt {attempt} failed permanently later")
+            }
+            Self::ExhaustedAttempts {
+                job_type,
+                max_attempts,
+            } => {
+                write!(
+                    formatter,
+                    "{job_type} exhausted after {max_attempts} attempts"
+                )
+            }
+            Self::UnsupportedPayload { job_type, payload } => {
+                write!(
+                    formatter,
+                    "{job_type} does not understand payload `{payload}`"
+                )
+            }
+            Self::Stored(message) => formatter.write_str(message),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JobLease {
-    pub lease_token: String,
+    pub lease_token: LeaseToken,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RetryPlan {
     pub available_at_ms: i64,
-    pub last_error: String,
+    pub last_error: JobFailure,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,12 +85,12 @@ pub struct JobResult {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FailureInfo {
-    pub error: String,
+    pub error: JobFailure,
 }
 
 #[machine]
 pub struct JobMachine<JobState> {
-    pub id: i64,
+    pub id: JobId,
     pub job_type: String,
     pub payload: String,
     pub attempts: i64,
@@ -50,7 +99,7 @@ pub struct JobMachine<JobState> {
 
 #[transition]
 impl JobMachine<Queued> {
-    fn start(mut self, lease_token: String) -> JobMachine<Running> {
+    fn start(mut self, lease_token: LeaseToken) -> JobMachine<Running> {
         self.attempts += 1;
         self.transition_with(JobLease { lease_token })
     }
@@ -58,7 +107,7 @@ impl JobMachine<Queued> {
 
 #[transition]
 impl JobMachine<Retrying> {
-    fn restart(mut self, lease_token: String) -> JobMachine<Running> {
+    fn restart(mut self, lease_token: LeaseToken) -> JobMachine<Running> {
         self.attempts += 1;
         self.transition_with(JobLease { lease_token })
     }
@@ -70,14 +119,14 @@ impl JobMachine<Running> {
         self.transition_with(JobResult { output })
     }
 
-    fn retry(self, available_at_ms: i64, error: String) -> JobMachine<Retrying> {
+    fn retry(self, available_at_ms: i64, error: JobFailure) -> JobMachine<Retrying> {
         self.transition_with(RetryPlan {
             available_at_ms,
             last_error: error,
         })
     }
 
-    fn fail(self, error: String) -> JobMachine<Failed> {
+    fn fail(self, error: JobFailure) -> JobMachine<Failed> {
         self.transition_with(FailureInfo { error })
     }
 }
@@ -99,7 +148,7 @@ struct JobRow {
 #[validators(JobMachine)]
 impl JobRow {
     fn is_queued(&self) -> statum::Result<()> {
-        if *id > 0
+        if id.0 > 0
             && !job_type.is_empty()
             && !payload.is_empty()
             && *attempts == 0
@@ -117,7 +166,7 @@ impl JobRow {
     }
 
     fn is_running(&self) -> statum::Result<JobLease> {
-        if *id <= 0
+        if id.0 <= 0
             || job_type.is_empty()
             || payload.is_empty()
             || *attempts <= 0
@@ -132,12 +181,14 @@ impl JobRow {
 
         self.lease_token
             .clone()
-            .map(|lease_token| JobLease { lease_token })
+            .map(|lease_token| JobLease {
+                lease_token: LeaseToken(lease_token),
+            })
             .ok_or(statum::Error::InvalidState)
     }
 
     fn is_retrying(&self) -> statum::Result<RetryPlan> {
-        if *id <= 0
+        if id.0 <= 0
             || job_type.is_empty()
             || payload.is_empty()
             || *attempts <= 0
@@ -154,13 +205,13 @@ impl JobRow {
             .filter(|last_error| !last_error.trim().is_empty())
             .map(|last_error| RetryPlan {
                 available_at_ms: self.available_at_ms,
-                last_error,
+                last_error: JobFailure::Stored(last_error),
             })
             .ok_or(statum::Error::InvalidState)
     }
 
     fn is_succeeded(&self) -> statum::Result<JobResult> {
-        if *id <= 0
+        if id.0 <= 0
             || job_type.is_empty()
             || payload.is_empty()
             || *attempts <= 0
@@ -180,7 +231,7 @@ impl JobRow {
     }
 
     fn is_failed(&self) -> statum::Result<FailureInfo> {
-        if *id <= 0
+        if id.0 <= 0
             || job_type.is_empty()
             || payload.is_empty()
             || *attempts <= 0
@@ -195,14 +246,16 @@ impl JobRow {
 
         self.last_error
             .clone()
-            .map(|error| FailureInfo { error })
+            .map(|error| FailureInfo {
+                error: JobFailure::Stored(error),
+            })
             .ok_or(statum::Error::InvalidState)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JobSnapshot {
-    pub id: i64,
+    pub id: JobId,
     pub job_type: String,
     pub payload: String,
     pub attempts: i64,
@@ -217,7 +270,7 @@ pub struct JobSnapshot {
 impl From<JobRow> for JobSnapshot {
     fn from(row: JobRow) -> Self {
         Self {
-            id: row.id,
+            id: JobId(row.id),
             job_type: row.job_type,
             payload: row.payload,
             attempts: row.attempts,
@@ -521,7 +574,7 @@ impl JobRunner {
     fn rehydrate_row(&self, row: JobRow) -> Result<job_machine::SomeState, RunnerError> {
         row.clone()
             .into_machine()
-            .id(row.id)
+            .id(JobId(row.id))
             .job_type(row.job_type)
             .payload(row.payload)
             .attempts(row.attempts)
@@ -530,9 +583,9 @@ impl JobRunner {
             .map_err(|_| RunnerError::CorruptState)
     }
 
-    fn next_lease_token(&mut self) -> String {
+    fn next_lease_token(&mut self) -> LeaseToken {
         self.lease_sequence += 1;
-        format!("lease-{}-{}", self.now_ms, self.lease_sequence)
+        LeaseToken(format!("lease-{}-{}", self.now_ms, self.lease_sequence))
     }
 
     async fn process_running_job(&mut self, machine: JobMachine<Running>) -> ProcessedJob {
@@ -549,21 +602,23 @@ impl JobRunner {
             ),
             "flaky" if attempts == 1 => ProcessedJob::Retrying(machine.retry(
                 self.now_ms + RETRY_DELAY_MS,
-                "temporary upstream timeout".to_string(),
+                JobFailure::TemporaryUpstreamTimeout,
             )),
             "flaky" => ProcessedJob::Succeeded(
                 machine.succeed(format!("{job_type} recovered on attempt {attempts}")),
             ),
             "always-fail" if attempts < max_attempts => ProcessedJob::Retrying(machine.retry(
                 self.now_ms + RETRY_DELAY_MS,
-                format!("attempt {attempts} failed permanently later"),
+                JobFailure::PermanentAttemptFailure { attempt: attempts },
             )),
-            "always-fail" => ProcessedJob::Failed(machine.fail(format!(
-                "{job_type} exhausted after {max_attempts} attempts"
-            ))),
-            other => ProcessedJob::Failed(
-                machine.fail(format!("{job_type} does not understand payload `{other}`")),
-            ),
+            "always-fail" => ProcessedJob::Failed(machine.fail(JobFailure::ExhaustedAttempts {
+                job_type: job_type.clone(),
+                max_attempts,
+            })),
+            other => ProcessedJob::Failed(machine.fail(JobFailure::UnsupportedPayload {
+                job_type,
+                payload: other.to_string(),
+            })),
         }
     }
 
@@ -577,8 +632,8 @@ impl JobRunner {
         )
         .bind(machine.attempts)
         .bind(STATUS_RUNNING)
-        .bind(&machine.state_data.lease_token)
-        .bind(machine.id)
+        .bind(&machine.state_data.lease_token.0)
+        .bind(machine.id.0)
         .execute(&self.pool)
         .await?;
 
@@ -596,8 +651,8 @@ impl JobRunner {
         .bind(machine.attempts)
         .bind(STATUS_RETRYING)
         .bind(machine.state_data.available_at_ms)
-        .bind(&machine.state_data.last_error)
-        .bind(machine.id)
+        .bind(machine.state_data.last_error.to_string())
+        .bind(machine.id.0)
         .execute(&self.pool)
         .await?;
 
@@ -615,7 +670,7 @@ impl JobRunner {
         .bind(machine.attempts)
         .bind(STATUS_SUCCEEDED)
         .bind(&machine.state_data.output)
-        .bind(machine.id)
+        .bind(machine.id.0)
         .execute(&self.pool)
         .await?;
 
@@ -632,8 +687,8 @@ impl JobRunner {
         )
         .bind(machine.attempts)
         .bind(STATUS_FAILED)
-        .bind(&machine.state_data.error)
-        .bind(machine.id)
+        .bind(machine.state_data.error.to_string())
+        .bind(machine.id.0)
         .execute(&self.pool)
         .await?;
 
@@ -660,7 +715,7 @@ mod tests {
                 assert_eq!(machine.attempts, 1);
                 assert_eq!(machine.state_data.available_at_ms, RETRY_DELAY_MS);
                 assert_eq!(
-                    machine.state_data.last_error.as_str(),
+                    machine.state_data.last_error.to_string(),
                     "temporary upstream timeout"
                 );
             }

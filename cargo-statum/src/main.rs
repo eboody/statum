@@ -98,9 +98,32 @@ enum Severity {
     Breaking,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MachineSelector {
+    AxumSqliteReviewDocument,
+}
+
+impl MachineSelector {
+    fn parse(input: &str) -> Result<Self, MachineSelectorParseError> {
+        match input {
+            "axum-sqlite-review" | "DocumentMachine" | "axum_sqlite_review::DocumentMachine" => {
+                Ok(Self::AxumSqliteReviewDocument)
+            }
+            _ => Err(MachineSelectorParseError {
+                requested: input.to_owned(),
+            }),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MachineSelectorParseError {
+    requested: String,
+}
+
 #[derive(Debug)]
 enum Error {
-    UnsupportedMachine(String),
+    UnsupportedMachine(MachineSelectorParseError),
     UnsupportedFormat(&'static str),
     MissingArgument(&'static str),
     Io {
@@ -119,9 +142,10 @@ enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnsupportedMachine(machine) => write!(
+            Self::UnsupportedMachine(error) => write!(
                 formatter,
-                "unsupported machine `{machine}`; prototype supports axum-sqlite-review, DocumentMachine, and axum_sqlite_review::DocumentMachine"
+                "unsupported machine `{}`; supported machine selectors: axum-sqlite-review, DocumentMachine, axum_sqlite_review::DocumentMachine",
+                error.requested
             ),
             Self::UnsupportedFormat(message) => formatter.write_str(message),
             Self::MissingArgument(argument) => {
@@ -186,9 +210,7 @@ fn run(cli: Cli) -> Result<(), Error> {
 }
 
 fn render_agent_context(args: AgentContextArgs) -> Result<(), Error> {
-    if !is_supported_flagship_machine(&args.machine) {
-        return Err(Error::UnsupportedMachine(args.machine));
-    }
+    let _selector = MachineSelector::parse(&args.machine).map_err(Error::UnsupportedMachine)?;
 
     let metadata = axum_sqlite_review::workflow_stable_graph_metadata();
     print!("{}", render_agent_context_markdown(&metadata));
@@ -196,9 +218,7 @@ fn render_agent_context(args: AgentContextArgs) -> Result<(), Error> {
 }
 
 fn render_explain(args: ExplainArgs) -> Result<(), Error> {
-    if !is_supported_flagship_machine(&args.machine) {
-        return Err(Error::UnsupportedMachine(args.machine));
-    }
+    let _selector = MachineSelector::parse(&args.machine).map_err(Error::UnsupportedMachine)?;
 
     let metadata = axum_sqlite_review::workflow_stable_graph_metadata();
     print!("{}", render_workflow_explanation(&metadata));
@@ -206,9 +226,7 @@ fn render_explain(args: ExplainArgs) -> Result<(), Error> {
 }
 
 fn render_docs(args: DocsArgs) -> Result<(), Error> {
-    if !is_supported_flagship_machine(&args.machine) {
-        return Err(Error::UnsupportedMachine(args.machine));
-    }
+    let _selector = MachineSelector::parse(&args.machine).map_err(Error::UnsupportedMachine)?;
 
     let metadata = axum_sqlite_review::workflow_stable_graph_metadata();
     print!(
@@ -227,9 +245,7 @@ fn run_graph(args: GraphArgs) -> Result<(), Error> {
 
 fn render_graph(args: GraphArgs) -> Result<(), Error> {
     let machine = args.machine.ok_or(Error::MissingArgument("--machine"))?;
-    if !is_supported_flagship_machine(&machine) {
-        return Err(Error::UnsupportedMachine(machine));
-    }
+    let _selector = MachineSelector::parse(&machine).map_err(Error::UnsupportedMachine)?;
 
     let metadata = axum_sqlite_review::workflow_stable_graph_metadata();
     match args.format {
@@ -941,13 +957,6 @@ fn markdown_change_label(change: &GraphChange) -> String {
         "unsupported_cases_changed" => "unsupported cases changed".to_string(),
         _ => format!("{} `{}`", change.category, change.key),
     }
-}
-
-fn is_supported_flagship_machine(machine: &str) -> bool {
-    matches!(
-        machine,
-        "axum-sqlite-review" | "DocumentMachine" | "axum_sqlite_review::DocumentMachine"
-    )
 }
 
 fn normalize_cargo_subcommand_args<I>(args: I) -> Vec<std::ffi::OsString>

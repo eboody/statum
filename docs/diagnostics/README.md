@@ -20,7 +20,7 @@ Pages marked as placeholders intentionally rely on native Rust errors today.
 They remain in this guide so maintainers can see every known diagnostic or
 regression fixture in one place.
 
-Known fixture count: 76. First-party diagnostic pages: 62. Compiler-fallback placeholders: 14.
+Known fixture count: 79. First-party diagnostic pages: 62. Compiler-fallback placeholders: 17.
 
 ## State
 - [invalid_builder_missing_state_data](invalid_builder_missing_state_data.md) — placeholder
@@ -48,6 +48,7 @@ Known fixture count: 76. First-party diagnostic pages: 62. Compiler-fallback pla
 - [invalid_machine_private_field_access](invalid_machine_private_field_access.md) — placeholder
 - [invalid_machine_unknown_attr_key](invalid_machine_unknown_attr_key.md) — diagnostic
 - [invalid_machine_wrong_generic](invalid_machine_wrong_generic.md) — diagnostic
+- [invalid_default_introspection_surface](invalid_default_introspection_surface.md) — placeholder
 - [invalid_rebuild_builder_duplicate_field](invalid_rebuild_builder_duplicate_field.md) — placeholder
 - [invalid_rebuild_many_builder_duplicate_field](invalid_rebuild_many_builder_duplicate_field.md) — placeholder
 
@@ -89,6 +90,8 @@ Known fixture count: 76. First-party diagnostic pages: 62. Compiler-fallback pla
 ## Validators
 - [invalid_validators_alias_wrong_payload](invalid_validators_alias_wrong_payload.md) — diagnostic
 - [invalid_validators_declared_before_machine](invalid_validators_declared_before_machine.md) — diagnostic
+- [invalid_validators_default_batch_disabled](invalid_validators_default_batch_disabled.md) — placeholder
+- [invalid_validators_default_reports_disabled](invalid_validators_default_reports_disabled.md) — placeholder
 - [invalid_validators_missing_machine_path](invalid_validators_missing_machine_path.md) — diagnostic
 - [invalid_validators_missing_variant](invalid_validators_missing_variant.md) — diagnostic
 - [invalid_validators_no_methods](invalid_validators_no_methods.md) — diagnostic

@@ -39,8 +39,6 @@ fn test_invalid_machine_usage() {
     t.compile_fail("tests/ui/invalid_machine_builder_duplicate_state_data.rs");
     t.compile_fail("tests/ui/invalid_builder_missing_machine_field.rs");
     t.compile_fail("tests/ui/invalid_builder_missing_state_data.rs");
-    t.compile_fail("tests/ui/invalid_builder_missing_machine_field.rs");
-    t.compile_fail("tests/ui/invalid_builder_missing_state_data.rs");
 }
 
 #[test]

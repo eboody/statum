@@ -363,12 +363,15 @@ async fn sqlite_event_log_rebuild_rejects_invalid_transition() {
 
 #[tokio::test]
 async fn tokio_websocket_session_happy_path() {
-    let mut session = tokio_websocket_session::spawn_session(7, "127.0.0.1:4000");
+    let mut session = tokio_websocket_session::spawn_session(
+        tokio_websocket_session::ConnectionId(7),
+        "127.0.0.1:4000",
+    );
 
     assert_eq!(
         recv_server_frame(&mut session).await,
         tokio_websocket_session::ServerFrame::Hello {
-            connection_id: 7,
+            connection_id: tokio_websocket_session::ConnectionId(7),
             peer_label: "127.0.0.1:4000".to_string(),
         }
     );
@@ -382,7 +385,7 @@ async fn tokio_websocket_session_happy_path() {
     assert_eq!(
         recv_server_frame(&mut session).await,
         tokio_websocket_session::ServerFrame::Authenticated {
-            user_id: "alice".to_string(),
+            user_id: tokio_websocket_session::UserId("alice".to_string()),
         }
     );
 
@@ -409,7 +412,7 @@ async fn tokio_websocket_session_happy_path() {
     assert_eq!(
         recv_server_frame(&mut session).await,
         tokio_websocket_session::ServerFrame::Delivered {
-            user_id: "alice".to_string(),
+            user_id: tokio_websocket_session::UserId("alice".to_string()),
             topic: "deployments".to_string(),
             body: "rollout started".to_string(),
         }
@@ -424,7 +427,9 @@ async fn tokio_websocket_session_happy_path() {
     assert_eq!(
         recv_server_frame(&mut session).await,
         tokio_websocket_session::ServerFrame::Bye {
-            reason: "demo complete".to_string(),
+            reason: tokio_websocket_session::CloseReason::ClientRequested(
+                "demo complete".to_string()
+            ),
         }
     );
 
@@ -433,7 +438,10 @@ async fn tokio_websocket_session_happy_path() {
 
 #[tokio::test]
 async fn tokio_websocket_session_rejects_out_of_order_frames() {
-    let mut session = tokio_websocket_session::spawn_session(8, "127.0.0.1:5000");
+    let mut session = tokio_websocket_session::spawn_session(
+        tokio_websocket_session::ConnectionId(8),
+        "127.0.0.1:5000",
+    );
     let _ = recv_server_frame(&mut session).await;
 
     session

@@ -79,6 +79,43 @@ Rustfmt defaults (4-space). `snake_case` modules/functions, `CamelCase` types/tr
 ## Commits & PRs
 Prefer `type(scope): short summary` (history mixes conventional prefixes with informal messages). PRs should update examples or tests when behavior changes.
 
+<!-- semantic-code-doctrine:start -->
+
+## Semantic Code Doctrine — Statum Repository Law
+
+This repository must also follow Eran's Semantic Code Doctrine. Treat this as a first-class design constraint alongside the existing Statum semantic-authority rules.
+
+Canonical repo-local references:
+
+- `docs/development/semantic-code-doctrine.md`
+- `docs/development/semantic-code-review-checklist.md`
+- `docs/development/semantic-code-task-prompt.md`
+
+Hermes sessions should load the `semantic-code-doctrine` skill before code/design/review work in this repo.
+
+### Statum-Specific Doctrine Requirements
+
+- **Semantic fidelity:** Statum's public API, examples, diagnostics, generated code, and docs must truthfully represent the typestate/state-machine concepts they expose.
+- **Invariants as semantic enums/concepts:** When Statum encodes states, transitions, validators, rebuild modes, introspection capability, feature surfaces, diagnostics, or report outcomes, model those invariants explicitly as semantic enums or enum-centered concepts before building ergonomics around them.
+- **Typestate around truth:** Builders, marker types, generated APIs, transition data, and validator surfaces should be refactored around invariant-bearing concepts. Do not let bools, strings, feature accidents, or macro mechanics become the semantic center.
+- **Module paths carry meaning:** Prefer module-qualified semantic names and public re-exports only when they compress meaning without erasing context.
+- **Boundary quarantine:** Raw proc-macro input, token streams, CLI args, JSON, SQLite rows, fixture text, and trybuild stderr are boundary material. Promote them into semantic internal types before they shape core logic.
+- **Explicit conversions:** Any conversion from syntax/fixture/runtime input into Statum semantic concepts should be named and fallible where appropriate. Avoid casual `.into()` for semantic promotion.
+- **Module-local errors:** Semantically meaningful modules should own `error.rs`, `Error`, and `pub type Result<T> = core::result::Result<T, Error>;`. Parent errors should compose child errors explicitly with `#[from]`/`derive_more` or SNAFU context selectors when that improves precision.
+- **Semantic tests:** Trybuild fixtures, examples, and unit/integration tests are executable doctrine. Names and assertions should describe the Statum contract being protected, not incidental compiler noise.
+- **Feature-boundary truth:** Cargo features are semantic boundaries. If an API surface requires `introspection`, `rebuild-reports`, validators, persistence, or another feature, examples/docs/tests must make that boundary explicit and compile accordingly.
+- **Exceptions:** Generated code, compatibility shims, and compiler-output fixtures may be ugly, but violations must remain local, intentional, and quarantined behind semantic APIs.
+
+Before implementing or reviewing substantial changes, perform the doctrine protocol:
+
+1. Identify Statum concepts, invariants, boundaries, failure modes, and tests.
+2. Check whether awkwardness is semantic pressure rather than something to hide with helpers.
+3. Implement small coherent edits around the semantic model.
+4. Run the appropriate focused gate plus `bash scripts/check_ci_parity.sh` before closeout when feasible.
+5. Report invariants encoded, errors/results introduced, tests proving the contract, and any quarantined exceptions.
+
+<!-- semantic-code-doctrine:end -->
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 

@@ -11,6 +11,32 @@ pub enum CartState {
     CheckedOut(CheckedOutCart),
 }
 
+#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, Serialize)]
+pub struct CartId(pub i64);
+
+impl fmt::Display for CartId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ReceiptId(pub String);
+
+impl ReceiptId {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl std::ops::Deref for ReceiptId {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OpenCart {
     pub items: Vec<String>,
@@ -19,18 +45,18 @@ pub struct OpenCart {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CheckedOutCart {
     pub items: Vec<String>,
-    pub receipt_id: String,
+    pub receipt_id: ReceiptId,
 }
 
 #[machine]
 pub struct CartMachine<CartState> {
-    pub cart_id: i64,
+    pub cart_id: CartId,
     pub owner: String,
 }
 
 #[transition]
 impl CartMachine<Open> {
-    fn checkout(self, receipt_id: String) -> CartMachine<CheckedOut> {
+    fn checkout(self, receipt_id: ReceiptId) -> CartMachine<CheckedOut> {
         self.transition_map(|open| CheckedOutCart {
             items: open.items,
             receipt_id,
@@ -73,7 +99,7 @@ impl CartSnapshot {
             .filter(|receipt_id| !receipt_id.trim().is_empty())
             .map(|receipt_id| CheckedOutCart {
                 items: self.items.clone(),
-                receipt_id,
+                receipt_id: ReceiptId(receipt_id),
             })
             .ok_or(statum::Error::InvalidState)
     }
@@ -81,17 +107,17 @@ impl CartSnapshot {
 
 #[derive(Debug, Default)]
 pub struct JsonSnapshotStore {
-    rows: HashMap<i64, String>,
+    rows: HashMap<CartId, String>,
     next_id: i64,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct CartResponse {
-    pub cart_id: i64,
+    pub cart_id: CartId,
     pub owner: String,
     pub status: String,
     pub items: Vec<String>,
-    pub receipt_id: Option<String>,
+    pub receipt_id: Option<ReceiptId>,
 }
 
 #[derive(Debug)]
@@ -141,7 +167,7 @@ impl JsonSnapshotStore {
 
         let cart_id = self.allocate_id();
         let snapshot = CartSnapshot {
-            cart_id,
+            cart_id: cart_id.0,
             owner: owner.to_owned(),
             status: STATUS_OPEN.to_owned(),
             items,
@@ -152,25 +178,31 @@ impl JsonSnapshotStore {
         Ok(snapshot.into())
     }
 
-    pub fn fetch_snapshot(&self, cart_id: i64) -> Result<CartSnapshot, StoreError> {
+    pub fn fetch_snapshot(&self, cart_id: CartId) -> Result<CartSnapshot, StoreError> {
         let json = self.rows.get(&cart_id).ok_or(StoreError::NotFound)?;
         Ok(serde_json::from_str(json)?)
     }
 
-    pub fn load_cart_state(&self, cart_id: i64) -> Result<cart_machine::SomeState, StoreError> {
+    pub fn load_cart_state(&self, cart_id: CartId) -> Result<cart_machine::SomeState, StoreError> {
         let snapshot = self.fetch_snapshot(cart_id)?;
         rebuild_cart_snapshot(&snapshot)
             .into_result()
             .map_err(|_| StoreError::CorruptSnapshot)
     }
 
-    pub fn checkout(&mut self, cart_id: i64, receipt_id: &str) -> Result<CartResponse, StoreError> {
+    pub fn checkout(
+        &mut self,
+        cart_id: CartId,
+        receipt_id: &str,
+    ) -> Result<CartResponse, StoreError> {
         if receipt_id.trim().is_empty() {
             return Err(StoreError::InvalidInput("receipt_id is required"));
         }
 
         let machine = match self.load_cart_state(cart_id)? {
-            cart_machine::SomeState::Open(machine) => machine.checkout(receipt_id.to_owned()),
+            cart_machine::SomeState::Open(machine) => {
+                machine.checkout(ReceiptId(receipt_id.to_owned()))
+            }
             _ => {
                 return Err(StoreError::InvalidTransition(
                     "checkout requires an open cart",
@@ -183,14 +215,14 @@ impl JsonSnapshotStore {
         Ok(snapshot.into())
     }
 
-    fn allocate_id(&mut self) -> i64 {
+    fn allocate_id(&mut self) -> CartId {
         self.next_id += 1;
-        self.next_id
+        CartId(self.next_id)
     }
 
     fn persist_snapshot(&mut self, snapshot: &CartSnapshot) -> Result<(), StoreError> {
         let json = serde_json::to_string(snapshot)?;
-        self.rows.insert(snapshot.cart_id, json);
+        self.rows.insert(CartId(snapshot.cart_id), json);
         Ok(())
     }
 }
@@ -199,7 +231,7 @@ fn rebuild_cart_snapshot(
     snapshot: &CartSnapshot,
 ) -> statum::RebuildReport<cart_machine::SomeState> {
     CartMachine::rebuild(snapshot)
-        .cart_id(snapshot.cart_id)
+        .cart_id(CartId(snapshot.cart_id))
         .owner(snapshot.owner.clone())
         .build_report()
 }
@@ -207,11 +239,11 @@ fn rebuild_cart_snapshot(
 impl CartSnapshot {
     fn from_checked_out(machine: &CartMachine<CheckedOut>) -> Self {
         Self {
-            cart_id: machine.cart_id,
+            cart_id: machine.cart_id.0,
             owner: machine.owner.clone(),
             status: STATUS_CHECKED_OUT.to_owned(),
             items: machine.state_data.items.clone(),
-            receipt_id: Some(machine.state_data.receipt_id.clone()),
+            receipt_id: Some(machine.state_data.receipt_id.0.clone()),
         }
     }
 }
@@ -219,11 +251,11 @@ impl CartSnapshot {
 impl From<CartSnapshot> for CartResponse {
     fn from(snapshot: CartSnapshot) -> Self {
         Self {
-            cart_id: snapshot.cart_id,
+            cart_id: CartId(snapshot.cart_id),
             owner: snapshot.owner,
             status: snapshot.status,
             items: snapshot.items,
-            receipt_id: snapshot.receipt_id,
+            receipt_id: snapshot.receipt_id.map(ReceiptId),
         }
     }
 }

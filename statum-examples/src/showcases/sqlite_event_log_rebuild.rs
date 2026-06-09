@@ -1,5 +1,6 @@
 use sqlx::{FromRow, SqlitePool, sqlite};
 use statum::{machine, projection, state, transition, validators};
+use std::fmt;
 
 const EVENT_CREATED: &str = "created";
 const EVENT_PAID: &str = "paid";
@@ -16,9 +17,18 @@ pub enum OrderState {
     Delivered(DeliveredOrder),
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct OrderId(pub i64);
+
+impl fmt::Display for OrderId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OrderContext {
-    pub order_id: i64,
+    pub order_id: OrderId,
     pub customer: String,
     pub sku: String,
 }
@@ -135,7 +145,7 @@ impl TryFrom<&OrderProjectionRow> for OrderContext {
         }
 
         Ok(Self {
-            order_id: row.order_id,
+            order_id: OrderId(row.order_id),
             customer: row.customer.clone(),
             sku: row.sku.clone(),
         })
@@ -336,24 +346,24 @@ impl OrderEventStore {
         Ok(())
     }
 
-    pub async fn create_order(&self, customer: &str, sku: &str) -> Result<i64, RebuildError> {
+    pub async fn create_order(&self, customer: &str, sku: &str) -> Result<OrderId, RebuildError> {
         ensure_non_empty(customer, "customer is required")?;
         ensure_non_empty(sku, "sku is required")?;
 
         let order_id = self.next_order_id().await?;
         self.append_event(order_id, EVENT_CREATED, Some(customer), Some(sku), None)
             .await?;
-        Ok(order_id)
+        Ok(OrderId(order_id))
     }
 
-    pub async fn pay(&self, order_id: i64, payment_receipt: &str) -> Result<(), RebuildError> {
+    pub async fn pay(&self, order_id: OrderId, payment_receipt: &str) -> Result<(), RebuildError> {
         ensure_non_empty(payment_receipt, "payment_receipt is required")?;
 
         match self.load_state(order_id).await? {
             order_machine::SomeState::Created(machine) => {
                 let machine = machine.pay(payment_receipt.to_string());
                 self.append_event(
-                    machine.state_data.order.order_id,
+                    machine.state_data.order.order_id.0,
                     EVENT_PAID,
                     None,
                     None,
@@ -367,14 +377,14 @@ impl OrderEventStore {
         }
     }
 
-    pub async fn pack(&self, order_id: i64, pick_ticket: &str) -> Result<(), RebuildError> {
+    pub async fn pack(&self, order_id: OrderId, pick_ticket: &str) -> Result<(), RebuildError> {
         ensure_non_empty(pick_ticket, "pick_ticket is required")?;
 
         match self.load_state(order_id).await? {
             order_machine::SomeState::Paid(machine) => {
                 let machine = machine.pack(pick_ticket.to_string());
                 self.append_event(
-                    machine.state_data.order.order_id,
+                    machine.state_data.order.order_id.0,
                     EVENT_PACKED,
                     None,
                     None,
@@ -388,14 +398,14 @@ impl OrderEventStore {
         }
     }
 
-    pub async fn ship(&self, order_id: i64, tracking_number: &str) -> Result<(), RebuildError> {
+    pub async fn ship(&self, order_id: OrderId, tracking_number: &str) -> Result<(), RebuildError> {
         ensure_non_empty(tracking_number, "tracking_number is required")?;
 
         match self.load_state(order_id).await? {
             order_machine::SomeState::Packed(machine) => {
                 let machine = machine.ship(tracking_number.to_string());
                 self.append_event(
-                    machine.state_data.order.order_id,
+                    machine.state_data.order.order_id.0,
                     EVENT_SHIPPED,
                     None,
                     None,
@@ -409,12 +419,12 @@ impl OrderEventStore {
         }
     }
 
-    pub async fn deliver(&self, order_id: i64) -> Result<(), RebuildError> {
+    pub async fn deliver(&self, order_id: OrderId) -> Result<(), RebuildError> {
         match self.load_state(order_id).await? {
             order_machine::SomeState::Shipped(machine) => {
                 let machine = machine.deliver();
                 self.append_event(
-                    machine.state_data.order.order_id,
+                    machine.state_data.order.order_id.0,
                     EVENT_DELIVERED,
                     None,
                     None,
@@ -430,11 +440,11 @@ impl OrderEventStore {
 
     pub async fn load_state(
         &self,
-        order_id: i64,
+        order_id: OrderId,
     ) -> Result<order_machine::SomeState, RebuildError> {
-        let events = self.events_for(order_id).await?;
+        let events = self.events_for(order_id.0).await?;
         let row = projection::reduce_one(events, &OrderProjector)
-            .map_err(|error| map_projection_error(error, Some(order_id)))?;
+            .map_err(|error| map_projection_error(error, Some(order_id.0)))?;
         row.into_machine().build().map_err(|_| {
             RebuildError::CorruptEventLog("projected order row did not match any validator")
         })
@@ -674,7 +684,7 @@ mod tests {
         let state = row.into_machine().build().unwrap();
         match state {
             order_machine::SomeState::Packed(machine) => {
-                assert_eq!(machine.state_data.order.order_id, 7);
+                assert_eq!(machine.state_data.order.order_id, OrderId(7));
                 assert_eq!(machine.state_data.pick_ticket.as_str(), "pick-7");
             }
             _ => panic!("expected a packed order"),

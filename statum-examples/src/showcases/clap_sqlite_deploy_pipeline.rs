@@ -3,7 +3,7 @@ use sqlx::{FromRow, SqlitePool, sqlite};
 use statum::{machine, state, transition, validators};
 use std::{
     ffi::OsString,
-    fs,
+    fmt, fs,
     path::{Path, PathBuf},
 };
 
@@ -38,30 +38,67 @@ pub struct ApprovalRequest {
     pub ticket: String,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct DeploymentId(pub i64);
+
+impl fmt::Display for DeploymentId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OperationId {
-    pub operation_id: String,
+    pub value: String,
     pub approved_by: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ApplyReceipt {
-    pub receipt_id: String,
+    pub value: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RollbackReason {
+    OperatorRequested(String),
+    Stored(String),
+}
+
+impl fmt::Display for RollbackReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OperatorRequested(reason) | Self::Stored(reason) => f.write_str(reason),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RollbackInfo {
-    pub reason: String,
+    pub reason: RollbackReason,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeploymentFailure {
+    ApplyFailed(String),
+    Stored(String),
+}
+
+impl fmt::Display for DeploymentFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ApplyFailed(reason) | Self::Stored(reason) => f.write_str(reason),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FailureInfo {
-    pub error: String,
+    pub error: DeploymentFailure,
 }
 
 #[machine]
 pub struct DeploymentMachine<DeploymentState> {
-    pub id: i64,
+    pub id: DeploymentId,
     pub service: String,
     pub environment: String,
     pub version: String,
@@ -101,14 +138,14 @@ impl deployment_machine::SomeState {
             Self::Applying(machine) => {
                 let mut lines = machine.summary_lines();
                 lines.push("state=applying".to_string());
-                lines.push(format!("operation_id={}", machine.state_data.operation_id));
+                lines.push(format!("operation_id={}", machine.state_data.value));
                 lines.push(format!("approved_by={}", machine.state_data.approved_by));
                 lines
             }
             Self::Applied(machine) => {
                 let mut lines = machine.summary_lines();
                 lines.push("state=applied".to_string());
-                lines.push(format!("receipt_id={}", machine.state_data.receipt_id));
+                lines.push(format!("receipt_id={}", machine.state_data.value));
                 lines
             }
             Self::RolledBack(machine) => {
@@ -154,7 +191,7 @@ impl DeploymentMachine<AwaitingApproval> {
     fn approve(self, approved_by: String) -> DeploymentMachine<Applying> {
         let operation_id = format!("op:{}:{}", self.id, self.version);
         self.transition_with(OperationId {
-            operation_id,
+            value: operation_id,
             approved_by,
         })
     }
@@ -164,18 +201,22 @@ impl DeploymentMachine<AwaitingApproval> {
 impl DeploymentMachine<Applying> {
     fn finish_success(self) -> DeploymentMachine<Applied> {
         let receipt_id = format!("receipt:{}:{}", self.id, self.version);
-        self.transition_with(ApplyReceipt { receipt_id })
+        self.transition_with(ApplyReceipt { value: receipt_id })
     }
 
     fn finish_failure(self, error: String) -> DeploymentMachine<Failed> {
-        self.transition_with(FailureInfo { error })
+        self.transition_with(FailureInfo {
+            error: DeploymentFailure::ApplyFailed(error),
+        })
     }
 }
 
 #[transition]
 impl DeploymentMachine<Applied> {
     fn rollback(self, reason: String) -> DeploymentMachine<RolledBack> {
-        self.transition_with(RollbackInfo { reason })
+        self.transition_with(RollbackInfo {
+            reason: RollbackReason::OperatorRequested(reason),
+        })
     }
 }
 
@@ -198,7 +239,7 @@ struct DeploymentRow {
 #[validators(DeploymentMachine)]
 impl DeploymentRow {
     fn is_draft(&self) -> statum::Result<()> {
-        if *id > 0
+        if id.0 > 0
             && !service.is_empty()
             && !environment.is_empty()
             && !version.is_empty()
@@ -218,7 +259,7 @@ impl DeploymentRow {
     }
 
     fn is_planned(&self) -> statum::Result<PlanDigest> {
-        if *id <= 0
+        if id.0 <= 0
             || service.is_empty()
             || environment.is_empty()
             || version.is_empty()
@@ -241,7 +282,7 @@ impl DeploymentRow {
     }
 
     fn is_awaiting_approval(&self) -> statum::Result<ApprovalRequest> {
-        if *id <= 0
+        if id.0 <= 0
             || service.is_empty()
             || environment.is_empty()
             || version.is_empty()
@@ -264,7 +305,7 @@ impl DeploymentRow {
     }
 
     fn is_applying(&self) -> statum::Result<OperationId> {
-        if *id <= 0
+        if id.0 <= 0
             || service.is_empty()
             || environment.is_empty()
             || version.is_empty()
@@ -283,7 +324,7 @@ impl DeploymentRow {
                 if !approved_by.trim().is_empty() && !operation_id.trim().is_empty() =>
             {
                 Ok(OperationId {
-                    operation_id: operation_id.clone(),
+                    value: operation_id.clone(),
                     approved_by: approved_by.clone(),
                 })
             }
@@ -292,7 +333,7 @@ impl DeploymentRow {
     }
 
     fn is_applied(&self) -> statum::Result<ApplyReceipt> {
-        if *id <= 0
+        if id.0 <= 0
             || service.is_empty()
             || environment.is_empty()
             || version.is_empty()
@@ -310,12 +351,12 @@ impl DeploymentRow {
         self.receipt_id
             .clone()
             .filter(|receipt_id| !receipt_id.trim().is_empty())
-            .map(|receipt_id| ApplyReceipt { receipt_id })
+            .map(|receipt_id| ApplyReceipt { value: receipt_id })
             .ok_or(statum::Error::InvalidState)
     }
 
     fn is_rolled_back(&self) -> statum::Result<RollbackInfo> {
-        if *id <= 0
+        if id.0 <= 0
             || service.is_empty()
             || environment.is_empty()
             || version.is_empty()
@@ -333,12 +374,14 @@ impl DeploymentRow {
         self.rollback_reason
             .clone()
             .filter(|reason| !reason.trim().is_empty())
-            .map(|reason| RollbackInfo { reason })
+            .map(|reason| RollbackInfo {
+                reason: RollbackReason::Stored(reason),
+            })
             .ok_or(statum::Error::InvalidState)
     }
 
     fn is_failed(&self) -> statum::Result<FailureInfo> {
-        if *id <= 0
+        if id.0 <= 0
             || service.is_empty()
             || environment.is_empty()
             || version.is_empty()
@@ -356,7 +399,9 @@ impl DeploymentRow {
         self.failure_reason
             .clone()
             .filter(|error| !error.trim().is_empty())
-            .map(|error| FailureInfo { error })
+            .map(|error| FailureInfo {
+                error: DeploymentFailure::Stored(error),
+            })
             .ok_or(statum::Error::InvalidState)
     }
 }
@@ -671,7 +716,7 @@ impl DeploymentStore {
         let row = self.fetch_row(id).await?;
         row.clone()
             .into_machine()
-            .id(row.id)
+            .id(DeploymentId(row.id))
             .service(row.service)
             .environment(row.environment)
             .version(row.version)
@@ -744,7 +789,7 @@ impl DeploymentStore {
 
     async fn persist_planned(&self, machine: &DeploymentMachine<Planned>) -> Result<(), CliError> {
         self.persist_state(
-            machine.id,
+            machine.id.0,
             PersistedPhase {
                 status: STATUS_PLANNED,
                 plan_digest: Some(&machine.state_data.digest),
@@ -764,7 +809,7 @@ impl DeploymentStore {
         machine: &DeploymentMachine<AwaitingApproval>,
     ) -> Result<(), CliError> {
         self.persist_state(
-            machine.id,
+            machine.id.0,
             PersistedPhase {
                 status: STATUS_AWAITING_APPROVAL,
                 plan_digest: None,
@@ -784,13 +829,13 @@ impl DeploymentStore {
         machine: &DeploymentMachine<Applying>,
     ) -> Result<(), CliError> {
         self.persist_state(
-            machine.id,
+            machine.id.0,
             PersistedPhase {
                 status: STATUS_APPLYING,
                 plan_digest: None,
                 approval_ticket: None,
                 approved_by: Some(&machine.state_data.approved_by),
-                operation_id: Some(&machine.state_data.operation_id),
+                operation_id: Some(&machine.state_data.value),
                 receipt_id: None,
                 failure_reason: None,
                 rollback_reason: None,
@@ -801,14 +846,14 @@ impl DeploymentStore {
 
     async fn persist_applied(&self, machine: &DeploymentMachine<Applied>) -> Result<(), CliError> {
         self.persist_state(
-            machine.id,
+            machine.id.0,
             PersistedPhase {
                 status: STATUS_APPLIED,
                 plan_digest: None,
                 approval_ticket: None,
                 approved_by: None,
                 operation_id: None,
-                receipt_id: Some(&machine.state_data.receipt_id),
+                receipt_id: Some(&machine.state_data.value),
                 failure_reason: None,
                 rollback_reason: None,
             },
@@ -818,7 +863,7 @@ impl DeploymentStore {
 
     async fn persist_failed(&self, machine: &DeploymentMachine<Failed>) -> Result<(), CliError> {
         self.persist_state(
-            machine.id,
+            machine.id.0,
             PersistedPhase {
                 status: STATUS_FAILED,
                 plan_digest: None,
@@ -826,7 +871,7 @@ impl DeploymentStore {
                 approved_by: None,
                 operation_id: None,
                 receipt_id: None,
-                failure_reason: Some(&machine.state_data.error),
+                failure_reason: Some(&machine.state_data.error.to_string()),
                 rollback_reason: None,
             },
         )
@@ -838,7 +883,7 @@ impl DeploymentStore {
         machine: &DeploymentMachine<RolledBack>,
     ) -> Result<(), CliError> {
         self.persist_state(
-            machine.id,
+            machine.id.0,
             PersistedPhase {
                 status: STATUS_ROLLED_BACK,
                 plan_digest: None,
@@ -847,7 +892,7 @@ impl DeploymentStore {
                 operation_id: None,
                 receipt_id: None,
                 failure_reason: None,
-                rollback_reason: Some(&machine.state_data.reason),
+                rollback_reason: Some(&machine.state_data.reason.to_string()),
             },
         )
         .await
@@ -904,7 +949,7 @@ mod tests {
         let state = store.load_state(id).await.unwrap();
         match state {
             deployment_machine::SomeState::Applying(machine) => {
-                assert_eq!(machine.state_data.operation_id.as_str(), "op:1:1.2.3");
+                assert_eq!(machine.state_data.value.as_str(), "op:1:1.2.3");
                 assert_eq!(machine.state_data.approved_by.as_str(), "alice");
             }
             _ => panic!("expected an applying deployment"),
