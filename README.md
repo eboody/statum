@@ -13,22 +13,23 @@
 
 # Statum
 
-Statum is a typed workflow-protocol framework for Rust. Use it when an entity
-moves through named phases, only some transitions are legal, and phase-specific
-data should not be visible outside the phase where it is valid.
+Statum is a typed workflow-protocol framework for Rust. Use it when you are
+modeling a concept that moves through distinct states and you want those states
+encoded in the type system.
 
-It is intentionally narrower than a general builder, enum, or validation crate.
-Statum is for durable protocols: document approval, deployment pipelines, job
-leases, sessions, and other flows where persisted facts must be rebuilt into a
-safe typed state before business logic continues.
+The point is the same spirit that makes `Option<T>` and `Result<T, E>` powerful:
+make undesirable states unrepresentable. `Option` makes absence explicit instead
+of hiding it in null. `Result` makes failure explicit instead of hiding it in an
+ambient exception or sentinel value. Statum applies that idea to domain phases:
+a draft document, an in-review document, and a published document can be
+different Rust types with different methods and different data.
 
 The core promise is representational correctness:
 
 - `DocumentMachine<Draft>` can be submitted for review.
 - `DocumentMachine<InReview>` can be approved.
 - Reviewer assignment data only exists while the document is in review.
-- Raw rows, events, and external inputs stay raw until your validators accept
-  them as one legal machine state.
+- Code cannot accidentally call phase-specific behavior from the wrong phase.
 
 Statum provides this through four macros:
 
@@ -142,9 +143,10 @@ service-shaped implementation lives in
 
 ## Typed Rehydration
 
-Typed rehydration is the part that makes Statum useful for real services. Your
-database row, event projection, or API payload remains an untrusted value until
-`#[validators]` accepts it as exactly one state for a machine.
+Typed rehydration is the boundary feature for services that store or receive
+state dynamically. The central model is still typestate: undesirable states are
+unrepresentable in the core API. `#[validators]` is how a database row, event
+projection, or API payload earns its way back into that typed world.
 
 A validator block lives on the persisted type and names the machine it rebuilds:
 
@@ -256,7 +258,7 @@ Use Statum when:
 - Invalid transitions are expensive enough to prevent at compile time.
 - Some data is only valid in specific states.
 - Workflow order, validation order, or resolution order is stable and meaningful.
-- Persisted or projected state needs a typed re-entry point.
+- Dynamic or persisted state needs a typed re-entry point.
 
 Skip Statum when:
 

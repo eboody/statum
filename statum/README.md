@@ -3,9 +3,10 @@
 `statum` is the public facade crate for Statum, a typed workflow-protocol
 framework for Rust.
 
-Use it when an entity moves through named phases, only some transitions are
-legal, and phase-specific data should not be visible outside the phase where it
-is valid.
+Use it when you are modeling a concept that moves through distinct states and
+you want those states encoded in the type system. In the same spirit as
+`Option<T>` and `Result<T, E>`, Statum helps make undesirable states
+unrepresentable in code.
 
 This crate re-exports:
 
@@ -52,7 +53,7 @@ transition return shapes are rejected unless the method provides an explicit
 - `#[state]` defines legal phases.
 - `#[machine]` defines durable context shared across phases.
 - `#[transition]` defines legal edges.
-- `#[validators]` rebuilds typed machines from data accepted by your validators.
+- `#[validators]` brings dynamic or persisted data back into the typed model.
 
 Statum is storage-agnostic. Database examples are integration patterns, not
 built-in adapters.
