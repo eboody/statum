@@ -3,7 +3,7 @@
     <source media="(prefers-color-scheme: dark)" srcset="./docs/static/image/logo-dark.png">
     <img alt="statum logo" src="./docs/static/image/logo.png" width="420">
   </picture>
-  <p><strong>Typed workflow protocols for Rust.</strong></p>
+  <p><strong>Beautiful Rust APIs, backed by typestate.</strong></p>
   <p>
     <a href="https://github.com/eboody/statum/actions/workflows/ci.yml"><img src="https://github.com/eboody/statum/actions/workflows/ci.yml/badge.svg?branch=main&event=push" alt="build status" /></a>
     <a href="https://crates.io/crates/statum"><img src="https://img.shields.io/crates/v/statum.svg?logo=rust" alt="crates.io" /></a>
@@ -13,15 +13,15 @@
 
 # Statum
 
-Statum is a typed workflow-protocol framework for Rust. Use it when you are
-modeling a concept that moves through distinct states and you want those states
-encoded in the type system.
+Statum helps you build beautiful Rust APIs where invalid paths simply do not
+appear. Use it when a concept moves through distinct states and each state should
+expose a different, more precise method surface.
 
 The point is the same spirit that makes `Option<T>` and `Result<T, E>` powerful:
-make undesirable states unrepresentable. `Option` makes absence explicit instead
-of hiding it in null. `Result` makes failure explicit instead of hiding it in an
-ambient exception or sentinel value. Statum applies that idea to domain phases:
-a draft document, an in-review document, and a published document can be
+make undesirable states unrepresentable in code. `Option` makes absence explicit
+instead of hiding it in null. `Result` makes failure explicit instead of hiding it
+in an ambient exception or sentinel value. Statum applies that idea to API
+design: a draft document, an in-review document, and a published document can be
 different Rust types with different methods and different data.
 
 The core promise is representational correctness:
@@ -67,6 +67,8 @@ remember which operations are currently legal.
 A Statum machine does not have to feel like a state-machine API at the call
 site. One of the most useful patterns is a guided builder: each choice narrows
 what the caller can do next until only complete, valid construction paths remain.
+Developers do not need to think about phantom types or protocol states; they
+press `.` and see the next valid methods.
 
 For a Maud or design-system button, choosing the icon-only variant can require
 an accessible label before rendering:
@@ -104,8 +106,8 @@ quest::Quest::builder(quest::LostRelic)
 A branch builder cannot return to the quest until it has an ending. Rewards can
 only appear on successful branches. Dialogue and objective references are typed
 values, not ad-hoc strings. The core idea is still the same: make undesirable
-state unrepresentable in code, while giving developers an ordinary, discoverable
-builder surface.
+state unrepresentable in code, while giving developers an ordinary, discoverable,
+beautiful builder surface.
 
 ## Why Not a Plain Enum?
 

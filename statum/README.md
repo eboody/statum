@@ -1,11 +1,11 @@
 # statum
 
-`statum` is the public facade crate for Statum, a typed workflow-protocol
-framework for Rust.
+`statum` is the public facade crate for Statum: beautiful Rust APIs, backed by
+typestate.
 
 Use it when you are modeling a concept that moves through distinct states and
-you want those states encoded in the type system. In the same spirit as
-`Option<T>` and `Result<T, E>`, Statum helps make undesirable states
+each state should expose a different, more precise method surface. In the same
+spirit as `Option<T>` and `Result<T, E>`, Statum helps make undesirable states
 unrepresentable in code.
 
 This crate re-exports:
@@ -59,11 +59,11 @@ Statum is storage-agnostic. Database examples are integration patterns, not
 built-in adapters.
 
 Use Statum when pressing `.` before and after a phase change should show a
-meaningfully different method surface. This includes guided builders: APIs where
-choosing a variant or phase reveals only the next legal construction methods.
-For example, an icon-only UI button can require an accessible label before
-`render()` exists, and a quest branch can require a typed ending before it can be
-added back to the quest.
+meaningfully different method surface. This includes guided builders: beautiful
+APIs where choosing a variant or phase reveals only the next legal construction
+methods. For example, an icon-only UI button can require an accessible label
+before `render()` exists, and a quest branch can require a typed ending before it
+can be added back to the quest.
 
 Compared with a plain enum, Statum moves legal behavior onto phase-specific
 machine types. If `publish()` only exists on `DocumentMachine<Draft>`, code
