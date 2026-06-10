@@ -59,11 +59,16 @@ Statum is storage-agnostic. Database examples are integration patterns, not
 built-in adapters.
 
 Use Statum when pressing `.` before and after a phase change should show a
-meaningfully different method surface.
+meaningfully different method surface. This includes guided builders: APIs where
+choosing a variant or phase reveals only the next legal construction methods.
+For example, an icon-only UI button can require an accessible label before
+`render()` exists, and a quest branch can require a typed ending before it can be
+added back to the quest.
 
 Compared with a plain enum, Statum moves legal behavior onto phase-specific
 machine types. If `publish()` only exists on `DocumentMachine<Draft>`, code
-holding a `DocumentMachine<Published>` cannot call it.
+holding a `DocumentMachine<Published>` cannot call it. The invalid state is not
+a runtime branch to reject; it is not representable in code.
 
 ## Minimal Example
 

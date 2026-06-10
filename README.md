@@ -62,6 +62,51 @@ After `submit`, the value is no longer a draft. After `approve`, it is no
 longer in review. Methods and fields follow the type, so callers do not need to
 remember which operations are currently legal.
 
+## Guided Builders
+
+A Statum machine does not have to feel like a state-machine API at the call
+site. One of the most useful patterns is a guided builder: each choice narrows
+what the caller can do next until only complete, valid construction paths remain.
+
+For a Maud or design-system button, choosing the icon-only variant can require
+an accessible label before rendering:
+
+```rust
+button::Button::builder()
+    .icon_only(icon::Settings)
+    .aria_label("Open settings")
+    .render();
+```
+
+The caller just sees a builder. Internally, the builder has moved into an
+`IconOnlyNeedsLabel` phase, so `render()` is not available until the accessibility
+contract is satisfied. Link buttons can expose `href()` while submit buttons
+expose `form_id()`. Destructive buttons can require either `confirm(...)` or an
+explicit `no_confirmation_needed()` before `on_click(...)` appears.
+
+The same idea works outside UI. A non-stringy quest DSL can make narrative
+structure explicit with typed IDs and typed assets:
+
+```rust
+quest::Quest::builder(quest::LostRelic)
+    .starts_with(dialogue::ElderIntro)
+    .requires(item::AncientMap)
+    .branch(choice::Accept)
+        .dialogue(dialogue::ElderAccept)
+        .objective(objective::FindRelic)
+        .reward(reward::RelicBlade)
+    .branch(choice::Decline)
+        .dialogue(dialogue::ElderDecline)
+        .ends()
+    .build();
+```
+
+A branch builder cannot return to the quest until it has an ending. Rewards can
+only appear on successful branches. Dialogue and objective references are typed
+values, not ad-hoc strings. The core idea is still the same: make undesirable
+state unrepresentable in code, while giving developers an ordinary, discoverable
+builder surface.
+
 ## Why Not a Plain Enum?
 
 Plain enums are great for many state machines, but they usually keep every
