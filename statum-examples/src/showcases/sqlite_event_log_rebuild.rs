@@ -125,15 +125,51 @@ struct EventRow {
     value: Option<String>,
 }
 
-#[derive(Clone, Debug)]
-struct OrderProjectionRow {
-    order_id: i64,
-    customer: String,
-    sku: String,
-    status: String,
-    payment_receipt: Option<String>,
-    pick_ticket: Option<String>,
-    tracking_number: Option<String>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OrderProjectionRow {
+    pub order_id: i64,
+    pub customer: String,
+    pub sku: String,
+    pub status: String,
+    pub payment_receipt: Option<String>,
+    pub pick_ticket: Option<String>,
+    pub tracking_number: Option<String>,
+}
+
+pub type ProjectedOrderSnapshot = OrderProjectionRow;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LegalOrderEvent {
+    order_id: OrderId,
+    expected_last_event_id: i64,
+    kind: LegalOrderEventKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum LegalOrderEventKind {
+    Packed { pick_ticket: String },
+}
+
+impl LegalOrderEvent {
+    pub fn order_id(&self) -> OrderId {
+        self.order_id
+    }
+
+    pub fn expected_last_event_id(&self) -> i64 {
+        self.expected_last_event_id
+    }
+
+    pub fn event_type(&self) -> &'static str {
+        match &self.kind {
+            LegalOrderEventKind::Packed { .. } => EVENT_PACKED,
+        }
+    }
+
+    pub fn value(&self) -> &str {
+        match &self.kind {
+            LegalOrderEventKind::Packed { pick_ticket } => pick_ticket,
+        }
+    }
 }
 
 impl TryFrom<&OrderProjectionRow> for OrderContext {
@@ -378,24 +414,8 @@ impl OrderEventStore {
     }
 
     pub async fn pack(&self, order_id: OrderId, pick_ticket: &str) -> Result<(), RebuildError> {
-        ensure_non_empty(pick_ticket, "pick_ticket is required")?;
-
-        match self.load_state(order_id).await? {
-            order_machine::SomeState::Paid(machine) => {
-                let machine = machine.pack(pick_ticket.to_string());
-                self.append_event(
-                    machine.state_data.order.order_id.0,
-                    EVENT_PACKED,
-                    None,
-                    None,
-                    Some(&machine.state_data.pick_ticket),
-                )
-                .await
-            }
-            _ => Err(RebuildError::InvalidTransition(
-                "pack requires a paid order",
-            )),
-        }
+        let event = self.emit_pack_event(order_id, pick_ticket).await?;
+        self.append_emitted_event(event).await
     }
 
     pub async fn ship(&self, order_id: OrderId, tracking_number: &str) -> Result<(), RebuildError> {
@@ -442,12 +462,81 @@ impl OrderEventStore {
         &self,
         order_id: OrderId,
     ) -> Result<order_machine::SomeState, RebuildError> {
+        let row = self.project_snapshot(order_id).await?;
+        self.rehydrate_snapshot(row)
+    }
+
+    pub async fn project_snapshot(
+        &self,
+        order_id: OrderId,
+    ) -> Result<ProjectedOrderSnapshot, RebuildError> {
         let events = self.events_for(order_id.0).await?;
-        let row = projection::reduce_one(events, &OrderProjector)
-            .map_err(|error| map_projection_error(error, Some(order_id.0)))?;
-        row.into_machine().build().map_err(|_| {
+        projection::reduce_one(events, &OrderProjector)
+            .map_err(|error| map_projection_error(error, Some(order_id.0)))
+    }
+
+    pub fn rehydrate_snapshot(
+        &self,
+        snapshot: ProjectedOrderSnapshot,
+    ) -> Result<order_machine::SomeState, RebuildError> {
+        snapshot.into_machine().build().map_err(|_| {
             RebuildError::CorruptEventLog("projected order row did not match any validator")
         })
+    }
+
+    pub async fn emit_pack_event(
+        &self,
+        order_id: OrderId,
+        pick_ticket: &str,
+    ) -> Result<LegalOrderEvent, RebuildError> {
+        ensure_non_empty(pick_ticket, "pick_ticket is required")?;
+
+        let events = self.events_for(order_id.0).await?;
+        let expected_last_event_id = events
+            .last()
+            .map(|event| event.event_id)
+            .ok_or(RebuildError::NotFound(order_id.0))?;
+        let row = projection::reduce_one(events, &OrderProjector)
+            .map_err(|error| map_projection_error(error, Some(order_id.0)))?;
+
+        match self.rehydrate_snapshot(row)? {
+            order_machine::SomeState::Paid(machine) => {
+                let machine = machine.pack(pick_ticket.to_string());
+                Ok(LegalOrderEvent {
+                    order_id: machine.state_data.order.order_id,
+                    expected_last_event_id,
+                    kind: LegalOrderEventKind::Packed {
+                        pick_ticket: machine.state_data.pick_ticket,
+                    },
+                })
+            }
+            _ => Err(RebuildError::InvalidTransition(
+                "pack requires a paid order",
+            )),
+        }
+    }
+
+    pub async fn append_emitted_event(&self, event: LegalOrderEvent) -> Result<(), RebuildError> {
+        match &event.kind {
+            LegalOrderEventKind::Packed { pick_ticket } => {
+                let current_event = self.emit_pack_event(event.order_id, pick_ticket).await?;
+                if current_event != event {
+                    return Err(RebuildError::InvalidTransition(
+                        "order state changed since event emission",
+                    ));
+                }
+            }
+        }
+
+        self.append_event_if_current(
+            event.order_id().0,
+            event.expected_last_event_id(),
+            event.event_type(),
+            None,
+            None,
+            Some(event.value()),
+        )
+        .await
     }
 
     pub async fn load_all_states(&self) -> Result<Vec<order_machine::SomeState>, RebuildError> {
@@ -490,6 +579,44 @@ impl OrderEventStore {
         .bind(value)
         .execute(&self.pool)
         .await?;
+
+        Ok(())
+    }
+
+    async fn append_event_if_current(
+        &self,
+        order_id: i64,
+        expected_last_event_id: i64,
+        event_type: &str,
+        customer: Option<&str>,
+        sku: Option<&str>,
+        value: Option<&str>,
+    ) -> Result<(), RebuildError> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO order_events (order_id, event_type, customer, sku, value)
+            SELECT ?, ?, ?, ?, ?
+            WHERE COALESCE(
+                (SELECT MAX(event_id) FROM order_events WHERE order_id = ?),
+                0
+            ) = ?
+            "#,
+        )
+        .bind(order_id)
+        .bind(event_type)
+        .bind(customer)
+        .bind(sku)
+        .bind(value)
+        .bind(order_id)
+        .bind(expected_last_event_id)
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(RebuildError::InvalidTransition(
+                "order state changed since event emission",
+            ));
+        }
 
         Ok(())
     }

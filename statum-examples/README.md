@@ -12,6 +12,10 @@ Use it in two modes:
 - `src/toy_demos/` for small syntax-first examples
 - `src/showcases/` for realistic service, CLI, worker, and protocol examples
 
+For the persistence boundary walkthrough across SQLx rows, Serde snapshots, and
+Axum handlers, see
+[`docs/persistence-integration-examples.md`](../docs/persistence-integration-examples.md).
+
 ## Run
 
 ```bash

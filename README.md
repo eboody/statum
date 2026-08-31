@@ -305,6 +305,7 @@ Key options:
   `statum::projection` helpers cover common reductions.
 
 Full guide: [docs/persistence-and-validators.md](docs/persistence-and-validators.md).
+Integration examples: [docs/persistence-integration-examples.md](docs/persistence-integration-examples.md).
 Event-log case study: [docs/case-study-event-log-rebuild.md](docs/case-study-event-log-rebuild.md).
 
 ## Machine Introspection
@@ -422,6 +423,7 @@ Start with docs by job, not by macro name:
   [docs/typestate-builder-design-playbook.md](docs/typestate-builder-design-playbook.md), and
   [docs/builder-ux-positioning.md](docs/builder-ux-positioning.md)
 - Rehydration: [docs/persistence-and-validators.md](docs/persistence-and-validators.md),
+  [docs/persistence-integration-examples.md](docs/persistence-integration-examples.md),
   [docs/rehydration-vocabulary.md](docs/rehydration-vocabulary.md), and
   [docs/migration.md](docs/migration.md)
 - Graph metadata: [docs/introspection.md](docs/introspection.md),

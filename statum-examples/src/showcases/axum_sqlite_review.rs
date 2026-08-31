@@ -334,10 +334,26 @@ async fn submit_document(
         return Err(AppError::BadRequest("reviewer is required"));
     }
 
-    let machine = load_document_state(&app.pool, id).await?;
+    Ok(Json(
+        submit_via_sqlx_boundary(&app.pool, id, request.reviewer).await?,
+    ))
+}
 
-    let machine = match machine {
-        document_machine::SomeState::Draft(machine) => machine.submit(request.reviewer),
+/// SQLx integration boundary: fetch one row, rehydrate it, perform a legal
+/// typed transition, persist the new representation, then return the stored row.
+///
+/// Statum does not own the pool, schema, transaction, or HTTP response shape;
+/// this function is the application adapter where those boundary choices live.
+async fn submit_via_sqlx_boundary(
+    pool: &SqlitePool,
+    id: i64,
+    reviewer: String,
+) -> Result<DocumentResponse, AppError> {
+    let row = fetch_document_row(pool, id).await?;
+    let report = rebuild_document_row(&row);
+
+    let machine = match report.into_result().map_err(|_| AppError::CorruptState)? {
+        document_machine::SomeState::Draft(machine) => machine.submit(reviewer),
         _ => {
             return Err(AppError::InvalidTransition(
                 "submit requires a draft document",
@@ -345,10 +361,10 @@ async fn submit_document(
         }
     };
 
-    persist_in_review(&app.pool, &machine).await?;
+    persist_in_review(pool, &machine).await?;
 
-    let row = fetch_document_row(&app.pool, id).await?;
-    Ok(Json(row.into()))
+    let row = fetch_document_row(pool, id).await?;
+    Ok(row.into())
 }
 
 async fn approve_document(
@@ -515,5 +531,44 @@ mod tests {
             }
             _ => panic!("expected an in-review machine"),
         }
+    }
+
+    #[tokio::test]
+    async fn sqlx_boundary_example_fetches_rehydrates_transitions_and_persists() {
+        let pool = build_pool().await.unwrap();
+        init_schema(&pool).await.unwrap();
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO documents (title, body, status, reviewer)
+            VALUES (?, ?, ?, NULL)
+            "#,
+        )
+        .bind("RFC")
+        .bind("ready for review")
+        .bind(STATUS_DRAFT)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let id = result.last_insert_rowid();
+        let before = fetch_document_row(&pool, id).await.unwrap();
+        assert_eq!(
+            rebuild_document_row(&before)
+                .matched_attempt()
+                .unwrap()
+                .validator,
+            "is_draft"
+        );
+
+        let response = submit_via_sqlx_boundary(&pool, id, "Ada".to_owned())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status, STATUS_IN_REVIEW);
+        assert_eq!(response.reviewer.as_deref(), Some("Ada"));
+
+        let persisted = fetch_document_row(&pool, id).await.unwrap();
+        assert_eq!(persisted.status, STATUS_IN_REVIEW);
+        assert_eq!(persisted.reviewer.as_deref(), Some("Ada"));
     }
 }

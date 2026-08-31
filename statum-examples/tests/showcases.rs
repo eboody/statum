@@ -362,6 +362,51 @@ async fn sqlite_event_log_rebuild_rejects_invalid_transition() {
 }
 
 #[tokio::test]
+async fn sqlite_event_log_rebuild_projects_snapshot_rehydrates_and_emits_next_event() {
+    let store = sqlite_event_log_rebuild::build_store().await.unwrap();
+    let order_id = store.create_order("acme", "widget").await.unwrap();
+    store.pay(order_id, "pay-001").await.unwrap();
+
+    let snapshot = store.project_snapshot(order_id).await.unwrap();
+    assert_eq!(snapshot.status, "paid");
+    assert_eq!(snapshot.payment_receipt.as_deref(), Some("pay-001"));
+    assert_eq!(snapshot.pick_ticket, None);
+
+    match store.rehydrate_snapshot(snapshot.clone()).unwrap() {
+        sqlite_event_log_rebuild::order_machine::SomeState::Paid(machine) => {
+            assert_eq!(machine.state_data.payment_receipt.as_str(), "pay-001");
+        }
+        _ => panic!("expected paid order before packing"),
+    }
+
+    let next_event = store.emit_pack_event(order_id, "pick-001").await.unwrap();
+    assert_eq!(next_event.order_id(), order_id);
+    assert_eq!(next_event.event_type(), "packed");
+    assert_eq!(next_event.value(), "pick-001");
+
+    store.append_emitted_event(next_event).await.unwrap();
+    match store.load_state(order_id).await.unwrap() {
+        sqlite_event_log_rebuild::order_machine::SomeState::Packed(machine) => {
+            assert_eq!(machine.state_data.pick_ticket.as_str(), "pick-001");
+        }
+        _ => panic!("expected packed order after appending emitted event"),
+    }
+}
+
+#[tokio::test]
+async fn sqlite_event_log_rebuild_revalidates_emitted_event_before_append() {
+    let store = sqlite_event_log_rebuild::build_store().await.unwrap();
+    let order_id = store.create_order("acme", "widget").await.unwrap();
+    store.pay(order_id, "pay-001").await.unwrap();
+
+    let stale_event = store.emit_pack_event(order_id, "pick-stale").await.unwrap();
+    store.pack(order_id, "pick-current").await.unwrap();
+
+    let error = store.append_emitted_event(stale_event).await.unwrap_err();
+    assert_eq!(error.to_string(), "pack requires a paid order");
+}
+
+#[tokio::test]
 async fn tokio_websocket_session_happy_path() {
     let mut session = tokio_websocket_session::spawn_session(
         tokio_websocket_session::ConnectionId(7),
