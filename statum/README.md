@@ -112,3 +112,5 @@ Start with the repository README and the guided workflow docs:
   <https://github.com/eboody/statum/blob/main/docs/persistence-and-validators.md>
 - Graph introspection:
   <https://github.com/eboody/statum/blob/main/docs/introspection.md>
+- Graph metadata authority boundaries:
+  <https://github.com/eboody/statum/blob/main/docs/introspection-authority.md>

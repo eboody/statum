@@ -375,6 +375,37 @@ fn graph_collection_is_scoped_per_machine() {
 }
 
 #[test]
+fn transition_ids_remain_machine_scoped_under_duplicate_method_names() {
+    let flow_graph = <Flow<Accepted> as MachineIntrospection>::GRAPH;
+    let alpha_graph = <AlphaMachine<Draft> as MachineIntrospection>::GRAPH;
+    let beta_graph = <BetaMachine<Draft> as MachineIntrospection>::GRAPH;
+
+    let flow_explain_targets = flow_graph
+        .transitions_named("explain")
+        .map(|transition| flow_graph.legal_targets(transition.id).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(flow_explain_targets.len(), 2);
+    assert!(flow_explain_targets.contains(&&[flow::StateId::Published][..]));
+    assert!(flow_explain_targets.contains(&&[flow::StateId::Draft][..]));
+
+    let alpha_finish = alpha_graph
+        .transition_from_method(alpha_machine::StateId::Draft, "finish")
+        .unwrap();
+    let beta_finish = beta_graph
+        .transition_from_method(beta_machine::StateId::Draft, "finish")
+        .unwrap();
+    assert_eq!(alpha_finish.method_name, beta_finish.method_name);
+    assert_eq!(
+        alpha_graph.legal_targets(alpha_finish.id).unwrap(),
+        &[alpha_machine::StateId::Published]
+    );
+    assert_eq!(
+        beta_graph.legal_targets(beta_finish.id).unwrap(),
+        &[beta_machine::StateId::Rejected]
+    );
+}
+
+#[test]
 fn runtime_transition_recording_joins_to_static_metadata() {
     let event =
         Flow::<Review>::try_record_transition_to::<Flow<Accepted>>(Flow::<Review>::MAYBE_DECIDE)

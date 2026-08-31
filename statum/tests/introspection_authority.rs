@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 #![cfg(feature = "introspection")]
 
-use statum::{machine, state, transition, MachineIntrospection};
+use statum::{
+    machine, state, transition, GraphAuthorityLevel, MachineIntrospection, StableGraphMetadata,
+    UnsupportedGraphMetadataCase,
+};
 
 #[state]
 enum GeneratedState {
@@ -104,4 +107,38 @@ fn graph_respects_cfg_pruning_and_macro_generated_transitions() {
         .collect::<Vec<_>>();
     labels.sort_unstable();
     assert_eq!(labels, vec!["Enable", "Via Include", "Via Macro"]);
+}
+
+#[test]
+fn stable_metadata_declares_authority_boundary_for_adversarial_sources() {
+    let graph = <GeneratedFlow<Start> as MachineIntrospection>::GRAPH;
+    let metadata = StableGraphMetadata::from_graph(graph);
+
+    assert_eq!(metadata.authority, GraphAuthorityLevel::CfgPrunedMacroInput);
+    assert_eq!(
+        metadata.unsupported_cases,
+        vec![
+            UnsupportedGraphMetadataCase::RuntimeOnlyTransitions,
+            UnsupportedGraphMetadataCase::CfgAmbiguousAliases,
+            UnsupportedGraphMetadataCase::UnexpandedCustomDecisionEnums,
+            UnsupportedGraphMetadataCase::MacroGeneratedItems,
+            UnsupportedGraphMetadataCase::IncludeGeneratedItems,
+            UnsupportedGraphMetadataCase::FieldLevelPresentationMetadata,
+        ]
+    );
+
+    let mut transition_methods = metadata
+        .transitions
+        .iter()
+        .map(|transition| transition.method_name.as_str())
+        .collect::<Vec<_>>();
+    transition_methods.sort_unstable();
+    assert_eq!(
+        transition_methods,
+        vec!["enable", "via_include", "via_macro"]
+    );
+    assert!(!metadata
+        .transitions
+        .iter()
+        .any(|transition| transition.method_name.starts_with("cfg_")));
 }

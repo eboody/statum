@@ -191,7 +191,9 @@ expanded items, runtime registry values, and persisted state, see
 [introspection-authority.md](introspection-authority.md).
 
 Unsupported cases are part of the model, not an afterthought. Version 1 declares
-runtime-only transitions, unexpanded custom decision enums, and field-level
+runtime-only transitions, cfg-ambiguous aliases, unexpanded custom decision
+enums, macro-generated items outside Statum-observed macro input,
+`include!`-generated items outside Statum-observed macro input, and field-level
 presentation metadata as unsupported. The JSON keeps reserved `fields` arrays so
 consumers can depend on the shape without pretending those fields are populated
 today.
