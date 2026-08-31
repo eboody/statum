@@ -164,6 +164,70 @@ but GRAPH contains Draft --approve--> Published
   `StateId` and `TransitionId` types where `S: Copy + Eq + Debug` and
   `T: Copy + Eq + Debug`.
 
+## Runtime Path Assertions
+
+Path assertions are metadata assertions over reachability, not transition
+execution. They should answer "can a legal sequence of generated transition sites
+connect these states under the active graph?" without claiming that a caller can
+supply method arguments, satisfy side effects, or persist every intermediate
+state.
+
+### Recommended API Shape
+
+```rust
+use statum::testing::graph::{assert_no_path, assert_path};
+
+assert_path(graph)
+    .from(document_machine::StateId::Draft)
+    .to(document_machine::StateId::Published)
+    .via_methods(["submit", "approve"]);
+
+assert_path(graph)
+    .from(document_machine::StateId::Draft)
+    .to(document_machine::StateId::Rejected)
+    .within_depth(2);
+
+assert_no_path(graph)
+    .from(document_machine::StateId::Archived)
+    .to(document_machine::StateId::Draft);
+```
+
+The helper should expose a non-panicking search result for callers that want to
+render diagnostics or feed CI reports:
+
+```rust
+pub struct PathAssertionResult<S, T> {
+    pub found: bool,
+    pub start: S,
+    pub end: S,
+    pub path: Vec<WalkStep<S, T>>,
+    pub explored_states: Vec<S>,
+}
+
+pub fn find_path<S, T>(
+    graph: &'static MachineGraph<S, T>,
+    from: S,
+    to: S,
+    options: PathOptions,
+) -> PathAssertionResult<S, T>;
+```
+
+### Helper Semantics
+
+- `assert_path(...).to(target)` passes if breadth-first graph search finds at
+  least one transition-site path from `from` to `target` within the configured
+  depth.
+- `.via_methods([...])` pins the method-name sequence and should fail if the graph
+  can reach the target only through a different method sequence.
+- `.within_depth(n)` is required for cyclic graphs when the helper enumerates more
+  than the first shortest path. The default single-path search may use an
+  internal visited set and stay finite without a caller-supplied depth.
+- `assert_no_path` proves absence only within the active metadata graph and the
+  configured search policy. Failure output should include one witness path.
+- Path assertions should reuse the same `WalkStep` vocabulary as legal walk
+  generators so path tests and property-test fixtures describe transitions in one
+  way.
+
 ## Runtime Metadata Assertions
 
 Metadata assertions should also cover machine shape, state-data flags,
@@ -499,6 +563,8 @@ Runtime tests:
 - assert a linear `Draft -> InReview -> Published` graph;
 - assert a branching transition with two legal targets;
 - assert absent source/method pairs;
+- assert a path exists via an expected method sequence;
+- assert no path exists from a terminal or archived state back to a start state;
 - assert state-data flags;
 - assert a valid `RecordedTransition` join and a mismatched-machine failure;
 - assert failed, successful, ambiguous, and not-checked `RebuildReport` cases;
@@ -528,6 +594,8 @@ Adversarial semantic tests:
 
 - Compile-time assertion APIs are documented separately from runtime assertion
   APIs.
+- Runtime path assertions are documented as metadata reachability checks, not
+  executable workflow proofs.
 - Runtime metadata assertions are documented separately from generated fixtures.
 - Rehydration assertions inspect `RebuildReport` evidence and do not make storage
   correctness claims.
