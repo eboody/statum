@@ -1,4 +1,4 @@
-# World-Class Quality Roadmap
+# Quality Standard
 
 This document turns Statum's current strengths into an explicit quality bar.
 It is not a feature wishlist. It is the acceptance standard for making Statum
@@ -112,14 +112,7 @@ Acceptance checks:
 - It includes a short "why not just an enum?" section.
 - It points to the exact runnable showcase and test coverage.
 
-## Current Next Tasks
+## Maintenance Rule
 
-1. Keep README positioning focused on typestate workflows and typed
-   rehydration; avoid defensive LOC/repo-size rationale.
-2. Add a diagnostics audit document and use it as the checklist for future
-   stderr fixture improvements.
-3. Add a builder UX positioning document so feature requests can be classified
-   as Statum-owned vs. ordinary-builder-owned.
-4. Add compile benchmark reporting docs before making performance claims.
-5. Keep the document-approval flagship and event-log companion aligned with the
-   README positioning.
+Treat these checks as release criteria. Track unfinished implementation work in
+issues rather than embedding a second task list in the public documentation.

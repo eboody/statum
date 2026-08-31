@@ -82,18 +82,20 @@ order. Pick the job you are doing:
 - Encode legal transitions: the tutorial's transition steps plus patterns for
   branching, nested, and side-effecting workflows.
 - Rehydrate persisted state: [Typed rehydration and validators](persistence-and-validators.md),
+  [Persistence integration examples](persistence-integration-examples.md),
   [Rehydration vocabulary](rehydration-vocabulary.md),
   [Escape hatches](escape-hatches.md), and [Migration guide](migration.md).
 - Process batches and event logs: [Event-log rebuild case study](case-study-event-log-rebuild.md)
   and [Batch rehydration helper design](batch-rehydration-design.md).
 - Explain or generate metadata: [Machine introspection](introspection.md),
+  [Introspection authority boundaries](introspection-authority.md),
   [MCP/protocol resource design](mcp-protocol-resource-design.md), and the
   [agent docs](agents/README.md).
 - Diagnose, migrate, or measure Statum itself: [Diagnostics guide](diagnostics/README.md),
   [Diagnostics quality audit](diagnostics-quality-audit.md),
   [Compile-time benchmark reporting](compile-time-benchmark-reporting.md),
   [Compile-time benchmark baseline](compile-time-benchmark-baseline.md), and
-  [World-class quality roadmap](world-class-roadmap.md).
+  [Quality standard](quality-standard.md).
 
 ## 6. Use The Agent Kit Only If It Matches Your Workflow
 

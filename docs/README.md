@@ -58,6 +58,9 @@ machines before app code continues.
 - [Typed rehydration and validators](persistence-and-validators.md): single-item
   rebuilds, report/explain mode, async validators, batches, integration
   boundaries, and failure model.
+- [Persistence integration examples](persistence-integration-examples.md):
+  SQLx row, Serde snapshot, and Axum handler boundaries that fetch, rehydrate,
+  legally transition, persist, and return application-owned representations.
 - [Rehydration vocabulary](rehydration-vocabulary.md): project, rebuild,
   rehydrate, recover, explain, and escape-hatch terminology.
 - [Escape hatches](escape-hatches.md): unchecked or assume-state surfaces and
@@ -123,7 +126,7 @@ Use these when you are maintaining Statum itself or upgrading a codebase.
   run and report compile-time benchmarks.
 - [Compile-time benchmark baseline](compile-time-benchmark-baseline.md): current
   benchmark baseline and interpretation.
-- [World-class quality roadmap](world-class-roadmap.md): quality bar across
+- [Quality standard](quality-standard.md): release bar across
   diagnostics, builder UX, compile-time reporting, examples, and docs.
 
 ## Run Service-Shaped Examples
