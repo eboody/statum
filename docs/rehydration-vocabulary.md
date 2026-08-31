@@ -245,9 +245,17 @@ Public naming should be scary and grep-able. Prefer names that contain one of:
 Avoid soft names like `restore`, `load_state`, or `from_row` for these APIs.
 Those names hide the invariant transfer.
 
-Unchecked docs should always say what the caller must uphold. Example wording:
+Unchecked docs should always say what the caller must uphold and include the
+label `CALLER INVARIANT BURDEN`. Example wording:
 
 ```rust
+/// Constructs a typed machine without running validators.
+///
+/// # CALLER INVARIANT BURDEN
+///
+/// The caller must prove that the state marker, state data, and shared machine
+/// fields describe the same workflow instance and satisfy the same membership
+/// rules as the skipped validators.
 // Hypothetical future shape, not current API:
 let machine = unsafe {
     TaskMachine::<InReview>::from_parts_unchecked(fields, review_data)

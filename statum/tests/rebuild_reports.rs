@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use statum::{machine, state, validators, Error, RebuildAttempt};
+use statum::{machine, state, validators, Error, RebuildAmbiguity, RebuildAttempt};
 
 fn plain_attempt(
     validator: &'static str,
@@ -258,6 +258,52 @@ mod async_diagnostic_reports {
     }
 }
 
+mod ambiguous_reports {
+    use super::*;
+
+    #[state]
+    pub enum AmbiguousReportState {
+        FirstMatch,
+        SecondMatch,
+        ThirdMiss,
+    }
+
+    #[machine]
+    pub struct AmbiguousReportMachine<AmbiguousReportState> {
+        pub name: String,
+    }
+
+    pub struct AmbiguousRow {
+        pub flag: bool,
+    }
+
+    #[validators(AmbiguousReportMachine)]
+    impl AmbiguousRow {
+        fn is_first_match(&self) -> statum::Result<()> {
+            let _ = &name;
+            if self.flag {
+                Ok(())
+            } else {
+                Err(Error::InvalidState)
+            }
+        }
+
+        fn is_second_match(&self) -> statum::Result<()> {
+            let _ = &name;
+            if self.flag {
+                Ok(())
+            } else {
+                Err(Error::InvalidState)
+            }
+        }
+
+        fn is_third_miss(&self) -> statum::Result<()> {
+            let _ = &name;
+            Err(Error::InvalidState)
+        }
+    }
+}
+
 #[cfg(feature = "rebuild-reports")]
 #[test]
 fn build_report_records_attempts_for_single_sync_match() {
@@ -314,6 +360,152 @@ fn build_report_records_failed_attempts_for_single_sync_miss() {
     );
     assert!(report.matched_attempt().is_none());
     assert!(matches!(report.into_result(), Err(Error::InvalidState)));
+}
+
+#[cfg(feature = "rebuild-reports")]
+#[test]
+fn build_report_failure_exposes_structured_admin_fields() {
+    let row = sync_reports::SyncRow {
+        status: "missing",
+        reviewer: None,
+        name: "spec",
+    };
+    let report = row
+        .into_machine()
+        .name(row.name.to_owned())
+        .build_report()
+        .with_input_identifier("document:spec");
+
+    assert_eq!(report.machine, "SyncReportMachine");
+    assert!(report.input.type_name.ends_with("sync_reports::SyncRow"));
+    assert_eq!(report.input.identifier.as_deref(), Some("document:spec"));
+    assert_eq!(
+        report.candidate_states,
+        vec!["DraftSync", "ReviewSync", "DoneSync"]
+    );
+    assert_eq!(report.ambiguity, RebuildAmbiguity::NotChecked);
+    assert_eq!(
+        report.attempts,
+        vec![
+            plain_attempt("is_draft_sync", "DraftSync", false),
+            plain_attempt("is_review_sync", "ReviewSync", false),
+            plain_attempt("is_done_sync", "DoneSync", false),
+        ]
+    );
+    assert!(matches!(report.result, Err(Error::InvalidState)));
+}
+
+#[cfg(feature = "rebuild-reports")]
+#[test]
+fn explain_evaluates_every_candidate_for_single_sync_match() {
+    let row = sync_reports::SyncRow {
+        status: "review",
+        reviewer: Some("alice"),
+        name: "spec",
+    };
+    let report = row
+        .into_machine()
+        .name(row.name.to_owned())
+        .explain()
+        .with_input_identifier("document:spec");
+
+    assert_eq!(report.machine, "SyncReportMachine");
+    assert_eq!(report.input.identifier.as_deref(), Some("document:spec"));
+    assert_eq!(report.ambiguity, RebuildAmbiguity::Unambiguous);
+    assert_eq!(
+        report.attempts,
+        vec![
+            plain_attempt("is_draft_sync", "DraftSync", false),
+            plain_attempt("is_review_sync", "ReviewSync", true),
+            plain_attempt("is_done_sync", "DoneSync", false),
+        ]
+    );
+
+    match report.into_result().unwrap() {
+        sync_reports::sync_report_machine::SomeState::ReviewSync(machine) => {
+            assert_eq!(machine.name, "spec");
+            assert_eq!(machine.state_data.reviewer, "alice");
+        }
+        _ => panic!("expected review state"),
+    }
+}
+
+#[cfg(feature = "rebuild-reports")]
+#[test]
+fn explain_debugs_bad_persisted_row_without_throwing() {
+    let row = diagnostic_reports::DiagnosticRow {
+        status: "review",
+        reviewer: None,
+        name: "bad-spec",
+    };
+    let report = row
+        .into_machine()
+        .name(row.name.to_owned())
+        .explain()
+        .with_input_identifier("document:bad-spec");
+
+    assert_eq!(report.machine, "DiagnosticReportMachine");
+    assert_eq!(
+        report.candidate_states,
+        vec!["DraftDiagnostic", "ReviewDiagnostic", "DoneDiagnostic"]
+    );
+    assert_eq!(
+        report.input.identifier.as_deref(),
+        Some("document:bad-spec")
+    );
+    assert_eq!(report.ambiguity, RebuildAmbiguity::Unambiguous);
+    assert_eq!(
+        report.attempts,
+        vec![
+            diagnostic_attempt(
+                "is_draft_diagnostic",
+                "DraftDiagnostic",
+                "wrong_status",
+                "expected draft status",
+            ),
+            diagnostic_attempt(
+                "is_review_diagnostic",
+                "ReviewDiagnostic",
+                "missing_reviewer",
+                "review rows need a reviewer",
+            ),
+            plain_attempt("is_done_diagnostic", "DoneDiagnostic", false),
+        ]
+    );
+    assert!(matches!(report.result, Err(Error::InvalidState)));
+}
+
+#[cfg(feature = "rebuild-reports")]
+#[test]
+fn explain_surfaces_ambiguous_validator_matches_and_fails_closed() {
+    let row = ambiguous_reports::AmbiguousRow { flag: true };
+    let report = row
+        .into_machine()
+        .name("ambiguous".to_owned())
+        .explain()
+        .with_input_identifier("ambiguous:true");
+
+    assert_eq!(report.machine, "AmbiguousReportMachine");
+    assert_eq!(
+        report.candidate_states,
+        vec!["FirstMatch", "SecondMatch", "ThirdMiss"]
+    );
+    assert_eq!(report.input.identifier.as_deref(), Some("ambiguous:true"));
+    assert_eq!(
+        report.ambiguity,
+        RebuildAmbiguity::Ambiguous {
+            matched_states: vec!["FirstMatch", "SecondMatch"],
+        }
+    );
+    assert_eq!(
+        report.attempts,
+        vec![
+            plain_attempt("is_first_match", "FirstMatch", true),
+            plain_attempt("is_second_match", "SecondMatch", true),
+            plain_attempt("is_third_miss", "ThirdMiss", false),
+        ]
+    );
+    assert!(matches!(report.result, Err(Error::InvalidState)));
 }
 
 #[cfg(all(feature = "rebuild-batch", feature = "rebuild-reports"))]

@@ -159,8 +159,10 @@ pub fn transition(
 /// `into_machine()`, `.into_machines()`, and `.into_machines_by(...)` helpers
 /// for typed rehydration. Validator methods can return `Result<T, _>` for
 /// ordinary membership checks or `Validation<T>` when rebuild reports should
-/// carry stable rejection details through `.build_report()` and
-/// `.build_reports()`. In relaxed mode, bare multi-segment paths like
+/// carry stable rejection details. The `rebuild-reports` feature generates
+/// `.build_report()` and the non-throwing single-row `.explain()` candidate
+/// report; enabling `rebuild-batch` as well generates `.build_reports()`. In
+/// relaxed mode, bare multi-segment paths like
 /// `#[validators(flow::Machine)]` are treated as local child-module paths, not
 /// imported aliases or re-exports. If Statum cannot resolve that local path,
 /// it emits a compile error asking for an anchored path instead.

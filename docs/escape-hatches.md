@@ -2,15 +2,25 @@
 
 This page is the grep-able audit list for Statum APIs that bypass a normal proof path or let callers supply metadata the macro cannot derive on its own.
 
-Scary names are intentional. If an API skips validation, makes a caller assertion stand in for proof, or overrides an introspection fact, the name and docs must make the invariant transfer visible.
+Scary names are intentional. If an API skips validation, makes a caller assertion
+stand in for proof, or overrides an introspection fact, the name and docs must
+make the invariant transfer visible.
+
+Required vocabulary for unchecked typed-rehydration APIs is deliberately loud:
+`unchecked`, `assume_state`, or `from_parts_unchecked`. These strings are the
+audit handle. Do not hide a validator bypass behind soft names such as `restore`,
+`load_state`, or `from_row`.
 
 ## Current Public Escape Hatches
 
 ### `#[introspect(return = ...)]`
 
-`#[introspect(return = ...)]` is a transition introspection escape hatch. It is not an unchecked rehydration API and it does not construct a typed state.
+`#[introspect(return = ...)]` is a transition introspection escape hatch. It is
+not an unchecked rehydration API and it does not construct a typed state.
 
-Use it only when a `#[transition]` method's written return type is not directly usable as the strict graph contract, but the method still returns the same machine path in a supported wrapper shape.
+Use it only when a `#[transition]` method's written return type is not directly
+usable as the strict graph contract, but the method still returns the same
+machine path in a supported wrapper shape.
 
 Caller obligations:
 
@@ -40,6 +50,7 @@ The current public typed-rehydration path is validator-backed:
 - `.into_machines()`
 - `.into_machines_by(...)`
 - `.build_report()` / `.build_reports()`
+- `.explain()`
 
 Those APIs run validators. They are not unchecked construction APIs.
 
@@ -51,7 +62,12 @@ Future APIs that bypass validator proof must use grep-able names from this list:
 - `assume_state` when the caller asserts the state marker from external proof.
 - `from_parts_unchecked` when raw machine fields and state data are assembled without validators.
 
-Do not use soft names such as `restore`, `load_state`, or `from_row` for validator bypass. Those names hide the proof boundary.
+Do not use soft names such as `restore`, `load_state`, or `from_row` for
+validator bypass. Those names hide the proof boundary.
+
+Every unchecked typed-rehydration API must include a docs section headed or
+labelled `CALLER INVARIANT BURDEN`. That section is the proof transfer: it says
+which validator proof was skipped and which facts the caller now owns.
 
 Any future unchecked rehydration API must document these caller obligations next to the API:
 
@@ -63,6 +79,26 @@ Any future unchecked rehydration API must document these caller obligations next
 
 If an API cannot state those obligations plainly, it should not be an unchecked API.
 
+## Future API Template
+
+Use this shape when a future escape hatch is truly necessary:
+
+```rust
+/// Constructs a typed machine without running validators.
+///
+/// # CALLER INVARIANT BURDEN
+///
+/// The caller must prove that the state marker, state data, and shared machine
+/// fields describe the same workflow instance and satisfy the same membership
+/// rules as the skipped validators.
+pub unsafe fn from_parts_unchecked(/* ... */) -> Machine<State> {
+    // ...
+}
+```
+
+Names that do not include `unchecked`, `assume_state`, or
+`from_parts_unchecked` are not acceptable for validator bypasses.
+
 ## Audit Rule
 
 When adding or reviewing an escape hatch, run:
@@ -71,4 +107,7 @@ When adding or reviewing an escape hatch, run:
 bash scripts/check_escape_hatches.sh
 ```
 
-The check does not prove semantic correctness. It keeps the public audit vocabulary present and catches accidental soft names for unchecked construction.
+The check does not prove semantic correctness. It keeps the public audit
+vocabulary present, requires the `CALLER INVARIANT BURDEN` wording, and fails if
+Rust code exposes grep-able unchecked rehydration functions before this catalog
+and the script are updated intentionally.

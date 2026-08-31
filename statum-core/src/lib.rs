@@ -25,11 +25,12 @@ pub mod testing;
 
 #[doc(hidden)]
 pub mod __private {
+    pub use crate::{RebuildAmbiguity, RebuildAttempt, RebuildInput, RebuildReport};
+
     #[cfg(feature = "introspection")]
     pub use crate::{
-        MachinePresentation, MachinePresentationDescriptor, RebuildAmbiguity, RebuildAttempt,
-        RebuildInput, RebuildReport, StatePresentation, TransitionPresentation,
-        TransitionPresentationInventory,
+        MachinePresentation, MachinePresentationDescriptor, StatePresentation,
+        TransitionPresentation, TransitionPresentationInventory,
     };
     #[cfg(feature = "introspection")]
     pub use linkme;

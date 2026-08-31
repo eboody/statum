@@ -142,9 +142,14 @@
 //! ```
 //!
 //! If you want explainable rebuild traces, validators can also return
-//! [`Validation`]. Then `.build_report()` and `.build_reports()` populate [`RebuildAttempt::reason_key`] and
-//! [`RebuildAttempt::message`] for failed matches while keeping the normal
-//! `.into_result()` surface.
+//! [`Validation`]. With the `rebuild-reports` feature enabled,
+//! `.build_report()` and `.explain()` populate [`RebuildAttempt::reason_key`]
+//! and [`RebuildAttempt::message`] for failed matches while keeping the normal
+//! `.into_result()` surface. `.build_reports()` additionally requires the
+//! `rebuild-batch` feature. Use `.explain()` when an admin or migration tool
+//! needs a non-throwing report that evaluates every candidate state, surfaces
+//! ambiguous validator matches, and fails closed instead of picking an
+//! arbitrary state.
 //!
 //! # Compile-Time Gating
 //!
@@ -450,8 +455,14 @@ pub use statum_macros::transition;
 /// - `Task::rebuild_many(rows)` and `.into_machines()` when all items share the same machine fields
 /// - `.into_machines_by(|row| machine::Fields { ... })` when each item needs
 ///   different machine fields
-/// - `.build_report()` / `.build_reports()` when you want rebuild attempts and
-///   stable rejection details alongside the normal result
+/// - `.build_report()` when the `rebuild-reports` feature is enabled and you
+///   want rebuild attempts and stable rejection details alongside the normal
+///   result
+/// - `.build_reports()` when both `rebuild-reports` and `rebuild-batch` are
+///   enabled and you want the same evidence for a batch
+/// - `.explain()` when `rebuild-reports` is enabled and you want a non-throwing
+///   single-row report that evaluates every candidate state and marks
+///   multi-validator matches as ambiguous
 ///
 /// Machine fields are available by name inside validator bodies through
 /// generated bindings. Persisted-row fields still live on `self`. In relaxed
